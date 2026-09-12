@@ -1,8 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
-    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
-    MAX_ID_PAGE_LIMIT,
+    delete, derive_poseidon_entity_id, list, mint, read, BodyInput, EntityRef, ExecutionScope,
+    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -145,23 +144,22 @@ impl NodContract<'_> {
 
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
-        let final_bucket = match current_bucket.as_ref() {
-            Some(current) => {
-                let mut bucket = nod_bucket_from_verified(current)?;
-                bucket.total_nods = bucket.total_nods.checked_add(1).ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod bucket {bucket_id} member count overflow"
-                    ))
-                })?;
-                bucket
-            }
+        let member_count = self.bucket_nod_count.read(&item.bucket_key)?;
+        if current_bucket.is_some() != (member_count > 0) {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
+                )),
+            );
+        }
+        let new_bucket = match current_bucket {
+            Some(_) => None,
             None => {
                 let bucket = NodBucketState {
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
                     is_qualified: false,
-                    total_nods: 1,
                     entry_price_minor,
                     reference_currency: item.reference_currency,
                 };
@@ -172,7 +170,7 @@ impl NodContract<'_> {
                     item.floor_price_minor,
                     item.reference_currency,
                 )?;
-                bucket
+                Some(bucket)
             }
         };
 
@@ -182,27 +180,22 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
-        self.insert_bucket_member(item.bucket_key, item.nod_id, final_bucket.total_nods)?;
+        self.insert_bucket_member(item.bucket_key, item.nod_id)?;
         let canonical_item = crate::repository::canonical_item(item);
         mint(
             self.storage_handle(),
             scope,
             BodyInput::NodItem(&canonical_item),
         )?;
-        let canonical_bucket = crate::repository::canonical_bucket(&final_bucket);
-        if let Some(current) = current_bucket {
-            update(
-                self.storage_handle(),
-                scope,
-                current,
-                BodyInput::NodBucket(&canonical_bucket),
-            )
-        } else {
+        if let Some(bucket) = new_bucket {
+            let canonical_bucket = crate::repository::canonical_bucket(&bucket);
             mint(
                 self.storage_handle(),
                 scope,
                 BodyInput::NodBucket(&canonical_bucket),
             )
+        } else {
+            Ok(())
         }
     }
 
@@ -214,7 +207,7 @@ impl NodContract<'_> {
         bucket: LoadedNodBucket,
     ) -> Result<()> {
         let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
+        let (_, current_bucket) = bucket.into_parts();
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current_bucket.entity_id() != bucket_id {
             return Err(
@@ -224,33 +217,21 @@ impl NodContract<'_> {
                 )),
             );
         }
-        bucket.total_nods = bucket.total_nods.checked_sub(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod bucket {bucket_id} has zero members during removal"
-            ))
-        })?;
-
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
                 "Nod total supply underflow during removal".into(),
             )
         })?;
         self.total_supply.write(supply)?;
-        self.remove_bucket_member(item.bucket_key, item.nod_id, bucket.total_nods)?;
+        let remaining = self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         delete(self.storage_handle(), scope, current_item)?;
-        if bucket.total_nods == 0 {
+        if remaining == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage_handle(), scope, current_bucket)
         } else {
-            let canonical = crate::repository::canonical_bucket(&bucket);
-            update(
-                self.storage_handle(),
-                scope,
-                current_bucket,
-                BodyInput::NodBucket(&canonical),
-            )
+            Ok(())
         }
     }
 
@@ -338,37 +319,31 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Appends `nod_id` to its bucket's member list. `total_nods` is the loaded
-    /// body's post-increment count, so the EVM mirror is written from the same
-    /// value the body carries and the two cannot drift.
+    /// Appends `nod_id` and increments the bucket's authoritative member count.
     pub(crate) fn insert_bucket_member(
         &mut self,
         bucket_key: B256,
         nod_id: WwdEntityId,
-        total_nods: u64,
     ) -> Result<()> {
         let index = self.bucket_nod_count.read(&bucket_key)?;
-        self.bucket_nods
-            .write(&Self::bucket_nod_key(bucket_key, index), nod_id)?;
-        self.bucket_nod_index.write(&nod_id, index)?;
         let next = index.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal(format!(
                 "Nod bucket {bucket_key} member index overflow"
             ))
         })?;
-        self.expect_member_parity(bucket_key, next, total_nods)?;
+        self.bucket_nods
+            .write(&Self::bucket_nod_key(bucket_key, index), nod_id)?;
+        self.bucket_nod_index.write(&nod_id, index)?;
         self.bucket_nod_count.write(&bucket_key, next)?;
         Ok(())
     }
 
-    /// Swap-removes `nod_id` from its bucket's member list. `total_nods` is the
-    /// loaded body's post-decrement count.
+    /// Swap-removes `nod_id` and returns the remaining member count.
     pub(crate) fn remove_bucket_member(
         &mut self,
         bucket_key: B256,
         nod_id: WwdEntityId,
-        total_nods: u64,
-    ) -> Result<()> {
+    ) -> Result<u32> {
         let index = self.bucket_nod_index.read(&nod_id)?;
         let last = self
             .bucket_nod_count
@@ -395,24 +370,8 @@ impl NodContract<'_> {
         }
         self.bucket_nods.write(&last_key, WwdEntityId::ZERO)?;
         self.bucket_nod_index.clear(&nod_id)?;
-        self.expect_member_parity(bucket_key, last, total_nods)?;
         self.bucket_nod_count.write(&bucket_key, last)?;
-        Ok(())
-    }
-
-    /// The forfeit sweep enumerates members through the EVM mirror but burns
-    /// through the bucket body, so a divergence between the two would silently
-    /// under- or over-burn. Fail loudly instead.
-    fn expect_member_parity(&self, bucket_key: B256, members: u32, total_nods: u64) -> Result<()> {
-        if u64::from(members) == total_nods {
-            return Ok(());
-        }
-        Err(
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                "Nod bucket {bucket_key} member index holds {members} entries but the body \
-                 counts {total_nods}"
-            )),
-        )
+        Ok(last)
     }
 
     // --- Callable-bucket index ----------------------------------------------

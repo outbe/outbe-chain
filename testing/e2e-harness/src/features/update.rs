@@ -683,79 +683,71 @@ fn approach_activation_height(world: &mut World) {
 #[then("the committee does not advance past the activation height")]
 fn does_not_pass_activation(world: &mut World) {
     let activation = world.state.activation_height.expect("activation captured");
-    let port = world.validators.primary_port();
-    // Give the committee time to attempt (and fail) the activation block.
+    let ports = validator_ports(world);
+    // Allow an attempted activation while requiring every RPC to stay below it.
     for _ in 0..20 {
-        if let Some(h) = world.rpc.head(port) {
+        for &port in &ports {
+            let head = world
+                .rpc
+                .head(port)
+                .expect("read fail-closed committee head");
             assert!(
-                h < activation,
-                "committee advanced to {h} past activation {activation}; unsupported version should Fatal"
+                head < activation,
+                "RPC {port} advanced to {head} at/past unsupported activation {activation}"
             );
         }
         sleep(Duration::from_secs(1));
     }
-    let head = world
-        .rpc
-        .head(port)
-        .expect("read fail-closed committee head below activation");
-    assert!(
-        head < activation,
-        "expected stall below activation {activation}, head={head}"
-    );
 }
 
 /// Active version must stay at the pre-proposal value (unsupported never activates).
 #[then("the active protocol version is unchanged")]
 fn active_version_unchanged(world: &mut World) {
-    let proposed = world.state.proposed_version.expect("version");
-    let got = world.rpc.active_version().expect("read active version");
-    assert_ne!(
-        got, proposed,
-        "unsupported version {proposed} must not become active"
-    );
-    assert_eq!(
-        got, 0,
-        "fresh localnet active version should remain 0, got {got}"
-    );
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.active_version_on(port),
+            Some(0),
+            "fresh localnet active version must remain 0 on RPC {port}"
+        );
+    }
 }
 
-/// Scheduled row stays waiting - activation never committed.
+/// Scheduled row stays waiting on every validator: activation never committed.
 #[then("the scheduled update is still waiting for activation")]
 fn scheduled_still_waiting(world: &mut World) {
-    let su = world
-        .rpc
-        .scheduled_update(world.state.proposal_id)
-        .expect("scheduled update");
-    assert_eq!(
-        su.status, 0,
-        "scheduled update should still be waiting for activation"
-    );
+    for port in validator_ports(world) {
+        let su = world
+            .rpc
+            .scheduled_update_on(port, world.state.proposal_id)
+            .expect("scheduled update");
+        assert_eq!(
+            su.status, 0,
+            "scheduled update must stay waiting on RPC {port}"
+        );
+        assert_eq!(su.version, world.state.proposed_version.expect("version"));
+        assert_eq!(
+            su.activation,
+            world.state.activation_height.expect("activation")
+        );
+    }
 }
 
-/// Node log should surface the Fatal activation guard message.
-#[then(expr = "validator {string} logs report the unsupported activation as fatal")]
-fn log_reports_unsupported_fatal(world: &mut World, name: String) {
-    let validator = world.validators.by_name(&name).expect("resolve validator");
-    let idx = validator.index;
-    let mut found = false;
+/// Require a real rejection from a current committee process, independent of leader selection.
+#[then("the current committee logs report the unsupported activation as fatal")]
+fn log_reports_unsupported_fatal(world: &mut World) {
+    let version = world.state.proposed_version.expect("unsupported version");
     for _ in 0..15 {
         if world
             .localnet
-            .log_has(idx, "cannot activate protocol version")
-            .expect("read required owned process log")
-            || world
-                .localnet
-                .log_has(idx, "binary supports at most")
-                .expect("read required owned process log")
+            .unsupported_activation_reported(version)
+            .expect("read current owned committee logs")
         {
-            found = true;
-            break;
+            return;
         }
         sleep(Duration::from_secs(2));
     }
-    assert!(
-        found,
-        "validator-{idx} log missing unsupported-activation Fatal message"
+    panic!(
+        "current committee logs missing exact unsupported-activation fatal for version {version}"
     );
 }
 

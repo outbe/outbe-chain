@@ -92,7 +92,6 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
     assert_eq!(reconstructed.worldwide_day, record.worldwide_day);
     assert_eq!(reconstructed.floor_price_minor, record.floor_price_minor);
     assert_eq!(reconstructed.is_qualified, record.is_qualified);
-    assert_eq!(reconstructed.total_nods, record.total_nods);
     assert_eq!(reconstructed.entry_price_minor, record.entry_price_minor);
     assert_eq!(reconstructed.reference_currency, record.reference_currency);
 }
@@ -130,7 +129,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         worldwide_day: WorldwideDay::new(0),
         floor_price_minor: U256::ZERO,
         is_qualified: false,
-        total_nods: 0,
         entry_price_minor: U256::ZERO,
         reference_currency: 0,
     });
@@ -139,7 +137,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         worldwide_day: WorldwideDay::new(u32::MAX),
         floor_price_minor: U256::MAX,
         is_qualified: true,
-        total_nods: u64::MAX,
         entry_price_minor: U256::MAX,
         reference_currency: u16::MAX,
     });

@@ -10512,7 +10512,6 @@ mod tests {
                     worldwide_day,
                     floor_price_minor,
                     is_qualified: false,
-                    total_nods: 1,
                     entry_price_minor: U256::from(450_000_000u64),
                     reference_currency: 840,
                 })

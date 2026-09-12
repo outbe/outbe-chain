@@ -5,6 +5,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use cucumber::{then, when};
 use outbe_tee::protocol::{Ledger, PromisOp};
 
@@ -46,8 +47,8 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
-/// Past the DEV notice (10 minutes) with room for the sweep to reach the queue.
-const FORFEIT_TIMEOUT_SECS: u64 = 900;
+/// Bounded processing allowance after the notice's UTC hour bucket closes.
+const EXPIRY_SWEEP_SLACK_SECS: u64 = 300;
 /// The position sweep runs after its deadline, on the same cadence.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
@@ -400,6 +401,29 @@ fn call_trigger_holds(world: &mut World) {
     let gem_id = forfeited_gem(world);
     let entry = read_gem(&url, gem_id).entryPrice;
 
+    // Either expiry may credit the pool first. Capture one baseline while the
+    // position still holds all unissued capacity and the gem is not Called.
+    let height = finalized_observation_height(world);
+    let position = eth::read_call_at(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::getPositionCall {
+            positionId: world.state.gem_position.expect("parked position"),
+        },
+        height,
+    )
+    .expect("position at expiry baseline");
+    assert_eq!(position.remainingCapacity, unissued_capacity());
+    assert_eq!(read_gem(&url, gem_id).state, QUALIFIED);
+    let pool = eth::read_call_at(
+        &url,
+        addresses::PROMIS_LIMIT_ADDR,
+        &eth::IPromisLimit::totalUnallocatedCall {},
+        height,
+    )
+    .expect("pool at expiry baseline");
+    world.state.gem_expiry_baseline = Some((height, pool));
+
     // A gem counts breach days from its own issuance day forward, and this one
     // was issued minutes ago: stamp it behind the days about to be seeded.
     let now = world
@@ -434,9 +458,6 @@ fn call_trigger_holds(world: &mut World) {
 fn gem_becomes_called(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     wait_for_gem_state(&url, forfeited_gem(world), CALLED, CALL_TIMEOUT_SECS);
-    world.state.unallocated_before_forfeit = world
-        .rpc
-        .promis_limit_total_unallocated_on(world.validators.primary_port());
 }
 
 #[then("it is forfeited and its load returns to the unallocated pool")]
@@ -445,12 +466,18 @@ fn gem_is_forfeited(world: &mut World) {
     let url = world.rpc.url(port);
     let merchant = crate::world::origin_venue::deployer_address();
     let gem_id = forfeited_gem(world);
-    let before = world
-        .state
-        .unallocated_before_forfeit
-        .expect("the unallocated pool was read when the gem was called");
-
-    let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
+    let gem = read_gem(&url, gem_id);
+    assert_eq!(gem.state, CALLED);
+    let now = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("head timestamp");
+    let wait = forfeit_wait_seconds(now, gem.calledAt, u64::from(gem.callNoticePeriod));
+    eprintln!(
+        "Gem forfeit: called_at={} notice={} wait_budget_secs={wait}",
+        gem.calledAt, gem.callNoticePeriod
+    );
+    let deadline = Instant::now() + Duration::from_secs(wait);
     loop {
         if gem_count(&url, merchant).is_zero() {
             break;
@@ -462,20 +489,13 @@ fn gem_is_forfeited(world: &mut World) {
         sleep(Duration::from_secs(2));
     }
 
-    assert_eq!(
-        world.rpc.promis_limit_total_unallocated_on(port),
-        Some(before + U256::from(GEM_LOAD_MINOR)),
-        "the forfeited load did not return to the unallocated pool"
-    );
+    assert_expiry_returns(world, finalized_observation_height(world), false);
 }
 
 #[when("the position's validity runs out")]
 fn wait_for_position_expiry(world: &mut World) {
     let port = world.validators.primary_port();
     let expires_at = read_position(world).expiresAt;
-    world.state.unallocated_before_position_expiry =
-        world.rpc.promis_limit_total_unallocated_on(port);
-
     let deadline = Instant::now() + Duration::from_secs(POSITION_DEADLINE_TIMEOUT_SECS);
     loop {
         let now = world
@@ -498,12 +518,6 @@ fn position_returns_capacity(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let position_id = world.state.gem_position.expect("a position was parked");
-    let before = world
-        .state
-        .unallocated_before_position_expiry
-        .expect("the unallocated pool was read before the deadline");
-    let unissued = U256::from(PROMIS_LOAD_MINOR) * U256::from(PARKED_UNITS)
-        - U256::from(GEM_LOAD_MINOR) * U256::from(2);
 
     // A retired position keeps its record and drops its capacity to zero; only
     // the sweep's live queue forgets it.
@@ -528,11 +542,134 @@ fn position_returns_capacity(world: &mut World) {
         sleep(Duration::from_secs(2));
     }
 
-    assert_eq!(
-        world.rpc.promis_limit_total_unallocated_on(port),
-        Some(before + unissued),
-        "the capacity the position never issued did not return to the pool"
+    assert_expiry_returns(world, finalized_observation_height(world), true);
+}
+
+fn forfeit_wait_seconds(now: u64, called_at: u64, notice: u64) -> u64 {
+    // Production queues by deadline hour and drains only closed buckets,
+    // including when the notice ends exactly on an hour boundary.
+    let bucket_end = ((called_at + notice) / 3_600 + 1) * 3_600;
+    bucket_end.saturating_sub(now) + EXPIRY_SWEEP_SLACK_SECS
+}
+
+fn unissued_capacity() -> U256 {
+    U256::from(PROMIS_LOAD_MINOR) * U256::from(PARKED_UNITS)
+        - U256::from(GEM_LOAD_MINOR) * U256::from(2)
+}
+
+fn finalized_observation_height(world: &World) -> u64 {
+    let port = world.validators.primary_port();
+    let height = eth::block_number(&world.rpc.url(port)).expect("observation height");
+    assert!(
+        world.rpc.wait_finalized_at_least(port, height, 30),
+        "expiry observation did not finalize"
     );
+    height
+}
+
+fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bool) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let (from, before) = world
+        .state
+        .gem_expiry_baseline
+        .expect("baseline before both returns");
+    let merchant = crate::world::origin_venue::deployer_address();
+    let position_id = world.state.gem_position.expect("parked position");
+    let position = eth::read_call_at(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::getPositionCall {
+            positionId: position_id,
+        },
+        height,
+    )
+    .expect("finalized position after return");
+    let position_expired = position.remainingCapacity.is_zero();
+    if require_position_expiry {
+        assert!(position_expired, "position retained unissued capacity");
+    } else if !position_expired {
+        assert_eq!(position.remainingCapacity, unissued_capacity());
+    }
+    assert_expiry_event(
+        &url,
+        addresses::GEM_ADDR,
+        from,
+        height,
+        eth::IGem::GemExpired {
+            gemId: forfeited_gem(world),
+            owner: merchant,
+            promisLoad: U256::from(GEM_LOAD_MINOR),
+        },
+    );
+    let returned = if position_expired {
+        assert_expiry_event(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            from,
+            height,
+            eth::IGemFactory::GemPositionExpired {
+                positionId: position_id,
+                merchant,
+                sourceIntexId: source_series(world),
+                returnedCapacity: unissued_capacity(),
+            },
+        );
+        U256::from(GEM_LOAD_MINOR) + unissued_capacity()
+    } else {
+        U256::from(GEM_LOAD_MINOR)
+    };
+    assert_eq!(
+        eth::read_call_at(
+            &url,
+            addresses::PROMIS_LIMIT_ADDR,
+            &eth::IPromisLimit::totalUnallocatedCall {},
+            height
+        ),
+        Some(before + returned),
+        "expiry returns did not credit the exact unallocated load"
+    );
+}
+
+fn assert_expiry_event<E: SolEvent>(url: &str, address: Address, from: u64, to: u64, expected: E) {
+    let encoded = expected.encode_log_data();
+    let logs = eth::raw_json_result(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "address": address, "fromBlock": format!("0x{from:x}"), "toBlock": format!("0x{to:x}"),
+            "topics": [encoded.topics()[0], encoded.topics()[1]],
+        }]),
+    )
+    .expect("finalized expiry events");
+    let logs = logs.as_array().expect("expiry log array");
+    assert_eq!(logs.len(), 1, "expected exactly one expiry for this asset");
+    assert_eq!(
+        logs[0]["topics"],
+        serde_json::json!(encoded.topics()),
+        "expiry identity mismatch"
+    );
+    assert_eq!(
+        logs[0]["data"],
+        serde_json::json!(encoded.data),
+        "expiry amount mismatch"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forfeit_wait_covers_the_closed_hour_not_just_the_notice() {
+        // Failed run: Called 18:39:01, notice ends 18:49:01, sweep due 19:00.
+        assert_eq!(
+            forfeit_wait_seconds(1_789_151_941, 1_789_151_941, 600),
+            1_259 + 300
+        );
+        assert_eq!(forfeit_wait_seconds(3_599, 2_999, 600), 1 + 300);
+        assert_eq!(forfeit_wait_seconds(3_600, 3_000, 600), 3_600 + 300);
+        assert_eq!(forfeit_wait_seconds(7_201, 3_000, 600), 300);
+    }
 }
 
 alloy_sol_types::sol! {

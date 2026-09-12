@@ -131,8 +131,8 @@ mod event_abi {
     );
 }
 #[cfg(feature = "ocomp-integration")]
-pub use event_abi::IGemFactory;
-pub use event_abi::{IMetadosis, INodFactory, IStablecoinFactory, ITribute};
+pub use event_abi::{IGemFactory, INodFactory};
+pub use event_abi::{IMetadosis, IStablecoinFactory, ITribute};
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node

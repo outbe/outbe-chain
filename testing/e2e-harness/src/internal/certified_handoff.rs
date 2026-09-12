@@ -62,6 +62,8 @@ impl std::fmt::Debug for AuthenticatedHistory {
 
 impl AuthenticatedHistory {
     pub(crate) fn new(binding: &DcapSeededChainSpecBindingV1) -> Result<Self> {
+        outbe_consensus::config::init_consensus_chain_id(binding.chain_id)
+            .map_err(|error| eyre!("initialize certified-history chain domain: {error}"))?;
         let participants = binding
             .genesis_consensus_keys
             .iter()

@@ -123,11 +123,11 @@ Feature: Governance proposals and protocol updates
     Then the committee does not advance past the activation height
     And the active protocol version is unchanged
     And the scheduled update is still waiting for activation
-    And validator "validator-0" logs report the unsupported activation as fatal
+    And the current committee logs report the unsupported activation as fatal
     When the entire committee restarts after the unsupported activation failure
     Then every validator RPC recovers below the unsupported activation height
     And the unsupported proposal and waiting schedule are identical on every validator
     And the committee remains stalled below the unsupported activation height
-    And validator "validator-0" logs report the unsupported activation as fatal
+    And the current committee logs report the unsupported activation as fatal
     When the operator replaces the committee binary with the supported version
     Then the replacement binary activates the scheduled version and resumes the committee

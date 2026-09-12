@@ -772,7 +772,6 @@ mod tests {
             worldwide_day: WorldwideDay::new(20_260_717),
             floor_price_minor: U256::from(10),
             is_qualified: true,
-            total_nods: 3,
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         };
@@ -1033,7 +1032,6 @@ mod tests {
             worldwide_day: WorldwideDay::new(20_260_717),
             floor_price_minor: U256::from(999),
             is_qualified: true,
-            total_nods: 3,
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         };
@@ -1225,10 +1223,10 @@ mod tests {
                     "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
                 ),
                 alloy_primitives::b256!(
-                    "3a24b33f4a1b870ffaf9bff3aab2824df6982dcb96eced6dbc9dfdc35db740d9"
+                    "a4917b783d610199cc6d05ec1444f6ae9895deae1ac1bdbca5f53d090f61cf2f"
                 ),
                 alloy_primitives::b256!(
-                    "c20d4efc5ab9a3ceb5ecefe77fc9b4a581c4d84e810e0ca617e75acace9ae2d9"
+                    "21f09568e23137477e27131d7c61488418cc0485a937797b3aa1ae9cd0b3f246"
                 ),
                 alloy_primitives::b256!(
                     "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"

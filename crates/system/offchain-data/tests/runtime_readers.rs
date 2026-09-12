@@ -96,7 +96,6 @@ fn bucket(bucket_key: B256) -> NodBucketState {
         worldwide_day: WorldwideDay::new(20_260_715),
         floor_price_minor: U256::from(8),
         is_qualified: true,
-        total_nods: 1,
         entry_price_minor: U256::from(5),
         reference_currency: 978,
     }
