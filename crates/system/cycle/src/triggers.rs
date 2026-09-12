@@ -72,7 +72,7 @@ pub enum TriggerHandler {
     ProtocolCycle,
     IntexDaily,
     AuctionAdvance,
-    GemCallDaily,
+    GemDaily,
     AuctionClearing,
     IntexNotify,
     CredisCallDaily,
@@ -91,7 +91,7 @@ impl TriggerHandler {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
+            Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
@@ -111,19 +111,19 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
-/// The Called sweep is daily in production. An e2e run seeds the days it reads
-/// rather than living through them, so it needs the sweep to come round sooner.
+/// The qualify and Called sweeps are daily in production. An e2e run seeds the days
+/// they read rather than living through them, so they need to come round sooner.
 #[cfg(not(feature = "e2e-test"))]
-const INTEX_CALL_PERIOD_SECONDS: u64 = 86_400;
+const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
-const INTEX_CALL_PERIOD_SECONDS: u64 = 60;
+const INTEX_DAILY_PERIOD_SECONDS: u64 = 60;
 
-/// The gem call and position sweeps are daily in production; an e2e run seeds
+/// The gem sweeps are daily in production for the same reason; an e2e run seeds
 /// the days they read instead of living through them.
 #[cfg(not(feature = "e2e-test"))]
-const GEM_CALL_PERIOD_SECONDS: u64 = 86_400;
+const GEM_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
-const GEM_CALL_PERIOD_SECONDS: u64 = 60;
+const GEM_DAILY_PERIOD_SECONDS: u64 = 60;
 #[cfg(not(feature = "e2e-test"))]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
@@ -165,8 +165,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         },
         TriggerSpec {
             id: TriggerId::IntexCallDaily.as_u32(),
-            label: "intex_call_daily",
-            period_seconds: INTEX_CALL_PERIOD_SECONDS,
+            label: "intex_daily",
+            period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to qualify and call series; no
             // dependency on the parent block's settlement accounting.
@@ -192,8 +192,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         },
         TriggerSpec {
             id: TriggerId::GemCallDaily.as_u32(),
-            label: "gem_call_daily",
-            period_seconds: GEM_CALL_PERIOD_SECONDS,
+            label: "gem_daily",
+            period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to qualify and force-call gems;
             // no dependency on the parent block's settlement accounting.
@@ -201,7 +201,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // The sweeps take their day from the block clock, so a missed slot
             // would only walk the same day again.
             coalesces_backlog: true,
-            handler: TriggerHandler::GemCallDaily,
+            handler: TriggerHandler::GemDaily,
         },
         TriggerSpec {
             id: TriggerId::AuctionClearing.as_u32(),
@@ -306,7 +306,7 @@ mod protocol_parameter_tests {
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
             (
-                GEM_CALL_PERIOD_SECONDS,
+                GEM_DAILY_PERIOD_SECONDS,
                 GEM_POSITION_PERIOD_SECONDS,
                 INTEX_NOTIFY_PERIOD_SECONDS
             ),
@@ -318,11 +318,8 @@ mod protocol_parameter_tests {
         assert_eq!(configured[1].period_seconds, 86_400);
         assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds, GEM_CALL_PERIOD_SECONDS);
-        assert!(matches!(
-            configured[3].handler,
-            TriggerHandler::GemCallDaily
-        ));
+        assert_eq!(configured[3].period_seconds, GEM_DAILY_PERIOD_SECONDS);
+        assert!(matches!(configured[3].handler, TriggerHandler::GemDaily));
         assert_eq!(configured[4].period_seconds, 600);
         assert!(matches!(
             configured[4].handler,

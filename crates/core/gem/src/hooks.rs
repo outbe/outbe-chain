@@ -249,7 +249,7 @@ type VwapWindow = Vec<(u32, Option<U256>)>;
 
 /// Cycle daily-trigger entry: open the day's qualification and Called sweeps,
 /// discarding the counts.
-pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     scan_and_qualify(ctx)?;
     scan_and_call(ctx)?;
     Ok(())

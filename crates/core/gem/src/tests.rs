@@ -807,7 +807,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
             .unwrap();
 
         let ctx = block_ctx(storage);
-        crate::hooks::run_call_daily(&ctx).unwrap();
+        crate::hooks::run_daily(&ctx).unwrap();
         let gem = GemContract::new(storage.clone());
         assert_eq!(
             api::get_gem(storage, first_id).unwrap().unwrap().state,
