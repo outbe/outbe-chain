@@ -467,3 +467,119 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         "a full spend leaves no change, so the pool must not grow"
     );
 }
+
+/// Measure the complete paid transaction, including intrinsic calldata gas,
+/// the fixed verifier charge and storage work. This is not a ZeroFee bypass:
+/// sponsorship policy is deliberately outside this execution-level test.
+#[test]
+fn measure_settle_gem_gas_with_real_paynote() {
+    use alloy_evm::{Evm as _, EvmFactory as _};
+    use alloy_sol_types::SolEvent as _;
+    use outbe_gem::{GemAddParams, GemState};
+    use outbe_gemfactory::precompile::IGemFactory;
+    use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+    use outbe_primitives::storage::gas::ZK_VERIFY_GAS;
+    use reth_ethereum::evm::primitives::EvmEnv;
+    use revm::context::{BlockEnv, CfgEnv, TxEnv};
+    use revm::primitives::TxKind;
+
+    let (mut ctx, scope, _, _) = fixture();
+    let funding = note(CHAIN_ID, NOTE_KEY, ASSET, U256::from(COST));
+    deposit(&mut ctx, &scope, ALICE2, &funding);
+    // Sub-calls retain writes in the journal; materialize the completed deposit
+    // before constructing an independent transaction executor from this DB.
+    use revm::DatabaseCommit as _;
+    let deposited_state = ctx.journaled_state.inner.state.clone();
+    ctx.journaled_state.database.commit(deposited_state);
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
+    let proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
+
+    // The deposited asset keeps its six-decimal response. All other views in
+    // settlement are isoCode(), so return USD instead of the transfer stub's 1.
+    let asset_code = alloy_primitives::hex!(
+        "60003560e01c63313ce56714601a5761034860005260206000f35b600660005260206000f3"
+    );
+    let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&asset_code));
+    ctx.journaled_state.database.insert_account_info(
+        ASSET,
+        AccountInfo {
+            code_hash: bytecode.hash_slow(),
+            code: Some(bytecode),
+            ..Default::default()
+        },
+    );
+    let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
+    let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        outbe_gem::api::add_gem(
+            &storage,
+            GemAddParams {
+                owner: ALICE1,
+                gem_type: outbe_gemfactory::schema::GemTypes::Validator as u8,
+                promis_load_minor: U256::from(COST),
+                entry_price_minor: U256::from(1_000_000),
+                floor_price_minor: U256::from(1_080_000),
+                call_price_minor: U256::from(2_280_000),
+                call_rate: 128,
+                issuance_currency: REFERENCE_CURRENCY,
+                reference_currency: REFERENCE_CURRENCY,
+                initial_state: GemState::Qualified,
+                issued_at: BLOCK_TIMESTAMP,
+            },
+        )
+        .unwrap()
+    });
+    provider.flush().unwrap();
+    drop(provider);
+    let calldata = Bytes::from(
+        IGemFactory::settleGemCall {
+            gemId: gem_id,
+            payNoteProof: proof.into(),
+        }
+        .abi_encode(),
+    );
+    let env = EvmEnv {
+        cfg_env: CfgEnv::new()
+            .with_chain_id(CHAIN_ID)
+            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
+        block_env: BlockEnv {
+            gas_limit: 30_000_000,
+            timestamp: U256::from(BLOCK_TIMESTAMP),
+            ..Default::default()
+        },
+    };
+    for sample in 0..5 {
+        let mut evm = outbe_evm::OutbeEvmFactory::new()
+            .create_evm(ctx.journaled_state.database.clone(), env.clone());
+        let mut tx = TxEnv::builder()
+            .caller(ALICE1)
+            .nonce(0)
+            .kind(TxKind::Call(GEM_FACTORY_ADDRESS))
+            .gas_price(0)
+            .data(calldata.clone())
+            .gas_limit(10_000_000)
+            .build()
+            .unwrap();
+        tx.chain_id = Some(CHAIN_ID);
+        let started = std::time::Instant::now();
+        let outcome = evm.transact_raw(tx).unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            outcome.result.is_success(),
+            "settleGem failed: {:?}",
+            outcome.result
+        );
+        assert!(
+            outcome.result.logs().iter().any(|log| {
+                log.address == GEM_FACTORY_ADDRESS
+                    && log.data.topics().first() == Some(&IGemFactory::GemSettled::SIGNATURE_HASH)
+            }),
+            "successful execution must emit GemSettled"
+        );
+        let used = outcome.result.tx_gas_used();
+        assert!(used > ZK_VERIFY_GAS && used < 10_000_000);
+        eprintln!("SETTLE_GEM_GAS sample={sample} total={used} fixed_zk={ZK_VERIFY_GAS} other={} calldata_bytes={} elapsed_us={}",
+            used - ZK_VERIFY_GAS, calldata.len(), elapsed.as_micros());
+    }
+}
