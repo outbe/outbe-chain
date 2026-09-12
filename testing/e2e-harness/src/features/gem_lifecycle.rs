@@ -47,8 +47,12 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
-/// Bounded processing allowance after the notice's UTC hour bucket closes.
-const EXPIRY_SWEEP_SLACK_SECS: u64 = 300;
+/// Once the bucket is closed the sweep reaches the gem in the next block or two.
+const FORFEIT_TIMEOUT_SECS: u64 = 120;
+/// The expiry queue buckets deadlines by the hour they fall in.
+const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Slack past the deadline so the notice is spent before the bucket is closed.
+const EXPIRY_MARGIN_SECS: u64 = 30;
 /// The position sweep runs after its deadline, on the same cadence.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
@@ -460,24 +464,60 @@ fn gem_becomes_called(world: &mut World) {
     wait_for_gem_state(&url, forfeited_gem(world), CALLED, CALL_TIMEOUT_SECS);
 }
 
+/// Wait out the gem's call notice on the chain's own clock, then re-queue it on a
+/// deadline already behind a closed bucket. The notice is spent for real; only the
+/// wait for the rest of its bucket's hour is skipped, which the sweep would otherwise
+/// impose on a DEV notice measured in minutes.
+fn close_expiry_bucket(world: &World, url: &str, gem_id: U256) {
+    let port = world.validators.primary_port();
+    let called = read_gem(url, gem_id);
+    let notice = u64::from(called.callNoticePeriod);
+    assert!(
+        notice <= EXPIRY_BUCKET_SECS,
+        "call notice is {notice}s: the DEV parameter profile is not active, so this \
+         scenario would wait out the production window"
+    );
+
+    let notice_end = called.calledAt + notice + EXPIRY_MARGIN_SECS;
+    let deadline = Instant::now() + Duration::from_secs(notice + CALL_TIMEOUT_SECS);
+    loop {
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp");
+        if now >= notice_end {
+            eth::send_call(
+                url,
+                addresses::GEM_ADDR,
+                DEPLOYER_KEY,
+                &IGemTestArming::closeCallNoticeForTestCall {
+                    gemId: gem_id,
+                    deadline: now.saturating_sub(EXPIRY_BUCKET_SECS),
+                },
+                None,
+            )
+            .expect("close the expiry bucket the gem sits in");
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gem {gem_id} never reached its call deadline {notice_end}, stuck at {now}"
+        );
+        sleep(Duration::from_secs(2));
+    }
+}
+
 #[then("it is forfeited and its load returns to the unallocated pool")]
 fn gem_is_forfeited(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let merchant = crate::world::origin_venue::deployer_address();
     let gem_id = forfeited_gem(world);
-    let gem = read_gem(&url, gem_id);
-    assert_eq!(gem.state, CALLED);
-    let now = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("head timestamp");
-    let wait = forfeit_wait_seconds(now, gem.calledAt, u64::from(gem.callNoticePeriod));
-    eprintln!(
-        "Gem forfeit: called_at={} notice={} wait_budget_secs={wait}",
-        gem.calledAt, gem.callNoticePeriod
-    );
-    let deadline = Instant::now() + Duration::from_secs(wait);
+    assert_eq!(read_gem(&url, gem_id).state, CALLED);
+
+    close_expiry_bucket(world, &url, gem_id);
+
+    let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
     loop {
         if gem_count(&url, merchant).is_zero() {
             break;
@@ -543,13 +583,6 @@ fn position_returns_capacity(world: &mut World) {
     }
 
     assert_expiry_returns(world, finalized_observation_height(world), true);
-}
-
-fn forfeit_wait_seconds(now: u64, called_at: u64, notice: u64) -> u64 {
-    // Production queues by deadline hour and drains only closed buckets,
-    // including when the notice ends exactly on an hour boundary.
-    let bucket_end = ((called_at + notice) / 3_600 + 1) * 3_600;
-    bucket_end.saturating_sub(now) + EXPIRY_SWEEP_SLACK_SECS
 }
 
 fn unissued_capacity() -> U256 {
@@ -655,26 +688,10 @@ fn assert_expiry_event<E: SolEvent>(url: &str, address: Address, from: u64, to: 
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn forfeit_wait_covers_the_closed_hour_not_just_the_notice() {
-        // Failed run: Called 18:39:01, notice ends 18:49:01, sweep due 19:00.
-        assert_eq!(
-            forfeit_wait_seconds(1_789_151_941, 1_789_151_941, 600),
-            1_259 + 300
-        );
-        assert_eq!(forfeit_wait_seconds(3_599, 2_999, 600), 1 + 300);
-        assert_eq!(forfeit_wait_seconds(3_600, 3_000, 600), 3_600 + 300);
-        assert_eq!(forfeit_wait_seconds(7_201, 3_000, 600), 300);
-    }
-}
-
 alloy_sol_types::sol! {
     interface IGemTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
+        function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
     }
 }
 

@@ -658,8 +658,13 @@ pub struct FixtureState {
     pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
-    /// Issued alongside them and never settled, so the call notice runs out on it.
+    /// Issued alongside them and only partly settled, so the call notice runs out on
+    /// the rest of it.
     pub expiring_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// Issued alongside them and never touched at all, so its whole tirage is forfeited.
+    pub untouched_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// The worldwide day the lifecycle series were issued into; the called group's key.
+    pub lifecycle_day: Option<u32>,
     /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
     pub unallocated_before_expiry: Option<alloy_primitives::U256>,
     /// The stablecoin holders settle Intex in, and its reserve vault.
@@ -709,6 +714,8 @@ impl Default for FixtureState {
             gem_expiry_baseline: None,
             lifecycle_series: Vec::new(),
             expiring_series: None,
+            untouched_series: None,
+            lifecycle_day: None,
             unallocated_before_expiry: None,
             settled_units: 0,
             proposal_id: 1,

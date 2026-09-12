@@ -62,11 +62,15 @@ Feature: Intex from auction to Promis
   # The rate, by contrast, is published through the real feeder: qualification
   # reads it with a freshness check that a seeded value would fail.
   #
+  # Two more series are left to run out instead of being settled whole: one is settled
+  # in part and one is never touched at all, so the sweep has to return the load of the
+  # unrealized units alone from one and the whole tirage from the other.
+  #
   # The two hops home also take the bridge's two routes: one series at a time
   # first, then both together, which is how a holder of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle
-  Scenario: Two Intex series qualify as one group, settle from both states, and burn into Promis
+  Scenario: Four Intex series qualify as one group, settle from both states, and burn or expire
     Given a fresh four-validator OCOMP public capacity localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
@@ -76,19 +80,23 @@ Feature: Intex from auction to Promis
     When a relay carries messages between the two chains
     And the settlement currency is registered on the committee chain
     Then holders may settle in that currency
-    When two test Intex series sharing a reference currency are issued to a funded holder
-    Then the holder holds issued units of both series on each chain
+    When four test Intex series sharing a reference currency are issued to a funded holder
+    Then the holder holds issued units of every series on each chain
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
-    Then both series qualify in one group decision
+    Then every series qualifies in one group decision
     When the holder brings part of the target-chain units home
     And the holder settles part of their units
     Then those units move from issued to settled
     And the settlement payment lands in the reserve vault
     When the call trigger holds above the call price across the call window
-    Then both series become Called
+    Then every series becomes Called
     When the holder brings the remaining units home to their own address in one batch
     And the holder settles the remaining units inside the notice period
-    Then no issued units remain and every unit is settled
+    Then no issued units remain of the pair being settled whole
     When the holder mines Promis against their settled units
     Then the settled units are burned and Promis is mined
+    When the holder settles part of one series they let run out
+    And the call notice runs out on both of them
+    Then both series read Expired on both chains
+    And only their unrealized load returns to the unallocated pool
