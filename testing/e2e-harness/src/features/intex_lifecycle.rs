@@ -238,17 +238,9 @@ fn issue_two_series(world: &mut World) {
 #[then("the holder holds issued units of every series on each chain")]
 fn holder_holds_issued_units(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    let target_url = world
-        .target_chain
-        .rpc_url()
-        .expect("target chain is running");
+    let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
-    let target_nft = world
-        .state
-        .target_contracts
-        .as_ref()
-        .expect("intex venue was deployed on the target chain")
-        .intex_nft;
+    let target_nft = target_intex_nft(world);
     let holder = crate::world::origin_venue::deployer_address();
 
     assert_eq!(
@@ -369,6 +361,23 @@ fn intex_nft(world: &World) -> alloy_primitives::Address {
         .as_ref()
         .expect("intex engine was deployed")
         .intex_nft
+}
+
+/// The same collection on the target chain, where the other half of every series lives.
+fn target_intex_nft(world: &World) -> alloy_primitives::Address {
+    world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .intex_nft
+}
+
+fn target_rpc_url(world: &World) -> String {
+    world
+        .target_chain
+        .rpc_url()
+        .expect("target chain is running")
 }
 
 #[when("the holder settles part of their units")]
@@ -1081,17 +1090,9 @@ fn notice_runs_out(world: &mut World) {
 #[then("both series read Expired on both chains")]
 fn unsettled_series_expired(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    let target_url = world
-        .target_chain
-        .rpc_url()
-        .expect("target chain is running");
+    let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
-    let target_nft = world
-        .state
-        .target_contracts
-        .as_ref()
-        .expect("intex venue was deployed on the target chain")
-        .intex_nft;
+    let target_nft = target_intex_nft(world);
     // No message carries expiry across: each chain derives it from the same calledAt
     // and notice, so both have to agree on their own.
     let target_router = world
@@ -1165,16 +1166,8 @@ fn forfeited_load_returns(world: &mut World) {
     // One series was settled in part and one was never touched, so the credit owed is
     // the sum of what each still carries unrealized - never either tirage on its own.
     let mut want = alloy_primitives::U256::ZERO;
-    let target_url = world
-        .target_chain
-        .rpc_url()
-        .expect("target chain is running");
-    let target_nft = world
-        .state
-        .target_contracts
-        .as_ref()
-        .expect("intex venue was deployed on the target chain")
-        .intex_nft;
+    let target_url = target_rpc_url(world);
+    let target_nft = target_intex_nft(world);
 
     for (series, settled_units) in expiring_series(world)
         .into_iter()

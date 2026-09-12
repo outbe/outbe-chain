@@ -65,6 +65,44 @@ sol! {
     }
 }
 
+/// Move a called group onto `deadline`, and with it into that deadline's bucket. The
+/// sweep opens a bucket only once its hour has closed, so a notice that lapsed minutes
+/// ago would otherwise idle out the rest of the hour.
+#[cfg(feature = "e2e-test")]
+fn requeue_called_group(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    worldwide_day: u32,
+    deadline: u64,
+) -> Result<()> {
+    use crate::schema::IntexFactoryContract;
+    use outbe_primitives::storage::types::Storable;
+    use outbe_primitives::time::WorldwideDay;
+
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    let worldwide_day = WorldwideDay::from(worldwide_day);
+    let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
+    let count = factory.called_group_count.read(&key)?;
+    if count == 0 {
+        return Err(outbe_primitives::error::PrecompileError::Revert(
+            "closeCallNoticeForTest: no called group".into(),
+        ));
+    }
+    let mut members = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let word = factory
+            .called_group_members
+            .read(&IntexFactoryContract::group_member_key(
+                iso_code,
+                worldwide_day,
+                index,
+            ))?;
+        members.push(SeriesId::from_word(word));
+    }
+    factory.remove_called_group(iso_code, worldwide_day)?;
+    factory.push_called_group(iso_code, worldwide_day, deadline, &members)
+}
+
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
@@ -147,31 +185,7 @@ pub fn dispatch(
     }
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
-        // The sweep opens a bucket only once its hour has closed, so a notice that
-        // lapsed minutes ago would idle out the rest of the hour. Re-queue the group
-        // on a lapsed deadline the sweep will already open.
-        use crate::schema::IntexFactoryContract;
-        use outbe_primitives::storage::types::Storable;
-        use outbe_primitives::time::WorldwideDay;
-
-        let mut factory = IntexFactoryContract::new(storage.clone());
-        let worldwide_day = WorldwideDay::from(call.worldwideDay);
-        let key = IntexFactoryContract::scoped(call.isoCode, worldwide_day.value());
-        let count = factory.called_group_count.read(&key)?;
-        if count == 0 {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "closeCallNoticeForTest: no called group".into(),
-            ));
-        }
-        let mut members = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            let word = factory.called_group_members.read(
-                &IntexFactoryContract::group_member_key(call.isoCode, worldwide_day, index),
-            )?;
-            members.push(SeriesId::from_word(word));
-        }
-        factory.remove_called_group(call.isoCode, worldwide_day)?;
-        factory.push_called_group(call.isoCode, worldwide_day, call.deadline, &members)?;
+        requeue_called_group(&storage, call.isoCode, call.worldwideDay, call.deadline)?;
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]

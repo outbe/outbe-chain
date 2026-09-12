@@ -443,6 +443,49 @@ fn gem_becomes_called(world: &mut World) {
         .promis_limit_total_unallocated_on(world.validators.primary_port());
 }
 
+/// Wait out the gem's call notice on the chain's own clock, then re-queue it on a
+/// deadline already behind a closed bucket. The notice is spent for real; only the
+/// wait for the rest of its bucket's hour is skipped, which the sweep would otherwise
+/// impose on a DEV notice measured in minutes.
+fn close_expiry_bucket(world: &World, url: &str, gem_id: U256) {
+    let port = world.validators.primary_port();
+    let called = read_gem(url, gem_id);
+    let notice = u64::from(called.callNoticePeriod);
+    assert!(
+        notice <= EXPIRY_BUCKET_SECS,
+        "call notice is {notice}s: the DEV parameter profile is not active, so this \
+         scenario would wait out the production window"
+    );
+
+    let notice_end = called.calledAt + notice + EXPIRY_MARGIN_SECS;
+    let deadline = Instant::now() + Duration::from_secs(notice + CALL_TIMEOUT_SECS);
+    loop {
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp");
+        if now >= notice_end {
+            eth::send_call(
+                url,
+                addresses::GEM_ADDR,
+                DEPLOYER_KEY,
+                &IGemTestArming::closeCallNoticeForTestCall {
+                    gemId: gem_id,
+                    deadline: now.saturating_sub(EXPIRY_BUCKET_SECS),
+                },
+                None,
+            )
+            .expect("close the expiry bucket the gem sits in");
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gem {gem_id} never reached its call deadline {notice_end}, stuck at {now}"
+        );
+        sleep(Duration::from_secs(2));
+    }
+}
+
 #[then("it is forfeited and its load returns to the unallocated pool")]
 fn gem_is_forfeited(world: &mut World) {
     let port = world.validators.primary_port();
@@ -454,43 +497,7 @@ fn gem_is_forfeited(world: &mut World) {
         .unallocated_before_forfeit
         .expect("the unallocated pool was read when the gem was called");
 
-    // The notice is waited out for real, but the sweep opens a bucket only once its
-    // hour has closed - so once the notice is spent the gem is re-queued on a deadline
-    // already behind a closed bucket rather than idling out the rest of the hour.
-    let called = read_gem(&url, gem_id);
-    let notice = u64::from(called.callNoticePeriod);
-    assert!(
-        notice <= EXPIRY_BUCKET_SECS,
-        "call notice is {notice}s: the DEV parameter profile is not active, so this \
-         scenario would wait out the production window"
-    );
-    let notice_end = called.calledAt + notice + EXPIRY_MARGIN_SECS;
-    let catch_up = Instant::now() + Duration::from_secs(notice + CALL_TIMEOUT_SECS);
-    loop {
-        let now = world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("committee head timestamp");
-        if now >= notice_end {
-            eth::send_call(
-                &url,
-                addresses::GEM_ADDR,
-                DEPLOYER_KEY,
-                &IGemTestArming::closeCallNoticeForTestCall {
-                    gemId: gem_id,
-                    deadline: now.saturating_sub(EXPIRY_BUCKET_SECS),
-                },
-                None,
-            )
-            .expect("close the expiry bucket the gem sits in");
-            break;
-        }
-        assert!(
-            Instant::now() < catch_up,
-            "gem {gem_id} never reached its call deadline {notice_end}, stuck at {now}"
-        );
-        sleep(Duration::from_secs(2));
-    }
+    close_expiry_bucket(world, &url, gem_id);
 
     let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
     loop {

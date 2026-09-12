@@ -29,6 +29,21 @@ sol! {
     }
 }
 
+/// Move a called gem onto `deadline`, and with it into that deadline's bucket.
+#[cfg(feature = "e2e-test")]
+fn requeue_called_gem(
+    storage: outbe_primitives::storage::StorageHandle,
+    gem_id: U256,
+    deadline: u64,
+) -> Result<()> {
+    let mut gem = GemContract::new(storage);
+    if gem.called_deadline.read(&gem_id)? == 0 {
+        return Err(GemError::InvalidState.into());
+    }
+    gem.remove_called(gem_id)?;
+    gem.push_called(gem_id, deadline)
+}
+
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
@@ -53,12 +68,7 @@ pub fn dispatch(
     if let Ok(call) =
         <IGemTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
-        let mut gem = GemContract::new(storage.clone());
-        if gem.called_deadline.read(&call.gemId)? == 0 {
-            return Err(GemError::InvalidState.into());
-        }
-        gem.remove_called(call.gemId)?;
-        gem.push_called(call.gemId, call.deadline)?;
+        requeue_called_gem(storage.clone(), call.gemId, call.deadline)?;
         return Ok(Bytes::new());
     }
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
