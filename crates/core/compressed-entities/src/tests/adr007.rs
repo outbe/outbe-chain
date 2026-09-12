@@ -646,7 +646,6 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
         is_qualified: false,
-        total_nods: 1,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -743,7 +742,6 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
         is_qualified: false,
-        total_nods: 1,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -872,7 +870,6 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         worldwide_day: stale_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(4),
         is_qualified: false,
-        total_nods: 1,
         entry_price_minor: U256::from(5),
         reference_currency: 840,
     };
@@ -882,7 +879,6 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         worldwide_day: missing_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(6),
         is_qualified: true,
-        total_nods: 2,
         entry_price_minor: U256::from(7),
         reference_currency: 840,
     };
@@ -1754,7 +1750,6 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
         worldwide_day: WorldwideDay::new(14),
         floor_price_minor: U256::from(10),
         is_qualified: false,
-        total_nods: 1,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -1809,7 +1804,6 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             worldwide_day: WorldwideDay::new(14),
             floor_price_minor: U256::from(10),
             is_qualified: false,
-            total_nods: 1,
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         }),
@@ -1978,7 +1972,6 @@ fn body_codecs_cover_all_three_closed_variants() {
         worldwide_day: WorldwideDay::new(16),
         floor_price_minor: U256::from(12),
         is_qualified: true,
-        total_nods: 13,
         entry_price_minor: U256::from(14),
         reference_currency: 840,
     };
@@ -2252,65 +2245,66 @@ fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
         worldwide_day: day,
         floor_price_minor: U256::MAX,
         is_qualified: true,
-        total_nods: u64::MAX,
         entry_price_minor: U256::MAX,
         reference_currency: u16::MAX,
     }
 }
 
-/// A shrinking body must zero the slots it frees. The bucket carries this: it
-/// is the one v1 body whose widest and narrowest forms differ by a whole slot,
-/// so a stale tail would survive here and nowhere else.
+/// Shrinking a body must clear truncated bytes, including padding in its final word.
 #[test]
-fn shrinking_a_body_zeroes_the_storage_tail_it_frees() {
+fn shrinking_a_body_zeroes_truncated_bytes_and_storage_padding() {
     let day = WorldwideDay::new(u32::MAX);
-    let widest = widest_bucket(day);
-    let narrowest = NodBucketBodyV1 {
-        bucket_key: widest.bucket_key,
-        worldwide_day: day,
-        floor_price_minor: U256::ZERO,
-        is_qualified: false,
-        total_nods: 1,
-        entry_price_minor: U256::ZERO,
-        reference_currency: 0,
+    let id = WwdEntityId::from_day_and_digest(day, [0xff; 32]);
+    let widest = NodItemBodyV1 {
+        league_id: u16::MAX,
+        issuance_currency: u16::MAX,
+        reference_currency: u16::MAX,
+        issued_at: u64::MAX,
+        ..nod_item(id, Address::repeat_byte(0xff))
     };
-    let stored = |body: &NodBucketBodyV1| {
-        StoredBody::new_v1(encode_nod_bucket_v1(body).unwrap())
+    let narrowest = NodItemBodyV1 {
+        league_id: 0,
+        issuance_currency: 0,
+        reference_currency: 0,
+        issued_at: 0,
+        ..widest.clone()
+    };
+    let stored = |body: &NodItemBodyV1| {
+        StoredBody::new_v1(encode_nod_item_v1(body).unwrap())
             .unwrap()
             .encode()
-            .len()
-            .div_ceil(32)
     };
-    let widest_slots = stored(&widest);
-    let narrowest_slots = stored(&narrowest);
-    assert!(narrowest_slots < widest_slots);
+    let widest_bytes = stored(&widest);
+    let narrowest_bytes = stored(&narrowest);
+    assert!(narrowest_bytes.len() < widest_bytes.len());
+    let widest_slots = widest_bytes.len().div_ceil(32);
 
-    let id = widest.entity_id();
     let scope = ExecutionScope::new();
     let parent = MemoryParent::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
-        mint(storage.clone(), &scope, BodyInput::NodBucket(&widest)).unwrap();
-        let locator = body_locator(Collection::NodBucket, id).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodItem(&widest)).unwrap();
+        let locator = body_locator(Collection::NodItem, id).unwrap();
         let base = locator.mapping_slot(U256::from(5));
         let data_start = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
-        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodBucket(id))
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodItem(id))
             .unwrap()
             .unwrap();
-        update(
-            storage.clone(),
-            &scope,
-            cap,
-            BodyInput::NodBucket(&narrowest),
-        )
-        .unwrap();
-        for slot in narrowest_slots..widest_slots {
-            assert!(storage
-                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
-                .unwrap()
-                .is_zero());
+        update(storage.clone(), &scope, cap, BodyInput::NodItem(&narrowest)).unwrap();
+        let mut actual = Vec::new();
+        for slot in 0..widest_slots {
+            actual.extend_from_slice(
+                &storage
+                    .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
+                    .unwrap()
+                    .to_be_bytes::<32>(),
+            );
         }
+        assert_eq!(&actual[..narrowest_bytes.len()], narrowest_bytes);
+        assert!(actual[narrowest_bytes.len()..]
+            .iter()
+            .all(|byte| *byte == 0));
     });
 }
 

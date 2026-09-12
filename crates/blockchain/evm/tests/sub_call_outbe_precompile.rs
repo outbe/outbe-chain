@@ -261,7 +261,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             worldwide_day: day,
             floor_price_minor: U256::from(10),
             is_qualified: true,
-            total_nods: 1,
             entry_price_minor: U256::from(9),
             reference_currency: 978,
         })

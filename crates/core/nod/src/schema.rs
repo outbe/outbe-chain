@@ -84,33 +84,19 @@ pub struct CallTerms {
     pub call_notice_period: u32,
 }
 
-/// Bucket record exists while `total_nods > 0`; the body is dropped when the
-/// last NOD in the bucket is mined.
+/// Shared bucket body. Membership is tracked separately by `bucket_nod_count`;
+/// the body is deleted when the last member is removed.
 #[derive(Serialize, Deserialize)]
-#[storage_record(exists_field = total_nods)]
 pub struct NodBucketState {
-    #[key]
     pub bucket_key: B256,
-
-    #[attribute(order = 0)]
     pub worldwide_day: WorldwideDay,
-
-    #[attribute(order = 1)]
     pub floor_price_minor: U256,
-
-    #[attribute(order = 2)]
     pub is_qualified: bool,
-
-    #[attribute(order = 3)]
-    pub total_nods: u64,
-
-    #[attribute(order = 4)]
     pub entry_price_minor: U256,
 
     /// Denomination of `floor_price_minor`, propagated from the Nods in the
     /// bucket. The qualifier compares the floor against the COEN rate for this
     /// currency only, and the bin index is namespaced by it.
-    #[attribute(order = 5)]
     pub reference_currency: u16,
 }
 
@@ -304,8 +290,8 @@ pub struct NodContract {
     // --- Bucket member index: lets the forfeit sweep enumerate a bucket's Nods,
     // which the compressed-entity store cannot do on its own. `WwdEntityId` is a
     // single storage word, so ids are stored whole and need no rebuilding.
-    /// Mirror of the bucket body's `total_nods`, written from the loaded body so
-    /// the two cannot drift.
+    /// Authoritative member count, stored outside the shared bucket body so
+    /// issuing or removing a member does not change its commitment.
     #[attribute(order = 35)]
     pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
 

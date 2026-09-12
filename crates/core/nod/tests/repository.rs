@@ -66,7 +66,6 @@ fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
         worldwide_day: bucket_id.worldwide_day(),
         floor_price_minor: U256::MAX,
         is_qualified: false,
-        total_nods: u64::MAX,
         entry_price_minor: U256::ZERO,
         reference_currency: 978,
     }
@@ -324,14 +323,12 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             worldwide_day: WorldwideDay::new(0),
             floor_price_minor: U256::ZERO,
             is_qualified: false,
-            total_nods: 0,
             entry_price_minor: U256::ZERO,
             reference_currency: 0,
         },
         NodBucketState {
             floor_price_minor: U256::MAX,
             is_qualified: true,
-            total_nods: u64::MAX,
             entry_price_minor: U256::MAX,
             reference_currency: u16::MAX,
             ..bucket(bucket_id(
@@ -346,7 +343,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
         assert_eq!(decoded.is_qualified, body.is_qualified);
-        assert_eq!(decoded.total_nods, body.total_nods);
         assert_eq!(decoded.entry_price_minor, body.entry_price_minor);
         assert_eq!(decoded.reference_currency, body.reference_currency);
     }
