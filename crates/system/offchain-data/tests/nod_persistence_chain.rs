@@ -57,9 +57,8 @@ fn assert_authenticated_nods(
         let first = &items[0];
         let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
         let bucket = api::load_bucket(&storage, &scope, readers, bucket_id)
-            .expect("authenticate the updated bucket against its persisted CE leaf")
+            .expect("authenticate the shared bucket against its persisted CE leaf")
             .unwrap();
-        assert_eq!(bucket.body().total_nods, items.len() as u64);
         assert_eq!(bucket.body().entry_price_minor, U256::from(5));
         assert_eq!(bucket.body().floor_price_minor, first.floor_price_minor);
         assert_eq!(bucket.body().reference_currency, first.reference_currency);
@@ -150,6 +149,27 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         let hash = B256::repeat_byte(height as u8);
         let batch = seal.staged_tree_batch.freeze(hash);
         ce.apply_finalized(&batch).unwrap();
+        identity = ExactParentIdentity {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            block_number: height,
+            block_hash: hash,
+            root: seal.new_root,
+        };
+        StorageHandle::enter(&mut evm, |storage| {
+            assert_eq!(
+                NodContract::new(storage)
+                    .bucket_nod_count
+                    .read(&item.bucket_key)
+                    .unwrap(),
+                height as u32
+            );
+        });
+        if height == 2 {
+            // CE already includes the second member, while RocksDB is still at block 1.
+            // The existing NOD and its shared bucket remain readable without a bucket rewrite.
+            assert_eq!(projector.state().checkpoint.unwrap().block_number, 1);
+            assert_authenticated_nods(&mut evm, &ce, identity, &readers, &items);
+        }
         let logs = evm.get_ordered_events()[first_event..]
             .iter()
             .enumerate()
@@ -175,12 +195,6 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
                 }],
             })
             .unwrap();
-        identity = ExactParentIdentity {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            block_number: height,
-            block_hash: hash,
-            root: seal.new_root,
-        };
         items.push(item);
         assert_authenticated_nods(&mut evm, &ce, identity, &readers, &items);
     }

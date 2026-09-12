@@ -227,7 +227,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),
         is_qualified: true,
-        total_nods: 2,
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };
@@ -237,7 +236,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "1001",
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
-        "2802",
         "32200000000000000000000000000000000000000000000000000000000000000003",
         "38c806"
     ))
@@ -247,9 +245,7 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     assert_eq!(payload, expected);
     assert_eq!(decode_nod_bucket_v1(&payload).unwrap(), body);
 
-    // Field 7 is omitted on zero, so bodies written before the currency
-    // existed keep their exact prior bytes. This is what keeps the pinned
-    // `ces1-noble-poseidon` bucket payload and leaf byte-identical.
+    // Field 7 is omitted on zero; the reserved member-count field is never emitted.
     let unpriced = NodBucketBodyV1 {
         reference_currency: 0,
         ..body.clone()
@@ -270,6 +266,12 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         decode_nod_bucket_v1(&explicit_zero),
         Err(CanonicalBodyError::ExplicitDefault { field: 7 })
     ));
+
+    // Legacy counts must not be silently stripped and authenticated as a different body.
+    let mut counted = payload.clone();
+    let entry_price_offset = counted.len() - 37;
+    counted.splice(entry_price_offset..entry_price_offset, [0x28, 0x02]);
+    assert!(decode_nod_bucket_v1(&counted).is_err());
 }
 
 #[test]
@@ -440,7 +442,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),
         is_qualified: true,
-        total_nods: 2,
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };

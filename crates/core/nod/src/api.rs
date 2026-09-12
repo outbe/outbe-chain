@@ -83,7 +83,7 @@ impl LoadedNodBucket {
     }
 }
 
-/// Inserts a Nod item and creates or updates its bucket atomically.
+/// Inserts a Nod item, increments membership and creates its bucket if absent atomically.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -97,7 +97,7 @@ pub fn add_nod(
         .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
 }
 
-/// Removes a previously loaded Nod item and updates or deletes its loaded bucket atomically.
+/// Removes a loaded Nod item and decrements membership, deleting the bucket only if empty.
 pub fn remove_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,

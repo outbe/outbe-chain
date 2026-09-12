@@ -297,7 +297,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
 }
 
 #[test]
-fn second_same_block_issue_updates_the_pending_bucket_without_parent_projection() {
+fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection() {
     let mut world = World::new();
     let first = params(Address::repeat_byte(0x18));
     let second = params(Address::repeat_byte(0x19));
@@ -315,7 +315,27 @@ fn second_same_block_issue_updates_the_pending_bucket_without_parent_projection(
         .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
         .unwrap()
         .unwrap();
-    assert_eq!(bucket.total_nods, 2);
+    assert_eq!(bucket.entry_price_minor, first.entry_price_minor);
+    assert_eq!(
+        world
+            .enter(|storage, _, _| NodContract::new(storage).bucket_nod_count.read(&bucket_key))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        world
+            .provider
+            .get_ordered_events()
+            .iter()
+            .filter(|event| {
+                event.address == NOD_ADDRESS
+                    && event.data.topics().first()
+                        == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+            })
+            .count(),
+        1,
+        "only the first member creates the bucket body"
+    );
     assert_eq!(
         world
             .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))

@@ -224,6 +224,32 @@ fn issue_two_series(world: &mut World) {
     )
     .expect("issue the lifecycle series");
 
+    // Outbound legs retain the issuing block's timestamp even when the test
+    // backdates the local series. The capacity committee runs ahead of wall
+    // time, so advance Anvil only after all legs have their timestamps fixed.
+    let issued_through = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee timestamp after issuance");
+    let target_url = world
+        .target_chain
+        .rpc_url()
+        .expect("target chain is running");
+    if eth::latest_block_timestamp(&target_url).expect("target timestamp before delivery")
+        < issued_through
+    {
+        world
+            .target_chain
+            .sync_clock_to(issued_through)
+            .expect("synchronize target time after issuance");
+    }
+    assert!(
+        eth::latest_block_timestamp(&target_url)
+            .expect("verify target timestamp after synchronization")
+            >= issued_through,
+        "target clock remains behind the issuing committee block"
+    );
+
     let mut series = series;
     let untouched = series.pop().expect("the untouched series was issued last");
     let expiring = series
@@ -269,7 +295,7 @@ fn holder_holds_issued_units(world: &mut World) {
             }
             assert!(
                 Instant::now() < deadline,
-                "series {series} never reached the target chain; the relay carried nothing"
+                "series {series} did not reach its exact target-chain balance before the delivery deadline"
             );
             // The committee runs on a logical clock days ahead of real time, and the
             // issuance carries its stamps: the target rejects them as its own future

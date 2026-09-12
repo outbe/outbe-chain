@@ -98,6 +98,79 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
 }
 
 #[test]
+fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let first = item(Address::repeat_byte(0x71));
+    let second = item(Address::repeat_byte(0x72));
+    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
+        let original = NodContract::new(storage.clone())
+            .get_bucket_verified(&scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        api::add_nod(&storage, &scope, &parent, &second, U256::from(5)).unwrap();
+        let after_issue = NodContract::new(storage.clone())
+            .get_bucket_verified(&scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            original, after_issue,
+            "adding another NOD must not rewrite the shared bucket commitment"
+        );
+        assert_eq!(original.stored_body(), after_issue.stored_body());
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .bucket_nod_count
+                .read(&first.bucket_key)
+                .unwrap(),
+            2
+        );
+
+        let loaded_item = api::load_item(&storage, &scope, &parent, first.nod_id)
+            .unwrap()
+            .unwrap();
+        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        api::remove_nod(&storage, &scope, loaded_item, bucket).unwrap();
+        let after_removal = NodContract::new(storage.clone())
+            .get_bucket_verified(&scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original, after_removal);
+        assert_eq!(original.stored_body(), after_removal.stored_body());
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 1);
+        assert_eq!(
+            nod.bucket_nods
+                .read(&NodContract::bucket_nod_key(first.bucket_key, 0))
+                .unwrap(),
+            second.nod_id
+        );
+        assert_eq!(nod.bucket_nod_index.read(&second.nod_id).unwrap(), 0);
+
+        let loaded_item = api::load_item(&storage, &scope, &parent, second.nod_id)
+            .unwrap()
+            .unwrap();
+        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        api::remove_nod(&storage, &scope, loaded_item, bucket).unwrap();
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 0);
+        assert_eq!(nod.total_supply().unwrap(), 0);
+        assert!(api::get_bucket(&storage, &scope, &parent, bucket_id)
+            .unwrap()
+            .is_none());
+    });
+}
+
+#[test]
 fn materialization_fifo_slots_match_the_genesis_seeder() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -109,6 +182,63 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
         assert_eq!(
             nod.ocomp_materialization_tail_sequence.slot(),
             U256::from(20)
+        );
+    });
+}
+
+#[test]
+fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let first = item(Address::repeat_byte(0x73));
+    let second = item(Address::repeat_byte(0x74));
+    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
+        let nod = NodContract::new(storage.clone());
+        let original = nod
+            .get_bucket_verified(&scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        nod.bucket_nod_count
+            .write(&first.bucket_key, u32::MAX)
+            .unwrap();
+        let error = api::add_nod(&storage, &scope, &parent, &second, U256::from(5)).unwrap_err();
+        assert!(
+            matches!(error, PrecompileError::Fatal(message) if message.contains("member index overflow"))
+        );
+        assert_eq!(nod.total_supply().unwrap(), 1);
+        assert_eq!(
+            nod.bucket_nod_count.read(&first.bucket_key).unwrap(),
+            u32::MAX
+        );
+        assert!(api::get_item(&storage, &scope, &parent, second.nod_id)
+            .unwrap()
+            .is_none());
+
+        nod.bucket_nod_count.write(&first.bucket_key, 0).unwrap();
+        let loaded = api::load_item(&storage, &scope, &parent, first.nod_id)
+            .unwrap()
+            .unwrap();
+        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
+            .unwrap()
+            .unwrap();
+        let error = api::remove_nod(&storage, &scope, loaded, bucket).unwrap_err();
+        assert!(
+            matches!(error, PrecompileError::BodyReadCorruption(message) if message.contains("member count underflow"))
+        );
+        assert_eq!(nod.total_supply().unwrap(), 1);
+        assert!(api::get_item(&storage, &scope, &parent, first.nod_id)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            nod.get_bucket_verified(&scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap(),
+            original
         );
     });
 }

@@ -17,6 +17,29 @@ use super::Localnet;
 use crate::world::state::TeeLeaseShutdownV1;
 
 impl Localnet {
+    /// At least one current committee process must actually reject the update.
+    /// A rejected local payload is not executed by every replica.
+    pub(crate) fn unsupported_activation_reported(&mut self, version: u64) -> Result<bool> {
+        let fragment = unsupported_version_fragment(version);
+        let mut found = false;
+        for index in 0..self.cfg.validators {
+            let child = self
+                .validators
+                .get_mut(&index)
+                .ok_or_else(|| eyre::eyre!("validator-{index} has no owned process"))?;
+            eyre::ensure!(
+                child.exit_status()?.is_none(),
+                "validator-{index} exited before activation rejection check"
+            );
+            let pid = child.pid();
+            let log = self.node_launch_log(index, pid)?;
+            found |= log
+                .lines()
+                .any(|line| exact_expected_update_fatal(line, &fragment));
+        }
+        Ok(found)
+    }
+
     /// Audits runtime health independently from functional scenario acceptance.
     pub fn audit_unexpected_logs(
         &self,
@@ -266,13 +289,7 @@ fn audit_loaded_logs_with_all_expectations(
                 BTreeSet::new()
             }
         };
-    let expected_fragment = unsupported_version.map(|version| {
-        format!(
-            "cannot activate protocol version v{}.{} ({version}): binary supports at most v",
-            version >> 24,
-            version & 0x00ff_ffff
-        )
-    });
+    let expected_fragment = unsupported_version.map(unsupported_version_fragment);
     let mut expected_by_validator = vec![0_usize; validators.min(1_024)];
     let mut expected_reveal_by_validator = vec![0_usize; validators.min(1_024)];
 
@@ -387,14 +404,13 @@ fn audit_loaded_logs_with_all_expectations(
         }
     }
 
-    if expected_fragment.is_some() {
-        for (validator, count) in expected_by_validator.into_iter().enumerate() {
-            if count == 0 {
-                findings.push(format!(
-                    "validator-{validator}/node.log: expected unsupported-version fatal is absent"
-                ));
-            }
-        }
+    // A rejected proposal never becomes a block every replica must execute.
+    // Require an exact rejection in the committee, not a local payload-build
+    // attempt on every node. The scenario separately checks current-launch
+    // rejection and the unchanged version/schedule/height on every validator.
+    if expected_fragment.is_some() && expected_by_validator.iter().all(|count| *count == 0) {
+        findings
+            .push("committee node logs: expected unsupported-version fatal is absent".to_owned());
     }
     if expected_dkg_reveal.is_some() {
         for (validator, count) in expected_reveal_by_validator.into_iter().enumerate() {
@@ -1161,6 +1177,14 @@ fn exact_expected_dkg_reveal(line: &str, expected_public_key: &str) -> bool {
         && !(line.contains("projection") && line.contains("fatal"))
 }
 
+fn unsupported_version_fragment(version: u64) -> String {
+    format!(
+        "cannot activate protocol version v{}.{} ({version}): binary supports at most v",
+        version >> 24,
+        version & 0x00ff_ffff
+    )
+}
+
 fn exact_expected_update_fatal(line: &str, expected_fragment: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.matches("fatal").count() == 1
@@ -1541,6 +1565,41 @@ mod tests {
         let rejected = audit_loaded_logs_with_expectations(&outside_topology, 4, None, None, None);
         assert!(!rejected.is_clean());
         assert_eq!(rejected.counts.expected_request_deadline_cancellation, 0);
+    }
+
+    #[test]
+    fn unsupported_update_requires_a_rejection_not_every_replica_to_build() {
+        let rejection = "ERROR fatal: cannot activate protocol version v3.0 (50331648): binary supports at most v0.1 (1)";
+        let idle = (0..4)
+            .map(|validator| {
+                (
+                    PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
+                    "INFO finalized height=54".to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !audit_loaded_logs_with_expectations(&idle, 4, Some(50_331_648), None, None).is_clean()
+        );
+        for rejecting_validator in 0..4 {
+            let mut logs = idle.clone();
+            logs[rejecting_validator].1 = rejection.to_owned();
+            let audit = audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None);
+            assert!(audit.is_clean(), "{:?}", audit.findings);
+            assert_eq!(audit.counts.expected_update_fatal, 1);
+            logs[rejecting_validator]
+                .1
+                .push_str("\nERROR fatal: database corruption");
+            assert!(
+                !audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None)
+                    .is_clean()
+            );
+            logs[rejecting_validator].1 = rejection.replace("v3.0 (50331648)", "v3.1 (50397184)");
+            assert!(
+                !audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None)
+                    .is_clean()
+            );
+        }
     }
 
     #[test]
