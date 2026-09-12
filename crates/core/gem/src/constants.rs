@@ -5,8 +5,8 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/gem/image/";
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Gems a begin-block qualify scan may inspect, shared across all reference
-/// currencies. The per-currency bin cursor resumes the rest next block.
+/// Gems one qualify slice may inspect, shared across all reference currencies.
+/// The per-currency bin cursor resumes the rest next block.
 pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
 /// Gems one call slice may call before it gives out; the sweep resumes on the

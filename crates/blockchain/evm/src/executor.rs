@@ -702,13 +702,13 @@ fn run_outbe_pre_execution_hooks_inner(
     // has already published the rate that transaction observes.
     let _ = readers;
 
-    // GEM: promote unqualified gems whose floor_price < current COEN/<reference>
-    // exchange rate AND whose maturity has elapsed. Reads the same Oracle
-    // surface, so it must run after Oracle.
+    // GEM: carry on the daily qualify and call sweeps the Cycle trigger opened,
+    // both pinned to a closed UTC day. Reads the same Oracle surface, so it must
+    // run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: qualify aged Issued series whose floor < current COEN/840
-    // rate. Reads the same Oracle surface, so it runs after Oracle.
+    // INTEX: carry on the same two sweeps for series, plus the payout and expiry
+    // drains. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())

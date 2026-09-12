@@ -40,7 +40,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
+    // Unqualified-series bin index (by floor_price_minor) the qualify sweep walks.
     // A floor is only comparable to the rate of its own reference currency, so
     // every column is namespaced by ISO code and each currency walks its own trie.
     #[attribute(order = 2)]
