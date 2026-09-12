@@ -1,0 +1,250 @@
+{
+  "source_run": "variant2/runs/lifecycle256-final",
+  "files": {
+    "aggregate.json": {
+      "bytes": 211,
+      "sha256": "6e140d57bf70f6873b035a202e31fd00a9f459f8f3528ab866e1f02dc2854f40"
+    },
+    "core-cycle.json": {
+      "bytes": 390,
+      "sha256": "7b3fc8e747a9ba65d72966ffdb16a702e45a6dc09c3a3cef661e29581d920011"
+    },
+    "cross-owner.json": {
+      "bytes": 585,
+      "sha256": "b349b3fc99e7871e9ed9ac215758e01240dfb0456fef1a4cc0482f941bab069f"
+    },
+    "host.json": {
+      "bytes": 406,
+      "sha256": "102943a444be165c948e85af2217e534c346360a7293a33323813c5cf276e5ff"
+    },
+    "key-only-recovery.json": {
+      "bytes": 118,
+      "sha256": "a2cb856a24c2e8c71ee5bcca4d85f354b6ba2a313e190c49a755e7cb89be4fdd"
+    },
+    "l2-generate-summary.json": {
+      "bytes": 83,
+      "sha256": "9cee0b1a8025cb96c05d8bcab7bbfdd3ead534a3c2dcb42ef3ee91d37f912e67"
+    },
+    "l2-verify.json": {
+      "bytes": 101,
+      "sha256": "5ac2dc469478f6ca12706d3b6a0aa5c971685354ec10f4d6bdb7199b846fdf7c"
+    },
+    "link-generate.json": {
+      "bytes": 124,
+      "sha256": "916b7efe9d8d7617a8f0b2f23bc414d1b34506e690bdf987fd6c4b91646f001e"
+    },
+    "link-verify.json": {
+      "bytes": 112,
+      "sha256": "2f7a3043773824c5a25dfa6dddddc4d5d9fdb4d7591c144f91faac45f60a8cee"
+    },
+    "metrics/00513-real-l2-generation.json": {
+      "bytes": 682,
+      "sha256": "7502cec9887df49372f90668b0a0564d72a5fc87f33812713537a4fd9d2bb756"
+    },
+    "metrics/00514-warm-distinct-link.json": {
+      "bytes": 830,
+      "sha256": "87db27b6d74fc56046f414137a7f9ecd1d2c015ca9384eb62c6633b05ef95b9f"
+    },
+    "metrics/00515-node-l2-verify.json": {
+      "bytes": 687,
+      "sha256": "29b33193e68e2722ebc6cf81cbca76130806d30a1af79dace2bbe179bb2122e0"
+    },
+    "metrics/00516-node-link-verify.json": {
+      "bytes": 828,
+      "sha256": "df613779c3421281a5b026f2077d0dae74166475aeee99826a3725dfa3d19dc7"
+    },
+    "metrics/00517-cold-link-32.json": {
+      "bytes": 960,
+      "sha256": "7bdc10f6a5c2ddc7f5e484fd43893c91957cb71669d6e1b3093115d16230da39"
+    },
+    "metrics/02610-retained-cold-claim-proof.json": {
+      "bytes": 718,
+      "sha256": "2de781369ad86ff057b9ed5b2815d86d57bd3febf561af38d42e345b538e6a4b"
+    },
+    "metrics/02611-cold-twisted-claim.json": {
+      "bytes": 730,
+      "sha256": "317f4c5888d9f845f7a0cbf9d22f2a764b1a7253fa6899c49fd6385f842f3c8a"
+    },
+    "metrics/02644-cold-twisted-payment.json": {
+      "bytes": 731,
+      "sha256": "fdfdcb825ed87019027168e853a3f2a30e1e5ae9d11679acfb49f1b8af71bee0"
+    },
+    "metrics/02672-cold-twisted-receive.json": {
+      "bytes": 732,
+      "sha256": "ba913ccc758c5e31f656cb79ed2c30635267c1e55223fcfe37558a6591a894d7"
+    },
+    "metrics/02700-cold-twisted-withdraw.json": {
+      "bytes": 733,
+      "sha256": "44d6db511124f1d4e04227173c4112f9324446483f20898fb2fce215323a8718"
+    },
+    "metrics/02740-retained-cold-mint-proof.json": {
+      "bytes": 716,
+      "sha256": "5357d7722aa509e4ecc0d0682019ad5f3573d17920fa82f9670d5e2f558e7a13"
+    },
+    "metrics/02741-cold-twisted-promis.json": {
+      "bytes": 731,
+      "sha256": "4e3fa56fa02bc10ec71a25639985ced628932b381eb58d3ff325a7665c6bb344"
+    },
+    "metrics/02779-cold-key-only-recovery.json": {
+      "bytes": 733,
+      "sha256": "c01be7cc6009297c6cc03d2344c6c3832415480d253efec62d232176944a89d5"
+    },
+    "metrics/02785-sender-encrypt-dual-amount.json": {
+      "bytes": 737,
+      "sha256": "08e24279991c0d1f5c21226e5e4fd6131677b2841509d0b31cd7ca6cc8dcf0fe"
+    },
+    "metrics/02786-cold-twisted-cross-send.json": {
+      "bytes": 735,
+      "sha256": "b8cbdb579b874cbff3c0d08da57c97fe674903dd0b0201a88e924d07d5da0b20"
+    },
+    "metrics/02790-recipient-key-only-amount-recovery.json": {
+      "bytes": 745,
+      "sha256": "39aa5229e7f82e452cbe47b3b70f0857748b92a97c990b545ac89d15184d724b"
+    },
+    "metrics/02792-cold-twisted-cross-receive.json": {
+      "bytes": 737,
+      "sha256": "ee040fa8a810433ae392ab581f8604d309bd945de0cdea2ebe2463d2c6f0efb1"
+    },
+    "metrics/02876-cold-cross-owner-key-only-recovery.json": {
+      "bytes": 743,
+      "sha256": "f2a915443195e40cc920f6ab2ea259fb41078abdd535fcba719974659e1ad556"
+    },
+    "metrics/02877-cold-cross-owner-key-only-recovery.json": {
+      "bytes": 745,
+      "sha256": "81e20cef3a25d9d117f38735f07cbc72969476725a2c3c5862ed2cb5f0492ec9"
+    },
+    "metrics/02879-retained-cold-pledge-proof.json": {
+      "bytes": 719,
+      "sha256": "68d171c7d20b95be71202c9f2791e1dd8cc166dae5dbabd6b731de2c5d6366f2"
+    },
+    "metrics/02880-cold-twisted-pledge-1.json": {
+      "bytes": 733,
+      "sha256": "9e247c92f2f81eec21baf0dea69f08b16d58620137d04c1e21676ba72698ad34"
+    },
+    "metrics/02948-cold-twisted-release-1.json": {
+      "bytes": 734,
+      "sha256": "b39197b779c9ea5aab25960ee0271ee87a70b0322230de5f6de2c91d2b74d25f"
+    },
+    "metrics/02987-retained-cold-pledge-proof.json": {
+      "bytes": 719,
+      "sha256": "523807ff6a4159b5ff40a83f3b3297d48711218243b8ea8f8c4a109fc1faa02f"
+    },
+    "metrics/02988-cold-twisted-pledge-2.json": {
+      "bytes": 733,
+      "sha256": "3a9c88b1e1c8f134bb702c93b41f24ff263589249f0912445d883eee92c56407"
+    },
+    "metrics/03173-cold-twisted-intex-cashout.json": {
+      "bytes": 738,
+      "sha256": "cad26fa008ae3bf76434708ee318a590fa2a13109071b63a770420e2d7ca9b39"
+    },
+    "operation-claim/twisted-resources.json": {
+      "bytes": 479,
+      "sha256": "f39dc17e819dfd560f69b0c2d71833f0a91024b8dbc68bc14fcee50718fc0ee9"
+    },
+    "operation-cross-receive/key-recovery.json": {
+      "bytes": 118,
+      "sha256": "2f13fbb86f8ae95fe5ec0e0d757a6d7cbcfa38f891f0b036a5e97c5c0a9c7b64"
+    },
+    "operation-cross-receive/twisted-resources.json": {
+      "bytes": 467,
+      "sha256": "90509bd3e346ae7e99d088eb4262dbfca32c317f88b2f7f83dc0d498257323d5"
+    },
+    "operation-cross-send/key-recovery.json": {
+      "bytes": 118,
+      "sha256": "a5e664eced3e24efd6e8e732066dab9af3db12617de55c015ac929f858f08a6b"
+    },
+    "operation-cross-send/twisted-resources.json": {
+      "bytes": 461,
+      "sha256": "5cf788e0e3d041369b281df3185c7460c4919b54b48ff6da36957b2ab5aec5d5"
+    },
+    "operation-intex-cashout/twisted-resources.json": {
+      "bytes": 453,
+      "sha256": "61dba13673918a4264f3f4d9b612a189fe5f4bd24d4523afe11aee0308169ad4"
+    },
+    "operation-payment/twisted-resources.json": {
+      "bytes": 462,
+      "sha256": "5814fdc963facda26865e4dc821a96f5cfdae5d943cc88d4cb52f434278d0190"
+    },
+    "operation-pledge-1/twisted-resources.json": {
+      "bytes": 461,
+      "sha256": "653ff48bafa97593fbaeab72b285bab76c8396e4fddbf1454c81b46e0742a070"
+    },
+    "operation-pledge-2/twisted-resources.json": {
+      "bytes": 471,
+      "sha256": "b7e98748e054964cd6995251b85f2e6624bb19ad40abeacba4dae9bbeb1ddef0"
+    },
+    "operation-promis/twisted-resources.json": {
+      "bytes": 471,
+      "sha256": "db19850281bf2b4aed330d3738f68706a7d42a3c943145d31b254c7d9d0c59f0"
+    },
+    "operation-receive/twisted-resources.json": {
+      "bytes": 472,
+      "sha256": "fb5d0d9ca5eab1bcd3c06b7c98bcd07575c6be4906e9f5d69b13248732424e6e"
+    },
+    "operation-release-1/twisted-resources.json": {
+      "bytes": 465,
+      "sha256": "bde37aae49894efcf5d9178c87aed82a8639370ebd2d314284f9cd08a1b6a236"
+    },
+    "operation-withdraw/twisted-resources.json": {
+      "bytes": 458,
+      "sha256": "92a1bdc1e4a908266882a1924c5e653781d6e66c6b05ca54ac30b2e3ab9d005c"
+    },
+    "oracle.json": {
+      "bytes": 257,
+      "sha256": "9a477636f781bbaba9683a1c26882d2401719b1b024209cf8ed8f991284db47e"
+    },
+    "paired-comparison/comparison.json": {
+      "bytes": 8881,
+      "sha256": "0f2a2e10d1c5b5f0b5593743a01a66ced29667a4a5e6c1c09080b48955c17535"
+    },
+    "paired-comparison/node-verification.json": {
+      "bytes": 1842,
+      "sha256": "ff452712927c926406ab51e0ba519f066a81cd51b1ba256eede41a03b23ea8bf"
+    },
+    "pledge.json": {
+      "bytes": 277,
+      "sha256": "64152b7eee9ca17b526681c3e1b77f27a69c406a6365e9b0a2e4f23f2a1fc77b"
+    },
+    "result.json": {
+      "bytes": 11626,
+      "sha256": "80e88bd8a69c437201ce56b10a5ccf035390a70a79a48dbd79826b5416bd55c7"
+    },
+    "source-snapshot.json": {
+      "bytes": 5258,
+      "sha256": "8caedda0a118d47dcf2157e689d9e2ad9b40c9ed3cec0dbe59d0cbb90498f13f"
+    },
+    "storage.json": {
+      "bytes": 4341,
+      "sha256": "c0a1ec18677fd2909c037cda63ce1504e4c30184aa19a191218e1d38c8359978"
+    },
+    "timings.json": {
+      "bytes": 247905,
+      "sha256": "4b1c69b558028e3a15e9990b49ce0485f7abd013fc21827753b7e2dafc11dfcc"
+    },
+    "verification.json": {
+      "bytes": 910,
+      "sha256": "cb025fb0673ffb67376ee28eb93d766f9af443fdbb8815040f62428a0ac556ba"
+    },
+    "withdraw-sample/key.public.json": {
+      "bytes": 67,
+      "sha256": "f8db534989080ef0616275272250d46b5b65fe97d2981c76d8701ef9e18db363"
+    },
+    "withdraw-sample/registry-before.json": {
+      "bytes": 35153,
+      "sha256": "de053095636eaed45a791375a54a8b2ae3dad218bfb2d4ec074dc6e5df1c99f5"
+    },
+    "withdraw-sample/statement.public.json": {
+      "bytes": 889,
+      "sha256": "e4824acb1074374b74f26df4302266a3d79914986c01a666debd86510708c180"
+    },
+    "withdraw-sample/twisted.bin": {
+      "bytes": 96735,
+      "sha256": "e57e31455717b6e42d15771cddc7ca40dd70d9c5d70093c5e117a726f931b343"
+    },
+    "worker.json": {
+      "bytes": 333,
+      "sha256": "e71a2bf6450eb395ec6efa461b671ed5519a384d788f439d79204ae4fc53a2ae"
+    }
+  },
+  "public_only": true
+}

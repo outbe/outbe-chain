@@ -1,0 +1,9 @@
+{
+  "all_16_share_checks_and_6_member_reshare_open_passed": true,
+  "exact_fixture_public_context_checked": true,
+  "existing_wide_vss_component_reused": true,
+  "real_saved_p_link_verified": true,
+  "same_c_nominal_at_admission_and_after_reshare": true,
+  "scope": "public-fixture component composition only; no L2 proof/root verification, network admission or consensus",
+  "valid_vss_for_different_nominal_rejected_by_linkage": true
+}

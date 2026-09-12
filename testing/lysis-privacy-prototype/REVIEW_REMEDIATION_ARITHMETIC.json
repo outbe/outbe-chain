@@ -1,0 +1,39 @@
+{
+  "scope": "exact integer consequences of reviewed interfaces; not crypto or production execution",
+  "nod_only_lifetime_upper_exclusive": "411376139330301510538742295639337626245683966408394965837152256",
+  "nod_only_bound_below_baby_scalar": true,
+  "required_assumptions": [
+    "zero initial state",
+    "current-source Nod-only",
+    "unique lifetime budget for each u32 day",
+    "no imports or re-mint"
+  ],
+  "conversion6_to18_max_input": "115792089237316195423570985008687907853269984665640564039457584007",
+  "conversion_boundary_pass_and_next_reject": true,
+  "payout_reveals_nominal_when_pot_equals_total": {
+    "pot": 20,
+    "nominals": [
+      7,
+      13
+    ],
+    "payouts": [
+      7,
+      13
+    ]
+  },
+  "per_leaf_floor_example": {
+    "pot": 11,
+    "nominals": [
+      7,
+      13
+    ],
+    "payouts": [
+      3,
+      7
+    ],
+    "remainder_after_all_leaves": 1
+  },
+  "original24_source_hashes_unchanged": true,
+  "historical_review_artifacts_unchanged": 8,
+  "prior_additional_source_hashes_unchanged": 14
+}

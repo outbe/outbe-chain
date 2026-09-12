@@ -1,0 +1,33 @@
+{
+  "coefficients": [
+    {
+      "kernel_median_ms": 0.00002084,
+      "leagues": 1
+    },
+    {
+      "kernel_median_ms": 0.08695124500000001,
+      "leagues": 8
+    },
+    {
+      "kernel_median_ms": 0.404222505,
+      "leagues": 32
+    }
+  ],
+  "kind": "kernel_and_proposed_encoding_only_not_worker_tps",
+  "nod_encoding": {
+    "batch_median_ms": 0.10806502343749999,
+    "defined_fields_bytes": 343,
+    "not_covered": [
+      "real commitments or curve validation",
+      "real Nod ABI",
+      "Merkle proofs and tree construction",
+      "input validation",
+      "source/data availability",
+      "disk/network",
+      "OCOMP execution and certification"
+    ],
+    "record_bytes": 343,
+    "records_per_batch": 256,
+    "serialization_and_one_keccak_each_only_per_second": 2368944.1028813454
+  }
+}

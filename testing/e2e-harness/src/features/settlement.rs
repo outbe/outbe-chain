@@ -313,7 +313,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // The cost is derived, so what to fund is the factory's own quote — already in
+    // The cost is derived, so what to fund is the factory's own quote - already in
     // the settlement asset's units, which the reference amount never was.
     let payable = eth::read_call(
         &url,

@@ -1,0 +1,108 @@
+{
+  "checked_on": "2026-09-11",
+  "purpose": "Read-only research snapshots, not selected dependencies; branch heads are not audited release pins.",
+  "libraries": [
+    {
+      "repo": "arkworks-rs/algebra",
+      "branch": "master",
+      "sha": "4d708c733d9340dedf3b3a8b41718d3370d8cf46",
+      "committed_at": "2026-08-31T04:53:05Z",
+      "url": "https://github.com/arkworks-rs/algebra/commit/4d708c733d9340dedf3b3a8b41718d3370d8cf46"
+    },
+    {
+      "repo": "arkworks-rs/groth16",
+      "branch": "master",
+      "sha": "8f0904a7d7a2c8945bf770bdd3c2081e0be1941a",
+      "committed_at": "2026-08-02T11:39:36Z",
+      "url": "https://github.com/arkworks-rs/groth16/commit/8f0904a7d7a2c8945bf770bdd3c2081e0be1941a"
+    },
+    {
+      "repo": "arkworks-rs/r1cs-std",
+      "branch": "master",
+      "sha": "45e4e2697626a9f9481fe57e70ed29c687194102",
+      "committed_at": "2026-03-02T06:45:59Z",
+      "url": "https://github.com/arkworks-rs/r1cs-std/commit/45e4e2697626a9f9481fe57e70ed29c687194102"
+    },
+    {
+      "repo": "docknetwork/crypto",
+      "branch": "main",
+      "sha": "224f195bb8babc2d0de5256135120e0aca9fbd19",
+      "committed_at": "2025-10-02T08:05:57Z",
+      "url": "https://github.com/docknetwork/crypto/commit/224f195bb8babc2d0de5256135120e0aca9fbd19"
+    },
+    {
+      "repo": "Consensys-Incorporated/gnark",
+      "branch": "master",
+      "sha": "fd5c2443d59970eb1c3e4202fb8f10a23ef60632",
+      "committed_at": "2026-08-24T18:19:33Z",
+      "url": "https://github.com/Consensys-Incorporated/gnark/commit/fd5c2443d59970eb1c3e4202fb8f10a23ef60632"
+    },
+    {
+      "repo": "TaceoLabs/co-snarks",
+      "branch": "main",
+      "sha": "23217ff78fc52f806420fd6d5c27563bea9c74bd",
+      "committed_at": "2026-09-09T13:09:57Z",
+      "url": "https://github.com/TaceoLabs/co-snarks/commit/23217ff78fc52f806420fd6d5c27563bea9c74bd"
+    },
+    {
+      "repo": "data61/MP-SPDZ",
+      "branch": "master",
+      "sha": "892ac0e2a2a9edabbe0249febc0b316ca649b479",
+      "committed_at": "2026-08-17T04:59:18Z",
+      "url": "https://github.com/data61/MP-SPDZ/commit/892ac0e2a2a9edabbe0249febc0b316ca649b479"
+    },
+    {
+      "repo": "iden3/rapidsnark",
+      "branch": "main",
+      "sha": "81eddf1a536d26497b237c0b8a04fe90baf7e439",
+      "committed_at": "2026-04-16T07:33:54Z",
+      "url": "https://github.com/iden3/rapidsnark/commit/81eddf1a536d26497b237c0b8a04fe90baf7e439"
+    },
+    {
+      "repo": "iden3/snarkjs",
+      "branch": "master",
+      "sha": "9a8f1c0083d18b9b5e18f526cfd729e7259423be",
+      "committed_at": "2026-01-12T11:01:57Z",
+      "url": "https://github.com/iden3/snarkjs/commit/9a8f1c0083d18b9b5e18f526cfd729e7259423be"
+    },
+    {
+      "repo": "zcash/halo2",
+      "branch": "main",
+      "sha": "79213cbe922e8868500e5944c407c69d893ec3a8",
+      "committed_at": "2026-09-09T16:16:58Z",
+      "url": "https://github.com/zcash/halo2/commit/79213cbe922e8868500e5944c407c69d893ec3a8"
+    },
+    {
+      "repo": "noir-lang/noir",
+      "branch": "master",
+      "sha": "db430759c5864fc276bc7887192960c902a85d2f",
+      "committed_at": "2026-09-10T16:44:48Z",
+      "url": "https://github.com/noir-lang/noir/commit/db430759c5864fc276bc7887192960c902a85d2f"
+    },
+    {
+      "repo": "dalek-cryptography/bulletproofs",
+      "branch": "main",
+      "sha": "be67b6d5f5ad1c1f54d5511b52e6d645a1313d07",
+      "committed_at": "2023-01-26T00:13:56Z",
+      "url": "https://github.com/dalek-cryptography/bulletproofs/commit/be67b6d5f5ad1c1f54d5511b52e6d645a1313d07"
+    },
+    {
+      "repo": "CHURPTeam/CHURP",
+      "sha": "3b0a03a04761e473d7b2b799759217a20e7563e0",
+      "date": "2019-09-01T20:15:15Z",
+      "url": "https://github.com/CHURPTeam/CHURP/commit/3b0a03a04761e473d7b2b799759217a20e7563e0"
+    },
+    {
+      "repo": "divviup/libprio-rs",
+      "sha": "b7f0cbe7145c01b618cd7b2f6a9636490b62f276",
+      "date": "2026-09-10T17:07:34Z",
+      "url": "https://github.com/divviup/libprio-rs/commit/b7f0cbe7145c01b618cd7b2f6a9636490b62f276"
+    },
+    {
+      "repo": "divviup/janus",
+      "sha": "743ab5851b1ab16ba472a0c03a9bd423e9bf509d",
+      "date": "2026-09-09T20:02:29Z",
+      "url": "https://github.com/divviup/janus/commit/743ab5851b1ab16ba472a0c03a9bd423e9bf509d"
+    }
+  ]
+}

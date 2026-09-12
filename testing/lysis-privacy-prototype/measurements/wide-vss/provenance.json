@@ -1,0 +1,29 @@
+{
+  "measured_date": "2026-09-11",
+  "kind": "P384 VSS component only; no source/range/admission ZK or network",
+  "hardware": {
+    "chip": "Apple M4 Max",
+    "cores": 14,
+    "performance_cores": 10,
+    "efficiency_cores": 4,
+    "memory_gb": 36,
+    "arch": "arm64"
+  },
+  "hardware_record": "same session machine as ../provenance.json; direct sysctl recheck restricted by sandbox",
+  "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "working_tree": "dirty; this experiment changed only files under testing/lysis-privacy-prototype",
+  "setup": "release; one process, all simulated parties sequentially; CPU not isolated; fixed public fixture RNG seed",
+  "samples": {
+    "deal_check_open": "1 warmup + 4 retained; median",
+    "handoff": "1 sample; final opening excluded from timer"
+  },
+  "format_note": "source normalized with cargo fmt after measured run; no semantic changes",
+  "source_and_result_sha256": {
+    "testing/lysis-privacy-prototype/measurements/wide-vss/Cargo.toml": "c7be98b743f54dd2dc627bcf14013077e603da660ff3e9b7e63fd507cdf1e262",
+    "testing/lysis-privacy-prototype/measurements/wide-vss/Cargo.lock": "4dae5209bf434ea96ea98bc92815a0540ae0124add2662869723cdd20a61b4a5",
+    "testing/lysis-privacy-prototype/measurements/wide-vss/src/main.rs": "24900262b22d56b849a80695142e62142b6f032610a9f2c9dc974aa209bf6c14",
+    "testing/lysis-privacy-prototype/measurements/wide-vss/results.json": "57836c4bff276d8dfdc3c89203e5dc20aebe24f64bc22e7457d19bb10e6e89d7"
+  }
+}

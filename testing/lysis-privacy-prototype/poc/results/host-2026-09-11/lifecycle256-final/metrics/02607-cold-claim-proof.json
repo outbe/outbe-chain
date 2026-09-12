@@ -1,0 +1,16 @@
+{
+  "command": [
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/poc-state",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/runs/lifecycle256-final/control/job-02607-cold-claim-proof.json"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 512000000,
+  "peak_rss_bytes": 236470272,
+  "sampled_peak_rss_bytes": 222806016,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 3.0993333329679444,
+  "rayon_num_threads": null,
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}

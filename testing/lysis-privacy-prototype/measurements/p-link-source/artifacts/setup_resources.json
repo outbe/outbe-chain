@@ -1,0 +1,17 @@
+{
+  "command": [
+    "testing/lysis-privacy-prototype/measurements/p-link-source/target/release/outbe-p-link-source-measurements",
+    "setup",
+    "testing/lysis-privacy-prototype/measurements/p-link-source/artifacts"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 0,
+  "peak_rss_bytes": 422756352,
+  "sampled_peak_rss_bytes": 415416320,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 4.145697333966382,
+  "rayon_num_threads": "1",
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}

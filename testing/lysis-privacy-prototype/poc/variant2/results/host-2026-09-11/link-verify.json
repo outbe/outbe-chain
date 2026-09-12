@@ -1,0 +1,6 @@
+{
+  "batch_ms": 560.422208,
+  "distinct_proofs": 256,
+  "load_parameters_ms": 2.056208,
+  "verify_only": true
+}

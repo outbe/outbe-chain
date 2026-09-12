@@ -1,0 +1,60 @@
+{
+  "scope": "same statement; baseline crypto after VK preparation; variant verifies BP, Sigma, all new bridges and retained Groth16 including small VK loading; proof and registry file reads excluded from both recorded timings",
+  "rows": [
+    {
+      "operation": "claim",
+      "baseline_groth16_crypto_verify_ms": 3.281792,
+      "variant_bundle_verify_ms": 661.124708
+    },
+    {
+      "operation": "cross-receive",
+      "baseline_groth16_crypto_verify_ms": 1.898792,
+      "variant_bundle_verify_ms": 532.88175
+    },
+    {
+      "operation": "cross-send",
+      "baseline_groth16_crypto_verify_ms": 2.367833,
+      "variant_bundle_verify_ms": 286.070417
+    },
+    {
+      "operation": "intex-cashout",
+      "baseline_groth16_crypto_verify_ms": 2.182708,
+      "variant_bundle_verify_ms": 277.24941600000005
+    },
+    {
+      "operation": "payment",
+      "baseline_groth16_crypto_verify_ms": 2.443583,
+      "variant_bundle_verify_ms": 637.678209
+    },
+    {
+      "operation": "pledge-1",
+      "baseline_groth16_crypto_verify_ms": 2.24975,
+      "variant_bundle_verify_ms": 291.765125
+    },
+    {
+      "operation": "pledge-2",
+      "baseline_groth16_crypto_verify_ms": 2.284625,
+      "variant_bundle_verify_ms": 292.97616700000003
+    },
+    {
+      "operation": "promis",
+      "baseline_groth16_crypto_verify_ms": 2.390583,
+      "variant_bundle_verify_ms": 288.631792
+    },
+    {
+      "operation": "receive",
+      "baseline_groth16_crypto_verify_ms": 2.173083,
+      "variant_bundle_verify_ms": 159.82333300000002
+    },
+    {
+      "operation": "release-1",
+      "baseline_groth16_crypto_verify_ms": 2.435083,
+      "variant_bundle_verify_ms": 160.3675
+    },
+    {
+      "operation": "withdraw",
+      "baseline_groth16_crypto_verify_ms": 2.023875,
+      "variant_bundle_verify_ms": 168.15991699999998
+    }
+  ]
+}

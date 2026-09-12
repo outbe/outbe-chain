@@ -3432,7 +3432,7 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         .nod_data_on(port, &nod_id)
         .expect("capacity owner NOD body");
     // Mining always burns a note, so the capacity Nod needs one deposited under
-    // an asset the router registers for its reference currency — the fixture
+    // an asset the router registers for its reference currency - the fixture
     // genesis registers liquidity sources but no vault.
     assert_eq!(
         body.referenceCurrency, 840,

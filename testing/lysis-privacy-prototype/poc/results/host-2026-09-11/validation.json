@@ -1,0 +1,19 @@
+{
+  "rust_library_tests": {
+    "command": "cargo test --offline --locked --release --manifest-path testing/lysis-privacy-prototype/poc/Cargo.toml --lib -- --test-threads=1",
+    "passed": 4,
+    "failed": 0
+  },
+  "cargo_fmt_check": true,
+  "python_py_compile": true,
+  "current_source_matches_both_full_run_snapshots": true,
+  "base_head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "worktree": "pre-existing unrelated edits retained; isolated PoC only",
+  "binary_sha256": {
+    "testing/lysis-privacy-prototype/poc/target/release/outbe-private-lifecycle-poc": "14d14e8f3194ab455675c8a1de15b4db021ab85c68f00a1448c004dde13394c6",
+    "testing/lysis-privacy-prototype/poc/target/release/poc-state": "c7badeb270b069d924ef7e227ff0fcace84d82ac3efb9950e40fdb53ba77dafe",
+    "testing/lysis-privacy-prototype/poc/target/release/poc-vss": "008d48ebb632bff7d1fc5e8bb0a6a084e7c6a0aea78386ac80bd882c734c9c13",
+    "testing/lysis-privacy-prototype/poc/target/release/poc-math": "80ebae3ed742710c97d4a446163acfccbe39ba4a5c27002530f8c59ada139c4a",
+    "target/release/outbe-poc-l2-source": "9c71f6ce40a144043a63740a9f6e3d396fcf54a2198cb07fe6c3a152141e8767"
+  }
+}

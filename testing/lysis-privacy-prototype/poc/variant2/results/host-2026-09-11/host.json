@@ -1,0 +1,12 @@
+{
+  "measured_at_utc": "2026-09-11T14:08:50.790774+00:00",
+  "hardware_model": "Mac16,5",
+  "cpu": "Apple M4 Max",
+  "physical_cores": 14,
+  "logical_cores": 14,
+  "ram_bytes": 38654705664,
+  "os_product_version": "26.7",
+  "architecture": "arm64",
+  "source": "sysctl/sw_vers/uname read on this host after completed run",
+  "memory_units": "decimal MB=1e6B; machine RAM=36GiB; wallet budget=512000000B"
+}

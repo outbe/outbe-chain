@@ -1,0 +1,1 @@
+{"elapsed_with_coefficient_kernel_ms":8.729874971322715,"scope":"PoC descriptor construction, validation of admitted metadata, file fsync, SQLite commit; no production OCOMP/consensus","shards":[{"bytes":71168,"elapsed_ms":3.503417014144361,"hash":"ac4a89ca10cd2f8246334c4d9b796d28470a39c7ac7c179699ccd223ac0680ad","records":256}]}

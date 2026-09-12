@@ -1,0 +1,16 @@
+{
+  "scope": "Integer formula equivalence and sizing arithmetic only; no MPC, proof, or throughput benchmark",
+  "fidelity_equivalence_cases": 137117,
+  "fidelity_limitation": "Public time weights; mathematical nonnegative integers. Existing U256 overflow/failure semantics are not tested.",
+  "amax_bits": 104,
+  "smax_billion_bits": 134,
+  "source_aggregate_fits_both_candidate_fields": true,
+  "admissions_per_second_single_50h_window": 5555.555555555556,
+  "admissions_per_second_one_billion_per_day_steady": 11574.074074074075,
+  "primary_shards_256": 3906250,
+  "raw_32byte_commitments_bytes": 32000000000,
+  "raw_64byte_share_pairs_per_holder_bytes": 64000000000,
+  "raw_64byte_share_pairs_16_holders_bytes": 1024000000000,
+  "baseline_6_threshold_extra_coefficient_commitments_bytes": 160000000000,
+  "uniform_50h_arrival_hourly_moves_live_records": 36500000000.0
+}

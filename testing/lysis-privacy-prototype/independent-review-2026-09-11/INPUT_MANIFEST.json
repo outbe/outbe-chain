@@ -1,0 +1,198 @@
+{
+  "date": "2026-09-11",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "scope": "Three independent full-route theoretical validity and completeness reviews; no production changes",
+  "graph": "codebase-memory tools unavailable; 24 source hashes match trace; direct source fallback required for material claims",
+  "independence": "Fresh reviewers, no shared conclusions or prior review reports until initial reports complete",
+  "source_files": {
+    "crates/core/tributefactory/src/runtime.rs": {
+      "sha256": "fca4406bbb1da1489901eec7150f0e7ee5b592c739a7291df64287861341f34b",
+      "line_count": 447,
+      "cited_lines": [
+        104,
+        282,
+        211
+      ]
+    },
+    "bin/outbe-tee-enclave/src/zk_claim.rs": {
+      "sha256": "8a5d73635689d78b6d11bff874d9f6dbe441e026a667fc33180de3f773cc29e2",
+      "line_count": 93,
+      "cited_lines": [
+        27
+      ]
+    },
+    "bin/outbe-tee-enclave/src/compute.rs": {
+      "sha256": "130bec885132028bdce73ad25a7441b2fb558c6dffa12e345bddc4f26d7c1e2d",
+      "line_count": 343,
+      "cited_lines": [
+        160,
+        118
+      ]
+    },
+    "crates/core/tribute/src/runtime.rs": {
+      "sha256": "4f6ac9230b7cc0af484e6763817e886b09dd32cc5bf21abba31951382883a415",
+      "line_count": 509,
+      "cited_lines": [
+        319
+      ]
+    },
+    "crates/core/tribute/src/state.rs": {
+      "sha256": "d9e19e87011e69d816ca2e83d22492b09042679e3db180c17c97f05c1daba09d",
+      "line_count": 430,
+      "cited_lines": [
+        317
+      ]
+    },
+    "crates/core/metadosis/src/constants.rs": {
+      "sha256": "b774f337298099c61447935cde33855ab3794b7cb735954f4bf993618f32d2cc",
+      "line_count": 85,
+      "cited_lines": [
+        13
+      ]
+    },
+    "crates/core/metadosis/src/lifecycle.rs": {
+      "sha256": "5bb20198adf94bcc26a265b9e543c1e9e82a792d32182a3ad4828412b3d54785",
+      "line_count": 440,
+      "cited_lines": [
+        206
+      ]
+    },
+    "crates/core/metadosis/src/settlement.rs": {
+      "sha256": "5e6bd45894cdd013e315c28b055c16d1e47600721ebea6ef018f480de1be3bd5",
+      "line_count": 382,
+      "cited_lines": [
+        119,
+        32
+      ]
+    },
+    "crates/core/metadosis/src/ocomp_budget.rs": {
+      "sha256": "6fa43f2b2021921e756fabdbb551b36ff74a2dfec123f945625c3ace7979a5e9",
+      "line_count": 205,
+      "cited_lines": [
+        41,
+        129
+      ]
+    },
+    "crates/core/metadosis/src/ocomp/snapshot.rs": {
+      "sha256": "40696b74553c7603838d9447a93fee313db691dc0a1c6be686566ae13bb73b40",
+      "line_count": 58,
+      "cited_lines": [
+        21
+      ]
+    },
+    "crates/core/fidelity/src/runtime.rs": {
+      "sha256": "5ade208c34f0fb8847a8301012d5153ca98b044d63b27691a36d602d6a7c2d33",
+      "line_count": 184,
+      "cited_lines": [
+        1
+      ]
+    },
+    "bin/outbe-tee-enclave/src/fidelity.rs": {
+      "sha256": "d12fb3ce8e08a486f9290d650f2143152347ad5921f7ed7267505874cb911685",
+      "line_count": 833,
+      "cited_lines": [
+        155
+      ]
+    },
+    "crates/core/fidelity-math/src/lib.rs": {
+      "sha256": "6b60902a379348ae2caac05772b7ff2fb53ec9c8fee3cd23a1c85c9cb1d84c7a",
+      "line_count": 249,
+      "cited_lines": [
+        42
+      ]
+    },
+    "crates/core/lysis/src/program_v1/phases.rs": {
+      "sha256": "2a421053ac10fd6c6df41c91fea05bc53903ada0374ed81d8e0e79b051aa45f2",
+      "line_count": 804,
+      "cited_lines": [
+        156,
+        358,
+        637
+      ]
+    },
+    "crates/core/lysis/src/program_v1/execute.rs": {
+      "sha256": "a56dbfde16c2da98817fdc6bb07d133f5d88fc70003b1d622e4a9e3b7dc567e4",
+      "line_count": 586,
+      "cited_lines": [
+        392
+      ]
+    },
+    "crates/core/lysis/src/algorithm.rs": {
+      "sha256": "59284ca1c7fb4f6a6b230e928523cf68cdf3c0c45fa5cebdae56b9d633422b42",
+      "line_count": 514,
+      "cited_lines": [
+        229,
+        33
+      ]
+    },
+    "crates/core/lysis/src/program_v1/planner.rs": {
+      "sha256": "807d6016f53b72926218fb53963c3292ffc98528155a29a3468fec2fa3132c5c",
+      "line_count": 1980,
+      "cited_lines": [
+        17
+      ]
+    },
+    "crates/core/lysis/src/program_v1/finalizer.rs": {
+      "sha256": "2c114ce9b7a61d6629170e269947f39747008af9c6dcc8b7fdc199acfbe23e43",
+      "line_count": 973,
+      "cited_lines": [
+        241
+      ]
+    },
+    "crates/core/metadosis/src/ocomp/activation.rs": {
+      "sha256": "e4b6884e84452f10bf693d5108d799e57de55d47c00752c1e4406f95d4b85649",
+      "line_count": 608,
+      "cited_lines": [
+        349
+      ]
+    },
+    "crates/core/nod/src/schema.rs": {
+      "sha256": "e9a9163b8aed7da7ea3f167a017e4486eac3ab20a51c0014a9d03c515e827c83",
+      "line_count": 609,
+      "cited_lines": [
+        95
+      ]
+    },
+    "crates/core/nod/src/runtime.rs": {
+      "sha256": "54959f207763c48abf9673fb3c2be405822e93d22bd605b0e72530fcddbf9a82",
+      "line_count": 91,
+      "cited_lines": [
+        19
+      ]
+    },
+    "crates/core/nod/src/called.rs": {
+      "sha256": "7f2ad70d29c661d1c47d26e906ee44c6bde8eb7e43c873fbe42c7d110ed0fd10",
+      "line_count": 332,
+      "cited_lines": [
+        50,
+        241
+      ]
+    },
+    "crates/core/nodfactory/src/runtime.rs": {
+      "sha256": "eae2fb1e3fd4d3747727eedf0d88c68e3e55e7bfe99d9080ef6a21f2bdbf952c",
+      "line_count": 329,
+      "cited_lines": [
+        256,
+        170
+      ]
+    },
+    "crates/core/gratisfactory/src/runtime.rs": {
+      "sha256": "13b21af9be6b472304b5cf6de5061935416260f55b350dd2cec9fdfa50b2974d",
+      "line_count": 174,
+      "cited_lines": [
+        129,
+        145
+      ]
+    }
+  },
+  "inputs": {
+    "testing/lysis-privacy-prototype/PROTOCOL_TRACE_AND_REQUIREMENTS.md": "850e2bc5487497e846da156817c0fc88acf88571f481fb33148d2252f5374c58",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_IMPLEMENTATION.md": "697b82478663b3c283daaad3e234bdf92233d4507b74070c9787dbc840b70bdc",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_AGGREGATION.md": "61b3be7878aa4613611ce0b88c4edfc69456b4299447a73278645b8a47f52d7b",
+    "testing/lysis-privacy-prototype/TRACE_EVIDENCE.json": "d29cc0b5e5f87fb2666fc5cf87ec05dbd2c6f4d4b3c383d998e03d4ed95ce55b",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_LIBRARY_PINS.json": "58d51f7ae6112afedae0d3e2e09adb896fd0a1210b86013030fc0f128359d583",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_ARITHMETIC.json": "1891853f9ddce87259c3a1e9fe727ff42db27176b4cc551778dacd32b9004034",
+    "testing/lysis-privacy-prototype/research_arithmetic_checks.py": "02967f3e1c685df6352b1fc2421faff6736f793d550f33e470513c2d96b70ddb",
+    "testing/lysis-privacy-prototype/measurements/README.md": "8c90ce7707ebaca070832cb35afa379aaa272202542463d23f30e23fa24869cd"
+  }
+}

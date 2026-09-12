@@ -6,7 +6,7 @@
 //! `NewNote` log, and prove membership.
 //!
 //! The tree is rebuilt from logs rather than read from storage because the pool
-//! keeps only the frontier on chain — the auth path exists nowhere but in the
+//! keeps only the frontier on chain - the auth path exists nowhere but in the
 //! deposit history.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,7 +67,7 @@ impl Note {
 }
 
 /// Deposits a note covering `cost_minor` of `asset` for `payer`, then proves a
-/// spend of it — the proof `mineGratis` takes.
+/// spend of it - the proof `mineGratis` takes.
 ///
 /// Every Nod is paid for by burning a note, so a Nod that costs nothing still
 /// has to present one. The pool refuses a zero deposit, so a free Nod is paid
@@ -120,7 +120,7 @@ pub(crate) fn deposit_and_prove(
 /// Proves a full spend of `note` by `spender` against the pool's live tree.
 ///
 /// Every leaf ever appended is read back from `NewNote`, so the proof is built
-/// against the same root the chain will check it under — including any notes
+/// against the same root the chain will check it under - including any notes
 /// other scenarios deposited.
 pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Address) -> Vec<u8> {
     let mut tree = Tree::new(note.chain_id).expect("paynote tree");
@@ -187,7 +187,7 @@ fn deposited_leaves(world: &World, port: u16) -> Vec<(u32, Field)> {
 }
 
 /// `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter,
-/// address indexed asset, uint256 noteAmount)` — the commitment is topic 1 and
+/// address indexed asset, uint256 noteAmount)` - the commitment is topic 1 and
 /// `leafIndex` is the first data word.
 fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
     let topics = log.get("topics")?.as_array()?;

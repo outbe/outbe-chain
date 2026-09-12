@@ -1,0 +1,144 @@
+{
+  "kind": "derived_model_not_network_tps",
+  "units": "decimal bytes/GB/TB; seconds",
+  "tribute_proposed_body_fields": {
+    "version": 1,
+    "id": 32,
+    "owner": 20,
+    "day": 4,
+    "currencies": 40,
+    "effective_reference_price": 32,
+    "issuance_commitments": 128,
+    "nominal_commitments": 128,
+    "exclude": 1,
+    "source_binding": 32
+  },
+  "tribute_body_bytes": 418,
+  "nod_proposed_body_fields": {
+    "version": 1,
+    "source_id": 32,
+    "owner": 20,
+    "day": 4,
+    "league": 2,
+    "nominal_commitments": 128,
+    "fraction": 32,
+    "entry_price": 32,
+    "floor_price": 32,
+    "reference_currency": 20,
+    "expiry": 8,
+    "params_root": 32
+  },
+  "nod_body_bytes": 343,
+  "private_gratis_value_bytes_without_owner_key_or_db_overhead": 136,
+  "profiles": [
+    {
+      "tributes": 1000000,
+      "n": 16,
+      "threshold": 11,
+      "target_per_second_in_50h": 5.555555555555555,
+      "tribute_modeled_public_bytes_each": 2819,
+      "public_total_bytes": 2819000000,
+      "private_fanout_total_bytes": 4096000000,
+      "per_replica_input_private_bytes": 256000000,
+      "proof_plus_share_check_single_thread_per_second": 88.48464384399946,
+      "cpu_core_equivalents_per_replica_at_target_rate_arithmetic_plus_share_check_only": 0.06278553333333332,
+      "client_proof_plus_vss_deal_ms": 143.33487499999998,
+      "nod_bodies_bytes": 343000000,
+      "only_one_aggregate_private_state_per_replica_bytes": 256,
+      "aggregate_public_coefficients_bytes": 1408,
+      "late_grouping_per_record_retained_private_state_per_replica_bytes": 256000000,
+      "handoff_one_aggregate_private_bytes_model": 45056,
+      "handoff_one_aggregate_public_coeff_bytes_model": 15488,
+      "baseline_49_hourly_handoffs_private_bytes_with_per_record_late_grouping_and_uniform_arrival": 1103872000000.0
+    },
+    {
+      "tributes": 1000000,
+      "n": 128,
+      "threshold": 86,
+      "target_per_second_in_50h": 5.555555555555555,
+      "tribute_modeled_public_bytes_each": 12419,
+      "public_total_bytes": 12419000000,
+      "private_fanout_total_bytes": 32768000000,
+      "per_replica_input_private_bytes": 256000000,
+      "proof_plus_share_check_single_thread_per_second": 86.36169244045016,
+      "cpu_core_equivalents_per_replica_at_target_rate_arithmetic_plus_share_check_only": 0.06432893333333332,
+      "client_proof_plus_vss_deal_ms": 161.44729149999998,
+      "nod_bodies_bytes": 343000000,
+      "only_one_aggregate_private_state_per_replica_bytes": 256,
+      "aggregate_public_coefficients_bytes": 11008,
+      "late_grouping_per_record_retained_private_state_per_replica_bytes": 256000000,
+      "handoff_one_aggregate_private_bytes_model": 2818048,
+      "handoff_one_aggregate_public_coeff_bytes_model": 946688,
+      "baseline_49_hourly_handoffs_private_bytes_with_per_record_late_grouping_and_uniform_arrival": 69042176000000.0
+    },
+    {
+      "tributes": 1000000000,
+      "n": 16,
+      "threshold": 11,
+      "target_per_second_in_50h": 5555.555555555556,
+      "tribute_modeled_public_bytes_each": 2819,
+      "public_total_bytes": 2819000000000,
+      "private_fanout_total_bytes": 4096000000000,
+      "per_replica_input_private_bytes": 256000000000,
+      "proof_plus_share_check_single_thread_per_second": 88.48464384399946,
+      "cpu_core_equivalents_per_replica_at_target_rate_arithmetic_plus_share_check_only": 62.785533333333326,
+      "client_proof_plus_vss_deal_ms": 143.33487499999998,
+      "nod_bodies_bytes": 343000000000,
+      "only_one_aggregate_private_state_per_replica_bytes": 256,
+      "aggregate_public_coefficients_bytes": 1408,
+      "late_grouping_per_record_retained_private_state_per_replica_bytes": 256000000000,
+      "handoff_one_aggregate_private_bytes_model": 45056,
+      "handoff_one_aggregate_public_coeff_bytes_model": 15488,
+      "baseline_49_hourly_handoffs_private_bytes_with_per_record_late_grouping_and_uniform_arrival": 1103872000000000.0
+    },
+    {
+      "tributes": 1000000000,
+      "n": 128,
+      "threshold": 86,
+      "target_per_second_in_50h": 5555.555555555556,
+      "tribute_modeled_public_bytes_each": 12419,
+      "public_total_bytes": 12419000000000,
+      "private_fanout_total_bytes": 32768000000000,
+      "per_replica_input_private_bytes": 256000000000,
+      "proof_plus_share_check_single_thread_per_second": 86.36169244045016,
+      "cpu_core_equivalents_per_replica_at_target_rate_arithmetic_plus_share_check_only": 64.32893333333334,
+      "client_proof_plus_vss_deal_ms": 161.44729149999998,
+      "nod_bodies_bytes": 343000000000,
+      "only_one_aggregate_private_state_per_replica_bytes": 256,
+      "aggregate_public_coefficients_bytes": 11008,
+      "late_grouping_per_record_retained_private_state_per_replica_bytes": 256000000000,
+      "handoff_one_aggregate_private_bytes_model": 2818048,
+      "handoff_one_aggregate_public_coeff_bytes_model": 946688,
+      "baseline_49_hourly_handoffs_private_bytes_with_per_record_late_grouping_and_uniform_arrival": 6.9042176e+16
+    }
+  ],
+  "seal_bfv_8192": {
+    "ciphertext_bytes": 524401,
+    "billion_input_ciphertexts_bytes": 524401000000000,
+    "raw_add_single_thread_per_second": 38529.07251622238,
+    "billion_repeat_exact": true
+  },
+  "arithmetic_only": {
+    "issue_nominal_uint256": {
+      "single_thread_verify_per_second": 90.081637835513,
+      "sequential_verify_256_ms": 2841.866624
+    },
+    "claim_nod_into_private_gratis_uint256": {
+      "single_thread_verify_per_second": 45.64776934985548,
+      "sequential_verify_256_ms": 5608.160128
+    },
+    "withdraw_private_gratis_to_public_coen_uint256": {
+      "single_thread_verify_per_second": 90.12612023951017,
+      "sequential_verify_256_ms": 2840.464
+    }
+  },
+  "unmeasured_required_costs": [
+    "source/offer authentication proof",
+    "PayNote private spend proof",
+    "Fidelity state proof",
+    "qualified-set and availability certificates",
+    "strict-only-S uint256 aggregate opening without limb-sum disclosure",
+    "network/DA/storage/consensus and actual OCOMP worker",
+    "chain-wide parallel contention"
+  ]
+}

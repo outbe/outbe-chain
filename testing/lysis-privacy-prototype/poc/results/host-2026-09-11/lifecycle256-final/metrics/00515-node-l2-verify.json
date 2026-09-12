@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/Users/sakor/outbe-io/outbe-chain/target/release/outbe-poc-l2-source",
+    "verify-batch",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/runs/lifecycle256-final/control/l2-manifest.json"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 2000000000,
+  "peak_rss_bytes": 77987840,
+  "sampled_peak_rss_bytes": 77791232,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 0.4283685830887407,
+  "rayon_num_threads": null,
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}

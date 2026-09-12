@@ -1,0 +1,15 @@
+{
+  "bridge_bytes": 436680,
+  "bridge_count": 5,
+  "bundle_bytes": 456816,
+  "cipher_raw_bytes_each": 1024,
+  "cipher_with_key_and_lengths_bytes_each": 1072,
+  "cross_curve_bridge_ms": 402.974083,
+  "money_proof_bytes": 12936,
+  "money_prove_ms": 352.258625,
+  "recovery_profile": "cold 65536-entry exact lookup; old encryption randomness never read",
+  "retained_groth16_bytes": 128,
+  "self_verify_ms": 651.0711670000001,
+  "total_ms": 1415.0928330000002,
+  "verified": true
+}

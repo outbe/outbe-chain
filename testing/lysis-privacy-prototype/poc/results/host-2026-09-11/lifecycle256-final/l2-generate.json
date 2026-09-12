@@ -1,0 +1,2311 @@
+{
+  "distinct_proofs": 256,
+  "elapsed_ms": 54034.903458,
+  "rows": [
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 247.834292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 9.194334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 211.021375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.235167
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.2495,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.026625000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.45525,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.130375
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.20425,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.089959
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.5255,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.327417
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.10229099999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.930916999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 191.691125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.755625
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.3135,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.114082999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.974959,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.064167000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.607084,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.78225
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 191.83366700000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.016041
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.96175,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.017916999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.88125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.045416999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.980291,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.870417
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.19916700000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.243
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.988208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.277542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.165,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.222042
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.121667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.084708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 189.882208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.131917000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.27479200000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.184917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.321209,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.985542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.72887500000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.10975
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.603917,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9977920000000005
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.983833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.006499999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.74849999999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.70025
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.053292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.887834
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.807625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.904375
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.015125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.076666
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.163916,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.190667000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.467625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.242875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.33487499999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.024833000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.019291,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.947125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.48024999999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.12025
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.610583,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.172416
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.814458,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.907832999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.51316599999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.247708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.71841600000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.04975
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.1765,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9986250000000005
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.168917,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.147833
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.440208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.8975
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.34479199999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.608542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.383125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.399917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.021375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9830000000000005
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.53175000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.851584
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.34616699999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.769209
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.99766699999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.222415999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.26825,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.929459
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.39600000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.858125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.656791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.111208999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.2395,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.274583
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.864791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.976333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.034125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.960125000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.587917,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.074875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.879958,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.117875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.167416,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.088833
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.16725,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.867374999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.191375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.733708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.06025,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.957917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.986084,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.593709
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.370542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.719125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.306917,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.079832999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.001333,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.026458
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.047125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.014584
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 207.522459,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.994041999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 209.033583,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.155208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 217.327417,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.27225
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.80487499999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.269791999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.84270800000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.959249999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 244.72020799999999,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.214374999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 208.36220799999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.905707999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 188.87591700000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.801709000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.15825,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.008750000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.578583,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.897125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 209.538375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.185833
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.647209,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.046707999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.2825,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.883917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.650291,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.099083
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.243708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.286791
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.817291,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.217584
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.791625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.012666999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.89895800000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.067
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.85625000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.0465
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.588375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.142
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.288375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.907666000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.173833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.989292
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.86058300000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.990458
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.858292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.019959
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.2015,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.151209
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.843625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.124083
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.693291,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.860499999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.165875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.967125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.325875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.514249999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.285875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.978125000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.101542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.759291
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.974208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.262500000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.091167,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.146208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.92583399999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.094209
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.65191700000003,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.340334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.066083,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.130875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.01916599999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.963459000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.927708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.884166999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.063,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.995833000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.408208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.82625
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.773375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.006958
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.153584,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.052834
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.098667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.057
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.25937499999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.606167
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.939041,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.936
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.65479200000001,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.928915999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.088292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.085040999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.899667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.036167
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.718875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.777374999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.250542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.084334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.971292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.16825
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.598084,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.135167000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.536834,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.763209
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.820583,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.819583
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.17695799999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.115499999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.79225,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9897920000000004
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.485916,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.173833
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.83166699999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.865749999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.563125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.056959
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.3295,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.237792
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.80225000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.175916
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.717792,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.076500000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.071875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.0175
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.802542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.901750000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.422708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.912542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.029791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.140667
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.860708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.222375000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 189.55333299999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.126625
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.741209,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.203375000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.2295,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.250834000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.112916,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.167334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.053167,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.080041
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.214833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.7285
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.05920899999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.959124999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.700125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.898166999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.322792,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.181667000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.150958,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.203958
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 207.48370799999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.032582999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.80420800000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.177875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.552334,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.044917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.432084,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.871209
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.58779199999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.173083
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.26987499999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.040333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.904833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.243
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.873209,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.140625
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.051625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.074875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.19120800000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.948208999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.861709,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.05125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.511,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.063084
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.184791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.043750000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.326709,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.262584
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.145958,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.142415999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.861458,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.037042
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.820416,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.957000000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 191.976667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.262084
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.723167,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.212541
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.061375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.906959
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.983625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.702
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 190.21141699999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.1595
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.54904200000001,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.158292
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.96574999999999,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.24925
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.55724999999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.143374999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.20075,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9058329999999994
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 208.273833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.165375000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.767833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.968667000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.149791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.152542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.158458,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.154875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.04725000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.316041
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.344625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.001542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.901375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.071375
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.353834,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.928707999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.980333,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.085542
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.758292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.019709
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.400875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.99525
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 189.0515,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.149791
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.786542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.786041
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.033208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.00725
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.52675,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.206708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 191.631666,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.890833
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 190.787375,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.978041999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.374083,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.19475
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.20725,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.826708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.097666,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.048959
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.86325000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.898125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.843625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.290917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.39075,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.7365
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.08724999999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.813166
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 192.602,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.259791
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.568292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.080708000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.25816600000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.31975
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.980333,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.939042000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 207.123958,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.016917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.01587500000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.100583
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.51391700000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.139000000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.516084,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.965750000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 194.797791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.104208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.484042,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.915208999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.07929099999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.103208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.134708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.027917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.07233399999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.844333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.216459,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.867582999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.748625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.236459
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.71075,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.960375000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 208.30337500000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.035874999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.934167,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.013208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.0705,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.669333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.970208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.165042000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.938584,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.142999999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.12633399999999,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.084417
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.706459,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.110167
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.663208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.125375
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 199.30075,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.393333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.535125,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.747207999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.643667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.048
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.48670800000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.121917
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.57466699999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.862667
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 198.46012499999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.107750000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 193.702667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.193208
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.636584,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.113125
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 210.229083,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.382708000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.21704200000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.907000000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.380667,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.209334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.52300000000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.887708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 209.671208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.262458
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.020542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.225334
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.020083,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.182875
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.412041,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.638167000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.864083,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.961958
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.542834,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.562834
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 209.03954099999999,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.105292
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 207.672542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.110417
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.22616599999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.244333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.84770899999998,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.130500000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.477208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.9491249999999996
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.644625,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.842167000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 211.8555,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.228708
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 205.870708,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.053458
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.170833,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.177541
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 213.308959,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.03075
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.420791,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.727458
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 206.95208300000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.066624999999998
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 208.40008300000002,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.796333
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 208.95012499999999,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.111749999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 201.929208,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.823666
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 200.175292,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.032124999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 204.011,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.968915999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 195.426917,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.100417
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 197.220417,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.099416999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 203.633875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 7.977542000000001
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 207.788542,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.16475
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 202.950875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.378874999999999
+    },
+    {
+      "circuit": "outbe.full_proof@1.1.0",
+      "proof_bytes": 8900,
+      "prove_ms": 196.326875,
+      "real_p_l2_verified": true,
+      "source_capacity": 32,
+      "source_trust": "fresh one-leaf local L2 fixture; root certificate/registry admission is separate",
+      "two_verifications_ms": 8.035499999999999
+    }
+  ],
+  "verify_only": false
+}

@@ -1,0 +1,64 @@
+{
+  "date": "2026-09-11",
+  "constraints": [
+    "C01",
+    "C02",
+    "C03",
+    "C04",
+    "C05",
+    "C06",
+    "C07",
+    "C08",
+    "C09",
+    "C10",
+    "C11",
+    "C12",
+    "C13",
+    "C14"
+  ],
+  "trace_steps": [
+    "R00",
+    "R01",
+    "R02",
+    "R03",
+    "R04",
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14"
+  ],
+  "research_questions": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q5",
+    "Q6",
+    "Q7"
+  ],
+  "frozen_inputs_checked": 8,
+  "source_hashes_checked": 24,
+  "all_unchanged": true,
+  "arithmetic_rerun_equal": true,
+  "fidelity_cases": 137117,
+  "new_crypto_benchmarks": false,
+  "historical_scope_checks": {
+    "source_only_peak_bytes": 398049280,
+    "wide_component_peak_bytes": 497418240,
+    "separate_processes_do_not_prove_full_p_link_ram": true,
+    "worker_record_count": 256,
+    "worker_result_scope": "kernel_and_proposed_encoding_only_not_worker_tps",
+    "full_worker_tps_claimed": false
+  },
+  "limits": [
+    "Arithmetic equivalence is not a security proof",
+    "All-source hash equality is not a full code audit",
+    "No full wallet or network benchmark was run"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/poc-state",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/runs/lifecycle256-final/control/job-03064-cold-withdraw-proof.json"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 512000000,
+  "peak_rss_bytes": 107544576,
+  "sampled_peak_rss_bytes": 100483072,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 1.3267487500561401,
+  "rayon_num_threads": null,
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}

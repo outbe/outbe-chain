@@ -1,0 +1,444 @@
+{
+  "date": "2026-09-11",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "working_tree": "dirty; no production changes made for this trace",
+  "method": "direct source reads; codebase graph tools unavailable in current tool set",
+  "scope": "R00-R18: original Tribute/Metadosis/Lysis/Nod route plus bounded Intex certified payout, Gratis collateral writers, Promis conversion and Fidelity exact-time/query interfaces",
+  "limits": [
+    "not a whole-repository security audit",
+    "L2 private draft delivery not verified",
+    "current DKG/validator cadence not verified",
+    "downstream read scope is interfaces in DOWNSTREAM_PRIVATE_STATE_TRACE.md, not all Intex/Credis/Promis economics",
+    "candidate protocol choices, malicious/mobile composition and production implementation remain open",
+    "exact-time proof completion scheduling, retry and liveness not implemented"
+  ],
+  "confirmed_user_constraints": {
+    "wallet_p_link_ram_bytes_max": 512000000,
+    "individual_nominal_max": "2^256-1",
+    "daily_nominal_max": "2^256-1",
+    "public_aggregates_allowed": [
+      "daily S",
+      "league S_l after closure"
+    ],
+    "tee": false,
+    "seal_in_shortlist": false
+  },
+  "derived_current_source_bounds": {
+    "formula": "e=max(vR,sc)>=vR and vI>=1 imply a6<=u6*10^6",
+    "max_u6": "18446744073709551615999999",
+    "max_a6_bound": "18446744073709551615999999000000",
+    "max_billion_S6_bound": "18446744073709551615999999000000000000000",
+    "bits": {
+      "u6": 84,
+      "a6": 104,
+      "billion_S6": 134,
+      "billion_S18": 174,
+      "all_u32_count_S6": 136
+    },
+    "status": "algebra checked using exact Python integers; not a billion-input execution"
+  },
+  "source_files": {
+    "crates/core/tributefactory/src/runtime.rs": {
+      "sha256": "fca4406bbb1da1489901eec7150f0e7ee5b592c739a7291df64287861341f34b",
+      "line_count": 447,
+      "cited_lines": [
+        104,
+        211,
+        282
+      ]
+    },
+    "bin/outbe-tee-enclave/src/zk_claim.rs": {
+      "sha256": "8a5d73635689d78b6d11bff874d9f6dbe441e026a667fc33180de3f773cc29e2",
+      "line_count": 93,
+      "cited_lines": [
+        27
+      ]
+    },
+    "bin/outbe-tee-enclave/src/compute.rs": {
+      "sha256": "130bec885132028bdce73ad25a7441b2fb558c6dffa12e345bddc4f26d7c1e2d",
+      "line_count": 343,
+      "cited_lines": [
+        118,
+        160
+      ]
+    },
+    "crates/core/tribute/src/runtime.rs": {
+      "sha256": "4f6ac9230b7cc0af484e6763817e886b09dd32cc5bf21abba31951382883a415",
+      "line_count": 509,
+      "cited_lines": [
+        319
+      ]
+    },
+    "crates/core/tribute/src/state.rs": {
+      "sha256": "d9e19e87011e69d816ca2e83d22492b09042679e3db180c17c97f05c1daba09d",
+      "line_count": 430,
+      "cited_lines": [
+        317
+      ]
+    },
+    "crates/core/metadosis/src/constants.rs": {
+      "sha256": "b774f337298099c61447935cde33855ab3794b7cb735954f4bf993618f32d2cc",
+      "line_count": 85,
+      "cited_lines": [
+        13
+      ]
+    },
+    "crates/core/metadosis/src/lifecycle.rs": {
+      "sha256": "5bb20198adf94bcc26a265b9e543c1e9e82a792d32182a3ad4828412b3d54785",
+      "line_count": 440,
+      "cited_lines": [
+        206
+      ]
+    },
+    "crates/core/metadosis/src/settlement.rs": {
+      "sha256": "5e6bd45894cdd013e315c28b055c16d1e47600721ebea6ef018f480de1be3bd5",
+      "line_count": 382,
+      "cited_lines": [
+        32,
+        119
+      ]
+    },
+    "crates/core/metadosis/src/ocomp_budget.rs": {
+      "sha256": "6fa43f2b2021921e756fabdbb551b36ff74a2dfec123f945625c3ace7979a5e9",
+      "line_count": 205,
+      "cited_lines": [
+        41,
+        129
+      ]
+    },
+    "crates/core/metadosis/src/ocomp/snapshot.rs": {
+      "sha256": "40696b74553c7603838d9447a93fee313db691dc0a1c6be686566ae13bb73b40",
+      "line_count": 58,
+      "cited_lines": [
+        21
+      ]
+    },
+    "crates/core/fidelity/src/runtime.rs": {
+      "sha256": "5ade208c34f0fb8847a8301012d5153ca98b044d63b27691a36d602d6a7c2d33",
+      "line_count": 184,
+      "cited_lines": [
+        1,
+        49,
+        63,
+        155
+      ]
+    },
+    "bin/outbe-tee-enclave/src/fidelity.rs": {
+      "sha256": "d12fb3ce8e08a486f9290d650f2143152347ad5921f7ed7267505874cb911685",
+      "line_count": 833,
+      "cited_lines": [
+        154,
+        155,
+        156,
+        234,
+        236,
+        317
+      ]
+    },
+    "crates/core/fidelity-math/src/lib.rs": {
+      "sha256": "6b60902a379348ae2caac05772b7ff2fb53ec9c8fee3cd23a1c85c9cb1d84c7a",
+      "line_count": 249,
+      "cited_lines": [
+        42,
+        48,
+        76
+      ]
+    },
+    "crates/core/lysis/src/program_v1/phases.rs": {
+      "sha256": "2a421053ac10fd6c6df41c91fea05bc53903ada0374ed81d8e0e79b051aa45f2",
+      "line_count": 804,
+      "cited_lines": [
+        156,
+        358,
+        637,
+        701
+      ]
+    },
+    "crates/core/lysis/src/program_v1/execute.rs": {
+      "sha256": "a56dbfde16c2da98817fdc6bb07d133f5d88fc70003b1d622e4a9e3b7dc567e4",
+      "line_count": 586,
+      "cited_lines": [
+        392
+      ]
+    },
+    "crates/core/lysis/src/algorithm.rs": {
+      "sha256": "59284ca1c7fb4f6a6b230e928523cf68cdf3c0c45fa5cebdae56b9d633422b42",
+      "line_count": 514,
+      "cited_lines": [
+        33,
+        229
+      ]
+    },
+    "crates/core/lysis/src/program_v1/planner.rs": {
+      "sha256": "807d6016f53b72926218fb53963c3292ffc98528155a29a3468fec2fa3132c5c",
+      "line_count": 1980,
+      "cited_lines": [
+        17
+      ]
+    },
+    "crates/core/lysis/src/program_v1/finalizer.rs": {
+      "sha256": "2c114ce9b7a61d6629170e269947f39747008af9c6dcc8b7fdc199acfbe23e43",
+      "line_count": 973,
+      "cited_lines": [
+        241
+      ]
+    },
+    "crates/core/metadosis/src/ocomp/activation.rs": {
+      "sha256": "e4b6884e84452f10bf693d5108d799e57de55d47c00752c1e4406f95d4b85649",
+      "line_count": 608,
+      "cited_lines": [
+        333,
+        349
+      ]
+    },
+    "crates/core/nod/src/schema.rs": {
+      "sha256": "e9a9163b8aed7da7ea3f167a017e4486eac3ab20a51c0014a9d03c515e827c83",
+      "line_count": 609,
+      "cited_lines": [
+        95
+      ]
+    },
+    "crates/core/nod/src/runtime.rs": {
+      "sha256": "54959f207763c48abf9673fb3c2be405822e93d22bd605b0e72530fcddbf9a82",
+      "line_count": 91,
+      "cited_lines": [
+        19
+      ]
+    },
+    "crates/core/nod/src/called.rs": {
+      "sha256": "7f2ad70d29c661d1c47d26e906ee44c6bde8eb7e43c873fbe42c7d110ed0fd10",
+      "line_count": 332,
+      "cited_lines": [
+        50,
+        241
+      ]
+    },
+    "crates/core/nodfactory/src/runtime.rs": {
+      "sha256": "eae2fb1e3fd4d3747727eedf0d88c68e3e55e7bfe99d9080ef6a21f2bdbf952c",
+      "line_count": 329,
+      "cited_lines": [
+        170,
+        236,
+        256
+      ]
+    },
+    "crates/core/gratisfactory/src/runtime.rs": {
+      "sha256": "13b21af9be6b472304b5cf6de5061935416260f55b350dd2cec9fdfa50b2974d",
+      "line_count": 174,
+      "cited_lines": [
+        45,
+        63,
+        129,
+        145
+      ]
+    },
+    "crates/core/intexfactory/src/runtime.rs": {
+      "sha256": "fc6ffea4467b8bfcd4d02b80a48acbb01011789aae2f6179060b11a98956709b",
+      "line_count": 1090,
+      "cited_lines": [
+        324,
+        366,
+        460,
+        538,
+        542,
+        657,
+        983
+      ]
+    },
+    "crates/core/gratis/src/runtime.rs": {
+      "sha256": "b27d197ab72bc87b33c56e00ebda8233272038c54706dc336090a42ea7f22c64",
+      "line_count": 514,
+      "cited_lines": [
+        120,
+        177,
+        238,
+        309,
+        388,
+        423,
+        449,
+        464
+      ]
+    },
+    "crates/core/credisfactory/src/runtime.rs": {
+      "sha256": "530b511b1286f96bdca9a0efe359103da2449e6700a761627cfcda92bbb5c32b",
+      "line_count": 309,
+      "cited_lines": [
+        40,
+        54,
+        93,
+        176,
+        190,
+        259,
+        292
+      ]
+    },
+    "crates/core/promisfactory/src/runtime.rs": {
+      "sha256": "550173b09b233a8647a666ac1790aa15ec9a98fa36266caf63f01e4ca5251413",
+      "line_count": 83,
+      "cited_lines": [
+        38,
+        63,
+        69,
+        80
+      ]
+    },
+    "crates/core/promisfactory/src/precompile.rs": {
+      "sha256": "c00be2397b3de10dc06bcbdbe247bc02427bbf739f9d40fab04c30194fa29b4a",
+      "line_count": 66,
+      "cited_lines": [
+        42
+      ]
+    },
+    "crates/blockchain/primitives/src/time.rs": {
+      "sha256": "36d60c627c18ee721a49794dc0c747c02e361c269bc3eeeccabc9a2e9c1f5e95",
+      "line_count": 459,
+      "cited_lines": [
+        138,
+        144
+      ]
+    },
+    "crates/blockchain/primitives/src/units.rs": {
+      "sha256": "a0922c1edbff15d14ab281e926639226686ff0ed2fd4006745fba607711c5868",
+      "line_count": 115,
+      "cited_lines": [
+        28
+      ]
+    },
+    "crates/core/intex/src/schema.rs": {
+      "sha256": "f3aaa1bea5149115ceb2335aea19e3844f6bd99372a46cb8ccc416661e9096d8",
+      "line_count": 549,
+      "cited_lines": [
+        304,
+        334
+      ]
+    },
+    "crates/core/intex/src/api.rs": {
+      "sha256": "064a8572f028d4bf3f96e5a2d90cf2b106dc24479a3e3067c47831bc0639faf1",
+      "line_count": 714,
+      "cited_lines": [
+        355,
+        588
+      ]
+    },
+    "crates/core/gratis/src/schema.rs": {
+      "sha256": "2f860f8e7056dcc864f1e9011f27ca76978d0427b70284486b459794d651308d",
+      "line_count": 39,
+      "cited_lines": [
+        17
+      ]
+    },
+    "crates/core/gratis/src/precompile.rs": {
+      "sha256": "3ebe4465255751191146e839679a73957e9b39e1cf60db5a2b73448d90e6977b",
+      "line_count": 61,
+      "cited_lines": [
+        18
+      ]
+    },
+    "bin/outbe-tee-enclave/src/gratis.rs": {
+      "sha256": "1d5680977131d253a4f521cbe1c9bed94fc15ff051981ec0eec5b073d1821f77",
+      "line_count": 1090,
+      "cited_lines": [
+        462,
+        489,
+        505,
+        539
+      ]
+    },
+    "crates/core/credisfactory/src/called.rs": {
+      "sha256": "90e59d5c96f45803ac346f1c3cf969391f70317bb9eab798fbc746d37ee744cf",
+      "line_count": 313,
+      "cited_lines": [
+        21,
+        151
+      ]
+    },
+    "crates/core/fidelity/src/api.rs": {
+      "sha256": "a64f40dcb2373b9abb581c91fbbbe7a6dd96589b024e2bb1fa7a7a64d8e90b83",
+      "line_count": 83,
+      "cited_lines": [
+        17
+      ]
+    },
+    "crates/core/credis/src/runtime.rs": {
+      "sha256": "29579420e523b55e1c3e1f67bc65a79f4badf4a427d13c9483b23f3e80747e25",
+      "line_count": 455,
+      "cited_lines": [
+        92,
+        211,
+        284,
+        311
+      ]
+    },
+    "crates/core/promislimit/src/runtime.rs": {
+      "sha256": "d28f183e7f07c91953a73d1935b82dbbfa8c312f6186d7db3149ce2b29e12466",
+      "line_count": 17,
+      "cited_lines": [
+        14
+      ]
+    },
+    "crates/core/gratisfactory/src/precompile.rs": {
+      "sha256": "14c397025b0a17c97abedc77022850c3fae7abdabd138cb7ea15bf81eb50988f",
+      "line_count": 114,
+      "cited_lines": [
+        37
+      ]
+    },
+    "crates/core/credis/src/schema.rs": {
+      "sha256": "1694d26336a93ff13cb28cd588a6e7832b41da80daa12f49c979c3ea39aa6b00",
+      "line_count": 235,
+      "cited_lines": [
+        78
+      ]
+    },
+    "crates/core/promis/src/runtime.rs": {
+      "sha256": "c03ec215cf5d389f365bfce509f521bde08119638a5bb42bf6abb9e6c0b016d3",
+      "line_count": 134,
+      "cited_lines": [
+        105
+      ]
+    },
+    "crates/core/gemfactory/src/runtime.rs": {
+      "sha256": "ee5630f304ef4005e08e10d150a3bc65e34d2c5d8cc32d12b517ed7e7b3f5a21",
+      "line_count": 652,
+      "cited_lines": [
+        514
+      ]
+    },
+    "contracts/precompiles/src/IFidelity.sol": {
+      "sha256": "c2d1655a04cbbde57555b9359a0df8ee725e203712cdd8c292ec0b761b47667e",
+      "line_count": 33,
+      "cited_lines": [
+        5
+      ]
+    },
+    "crates/core/fidelity/src/precompile.rs": {
+      "sha256": "172d40221270dce2897777a0ffa8fd019ed7651b39a8f6ac7973aecc3450cf2d",
+      "line_count": 63,
+      "cited_lines": [
+        31,
+        32
+      ]
+    },
+    "crates/core/fidelity/src/schema.rs": {
+      "sha256": "a54665316852681386a789c85bf043a83cc6e7b0f47c72fd51218ef10a3e9ffb",
+      "line_count": 29,
+      "cited_lines": [
+        6
+      ]
+    }
+  },
+  "trace_sha256": "77c6d88629a152e4e49dd92d7e8140ea4744b36037e219b59c87a8f72b6f3c87",
+  "source_hash_recheck": "All 24 original source hashes unchanged; added cited downstream source snapshots. A file hash records version, not whole-file audit coverage.",
+  "revision_after_independent_review": {
+    "original_input_manifest": "independent-review-2026-09-11/INPUT_MANIFEST.json",
+    "correction_ledger": "REVIEW_REMEDIATION.md",
+    "findings": [
+      "IR-01",
+      "IR-02",
+      "IR-03",
+      "IR-04",
+      "IR-05",
+      "IR-06"
+    ]
+  }
+}

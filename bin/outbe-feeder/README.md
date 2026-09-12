@@ -161,15 +161,15 @@ Each `[[dex_providers]]` contains:
 |---|---|
 | `name`, `chain_id` | `uniswap`, `1` (Ethereum), or `pancakeswap`, `56` (BNB Chain) |
 | `rpc_endpoint` | HTTP(S) JSON-RPC; separate from the destination `[chain]` RPC |
-| `poll_interval_secs` | Poll/retry delay, default 2 seconds, allowed 1–10 |
-| `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1–10000; errors reduce the range down to one block |
+| `poll_interval_secs` | Poll/retry delay, default 2 seconds, allowed 1-10 |
+| `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1-10000; errors reduce the range down to one block |
 | `max_finalized_age_secs` | Maximum wall-clock age of the finalized block, default 1800 seconds, including the chain's finality delay |
 | `markets` | Explicit `base`, `quote`, `base_token`, `quote_token`, and nested `pool` configuration |
 
 One pool is selected explicitly per `(provider, base, quote)`; duplicate markets
 and duplicate pool identities are rejected. There is no automatic pool discovery
 or liquidity-based switching. Both tokens must be ERC20 contracts. Their
-`decimals()` are read on-chain (0–77 supported); V2/V3 token addresses are checked
+`decimals()` are read on-chain (0-77 supported); V2/V3 token addresses are checked
 against `token0()` and `token1()`. Symbols never select a token contract.
 
 The nested `[dex_providers.markets.pool]` accepts these variants:

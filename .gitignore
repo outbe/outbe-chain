@@ -38,3 +38,4 @@ target-docker/
 .beads-credential-key
 .beads/proxieddb/
 .beads
+/.repowise

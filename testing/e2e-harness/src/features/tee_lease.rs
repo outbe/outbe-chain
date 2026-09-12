@@ -1802,7 +1802,7 @@ mod tests {
         for changed in [
             baseline.replace("INFO", "DEBUG"),
             baseline.replace("outbe_engine::stack", "other"),
-            baseline.replace("epoch - running", "epoch — running"),
+            baseline.replace("epoch - running", "epoch \u{2014} running"),
         ] {
             assert!(!super::pre_readiness_recovery_is_authority_free(
                 super::STATUS_PENDING,
@@ -1836,7 +1836,7 @@ mod tests {
         ));
         for changed in [
             baseline.lines().rev().collect::<Vec<_>>().join("\n"),
-            baseline.replace("complete - threshold", "complete — threshold"),
+            baseline.replace("complete - threshold", "complete \u{2014} threshold"),
             baseline.replace("outbe_consensus::dkg_actor::actor", "outbe_engine::stack"),
             baseline.replace("INFO", "DEBUG"),
             baseline.replace("vrf_material_version=9", "vrf_material_version=8"),

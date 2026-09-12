@@ -1,0 +1,7 @@
+{
+  "version": "5.0.0",
+  "package_checksum": null,
+  "original_decoder_sha256": "96c798c7afe0b5a6ef4d92e57e9afcbc8996fb51ea42dbe306baea10954fce19",
+  "patched_decoder_sha256": "6b0c3b7e19ce72eb99398c63a083a7beaf8c52028be20fa168e5f1cfa02d63b6",
+  "compatibility_edits": 3
+}

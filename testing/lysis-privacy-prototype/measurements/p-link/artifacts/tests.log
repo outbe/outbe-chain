@@ -1,0 +1,54 @@
+   Compiling outbe-p-link-measurements v0.1.0 (/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/measurements/p-link)
+    Finished `release` profile [optimized] target(s) in 3.24s
+     Running unittests src/lib.rs (testing/lysis-privacy-prototype/measurements/p-link/target/release/deps/outbe_p_link_measurements-3d120880747a707e)
+
+running 8 tests
+test integer::tests::integer_order ... ok
+test integer::tests::integer_products_and_overflow ... Constraint trace requires enabling `ConstraintLayer`
+ok
+test p384_gadget::tests::complete_addition_handles_identity_doubling_and_inverse ... ok
+test p384_gadget::tests::full_width_matches_native_and_reports_constraints ... P-384 full width: 5570071 constraints, 45.671s synthesis+check
+ok
+test p384_gadget::tests::h_matches_vss_fixture_and_native_rejects_noncanonical_scalar ... ok
+test p384_gadget::tests::scalar_windows_match_native_zero_one_and_randoms ... ok
+test p384_gadget::tests::wrong_public_point_is_unsatisfied ... Constraint trace requires enabling `ConstraintLayer`
+ok
+test poseidon2::tests::noir_known_answers_constrained ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 122.48s
+
+     Running unittests src/bin/check_vss_link.rs (testing/lysis-privacy-prototype/measurements/p-link/target/release/deps/check_vss_link-3c0387c9e2d61af1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (testing/lysis-privacy-prototype/measurements/p-link/target/release/deps/outbe_p_link_measurements-3c505070a566cb00)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/adversarial_integer.rs (testing/lysis-privacy-prototype/measurements/p-link/target/release/deps/adversarial_integer-c3f24a7e7ad6af52)
+
+running 2 tests
+test multiplication_rejects_forged_high_padding_limb_and_matching_bits ... Constraint trace requires enabling `ConstraintLayer`
+Constraint trace requires enabling `ConstraintLayer`
+ok
+test widened_multiplication_accepts_honest_padding ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/canonical.rs (testing/lysis-privacy-prototype/measurements/p-link/target/release/deps/canonical-5b7cc1415e09b6dd)
+
+running 1 test
+test draft_and_binding_match_current_enclave_schema ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests outbe_p_link_measurements
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

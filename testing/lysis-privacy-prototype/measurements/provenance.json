@@ -1,0 +1,26 @@
+{
+  "measured_date": "2026-09-11",
+  "hardware": {
+    "chip": "Apple M4 Max",
+    "cores": 14,
+    "performance_cores": 10,
+    "efficiency_cores": 4,
+    "memory_gb": 36,
+    "arch": "arm64"
+  },
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "working_tree": "dirty; production files not edited by this experiment",
+  "source_and_result_sha256": {
+    "testing/lysis-privacy-prototype/measurements/Cargo.toml": "116595acb67f69d00d25bd7e2e3f3b5365a3d1e47b6b1cccc34261349f7e5ffb",
+    "testing/lysis-privacy-prototype/measurements/Cargo.lock": "2986a43ad0a6cbeb138aa1935fe233e85719476f99a8e5283d2418ab9bd9e0f6",
+    "testing/lysis-privacy-prototype/measurements/src/main.rs": "10f5f7a62e7714b7dc3546dec2f33a92baaa7c0bc6c7b61b99d2011a7342f81d",
+    "testing/lysis-privacy-prototype/measurements/src/bin/worker_costs.rs": "9b727755c9b7a8be1151e963dc977a9a6824ff4fe24b3c74eb5e152ac88b6858",
+    "testing/lysis-privacy-prototype/measurements/seal_bench.cpp": "db614d6361a9b0a6ff23fa63fa72a0f7074c5a4914e609e2042ecf5673a43560",
+    "testing/lysis-privacy-prototype/measurements/rust_results.json": "e16a576076e648b14d122294b97ee48eff171ce3e9e6c3b99faf997a82f51d4e",
+    "testing/lysis-privacy-prototype/measurements/worker_results.json": "20773ab6d5c67509f0ab79b6cafeee3ad31c6f0e2cf602e2558d27c6ed1f291b",
+    "testing/lysis-privacy-prototype/measurements/seal_results.json": "b1d96b7632c94f2f8a6cbcb69b41d80231a577bf62adcb5ff2e679570c1809d4",
+    "crates/core/lysis/src/algorithm.rs": "59284ca1c7fb4f6a6b230e928523cf68cdf3c0c45fa5cebdae56b9d633422b42"
+  },
+  "setup": "release; sequential single-process component measurements; CPU not isolated"
+}

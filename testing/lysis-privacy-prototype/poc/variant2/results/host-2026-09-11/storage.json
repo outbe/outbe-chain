@@ -1,0 +1,132 @@
+{
+  "cipher_raw_uint256_bytes": 1024,
+  "cipher_bincode_with_key_and_lengths_bytes": 1072,
+  "additional_baby_commitments_bytes_per_uint256": 128,
+  "single_cross_curve_bridge_bytes": 87336,
+  "operations": [
+    {
+      "operation": "claim",
+      "public_statement_bincode_bytes": 1683,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1819,
+      "variant_bundle_bytes": 456816,
+      "money_proof_bytes": 12936,
+      "bridge_bytes": 436680,
+      "bridge_count": 5
+    },
+    {
+      "operation": "cross-receive",
+      "public_statement_bincode_bytes": 1375,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1511,
+      "variant_bundle_bytes": 364755,
+      "money_proof_bytes": 9720,
+      "bridge_bytes": 349344,
+      "bridge_count": 4
+    },
+    {
+      "operation": "cross-send",
+      "public_statement_bincode_bytes": 1375,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1511,
+      "variant_bundle_bytes": 190083,
+      "money_proof_bytes": 9720,
+      "bridge_bytes": 174672,
+      "bridge_count": 2
+    },
+    {
+      "operation": "intex-cashout",
+      "public_statement_bincode_bytes": 787,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 923,
+      "variant_bundle_bytes": 184053,
+      "money_proof_bytes": 6424,
+      "bridge_bytes": 174672,
+      "bridge_count": 2
+    },
+    {
+      "operation": "payment",
+      "public_statement_bincode_bytes": 1375,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1511,
+      "variant_bundle_bytes": 277419,
+      "money_proof_bytes": 9720,
+      "bridge_bytes": 262008,
+      "bridge_count": 3
+    },
+    {
+      "operation": "pledge-1",
+      "public_statement_bincode_bytes": 1099,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1235,
+      "variant_bundle_bytes": 187758,
+      "money_proof_bytes": 8616,
+      "bridge_bytes": 174672,
+      "bridge_count": 2
+    },
+    {
+      "operation": "pledge-2",
+      "public_statement_bincode_bytes": 1099,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1235,
+      "variant_bundle_bytes": 187758,
+      "money_proof_bytes": 8616,
+      "bridge_bytes": 174672,
+      "bridge_count": 2
+    },
+    {
+      "operation": "promis",
+      "public_statement_bincode_bytes": 1079,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1215,
+      "variant_bundle_bytes": 187738,
+      "money_proof_bytes": 8616,
+      "bridge_bytes": 174672,
+      "bridge_count": 2
+    },
+    {
+      "operation": "receive",
+      "public_statement_bincode_bytes": 1375,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1511,
+      "variant_bundle_bytes": 102747,
+      "money_proof_bytes": 9720,
+      "bridge_bytes": 87336,
+      "bridge_count": 1
+    },
+    {
+      "operation": "release-1",
+      "public_statement_bincode_bytes": 1375,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 1511,
+      "variant_bundle_bytes": 102747,
+      "money_proof_bytes": 9720,
+      "bridge_bytes": 87336,
+      "bridge_count": 1
+    },
+    {
+      "operation": "withdraw",
+      "public_statement_bincode_bytes": 805,
+      "baseline_statement_and_proof_comparison_encoding_bytes": 941,
+      "variant_bundle_bytes": 96735,
+      "money_proof_bytes": 6424,
+      "bridge_bytes": 87336,
+      "bridge_count": 1
+    }
+  ],
+  "comparison_format_caveat": "baseline tuple(Public,Vec<proof bytes>) is a calculated equivalent bincode comparison envelope, not a deployed baseline wire protocol; variant sizes are actual bundle files",
+  "parameter_cache_bytes": {
+    "native32": 18737488,
+    "claim-v2": 10693456,
+    "mint-v2": 6019760,
+    "pledge-v2": 5919760
+  },
+  "parameter_cache_total_bytes": 41370464,
+  "retained_registry_entries": 24,
+  "retained_registry_json_bytes": 93860,
+  "current_holder_dirs_bytes": [
+    251513,
+    251465,
+    251483
+  ],
+  "wallet_source_and_recovery_dirs_bytes": {
+    "wallet-0": 12536,
+    "wallet-1": 34168,
+    "wallet-2": 9525
+  },
+  "all_wallet_operation_dirs_bytes": 51797,
+  "dual_transfer_json_bytes": 149753,
+  "cross_transfer_total_binary_bundles_plus_dual_json_bytes": 704591,
+  "public_run_bytes_at_finish_before_comparison": 16162987,
+  "retention": "all intermediate registry snapshots, proofs, receipts and role fixtures retained; not a production pruning model"
+}

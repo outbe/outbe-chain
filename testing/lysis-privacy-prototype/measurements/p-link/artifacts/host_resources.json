@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "elapsed_seconds": 405.65749502182007,
+  "user_seconds": 482.074575,
+  "system_seconds": 83.181208,
+  "peak_rss_bytes": 19445481472,
+  "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
+  "rayon_num_threads": 8
+}

@@ -1,0 +1,1 @@
+{"bridge_digest_hex":"44e5a353ba1c91a296016a162afd2548ca85520588fd1e7fdf822f9cdcc07c95","load_pk_ms":7408.244417,"proof_compressed_bytes":128,"prove_ms":1324.704625,"public_field_payload_bytes":960,"scope":"P_source only; requires P_commit with same digest plus external P_L2/admission"}

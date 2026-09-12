@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-11",
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 38654705664,
+  "physical_cores": 14,
+  "logical_cores": 14,
+  "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
+  "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+  "cargo": "1.96.0 (30a34c682 2026-05-25)",
+  "python": "3.14.6",
+  "mpyc_version": "0.11.2",
+  "mpyc_commit": "38f06a7af688231fca4defe1613d01a2aa8bcbfb",
+  "native_proof_profile": "release; default Rayon unless parallel comparison explicitly uses 2 threads",
+  "wallet_rss_limit_bytes": 512000000,
+  "mpc": "3 processes, threshold 1, localhost, pure Python; no gmpy2/numpy",
+  "phone_measured": false,
+  "total_ram_is_not_wallet_rss": true
+}

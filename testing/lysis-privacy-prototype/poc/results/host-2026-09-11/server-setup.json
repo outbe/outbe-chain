@@ -1,0 +1,59 @@
+{
+  "scope": "fresh setup only for profiles with no cached parameters; native32 reused cached setup",
+  "profiles": {
+    "su-1": {
+      "command": [
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/outbe-private-lifecycle-poc",
+        "setup",
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/parameters/native1",
+        "1"
+      ],
+      "exit_code": 0,
+      "ram_limit_bytes": 2000000000,
+      "peak_rss_bytes": 91783168,
+      "sampled_peak_rss_bytes": 75710464,
+      "killed_on_sampled_limit": false,
+      "sampler_available": true,
+      "within_ram_limit": true,
+      "wall_seconds": 0.2181219169870019,
+      "rayon_num_threads": null,
+      "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+    },
+    "su-16": {
+      "command": [
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/outbe-private-lifecycle-poc",
+        "setup",
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/parameters/native16",
+        "16"
+      ],
+      "exit_code": 0,
+      "ram_limit_bytes": 2000000000,
+      "peak_rss_bytes": 241565696,
+      "sampled_peak_rss_bytes": 237551616,
+      "killed_on_sampled_limit": false,
+      "sampler_available": true,
+      "within_ram_limit": true,
+      "wall_seconds": 0.4690844159340486,
+      "rayon_num_threads": null,
+      "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+    },
+    "su-64": {
+      "command": [
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/outbe-private-lifecycle-poc",
+        "setup",
+        "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/parameters/native64",
+        "64"
+      ],
+      "exit_code": 0,
+      "ram_limit_bytes": 2000000000,
+      "peak_rss_bytes": 688291840,
+      "sampled_peak_rss_bytes": 675954688,
+      "killed_on_sampled_limit": false,
+      "sampler_available": true,
+      "within_ram_limit": true,
+      "wall_seconds": 1.1395927909761667,
+      "rayon_num_threads": null,
+      "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+    }
+  }
+}

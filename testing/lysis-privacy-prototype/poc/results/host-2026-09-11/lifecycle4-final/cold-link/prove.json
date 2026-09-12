@@ -1,0 +1,9 @@
+{
+  "commitment_bytes": 32,
+  "load_pk_ms": 3472.9972500000003,
+  "p_link_verified": true,
+  "proof_bytes": 128,
+  "prove_ms": 418.69941700000004,
+  "public_input_bytes": 1856,
+  "scope": "complete canonical source/economics/commitment P_link; P_L2 admission is a separate required check"
+}

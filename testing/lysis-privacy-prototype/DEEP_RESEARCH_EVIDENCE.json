@@ -1,0 +1,60 @@
+{
+  "checked_on": "2026-09-11",
+  "research_status": "confirmed review findings incorporated into documents; protocol decisions and execution gates remain open",
+  "trace_source_hashes_checked": 47,
+  "original_source_hashes_unchanged": 24,
+  "trace_source_changes": [],
+  "historical_independent_review_artifacts_unchanged": 8,
+  "historical_independent_review_evidence_sha256": "b30e5e900b14d428270398f89b4fe2435147e3fb7c9162a15305972b6543f8c8",
+  "prior_additional_source_hashes_unchanged": 14,
+  "local_links_checked": 225,
+  "local_links_ok": true,
+  "local_markdown_heading_anchors_ok": true,
+  "footnotes_ok": true,
+  "whitespace_check_ok": true,
+  "markdown_files_checked": 9,
+  "library_snapshots": 15,
+  "arithmetic_cases_historical": 137117,
+  "arithmetic_rerun_this_remediation": false,
+  "additional_exact_integer_checks": "REVIEW_REMEDIATION_ARITHMETIC.json",
+  "new_crypto_benchmarks": false,
+  "new_production_changes": false,
+  "full_wallet_ram_confirmed": false,
+  "billion_record_runtime_confirmed": false,
+  "remediation_recheck": {
+    "bounded_reviewer": "independent_privacy_a",
+    "scope": "Lego prover recipe, restricted lifetime bound, exact-time transition contract",
+    "found_and_corrected": "successful exact-time checked Fidelity evaluation must precede monetary finality",
+    "final_disposition": "T2a/T2b closes the specification gap; scheduling/retry/liveness remain explicit open gates",
+    "not_a_new_three_agent_full_protocol_audit": true
+  },
+  "upstream_prover_recheck": {
+    "url": "https://github.com/docknetwork/crypto/blob/224f195bb8babc2d0de5256135120e0aca9fbd19/legogroth16/src/prover.rs",
+    "sections": [
+      "create_random_proof_incl_cp_link:32-47",
+      "Compute D:358-379"
+    ],
+    "method": "read-only GitHub connector fetch of pinned raw source",
+    "full_proof_exploit_executed": false
+  },
+  "artifacts": {
+    "testing/lysis-privacy-prototype/AGGREGATION_COMPLETION_REVIEW.md": "de6ef3686fa5da2f32897c5540a7a145e2096239c62f13b2766e4e94454eccd3",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_AGGREGATION.md": "8489dbe4a8d7fc6c5e5b4b4f972277b4e18ae87223328f0585d53cfafcdf737c",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_ARITHMETIC.json": "1891853f9ddce87259c3a1e9fe727ff42db27176b4cc551778dacd32b9004034",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_IMPLEMENTATION.md": "4748ec9df2ee3f76eac15805078296092cf511d4a4ac2008635c9ea30003489a",
+    "testing/lysis-privacy-prototype/DEEP_RESEARCH_LIBRARY_PINS.json": "58d51f7ae6112afedae0d3e2e09adb896fd0a1210b86013030fc0f128359d583",
+    "testing/lysis-privacy-prototype/DOWNSTREAM_PRIVATE_STATE_TRACE.md": "68c44375244b0c73c079134d15c75b63850ccda3275881651eb84377aa028174",
+    "testing/lysis-privacy-prototype/PROTOCOL_TRACE_AND_REQUIREMENTS.md": "77c6d88629a152e4e49dd92d7e8140ea4744b36037e219b59c87a8f72b6f3c87",
+    "testing/lysis-privacy-prototype/README.md": "17a2cf1f5e1a0a901093a47e22dc7d1c756acf971b7a939659b7fb906424c995",
+    "testing/lysis-privacy-prototype/RESEARCH_COMPLETION_REVIEW.md": "d01a12d071f0cb6d85f44e459f27d64f82d7ccc6affad7f9daf12b218bf3ca07",
+    "testing/lysis-privacy-prototype/REVIEW_REMEDIATION.md": "55840fdb20c036ceb9857d5cbdb93fe51ad01ef078117da1d0a82969ba286745",
+    "testing/lysis-privacy-prototype/REVIEW_REMEDIATION_ARITHMETIC.json": "c359ce7f7f8178d3bfa622efd7fdbea3d7aeb49d812048f191dfae55f2d4b4e0",
+    "testing/lysis-privacy-prototype/TRACE_EVIDENCE.json": "614f092737c3c6ff256281c706678edd5d08de4d9c0d35a7a77c68b5e41020db",
+    "testing/lysis-privacy-prototype/measurements/README.md": "8c90ce7707ebaca070832cb35afa379aaa272202542463d23f30e23fa24869cd",
+    "testing/lysis-privacy-prototype/measurements/p-link-source/artifacts/prove.json": "97011d3087e566626be725d6327570aaaba95be6b7d78dbe7055f2d0776a8d31",
+    "testing/lysis-privacy-prototype/measurements/p-link-source/artifacts/prove_resources.json": "71dc2200a481186f17eacc922f560bc4b2f974995928bc455031ef9affe113e0",
+    "testing/lysis-privacy-prototype/measurements/p-link-source/artifacts/verify.json": "00d3881a1c934365235905a8b61d41409cd4606577e8399e28c90e64464d6eee",
+    "testing/lysis-privacy-prototype/research_arithmetic_checks.py": "02967f3e1c685df6352b1fc2421faff6736f793d550f33e470513c2d96b70ddb"
+  },
+  "code_evidence_method": "direct source and pinned upstream reads; original and additional snapshots checked; graph MCP unavailable, no generation/coverage claim"
+}

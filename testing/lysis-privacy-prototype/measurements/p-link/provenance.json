@@ -1,0 +1,55 @@
+{
+  "measured_date": "2026-09-11",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "hardware": {
+    "cpu": "Apple M4 Max",
+    "logical_cores": 14,
+    "physical_memory_bytes": 38654705664,
+    "verified_by": "sysctl"
+  },
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "baseline_status": "REJECTED for wallet RAM requirement <=512000000 bytes; no claim about isolated prover RSS from full-run RSS",
+  "setup_and_proof": "single-process OsRng research setup; no production ceremony; fixed public fixture",
+  "proof_inputs": "canonical raw digest fields and 49-byte P384 commitment; private fixture deliberately public source",
+  "source_note": "only comment/license formatting and main runner type alias changed after measured compile; circuit equations unchanged; standalone VSS check added separately",
+  "checks": {
+    "unit_tests": 8,
+    "integration_tests": 3,
+    "artifact_verify": true,
+    "saved_proof_and_original_vss_reshare": true,
+    "clippy_all_targets_deny_warnings": true,
+    "old_measurement_hashes": [
+      {
+        "file": "testing/lysis-privacy-prototype/measurements/provenance.json",
+        "mismatches": []
+      },
+      {
+        "file": "testing/lysis-privacy-prototype/measurements/wide-vss/provenance.json",
+        "mismatches": []
+      }
+    ]
+  },
+  "source_and_artifact_sha256": {
+    "testing/lysis-privacy-prototype/measurements/p-link/Cargo.toml": "1f9d88669c1a6e986bdb6b16bf5345dd31ee7102abb115e832bc8398cdfe6375",
+    "testing/lysis-privacy-prototype/measurements/p-link/Cargo.lock": "1726370827c114e5e2b439a07a18939a303050804cbaf0c882f2b1f8597b491f",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/bin/check_vss_link.rs": "3c4691fa8580ee710bb6bccbd256b348bcc4c513b92768d32fdb8f30bf6032f2",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/circuit.rs": "d1d9b0af6ca086c6d7871faf44caa8573a1717ece60be302b7a05d3fd4fd4ea0",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/integer.rs": "12d2c064731095ade2ce5d02dab5691764f7834b88b95260aa66327e07fffaab",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/lib.rs": "3dc6209fce1b0e8086fa85d3056879e6eb02fe8ffb909dffd200c3b0154ad32b",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/main.rs": "2bed0dda8ff42f48e82a8c8e3d96ffa37c87ce795a1692fa49944c3fd7aaa527",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/p384_gadget.rs": "e6b729244f06ed409126a7d5743df3ed3b9f03ceceb6e5126a510f86d6b1f863",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/poseidon2.rs": "98b7500274ae673cb37115873c9d1f831af6a74d775a0466e743c610710130d1",
+    "testing/lysis-privacy-prototype/measurements/p-link/src/poseidon2_constants.rs": "d1175630def2a4bc9bd48909cb1d28b36960fc9ecb82cfda9a2bf597eeaffc26",
+    "testing/lysis-privacy-prototype/measurements/p-link/tests/adversarial_integer.rs": "cf840d44ac12a911cf6658cbec53bd070eaf3472d2c370e4dd1c3b5542b3ace5",
+    "testing/lysis-privacy-prototype/measurements/p-link/tests/canonical.rs": "3c71650010435ca6223650640f424ee460cf1af9aed74c1e8a6e62e49cda78b7",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/benchmark.log": "27dfd742fa08a70973346960169c08a22c17fd31b555bec7933098e686b96a27",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/host_resources.json": "903aadf758e42fda2526730cf0a28fa9a2b1a119a9b3830a3df4e8a7545527df",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/proof.bin": "794967f7a93d04c78cfc8b57ee1705d891732f7900081b6c3592225c01f6fc05",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/public_inputs.bin": "38cf140bb0820865a91a859e18be644563b8a31db8b7abab4aa1b66386f21186",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/public_inputs.json": "6819f3b9d4809e4b64cac5ba458653758251156f4aba341c5f63d62d336dd829",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/results.json": "e83e65d8b4e5ef5a9b5847daaa46cf5947cb6e49dfef984ecb3f51f1b37569a7",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/tests.log": "bf425c31c40777299abdcd47f2364981912d68b07b961f2a48c8f76f7ebfc88f",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/vk.bin": "e39757fc1f9c4eb4a823faf4566bd4264c7c6cb2a894661642807f1ddbdbb312",
+    "testing/lysis-privacy-prototype/measurements/p-link/artifacts/vss_link.json": "b82734fa365ff0ae905fae3791a476a662df2bb0258edb49d1cd8c9c89c8cb6d"
+  }
+}

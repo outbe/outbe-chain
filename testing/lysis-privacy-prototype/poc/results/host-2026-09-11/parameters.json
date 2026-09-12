@@ -1,0 +1,137 @@
+{
+  "native32": {
+    "metadata": {
+      "constraints": 100913,
+      "pk_bytes": 18737488,
+      "public_inputs": 58,
+      "setup_ms": 489.89104100000003,
+      "setup_role": "separate server process; single-party PoC ceremony, not production",
+      "source_capacity": 32,
+      "vk_bytes": 2120
+    },
+    "sha256": {
+      "pk.bin": "b001116bd112faa45654be1482c08813a06009c9b554cbed0d70b47d85d3241a",
+      "vk.bin": "0f407ad56f30c447642a7c26d1cd1dfce87800da51ad4ad6328950f19bf75f2c"
+    }
+  },
+  "claim-v2": {
+    "metadata": {
+      "ceremony": "single-party experimental",
+      "constraints": 53791,
+      "kind": "claim",
+      "pk_bytes": 10693456,
+      "setup_ms": 663.55525,
+      "vk_bytes": 2056,
+      "wrong_conservation_rejected": true
+    },
+    "sha256": {
+      "pk.bin": "6b9433ae2e286bb9f469a106c5100b346e6db6b927310c81238cfd75a4c1ce54",
+      "vk.bin": "0716b8f4c31ca76d6cc085fda239e539de60f0c9de08cfa03601a99fa0121d8a"
+    }
+  },
+  "move-v2": {
+    "metadata": {
+      "ceremony": "single-party experimental",
+      "constraints": 40098,
+      "kind": "move",
+      "pk_bytes": 8508496,
+      "setup_ms": 505.187834,
+      "vk_bytes": 1800,
+      "wrong_conservation_rejected": true
+    },
+    "sha256": {
+      "pk.bin": "0eff1bb9cdcf97c3f12b342594130a117d7c60a5e4816a4165dc727c81eb29de",
+      "vk.bin": "49bb751854dbbe6173e0947d4fe2c7a0966a2bd2e56bd9f40fa6b42acb247f70"
+    }
+  },
+  "withdraw-v2": {
+    "metadata": {
+      "ceremony": "single-party experimental",
+      "constraints": 21105,
+      "kind": "withdraw",
+      "pk_bytes": 4423440,
+      "setup_ms": 263.675041,
+      "vk_bytes": 1288,
+      "wrong_conservation_rejected": true
+    },
+    "sha256": {
+      "pk.bin": "fbdd8bbbffdd21f7eefed652fea87a99e50659658fc7cc811ddd5f6d3cb472f3",
+      "vk.bin": "fb3e624b6d84d0b75275880557ad184bbbb18abbcbe39e46874ec85ba7338a7c"
+    }
+  },
+  "mint-v2": {
+    "metadata": {
+      "ceremony": "single-party experimental",
+      "constraints": 31092,
+      "kind": "mint",
+      "pk_bytes": 6019760,
+      "setup_ms": 374.679,
+      "vk_bytes": 1544,
+      "wrong_conservation_rejected": true
+    },
+    "sha256": {
+      "pk.bin": "c0dbff7b7b5aeae974b57df64e6bf20e4db429aeab1326e02c36dcdd4059a8f9",
+      "vk.bin": "86608fc9ee0ca9551ae41a346a447b4c860ccf65c93f8908494e6dccdc193311"
+    }
+  },
+  "pledge-v2": {
+    "metadata": {
+      "ceremony": "single-party experimental",
+      "constraints": 30465,
+      "kind": "pledge",
+      "pk_bytes": 5919760,
+      "setup_ms": 368.38245800000004,
+      "vk_bytes": 1544,
+      "wrong_conservation_rejected": true
+    },
+    "sha256": {
+      "pk.bin": "c6e382ea584fa9cb7c61800aaa98e8318007bec70039783ec071aa7da76d64f0",
+      "vk.bin": "b505aebb338ae8190b8a8880f9e5ebf788efb6fcceb845ae9f5f51132d16ded2"
+    }
+  },
+  "native1": {
+    "metadata": {
+      "constraints": 18850,
+      "pk_bytes": 4004240,
+      "public_inputs": 27,
+      "setup_ms": 139.03512500000002,
+      "setup_role": "separate server process; single-party PoC ceremony, not production",
+      "source_capacity": 1,
+      "vk_bytes": 1128
+    },
+    "sha256": {
+      "pk.bin": "a820a14e7c2436623ec31c8e527caa0ffa8e451c72e509989b45648de807b5d9",
+      "vk.bin": "9e5aa4fa67af2cb4b357dd42b87aa06bde04de195529e55e527832c786db324d"
+    }
+  },
+  "native16": {
+    "metadata": {
+      "constraints": 58601,
+      "pk_bytes": 10666576,
+      "public_inputs": 42,
+      "setup_ms": 290.07575,
+      "setup_role": "separate server process; single-party PoC ceremony, not production",
+      "source_capacity": 16,
+      "vk_bytes": 1608
+    },
+    "sha256": {
+      "pk.bin": "92f3e20520c279383effe2d8db7474970ce7fb82ecf4e3d94af1dd0d5f9ed347",
+      "vk.bin": "2773962a9f2d554deb599f9df082244e12b9f720afaf7b0096ed5ed3a40ecfdc"
+    }
+  },
+  "native64": {
+    "metadata": {
+      "constraints": 185801,
+      "pk_bytes": 34921552,
+      "public_inputs": 90,
+      "setup_ms": 859.0578330000001,
+      "setup_role": "separate server process; single-party PoC ceremony, not production",
+      "source_capacity": 64,
+      "vk_bytes": 3144
+    },
+    "sha256": {
+      "pk.bin": "df6361124a15dd41d39fc497c9aca2423f6fd37169a77075dd96e822c7d4fbca",
+      "vk.bin": "7b8a2d65810a97c37141ce9726ee2bd1b5818c54171909285e46dce091424905"
+    }
+  }
+}

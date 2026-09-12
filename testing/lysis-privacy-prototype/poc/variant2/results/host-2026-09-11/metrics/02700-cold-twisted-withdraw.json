@@ -1,0 +1,16 @@
+{
+  "command": [
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/variant2/target/release/outbe-twisted-poc",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/variant2/runs/lifecycle256-final/control/twisted-02700-cold-twisted-withdraw.json"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 512000000,
+  "peak_rss_bytes": 10354688,
+  "sampled_peak_rss_bytes": 10289152,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 0.6574032920179889,
+  "rayon_num_threads": null,
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}

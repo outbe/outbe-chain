@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn node_ipc_preflight_uses_bytes_and_rejects_nul() {
-        let multibyte = PathBuf::from("/tmp").join("界".repeat(40));
+        let multibyte = PathBuf::from("/tmp").join("\u{754c}".repeat(40));
         assert!(validate_node_ipc_path(&multibyte).is_err());
         assert!(validate_node_ipc_path(Path::new("/tmp/invalid\0path")).is_err());
     }

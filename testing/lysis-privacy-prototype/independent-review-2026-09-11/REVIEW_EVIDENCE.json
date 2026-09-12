@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-11",
+  "head": "177a72ddbea9f2e52eef094405481292ecd56046",
+  "reviewers_completed": [
+    "independent_privacy_a",
+    "independent_privacy_b",
+    "independent_privacy_c"
+  ],
+  "independence": {
+    "fresh_contexts": true,
+    "full_route_assigned_to_each": true,
+    "no_cross_report_access_during_initial_reviews": true,
+    "initial_reports_not_rewritten": true,
+    "c_addendum_after_c_initial_report": true
+  },
+  "frozen_research_inputs_unchanged": 8,
+  "frozen_source_files_unchanged": 24,
+  "matrix_identifier_presence_checked": {
+    "review_count": 3,
+    "C_ids_per_review": 14,
+    "Q_ids_per_review": 7,
+    "limitation": "Identifier presence is not a semantic completeness or security proof"
+  },
+  "reconciliation": {
+    "theory": "conditional support for constructions and arithmetic; full composition not proven",
+    "completeness": "not confirmed; substantive missing consumers and interfaces",
+    "confirmed_findings": [
+      "IR-01 Intex contributor payout",
+      "IR-02 offline external Gratis/Fidelity writers",
+      "IR-03 Lego internal blinder",
+      "IR-04 Fidelity inclusion timestamp"
+    ],
+    "additional_scope_obligations": [
+      "IR-05 other mint source, global conservation and supply API",
+      "IR-06 Fidelity exact query API"
+    ],
+    "downgraded_claims": [
+      "singleton S_l is accepted leakage, not a new blocker",
+      "G-F inference belongs to the already open forfeit policy",
+      "global overflow symbolic example is not reachable in the specified current-source Nod-only profile"
+    ]
+  },
+  "upstream_parent_recheck": {
+    "url": "https://github.com/docknetwork/crypto/blob/224f195bb8babc2d0de5256135120e0aca9fbd19/legogroth16/src/prover.rs",
+    "sections": [
+      "create_random_proof_incl_cp_link:32-47",
+      "Compute D:358-379"
+    ],
+    "method": "read-only GitHub connector fetch of pinned raw source",
+    "full_proof_exploit_executed": false
+  },
+  "additional_local_source_snapshots": {
+    "crates/core/intexfactory/src/runtime.rs": "fc6ffea4467b8bfcd4d02b80a48acbb01011789aae2f6179060b11a98956709b",
+    "crates/core/credisfactory/src/runtime.rs": "530b511b1286f96bdca9a0efe359103da2449e6700a761627cfcda92bbb5c32b",
+    "crates/core/credisfactory/src/called.rs": "90e59d5c96f45803ac346f1c3cf969391f70317bb9eab798fbc746d37ee744cf",
+    "crates/core/gratis/src/runtime.rs": "b27d197ab72bc87b33c56e00ebda8233272038c54706dc336090a42ea7f22c64",
+    "crates/core/gratis/src/schema.rs": "2f860f8e7056dcc864f1e9011f27ca76978d0427b70284486b459794d651308d",
+    "crates/core/gratis/src/api.rs": "d5d928af19d1c8c6c89463b1be55ed593ae2b2f89b2d9477321e366cff332199",
+    "crates/core/fidelity/src/precompile.rs": "172d40221270dce2897777a0ffa8fd019ed7651b39a8f6ac7973aecc3450cf2d",
+    "crates/blockchain/primitives/src/time.rs": "36d60c627c18ee721a49794dc0c747c02e361c269bc3eeeccabc9a2e9c1f5e95",
+    "crates/core/promisfactory/src/runtime.rs": "550173b09b233a8647a666ac1790aa15ec9a98fa36266caf63f01e4ca5251413",
+    "crates/core/promisfactory/src/precompile.rs": "c00be2397b3de10dc06bcbdbe247bc02427bbf739f9d40fab04c30194fa29b4a",
+    "crates/blockchain/evm/src/precompile_routes.rs": "61fa5bc2d5d2e6f7806d313d07a357ae9ed737d56ca609cae0f383b998954c61",
+    "scripts/seed_genesis.py": "a137c1c3503b31a568bd0cfafd2646ff708e17d6c0b4a8d8cce8c73078c80822",
+    "release/testnet-genesis.json": "84eb053a54aa9ba3ff7f90d69158b0ea4f4e81052d6548df16d4d22f1f510d11",
+    "crates/blockchain/node/tests/assets/genesis.json": "9ec1d410a7f12bd6d9353d50693d3e39f73260281bb4f79e48100c333de2fba0"
+  },
+  "additional_source_limits": "Evidence includes direct parent reads and named reviewers source reads. Hashing a file is not a full audit; genesis/import read scope remains the C addendum scope.",
+  "new_crypto_benchmarks": false,
+  "new_production_changes": false,
+  "full_wallet_ram_confirmed": false,
+  "billion_record_runtime_confirmed": false,
+  "artifacts": {
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/INPUT_MANIFEST.json": "707a4413ad0c5c425fe7ac2ad31023058616bdf498550ef1b49d8aca4399161c",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/BASELINE_VALIDATION.json": "9ea9e13b1832bd54a741d1e16dfbeb71dc5fd224af382d0145c80573b6f01658",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/REVIEW_A.md": "461a5af20eb2d2fcb15fdbce9115b6ab86aa327e0ad8ebe93ccb5e3187e6dc14",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/REVIEW_B.md": "ba0617046222f3a5e2c698b14f6f4eb50e91c92090804380f0bfe9bc23a86e00",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/REVIEW_C.md": "b2d137bdf06da5b8dc5a56ac96c5ba064bf7ebd2a16f0a2c55436ff64cd9994b",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/REVIEW_C_ADDENDUM.md": "cc3a29e40c05999ce14f886aab1c78b17eb588f9e26c9b02338c35ccb6ce7224",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/SYNTHESIS.md": "3946c21e8e21c15e20fc6e50c251fb5a6d8ea454c9058c4b99c62c21ed823f58",
+    "testing/lysis-privacy-prototype/independent-review-2026-09-11/README.md": "4698a4897e9df8b1805e5a92b2da1ae0a0045eab7055045d518b46bf83f08ffe"
+  },
+  "graph_evidence": "MCP graph unavailable; exact-source fallback, no graph generation/coverage claim",
+  "artifact_validation": {
+    "local_links_checked": 37,
+    "missing_links": [],
+    "bad_markdown_anchors": [],
+    "footnotes_ok": true,
+    "whitespace_ok": true,
+    "initial_C_hash_preserved": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "tests_executed": 6,
+  "rust_library_integration_tests": 3,
+  "rust_binary_regression_tests": 3,
+  "status": "PASS",
+  "command": "cargo test --offline --locked --release --manifest-path testing/lysis-privacy-prototype/poc/variant2/Cargo.toml -- --test-threads=1",
+  "full_lifecycle_distinct_offers": 256,
+  "su": 32,
+  "same_witness_comparisons": 11,
+  "baseline_33_sources_unchanged": true,
+  "runtime_42_sources_match_completed_snapshot": true,
+  "test_sources_sha256": {
+    "testing/lysis-privacy-prototype/poc/variant2/tests/crypto.rs": "ee40a17d0da9ec4aa2e26491416fea56081fcb4a4981b514a2cbdfeabb285fd7"
+  },
+  "independent_review": "bounded source review; three P1 repaired and rechecked; not an external security audit",
+  "proof_model": "passive honest-majority committee; experimental cross-curve Sigma composition; single-party test Groth16 setup",
+  "public_withdraw_sample_reverified": true
+}

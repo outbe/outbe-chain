@@ -28,7 +28,7 @@ recipient -> mint(payoutRecipient, statement, proof)
 ```
 
 Write calls are signed EVM transactions to `EMIT_ADDRESS`; only `burn` carries
-value — every other selector refuses credited value.
+value - every other selector refuses credited value.
 
 ```bash
 EMIT_ADDR=0x000000000000000000000000000000000000EE13
@@ -47,18 +47,18 @@ cast send "$EMIT_ADDR" \
 
 Methods:
 
-- `burn(bytes32 noteSn) external payable` — derives the commitment from the
+- `burn(bytes32 noteSn) external payable` - derives the commitment from the
   runtime chain ID, `noteSn`, and `msg.value`; initializes the tree on the
   first call.
 - `mint(address payoutRecipient, bytes32 root, bytes32 nullifier, address noteOwner,
-  uint256 mintUnits, bytes32 changeCommitment, bytes proof) external` — proves
+  uint256 mintUnits, bytes32 changeCommitment, bytes proof) external` - proves
   membership under an accepted root, nullifies, credits `mintUnits`, and
   appends the deterministic change commitment on partial mints.
-- `currentRoot() external view returns (bytes32)` — returns the latest tree root.
-- `leafCount() external view returns (uint64)` — returns the appended leaf count.
-- `isSpent(bytes32 nullifier) external view returns (bool)` — reports whether a
+- `currentRoot() external view returns (bytes32)` - returns the latest tree root.
+- `leafCount() external view returns (uint64)` - returns the appended leaf count.
+- `isSpent(bytes32 nullifier) external view returns (bool)` - reports whether a
   nullifier was spent.
-- `hasCommitment(bytes32 commitment) external view returns (bool)` — reports
+- `hasCommitment(bytes32 commitment) external view returns (bool)` - reports
   tree membership.
 
 Rules:
@@ -84,7 +84,7 @@ fatal block aborts, not reverts.
 
 Limits:
 
-- Tree depth 32 → 4,294,967,296 commitments (bounded to 4,294,967,295 by the u32 leaf counter).
+- Tree depth 32 -> 4,294,967,296 commitments (bounded to 4,294,967,295 by the u32 leaf counter).
 - Root window 32.
 - Base gas burn 530,000, mint 3,517,500 (`ZK_VERIFY_GAS` 3,000,000 +
   517,500), views 30,000.
@@ -107,7 +107,7 @@ diagram vocabulary to the implemented ABI surface.
 ```text
 Diagram term                              Implemented precompile surface
 Ledger                                    Emit precompile at EMIT_ADDRESS (0x000000000000000000000000000000000000EE13)
-burn(caller, native_value, note_sn)       burn(bytes32 noteSn), payable — value is msg.value
+burn(caller, native_value, note_sn)       burn(bytes32 noteSn), payable - value is msg.value
 BurnReceipt(C, note_amount, leaf_index,
 root_after)                               NewNote(commitment, leafIndex, rootAfter, noteAmount) event
 mint(caller, payout_recipient, statement,
@@ -254,7 +254,7 @@ unimplemented.
 
 ## Spend-key requirements
 
-The precompile treats `note_spend_key` as an opaque private value — `burn`
+The precompile treats `note_spend_key` as an opaque private value - `burn`
 never receives it; only the mint circuit sees it, as a private witness.
 
 ```text
@@ -263,7 +263,7 @@ N        = P(TAG_NULLIFIER, [note_commitment, note_spend_key])
 K_change = P(TAG_CHANGE_KEY, [note_spend_key, N])
 ```
 
-- **One-time use — fresh key per note.** The nullifier `N` binds the full
+- **One-time use - fresh key per note.** The nullifier `N` binds the full
   note commitment (chain, serial, and amount), so notes are nullified
   independently: reusing one owner/key pair across notes with different
   amounts creates distinct commitments with distinct nullifiers, each
@@ -272,7 +272,7 @@ K_change = P(TAG_CHANGE_KEY, [note_spend_key, N])
   fresh initial key for every note (an equal-amount burn is otherwise
   indistinguishable from a duplicate).
 - **Secrecy in transfer.** Anyone holding `note_spend_key` can construct the
-  mint witness and trace deterministic change successors — privacy destroyed,
+  mint witness and trace deterministic change successors - privacy destroyed,
   griefing enabled. Runtime `caller == noteOwner` still prevents a different
   account from minting. The off-chain note-package channel must protect the
   key.
@@ -288,12 +288,12 @@ Status: proposal, not implemented. No KYC profile changes the mint circuit or
 the precompile API; the core accepts any opaque `note_spend_key`.
 
 Construction (wallet-side; the purple blocks in scenario 1):
-`note_spend_key = (recipient, amount).build_kyc_spend_key(random)` — the
+`note_spend_key = (recipient, amount).build_kyc_spend_key(random)` - the
 proposed profile signs a pool/recipient/amount/random context
 (`m_kyc(owner_B, amount, rho)`, `spend_key = Sign(KYC_secret, m_kyc)`) and
 derives the spend key from the canonical signature.
 
-**Requirement — signed and off-chain verifiable.** Before accepting a note,
+**Requirement - signed and off-chain verifiable.** Before accepting a note,
 the recipient fetches the issuer credential (`pk_Alice` + status) from the KYC
 authority, recomputes `m_key(owner, amount, rho)`, and verifies the signature
 against the issuer public key. All verification happens off-chain; the
@@ -302,7 +302,7 @@ precompile never sees or checks KYC data.
 **Open linkage questions** (summary mirror of the onepager): the current
 design leaves change notes KYC-linkable, and a recipient who learns the note
 index can locate the initial burn transaction and reveal the sender's
-address. The onepager sketches three alternatives — external linkage,
+address. The onepager sketches three alternatives - external linkage,
 change-as-private-transfer (loses KYC linkage for change), and full private
 transfer. The choice is open; none is implemented.
 

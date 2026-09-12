@@ -1,0 +1,56 @@
+P_link: synthesizing complete draft/economics/P384 circuit
+P_link: satisfied; 5600598 constraints, 40 public inputs; 47455.4 ms
+P_link: local circuit-specific Groth16 setup (research only)
+P_link: setup finished in 137142.1 ms
+P_link: proof generated in 130622.9 ms
+P_link: valid proof verified; 14 public/proof substitutions rejected
+Constraint trace requires enabling `ConstraintLayer`
+Constraint trace requires enabling `ConstraintLayer`
+{
+  "constraints": 5600598,
+  "fixture_source_markers": 2,
+  "kind": "P_link Groth16 BN254 with canonical draft hash, exact integer nominal and P384 commitment",
+  "max_source_markers": 4,
+  "negative_checks_passed": [
+    "L2 draft hash",
+    "L2 derived owner",
+    "L2 binding hash",
+    "L2 root context",
+    "L1 sender",
+    "chain",
+    "day",
+    "currency",
+    "reference currency",
+    "exclusion flag",
+    "oracle price",
+    "source marker",
+    "nominal commitment",
+    "proof point",
+    "wrong arithmetic with matching new commitment (R1CS)",
+    "different private draft with matching economics (R1CS)"
+  ],
+  "nominal_commitment_sec1_bytes": 49,
+  "not_implemented": [
+    "L2 FullProof verification inside this executable",
+    "network admission/receipts/consensus",
+    "production setup/VK registration",
+    "private PayNote/Fidelity and exact claim",
+    "wallet witness delivery from L2"
+  ],
+  "pk_compressed_bytes": 1160681200,
+  "prepare_vk_ms": 1.0778750000000001,
+  "proof_compressed_bytes": 128,
+  "prove_ms_one_sample": 130622.85841600002,
+  "public_field_payload_bytes": 1280,
+  "public_inputs": 40,
+  "public_inputs_serialized_bytes": 1288,
+  "randomness": "OsRng for Groth16 setup and proof; fixed PUBLIC witness fixture in source",
+  "scope": "P_link only; no production code changed",
+  "setup_ms": 137142.051958,
+  "setup_security": "single-process research setup; no distributed ceremony; keys MUST NOT be deployed",
+  "source_hash_crosschecked": "pinned outbe-protocol v0.14.0 canonical Entity derive in cargo integration test",
+  "synthesis_and_satisfaction_ms": 47455.381167,
+  "verify_ms_median_of_5_after_warmup": 0.962375,
+  "vk_compressed_bytes": 1544,
+  "witness_variables": 5576493
+}

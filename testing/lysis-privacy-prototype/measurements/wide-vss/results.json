@@ -1,0 +1,120 @@
+{
+  "blinding_generator_sec1_hex": "0338678c78c59cf7b985c6cf9c2980028848e48c90a6e47399ac4b488350fd9cdd319a8526d7871792072fa67827813f23",
+  "curve": "NIST P-384",
+  "fixed_seed_fixture_only": true,
+  "hash_to_curve_dst": "OUTBE-RESEARCH-VSS-v1-P384_XMD:SHA-384_SSWU_RO_",
+  "integer_capacity": {
+    "billion_times_uint256_max_exact": true,
+    "max_uint256_roundtrip": true,
+    "q_exceeds_worst_sum": true,
+    "uint256_total_policy_would_reject_worst_sum": true,
+    "worst_sum_bits": 286
+  },
+  "kind": "wide_field_vss_component_only_no_admission_zk_or_network",
+  "library": "RustCrypto p384 0.13.1",
+  "not_implemented": [
+    "source/range proof for P384 commitment",
+    "Ristretto to P384 equality bridge",
+    "authentication/signatures or network receipts",
+    "consensus agreement on admitted input root",
+    "malicious-network DKG/reshare liveness",
+    "proactive erasure",
+    "late-grouping data transfer",
+    "private PayNote/Fidelity",
+    "exact-claim proof on this group"
+  ],
+  "profiles": [
+    {
+      "all_recipient_private_bytes": 1536,
+      "assumed_max_byzantine_f": 5,
+      "compressed_commitment_bytes": 49,
+      "deal_generation_all_recipients_median_ms": 3.193333,
+      "extra_coefficients_excluding_existing_nominal_commitment_bytes": 245,
+      "handoff": {
+        "all_old_dealers_all_new_recipients_sequential_ms": 80.777667,
+        "old_epoch_share_rejected": true,
+        "private_share_bytes": 9216,
+        "public_coefficient_bytes": 1764
+      },
+      "n": 16,
+      "negative_checks_passed": [
+        "bad share",
+        "wrong expected context",
+        "duplicate index",
+        "insufficient contributions",
+        "wrong sum"
+      ],
+      "one_aggregate_private_state_per_member_bytes": 96,
+      "open_including_each_contribution_verification_median_ms": 4.3895,
+      "opening_raw_share_pairs_bytes": 576,
+      "own_share_acknowledgments_needed_without_repair": 11,
+      "private_share_pair_bytes": 96,
+      "public_coefficients_bytes": 294,
+      "retained_samples": 4,
+      "scalar_bytes": 48,
+      "threshold": 6,
+      "verify_one_recipient_median_ms": 0.579125
+    },
+    {
+      "all_recipient_private_bytes": 1536,
+      "assumed_max_byzantine_f": 5,
+      "compressed_commitment_bytes": 49,
+      "deal_generation_all_recipients_median_ms": 5.758354499999999,
+      "extra_coefficients_excluding_existing_nominal_commitment_bytes": 490,
+      "handoff": {
+        "all_old_dealers_all_new_recipients_sequential_ms": 180.23920800000002,
+        "old_epoch_share_rejected": true,
+        "private_share_bytes": 16896,
+        "public_coefficient_bytes": 5929
+      },
+      "n": 16,
+      "negative_checks_passed": [
+        "bad share",
+        "wrong expected context",
+        "duplicate index",
+        "insufficient contributions",
+        "wrong sum"
+      ],
+      "one_aggregate_private_state_per_member_bytes": 96,
+      "open_including_each_contribution_verification_median_ms": 7.5425415000000005,
+      "opening_raw_share_pairs_bytes": 1056,
+      "own_share_acknowledgments_needed_without_repair": 16,
+      "private_share_pair_bytes": 96,
+      "public_coefficients_bytes": 539,
+      "retained_samples": 4,
+      "scalar_bytes": 48,
+      "threshold": 11,
+      "verify_one_recipient_median_ms": 0.5894584999999999
+    },
+    {
+      "all_recipient_private_bytes": 12288,
+      "assumed_max_byzantine_f": 42,
+      "compressed_commitment_bytes": 49,
+      "deal_generation_all_recipients_median_ms": 22.867708,
+      "extra_coefficients_excluding_existing_nominal_commitment_bytes": 2058,
+      "handoff": null,
+      "n": 128,
+      "negative_checks_passed": [
+        "bad share",
+        "wrong expected context",
+        "duplicate index",
+        "insufficient contributions",
+        "wrong sum"
+      ],
+      "one_aggregate_private_state_per_member_bytes": 96,
+      "open_including_each_contribution_verification_median_ms": 36.842396,
+      "opening_raw_share_pairs_bytes": 4128,
+      "own_share_acknowledgments_needed_without_repair": 85,
+      "private_share_pair_bytes": 96,
+      "public_coefficients_bytes": 2107,
+      "retained_samples": 4,
+      "scalar_bytes": 48,
+      "threshold": 43,
+      "verify_one_recipient_median_ms": 0.776312
+    }
+  ],
+  "public_numeric_aggregate": "one S, plus random aggregate blinding R; no limb totals",
+  "scalar_order_bits": 384,
+  "scalar_order_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
+  "single_process_holds_all_simulated_parties": true
+}

@@ -1,0 +1,44 @@
+{
+  "p_l2_tamper_cases": [
+    {
+      "test": "valid",
+      "exit_code": 0,
+      "expected_status": true
+    },
+    {
+      "test": "owner",
+      "exit_code": 1,
+      "expected_status": true
+    },
+    {
+      "test": "nft_hash",
+      "exit_code": 1,
+      "expected_status": true
+    },
+    {
+      "test": "binding",
+      "exit_code": 1,
+      "expected_status": true
+    },
+    {
+      "test": "root",
+      "exit_code": 1,
+      "expected_status": true
+    },
+    {
+      "test": "proof_body",
+      "exit_code": 1,
+      "expected_status": true
+    }
+  ],
+  "p_link_circuit_negative_and_boundary": {
+    "constraints": 100913,
+    "correct_source_and_u64_boundary": true,
+    "public_inputs": 58,
+    "source_capacity": 32,
+    "wrong_blinder_rejected": true,
+    "wrong_nominal_same_commit_rejected": true,
+    "wrong_source_same_economics_rejected": true
+  },
+  "scope": "actual source verifier for PI/proof mutations; R1CS satisfaction check for private source/economics mutations; separate from measured timed batches"
+}

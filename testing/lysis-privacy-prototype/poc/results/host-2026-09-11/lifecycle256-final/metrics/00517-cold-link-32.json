@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/target/release/outbe-private-lifecycle-poc",
+    "prove",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/parameters/native32",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/runs/lifecycle256-final/private/wallet-0/wallet.private.json",
+    "/Users/sakor/outbe-io/outbe-chain/testing/lysis-privacy-prototype/poc/runs/lifecycle256-final/public/cold-link"
+  ],
+  "exit_code": 0,
+  "ram_limit_bytes": 512000000,
+  "peak_rss_bytes": 388169728,
+  "sampled_peak_rss_bytes": 376995840,
+  "killed_on_sampled_limit": false,
+  "sampler_available": true,
+  "within_ram_limit": true,
+  "wall_seconds": 4.0581274590222165,
+  "rayon_num_threads": null,
+  "measurement": "fresh native child process, including PK loading; getrusage high-water mark (includes small ps sampler children); no browser/WASM test"
+}
