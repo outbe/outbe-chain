@@ -181,8 +181,13 @@ fn stopped_header_command(
         fs::symlink_metadata(genesis)?.is_file(),
         "canonical header genesis is not a regular file"
     );
-    let mut command = Command::new(binary);
+    // The DB subcommand does not raise the node's file-descriptor limit itself.
+    // Set only this reader child's soft limit so RocksDB can open its files
+    // without a performance warning; preserve the hard limit and strict parser.
+    let mut command = Command::new("prlimit");
     command
+        .args(["--nofile=131072:", "--"])
+        .arg(binary)
         .arg("db")
         .arg("--datadir")
         .arg(data)
@@ -863,7 +868,7 @@ mod tests {
         assert!(!data.join("rocksdb/CURRENT").exists());
         std::fs::write(data.join("rocksdb/CURRENT"), "MANIFEST-000001\n").unwrap();
         let command = super::stopped_header_command(binary, &data, &genesis, 42).unwrap();
-        assert_eq!(command.get_program(), binary);
+        assert_eq!(command.get_program(), "prlimit");
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -871,6 +876,9 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "--nofile=131072:".to_owned(),
+                "--".into(),
+                binary.display().to_string(),
                 "db".to_owned(),
                 "--datadir".into(),
                 data.display().to_string(),
@@ -889,6 +897,49 @@ mod tests {
         std::fs::remove_file(data.join("rocksdb/CURRENT")).unwrap();
         std::os::unix::fs::symlink(&genesis, data.join("rocksdb/CURRENT")).unwrap();
         assert!(super::stopped_header_command(binary, &data, &genesis, 42).is_err());
+    }
+
+    #[test]
+    fn stopped_header_reader_sets_only_its_own_soft_descriptor_limit() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("data");
+        let genesis = directory.path().join("genesis.json");
+        let binary = directory.path().join("reader");
+        for relative in ["db", "static_files", "rocksdb"] {
+            std::fs::create_dir_all(data.join(relative)).unwrap();
+        }
+        std::fs::write(data.join("rocksdb/CURRENT"), "MANIFEST-000001\n").unwrap();
+        std::fs::write(&genesis, "{}").unwrap();
+        std::fs::write(&binary, "#!/bin/sh\nulimit -Sn\nulimit -Hn\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let parent_limits = || {
+            Command::new("sh")
+                .args(["-c", "ulimit -Sn; ulimit -Hn"])
+                .output()
+                .unwrap()
+                .stdout
+        };
+        let before = parent_limits();
+        let output = super::stopped_header_command(&binary, &data, &genesis, 42)
+            .unwrap()
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        assert_eq!(
+            parent_limits(),
+            before,
+            "reader changed the parent's limits"
+        );
+        let before = String::from_utf8(before).unwrap();
+        let after = String::from_utf8(output.stdout).unwrap();
+        let before = before.lines().collect::<Vec<_>>();
+        let after = after.lines().collect::<Vec<_>>();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[1], before[1], "reader changed the hard limit");
+        assert_eq!(after[0].parse::<u64>().unwrap(), 131_072);
     }
 
     #[test]
