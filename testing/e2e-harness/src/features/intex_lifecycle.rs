@@ -279,9 +279,26 @@ fn holder_holds_issued_units(world: &mut World) {
                 Instant::now() < deadline,
                 "series {series} never reached the target chain; the relay carried nothing"
             );
+            // The committee runs on a logical clock days ahead of real time, and the
+            // issuance carries its stamps: the target rejects them as its own future
+            // until its clock is carried over, and the relay retries in silence.
+            carry_target_clock(world);
             sleep(Duration::from_secs(2));
         }
     }
+}
+
+/// Carry the committee's logical clock over to the target chain. Nothing on a
+/// localnet plays the operator who keeps a second chain in step, and a stamp that
+/// sits in the target's future is refused rather than queued.
+fn carry_target_clock(world: &World) {
+    let Some(now) = world
+        .rpc
+        .latest_block_timestamp(world.validators.primary_port())
+    else {
+        return;
+    };
+    let _ = world.target_chain.sync_clock_to(now);
 }
 
 #[when("the reference rate stands above the series floor")]
