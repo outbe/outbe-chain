@@ -813,11 +813,11 @@ fn discharge_cost(
 ) -> Result<()> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // Notes are bearer: anyone can relay a proof, so bind its spender to the settler.
-    if claim.spender != settler {
-        return Err(IntexFactoryError::PayNoteSpenderMismatch {
+    // Notes are bearer: anyone can relay a proof, so bind its owner to the settler.
+    if claim.owner != settler {
+        return Err(IntexFactoryError::PayNoteOwnerMismatch {
             expected: settler,
-            actual: claim.spender,
+            actual: claim.owner,
         }
         .into());
     }

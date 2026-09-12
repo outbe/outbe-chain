@@ -109,7 +109,7 @@ fn generate_zk_offer_fixture(
         let binding =
             OutbeV1::binding(&l1_owner.into_array(), tribute_draft_id.as_ref(), chain_id).unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+        let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
             .unwrap()
             .empty_inclusion_path(0);
         let (witness, public) = draft
@@ -451,7 +451,9 @@ fn offer_rejected_supply_zero(world: &mut World) {
 mod tests {
     use super::*;
     use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::full_proof::decode_public_inputs as decode_full_proof_public_inputs;
+    use outbe_zk_canonical::full_proof::{
+        alloy::PublicInputs, decode_public_inputs as decode_full_proof_public_inputs,
+    };
 
     #[test]
     #[ignore = "generates and verifies a real Barretenberg FullProof"]
@@ -465,7 +467,10 @@ mod tests {
         )
         .expect("fixture proof is hex");
 
-        let public = decode_full_proof_public_inputs(&proof).expect("public inputs decode");
+        let public: PublicInputs = decode_full_proof_public_inputs(&proof)
+            .expect("public inputs decode")
+            .try_into()
+            .expect("Alloy public inputs");
         assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, fixture.merkle_root);
         let donor = generate_zk_offer_fixture(Address::repeat_byte(0x44), 19_280_502, 20_260_729);

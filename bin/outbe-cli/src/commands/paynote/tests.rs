@@ -25,7 +25,7 @@ fn event(note: &Note, index: u32, root: Field, amount: U256) -> Value {
     let log = IPayNote::NewNote {
         commitment: note.commitment,
         leafIndex: index,
-        rootAfter: word(root),
+        rootAfter: PayNoteSuit::field_to_b256(&root).unwrap(),
         asset: note.asset,
         noteAmount: amount,
     }
@@ -108,7 +108,7 @@ fn deposit_data(note: &Note) -> Vec<u8> {
     IPayNote::depositCall {
         asset: note.asset,
         amount: note.amount,
-        noteSn: word(note_sn(note.key().unwrap()).unwrap()),
+        noteSn: PayNoteSuit::field_to_b256(&note_sn(note.key().unwrap()).unwrap()).unwrap(),
     }
     .abi_encode()
 }
@@ -131,7 +131,7 @@ fn command_inputs_and_note_validation() {
         "spend-proof",
         "note.json",
         "1",
-        "--spender",
+        "--owner",
         &asset
     ])
     .is_ok());
@@ -148,12 +148,12 @@ fn command_inputs_and_note_validation() {
         assert!(parse_amount(invalid).is_err(), "{invalid}");
     }
     assert_eq!(
-        resolve_spender(None, Some(KEY)).unwrap(),
+        resolve_owner(None, Some(KEY)).unwrap(),
         TxSigner::new(KEY).unwrap().address()
     );
-    assert_eq!(resolve_spender(Some(ASSET), None).unwrap(), ASSET);
-    assert!(resolve_spender(None, None).is_err());
-    assert!(resolve_spender(Some(Address::ZERO), Some(KEY)).is_err());
+    assert_eq!(resolve_owner(Some(ASSET), None).unwrap(), ASSET);
+    assert!(resolve_owner(None, None).is_err());
+    assert!(resolve_owner(Some(Address::ZERO), Some(KEY)).is_err());
     let mut n = note();
     assert!(n.change(U256::ZERO).is_err());
     assert!(n.change(n.amount + U256::ONE).is_err());
@@ -216,8 +216,8 @@ fn note_files_are_private_immutable_and_roundtrip_full_u256() {
 #[tokio::test]
 async fn deposit_approves_only_when_needed_and_preserves_note_on_failure() {
     let n = note();
-    let mut tree = Tree::new(CHAIN).unwrap();
-    tree.append(field(n.commitment).unwrap()).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
     for initial in [U256::ZERO, U256::ONE, n.amount] {
         let mut calls = vec![allowance_call(initial)];
         if initial < n.amount {
@@ -319,7 +319,7 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
         .contains("pending"));
 }
 
-fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
+fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
     MockRpc {
         chain_id: Ok(CHAIN),
         block_number: Ok(10),
@@ -331,7 +331,7 @@ fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-                word(tree.root()).to_vec(),
+                PayNoteSuit::field_to_b256(&tree.root()).unwrap().to_vec(),
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -349,8 +349,8 @@ fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
 #[tokio::test]
 async fn tree_history_requires_dense_indexes_and_matching_roots() {
     let n = note();
-    let mut tree = Tree::new(CHAIN).unwrap();
-    tree.append(field(n.commitment).unwrap()).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
     let valid = event(&n, 0, tree.root(), n.amount);
     assert_eq!(
         read_tree(&tree_rpc(&tree, vec![valid.clone()]), CHAIN)
@@ -421,8 +421,8 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
     let temp = tempfile::tempdir().unwrap();
     let path = save_note(temp.path(), &n).unwrap();
     let before = fs::read(&path).unwrap();
-    let mut tree = Tree::new(CHAIN).unwrap();
-    tree.append(field(n.commitment).unwrap()).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
     let mut rpc = tree_rpc(&tree, vec![event(&n, 0, tree.root(), n.amount)]);
     rpc.eth_call_map = Some(call_map(HashMap::from([
         (
@@ -431,7 +431,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-            word(tree.root()).to_vec(),
+            PayNoteSuit::field_to_b256(&tree.root()).unwrap().to_vec(),
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -453,10 +453,10 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
 #[tokio::test]
 async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let n = note();
-    let spender = TxSigner::new(KEY).unwrap().address();
+    let owner = TxSigner::new(KEY).unwrap().address();
     let temp = tempfile::tempdir().unwrap();
-    let mut tree = Tree::new(CHAIN).unwrap();
-    tree.append(field(n.commitment).unwrap()).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
     let origin_log = event(&n, 0, tree.root(), n.amount);
     let mut calls = vec![allowance_call(n.amount)];
     calls.extend(tx_calls(
@@ -476,14 +476,15 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         temp.path(),
         &saved,
         amount,
-        spender,
+        owner,
     )
     .await
     .unwrap();
     let combined = hex::decode(output["proof"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     let change = load_note(Path::new(output["change_note"].as_str().unwrap())).unwrap();
+    assert_eq!(output["owner"], json!(owner));
     assert_eq!(change.amount, n.amount - amount);
-    assert!(tree.witness(field(change.commitment).unwrap()).is_err());
+    assert!(witness(&tree, change.commitment.to_field().unwrap()).is_err());
     assert!(load_note(Path::new(deposited["note"].as_str().unwrap())).unwrap() == n);
     let artifact = fs::read_to_string(output["proof_file"].as_str().unwrap()).unwrap();
     assert!(!artifact.contains(&format!("{:#x}", change.spend_key)));
@@ -496,10 +497,10 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     provider.enter(|storage| {
         let claim = outbe_paynote::api::consume(&storage, &combined).unwrap();
         assert_eq!(claim.spend_amount, amount);
-        assert_eq!(claim.spender, spender);
+        assert_eq!(claim.owner, owner);
         assert!(outbe_paynote::api::is_spent(&storage, n.nullifier().unwrap()).unwrap());
     });
-    tree.append(field(change.commitment).unwrap()).unwrap();
+    tree.append(change.commitment.to_field().unwrap()).unwrap();
     let change_log = provider
         .get_ordered_events()
         .iter()
@@ -508,14 +509,14 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let change_log = json!({ "address": change_log.address, "topics": change_log.data.topics(), "data": change_log.data.data });
     assert_eq!(
         decode_note(&change_log).unwrap().rootAfter,
-        word(tree.root())
+        PayNoteSuit::field_to_b256(&tree.root()).unwrap()
     );
     let output = spend_proof(
         &tree_rpc(&tree, vec![origin_log, change_log]),
         temp.path(),
         &change,
         change.amount,
-        spender,
+        owner,
     )
     .await
     .unwrap();

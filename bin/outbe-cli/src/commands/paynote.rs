@@ -11,23 +11,23 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
+use outbe_paynote::Field;
 use outbe_paynote::{
-    client::Tree,
-    hash::{
-        address_field, change_key, field_from_be_bytes, field_to_be_bytes, note_commitment,
-        note_nullifier, note_sn, Field,
-    },
+    client::{new_tree, witness},
+    hash::{change_key, note_commitment, note_nullifier, note_sn},
     precompile::IPayNote,
+    PayNoteSuit, PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
 use outbe_protocol::{
-    protocol::zk::{Circuit, ProofGenerator},
-    OutbeV1,
+    codec::FieldElement,
+    protocol::zk::{Circuit, CircuitId, ProofGenerator},
+    Codec,
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
-use outbe_zk_canonical::{
-    noir::paynote::{Paynote, PublicInputs, Witness},
-    u256,
+use outbe_zk_canonical::noir::paynote::{
+    alloy::{PublicInputs, Witness},
+    Paynote,
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 ///
 ///   Generate a proof for an explicit recipient without a signing key:
 ///   outbe-cli --rpc-url http://localhost:8545 \
-///     paynote spend-proof 0xCOMMITMENT 600000 --spender "$RECIPIENT_ADDRESS"
+///     paynote spend-proof 0xCOMMITMENT 600000 --owner "$RECIPIENT_ADDRESS"
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
@@ -75,9 +75,9 @@ pub enum PaynoteCmd {
         paynote: String,
         #[arg(value_parser = parse_amount)]
         amount: U256,
-        /// Proof recipient; defaults to the global --private-key address.
+        /// Proof owner (recipient); defaults to the global --private-key address.
         #[arg(long)]
-        spender: Option<Address>,
+        owner: Option<Address>,
     },
 }
 
@@ -93,11 +93,11 @@ impl PaynoteCmd {
             Self::SpendProof {
                 paynote,
                 amount,
-                spender,
+                owner,
             } => {
-                let spender = resolve_spender(spender, private_key)?;
+                let owner = resolve_owner(owner, private_key)?;
                 let note = load_note(&resolve_note(dir, &paynote))?;
-                spend_proof(client, dir, &note, amount, spender).await?
+                spend_proof(client, dir, &note, amount, owner).await?
             }
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -105,12 +105,12 @@ impl PaynoteCmd {
     }
 }
 
-fn resolve_spender(spender: Option<Address>, private_key: Option<&str>) -> Result<Address> {
-    let address = match spender {
+fn resolve_owner(owner: Option<Address>, private_key: Option<&str>) -> Result<Address> {
+    let address = match owner {
         Some(address) => address,
         None => require_signer(private_key)?.address(),
     };
-    ensure!(!address.is_zero(), "spender must be non-zero");
+    ensure!(!address.is_zero(), "owner must be non-zero");
     Ok(address)
 }
 
@@ -150,7 +150,8 @@ impl Note {
         ensure!(key != Field::from(0), "spend key must be non-zero");
         let serial = note_sn(key)?;
         ensure!(serial != Field::from(0), "note serial must be non-zero");
-        let commitment = word(note_commitment(chain_id, serial, asset.into(), amount)?);
+        let commitment =
+            PayNoteSuit::field_to_b256(&note_commitment(chain_id, serial, asset, amount)?)?;
         ensure!(commitment != B256::ZERO, "commitment must be non-zero");
         Ok(Self {
             version: 1,
@@ -158,7 +159,7 @@ impl Note {
             pool: PAYNOTE_ADDRESS,
             asset,
             amount,
-            spend_key: word(key),
+            spend_key: PayNoteSuit::field_to_b256(&key)?,
             commitment,
         })
     }
@@ -170,7 +171,7 @@ impl Note {
             rng.fill(bytes.as_mut())
                 .map_err(|_| eyre::eyre!("spend-key randomness unavailable"))?;
             // Rejection sampling avoids reducing random words modulo the field.
-            if let Some(key) = field_from_be_bytes(&bytes) {
+            if let Ok(key) = B256::from(*bytes).to_field() {
                 if key != Field::from(0) {
                     return Self::new(chain_id, asset, amount, key);
                 }
@@ -192,10 +193,14 @@ impl Note {
     }
 
     fn key(&self) -> Result<Field> {
-        field(self.spend_key)
+        Ok(self.spend_key.to_field()?)
     }
+
     fn nullifier(&self) -> Result<B256> {
-        Ok(word(note_nullifier(field(self.commitment)?, self.key()?)?))
+        Ok(PayNoteSuit::field_to_b256(&note_nullifier(
+            self.commitment.to_field()?,
+            self.key()?,
+        )?)?)
     }
 
     fn change(&self, amount: U256) -> Result<Option<Self>> {
@@ -211,16 +216,9 @@ impl Note {
             self.chain_id,
             self.asset,
             remaining,
-            change_key(self.key()?, field(self.nullifier()?)?)?,
+            change_key(self.key()?, self.nullifier()?.to_field()?)?,
         )?))
     }
-}
-
-fn word(value: Field) -> B256 {
-    B256::new(field_to_be_bytes(value))
-}
-fn field(value: B256) -> Result<Field> {
-    field_from_be_bytes(&value.0).ok_or_else(|| eyre::eyre!("noncanonical BN254 field"))
 }
 
 fn resolve_note(dir: &Path, argument: &str) -> PathBuf {
@@ -406,7 +404,7 @@ async fn deposit(
             IPayNote::depositCall {
                 asset: note.asset,
                 amount: note.amount,
-                noteSn: word(note_sn(note.key()?)?),
+                noteSn: PayNoteSuit::field_to_b256(&note_sn(note.key()?)?)?,
             }
             .abi_encode(),
         )
@@ -472,15 +470,15 @@ fn decode_note(log: &Value) -> Result<IPayNote::NewNote> {
         event.commitment != B256::ZERO && !event.asset.is_zero(),
         "invalid NewNote commitment or asset"
     );
-    field(event.commitment)?;
-    field(event.rootAfter)?;
+    let _: Field = event.commitment.to_field()?;
+    let _: Field = event.rootAfter.to_field()?;
     Ok(event)
 }
 
-async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
+async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
     let head = client.eth_block_number().await?;
     let tag = format!("0x{head:x}");
-    let mut tree = Tree::new(chain_id)?;
+    let mut tree = new_tree(chain_id)?;
     let mut from = 0u64;
     // ponytail: scan all history, O(leaves) memory; cache the tree when pool size warrants it.
     loop {
@@ -500,9 +498,9 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
                 usize::try_from(event.leafIndex)? == tree.leaves().len(),
                 "NewNote history has duplicate or missing leaf indexes"
             );
-            tree.append(field(event.commitment)?)?;
+            tree.append(event.commitment.to_field()?)?;
             ensure!(
-                word(tree.root()) == event.rootAfter,
+                PayNoteSuit::field_to_b256(&tree.root())? == event.rootAfter,
                 "NewNote history root mismatch"
             );
         }
@@ -534,7 +532,8 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
             .await?,
     )?;
     ensure!(
-        count == u64::try_from(tree.leaves().len())? && root == word(tree.root()),
+        count == u64::try_from(tree.leaves().len())?
+            && root == PayNoteSuit::field_to_b256(&tree.root())?,
         "NewNote history does not match chain snapshot"
     );
     Ok(tree)
@@ -558,42 +557,43 @@ async fn check_unspent(client: &impl Rpc, note: &Note) -> Result<()> {
 fn prove(
     note: &Note,
     amount: U256,
-    spender: Address,
-    tree: &Tree,
+    owner: Address,
+    tree: &PayNoteTree,
 ) -> Result<(Vec<u8>, Option<Note>, PublicInputs)> {
     note.validate()?;
-    ensure!(!spender.is_zero(), "spender must be non-zero");
+    ensure!(!owner.is_zero(), "owner must be non-zero");
     let change = note.change(amount)?;
-    let (leaf_index, auth_path) = tree.witness(field(note.commitment)?)?;
+    let (leaf_index, auth_path) = witness(tree, note.commitment.to_field()?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
-        root: tree.root(),
-        nullifier: field(note.nullifier()?)?,
-        asset: address_field(note.asset.into()),
-        spender: address_field(spender.into()),
-        spend_amount: u256::to_limbs(amount),
-        change_commitment: change
-            .as_ref()
-            .map(|n| field(n.commitment))
-            .transpose()?
-            .unwrap_or(Field::from(0)),
+        root: PayNoteSuit::field_to_b256(&tree.root())?,
+        nullifier: note.nullifier()?,
+        asset: note.asset,
+        owner,
+        spend_amount: amount,
+        change_commitment: change.as_ref().map_or(B256::ZERO, |n| n.commitment),
     };
-    let witness = Witness {
-        note_amount: u256::to_limbs(note.amount),
-        note_spend_key: note.key()?,
+    let mut witness = Witness {
+        note_amount: note.amount,
+        note_spend_key: note.spend_key,
         leaf_index,
-        auth_path,
+        auth_path: auth_path.map(|_| B256::ZERO),
     };
-    let proof =
-        ProofGenerator::<OutbeV1, Paynote>::generate(&Barretenberg::default(), &witness, &public)
-            .map_err(|_| {
-            eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup")
-        })?;
-    let fields = <Paynote as Circuit<OutbeV1>>::public_inputs(&public);
+    for (word, field) in witness.auth_path.iter_mut().zip(auth_path) {
+        *word = PayNoteSuit::field_to_b256(&field)?;
+    }
+    let circuit_public = public.try_into()?;
+    let proof = ProofGenerator::<PayNoteSuit, Paynote>::generate(
+        &Barretenberg::default(),
+        &witness.try_into()?,
+        &circuit_public,
+    )
+    .map_err(|_| eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup"))?;
+    let fields = <Paynote as Circuit<PayNoteSuit>>::public_inputs(&circuit_public);
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
-        combined.extend_from_slice(&field_to_be_bytes(value));
+        combined.extend_from_slice(PayNoteSuit::field_to_b256(&value)?.as_slice());
     }
     for value in proof.proof {
         combined.extend_from_slice(&value);
@@ -610,25 +610,23 @@ async fn spend_proof(
     dir: &Path,
     note: &Note,
     amount: U256,
-    spender: Address,
+    owner: Address,
 ) -> Result<Value> {
     note.validate()?;
     ensure!(
         client.eth_chain_id().await? == note.chain_id,
         "note chain ID does not match RPC chain"
     );
-    ensure!(!spender.is_zero(), "spender must be non-zero");
+    ensure!(!owner.is_zero(), "owner must be non-zero");
     note.change(amount)?;
     check_unspent(client, note).await?;
     let tree = read_tree(client, note.chain_id).await?;
-    let (combined, change, public) = prove(note, amount, spender, &tree)?;
+    let (combined, change, public) = prove(note, amount, owner, &tree)?;
     ensure!(
         call(
             client,
             PAYNOTE_ADDRESS,
-            IPayNote::isKnownRootCall {
-                root: word(public.root)
-            }
+            IPayNote::isKnownRootCall { root: public.root }
         )
         .await?,
         "proof root expired during generation; rerun spend-proof"
@@ -639,10 +637,10 @@ async fn spend_proof(
         .as_ref()
         .map(|note| save_note(dir, note))
         .transpose()?;
-    let output = json!({ "version": 1, "circuit": "outbe.paynote@1.1.0", "proof": format!("0x{}", hex::encode(&combined)),
+    let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
-        "asset": note.asset, "spender": spender, "spend_amount": amount.to_string(),
-        "root": word(public.root), "nullifier": word(public.nullifier), "change_commitment": word(public.change_commitment) });
+        "asset": note.asset, "owner": owner, "spend_amount": amount.to_string(),
+        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
     let proof_path = save_json(
         &dir.join("proofs"),
         &format!("{:#x}.json", keccak256(&combined)),

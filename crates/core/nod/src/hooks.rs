@@ -1,12 +1,11 @@
-//! NOD price-qualifier block hook.
+//! Daily Nod qualification, call and forfeit hook.
 //!
-//! Mirrors the Cosmos reference (`x/nod/abci.go::EndBlocker` +
-//! `x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`): every
-//! block, read each reference currency's current COEN rate from the oracle and
-//! promote any unqualified bucket whose `floor_price_minor < rate`. The
+//! Each daily run reads each reference currency's COEN VWAP for the previous
+//! completed UTC day after the oracle has finalized it and
+//! promotes any unqualified bucket whose `floor_price_minor < rate`. The
 //! comparison is strict - a bucket priced exactly at the rate stays
 //! unqualified until the rate moves strictly above its floor.
-//! Qualification is a monotonic latch - once a bucket is qualified it stays
+//! Qualification is a monotonic latch - once a bucket is qualified, it stays
 //! that way, so `mine_gratis` only has to read the cached `is_qualified` bit.
 //!
 //! Implementation (PancakeSwap-Liquidity-Book bin index):
@@ -15,7 +14,7 @@
 //! - Unqualified buckets are stored in `unqualified_bin_count` /
 //!   `unqualified_bin_buckets`, and a 3-level radix-256 bitmap trie
 //!   (`bin_tree_root`/`bin_tree_mid`/`bin_tree_leaf`) marks non-empty bins.
-//! - Each block: walk set bins in ascending `bin_id` order via
+//! - Each run: walk set bins in ascending `bin_id` order via
 //!   `bin_tree::find_first_left_inclusive`. Bins strictly below `r_bin` hold
 //!   only floors `< rate` (any floor equal to the rate maps into `r_bin`), so
 //!   they drain wholesale; the tail bin (`bin_id == r_bin`) checks each
@@ -24,87 +23,72 @@
 //!
 //! Multi-currency: a floor is only comparable to the rate of its own
 //! `reference_currency`, so every bin column is namespaced by ISO code and
-//! each reference currency walks an independent trie. The block reads the
+//! each reference currency walks an independent trie. The daily run reads the
 //! oracle's whole reference-currency registry in order, prices each one, and
-//! shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget across them;
-//! each currency resumes from its own per-bin cursor next block. A currency
-//! whose COEN pair is unregistered, unpriced or stale is skipped for the block
-//! rather than halting it. Qualification is a one-way latch, so the rate that
-//! arms a bucket's call clock must be a live one: the read enforces the same
-//! `FX_RATE_MAX_AGE_SECONDS` bound Gem and Intex qualify under.
+//! shares a single `MAX_BUCKET_QUALIFICATIONS_PER_RUN` budget across them;
+//! each currency resumes from its own per-bin cursor next daily run. A currency
+//! whose COEN pair is unregistered or has no VWAP for that day is skipped.
+//! Qualification waits for finalization and never falls back to a live rate,
+//! an older day, or a WorldwideDay VWAP.
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::{
-    ExecutionScope, ParentBodySource, ParentBodySourceRef, WwdEntityId,
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_oracle::{
+    api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap},
+    schema::OracleContract,
 };
-use outbe_oracle::api::{fresh_coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
+    block::BlockRuntimeContext,
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
+    time::{previous_date_key, timestamp_to_date_key},
 };
 
 use crate::{
-    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, schema::NodContract, state::CurrencyBins,
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_RUN, schema::NodContract, state::CurrencyBins,
 };
 
-pub struct NodLifecycle;
-
-/// Explicit body authorities required by receipt-visible Nod qualification.
-pub struct NodLifecycleContext<'a, 'storage> {
-    pub runtime: BlockRuntimeContext<'storage>,
-    pub scope: &'a ExecutionScope,
-    parent: ParentBodySourceRef<'a>,
-}
-
-impl<'a, 'storage> NodLifecycleContext<'a, 'storage> {
-    #[must_use]
-    pub fn new(
-        runtime: BlockRuntimeContext<'storage>,
-        scope: &'a ExecutionScope,
-        parent: &'a dyn ParentBodySource,
-    ) -> Self {
-        Self {
-            runtime,
-            scope,
-            parent: ParentBodySourceRef::new(parent),
-        }
-    }
-}
-
-impl BlockLifecycle for NodLifecycle {
-    type Context<'a, 'storage> = NodLifecycleContext<'a, 'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
-        qualify_nods(&ctx.runtime, ctx.scope, &ctx.parent)
-    }
-
-    fn end_block(_ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {
-        Ok(())
-    }
+/// Daily cycle-trigger entry. Qualification arms buckets before the call scan.
+/// The Cycle dispatcher owns scheduling and the checkpoint for both scans.
+pub fn run_daily(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    qualify_nods(ctx, scope, parent)?;
+    crate::called::scan_and_call(ctx, scope, parent)?;
+    Ok(())
 }
 
 /// Qualifies Nod buckets using the same block scope and parent source as transactions.
 ///
 /// Reads every reference currency the oracle knows about and qualifies each
-/// one's buckets against its own COEN rate. An uninitialized registry does no
-/// work. A currency whose COEN pair is unregistered, carries no published rate
-/// or carries one older than `FX_RATE_MAX_AGE_SECONDS` is skipped for this
-/// block rather than halting it - the registry lists currencies independently
-/// of whether a pair has been priced yet, and a stale rate must not arm a
-/// latch that never reopens.
+/// one's buckets against its own previously completed UTC-day VWAP. Waits for
+/// Oracle finalization and skips currencies with no registered pair or daily
+/// price. An uninitialized registry does not work.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
+    let previous_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+    let oracle = OracleContract::new(ctx.storage.clone());
+    if oracle.utc_day_vwap_last_finalized.read()? < previous_day {
+        return Ok(());
+    }
+    let nod = NodContract::new(ctx.storage.clone());
+    let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_RUN;
     for iso_code in get_all_reference_currencies(ctx)? {
         if budget == 0 {
             break;
         }
-        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        if nod.bin_tree_root.read(&iso_code)?.is_zero() {
+            continue;
+        }
+        let Some(index) = coen_pair_index_opt(ctx.storage.clone(), iso_code)? else {
+            continue;
+        };
+        let Some(rate) = get_utc_day_vwap(ctx.storage.clone(), previous_day, index)? else {
             continue;
         };
         let inspected = qualify_buckets_with_rate(ctx, scope, parent, iso_code, rate, budget)?;
@@ -115,9 +99,9 @@ pub fn qualify_nods(
 
 /// Qualifies one reference currency's buckets, inspecting at most `budget`
 /// bucket bodies. Returns how many it inspected so the caller can share one
-/// per-block budget across currencies.
+/// per-run budget across currencies.
 ///
-/// Entry point used by the block executor and behavioral tests.
+/// Used by the daily qualifier and behavioral tests.
 pub fn qualify_buckets_with_rate(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -126,6 +110,9 @@ pub fn qualify_buckets_with_rate(
     rate: U256,
     budget: u32,
 ) -> Result<u32> {
+    if budget == 0 {
+        return Ok(0);
+    }
     let r_bin = NodContract::price_to_bin(rate)?;
     let mut nod = NodContract::new(ctx.storage.clone());
     let mut bin_cursor = 0_u32;
@@ -143,7 +130,8 @@ pub fn qualify_buckets_with_rate(
         };
         let scoped = NodContract::scoped(iso_code, next);
         let strict = next < r_bin;
-        let mut count = nod.unqualified_bin_count.read(&scoped)?;
+        let initial_count = nod.unqualified_bin_count.read(&scoped)?;
+        let mut count = initial_count;
         if count == 0 {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
@@ -151,7 +139,8 @@ pub fn qualify_buckets_with_rate(
                 )),
             );
         }
-        let mut index = nod.unqualified_bin_scan_cursor.read(&scoped)?;
+        let initial_cursor = nod.unqualified_bin_scan_cursor.read(&scoped)?;
+        let mut index = initial_cursor;
         if index >= count {
             index = 0;
         }
@@ -216,14 +205,17 @@ pub fn qualify_buckets_with_rate(
             inspected += 1;
         }
 
-        nod.unqualified_bin_count.write(&scoped, count)?;
+        if count != initial_count {
+            nod.unqualified_bin_count.write(&scoped, count)?;
+        }
+        let next_cursor = if index >= count { 0 } else { index };
+        if next_cursor != initial_cursor {
+            nod.unqualified_bin_scan_cursor
+                .write(&scoped, next_cursor)?;
+        }
         if count == 0 {
-            nod.unqualified_bin_scan_cursor.write(&scoped, 0)?;
             tree_math::remove(&CurrencyBins(&nod, iso_code), next)?;
-        } else if index >= count {
-            nod.unqualified_bin_scan_cursor.write(&scoped, 0)?;
-        } else {
-            nod.unqualified_bin_scan_cursor.write(&scoped, index)?;
+        } else if index < count {
             break;
         }
 

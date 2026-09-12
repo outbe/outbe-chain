@@ -65,7 +65,8 @@ use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOff
 use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
 use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::full_proof::{
-    decode_public_inputs as decode_full_proof_public_inputs, PublicInputs as FullProofPublicInputs,
+    alloy::PublicInputs as FullProofPublicInputs,
+    decode_public_inputs as decode_full_proof_public_inputs,
     COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
 };
 use outbe_zk_canonical::noir::full_proof::FullProof;
@@ -257,7 +258,7 @@ fn build_fixture() -> Fixture {
     let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
 
     let proof_started = Instant::now();
-    let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+    let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
         .unwrap()
         .empty_inclusion_path(0);
     let (witness, public) = draft
@@ -278,7 +279,11 @@ fn build_fixture() -> Fixture {
         generated_combined.extend_from_slice(&field);
     }
     assert_eq!(generated_combined.len(), FULL_PROOF_COMBINED_LEN);
-    let generated_public_inputs = decode_full_proof_public_inputs(&generated_combined).unwrap();
+    let generated_public_inputs: FullProofPublicInputs =
+        decode_full_proof_public_inputs(&generated_combined)
+            .unwrap()
+            .try_into()
+            .unwrap();
     assert!(verify_circuit::<FullProof>(&generated_combined).unwrap());
 
     assert_eq!(
@@ -286,7 +291,10 @@ fn build_fixture() -> Fixture {
         FULL_PROOF_COMBINED_LEN,
         "versioned benchmark proof has the wrong size"
     );
-    let public_inputs = decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1).unwrap();
+    let public_inputs: FullProofPublicInputs = decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1)
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert!(
         verify_circuit::<FullProof>(FIXED_FULL_PROOF_V1).unwrap(),
         "versioned benchmark proof no longer verifies"
@@ -302,7 +310,7 @@ fn build_fixture() -> Fixture {
     let signature = sign_message::<MinSig>(
         &l2_private_key,
         outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
-        &public_inputs.merkle_root,
+        public_inputs.merkle_root.as_slice(),
     )
     .encode()
     .to_vec();
@@ -337,7 +345,7 @@ fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
             Bytes::new()
         },
         zk_merkle_root: if zk {
-            Bytes::copy_from_slice(&fixture.public_inputs.merkle_root)
+            Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
         } else {
             Bytes::new()
         },
@@ -366,7 +374,7 @@ fn calldata(fixture: &Fixture, zk: bool) -> Vec<u8> {
         zkVerificationKey: Bytes::new(),
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: if zk {
-            Bytes::copy_from_slice(&fixture.public_inputs.merkle_root)
+            Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
         } else {
             Bytes::new()
         },
