@@ -469,7 +469,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
 }
 
 /// Measure the complete paid transaction, including intrinsic calldata gas,
-/// the fixed verifier charge and storage work. This is not a ZeroFee bypass:
+/// the calldata floor and storage work, without an extra verifier tariff.
+/// This is not a ZeroFee bypass:
 /// sponsorship policy is deliberately outside this execution-level test.
 #[test]
 fn measure_settle_gem_gas_with_real_paynote() {
@@ -478,7 +479,6 @@ fn measure_settle_gem_gas_with_real_paynote() {
     use outbe_gem::{GemAddParams, GemState};
     use outbe_gemfactory::precompile::IGemFactory;
     use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
-    use outbe_primitives::storage::gas::ZK_VERIFY_GAS;
     use reth_ethereum::evm::primitives::EvmEnv;
     use revm::context::{BlockEnv, CfgEnv, TxEnv};
     use revm::primitives::TxKind;
@@ -558,7 +558,10 @@ fn measure_settle_gem_gas_with_real_paynote() {
             .kind(TxKind::Call(GEM_FACTORY_ADDRESS))
             .gas_price(0)
             .data(calldata.clone())
-            .gas_limit(10_000_000)
+            // The real proof's Prague calldata floor alone exceeds 300k.
+            // Bound execution by the existing ZeroFee envelope without
+            // weakening transaction validation or claiming a 300k total.
+            .gas_limit(500_000)
             .build()
             .unwrap();
         tx.chain_id = Some(CHAIN_ID);
@@ -578,8 +581,14 @@ fn measure_settle_gem_gas_with_real_paynote() {
             "successful execution must emit GemSettled"
         );
         let used = outcome.result.tx_gas_used();
-        assert!(used > ZK_VERIFY_GAS && used < 10_000_000);
-        eprintln!("SETTLE_GEM_GAS sample={sample} total={used} fixed_zk={ZK_VERIFY_GAS} other={} calldata_bytes={} elapsed_us={}",
-            used - ZK_VERIFY_GAS, calldata.len(), elapsed.as_micros());
+        assert!(used <= 500_000);
+        if let revm::context::result::ExecutionResult::Success { gas, .. } = &outcome.result {
+            eprintln!("SETTLE_GEM_METER sample={sample} {gas:?}");
+        }
+        eprintln!(
+            "SETTLE_GEM_GAS sample={sample} total={used} calldata_bytes={} elapsed_us={}",
+            calldata.len(),
+            elapsed.as_micros()
+        );
     }
 }
