@@ -17,7 +17,7 @@ build_info = true
 extra_output = ['storageLayout']
 libs = ['node_modules']
 # @shared files import their own vendored deps by relative path, which land outside this project.
-allow_paths = ['../shared/src']
+allow_paths = ['../shared/src', '../crosschain/src']
 
 remappings = [
     # Contract imports from tests
