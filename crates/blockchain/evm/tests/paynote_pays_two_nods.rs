@@ -248,7 +248,7 @@ fn call(
             target,
             value: U256::ZERO,
             calldata,
-            // `mineGratis` charges `ZK_VERIFY_GAS` (3M) before it reads a byte
+            // `mineGratis` charges `ZK_VERIFY_GAS` (300k) before it reads a byte
             // of storage, so the limit has to clear that with room to spare.
             gas_limit: 20_000_000,
             is_static,

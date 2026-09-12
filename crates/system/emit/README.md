@@ -86,7 +86,7 @@ Limits:
 
 - Tree depth 32 → 4,294,967,296 commitments (bounded to 4,294,967,295 by the u32 leaf counter).
 - Root window 32.
-- Base gas burn 530,000, mint 3,517,500 (`ZK_VERIFY_GAS` 3,000,000 +
+- Base gas burn 530,000, mint 817,500 (`ZK_VERIFY_GAS` 300,000 +
   517,500), views 30,000.
 
 ## Interaction scenarios

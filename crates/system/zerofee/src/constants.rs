@@ -40,7 +40,7 @@ pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
 /// Maximum sponsored gas limit for calls to the TributeFactory.
 ///
 /// This matches the explicit transaction limit used by `outbe-cli tribute
-/// offer` and leaves headroom above the verifier's 3,000,000 base gas without
+/// offer` and leaves headroom above the verifier's 300,000 base gas without
 /// broadening the limit for every sponsored target.
 pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
 
