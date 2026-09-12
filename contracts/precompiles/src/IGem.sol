@@ -42,7 +42,7 @@ interface IGem {
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
 
     // --- Events (emitted by the Gem precompile) ---
-    /// @notice Issued gem promoted to Qualified by the begin-block scan.
+    /// @notice Issued gem promoted to Qualified by the daily qualification sweep.
     event GemQualified(uint256 indexed gemId, uint64 qualifiedAt);
     /// @notice Qualified gem force-called by the daily Call scan.
     event GemCalled(uint256 indexed gemId, uint64 calledAt);
@@ -51,4 +51,10 @@ interface IGem {
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+    /// @notice A reference currency was left out of one day's qualification because its
+    ///         day price could not be indexed. The next day's pass tries it again.
+    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 }

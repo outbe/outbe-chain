@@ -42,7 +42,7 @@ const CALL_THRESHOLD_DAYS: u32 = 2;
 const CALL_LOOKBACK_DAYS: u64 = 3;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
-/// The qualify scan runs in begin-block; a handful of blocks is plenty.
+/// The daily trigger that opens the qualify sweep comes round every minute in e2e.
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
@@ -274,10 +274,39 @@ fn gems_read_issued(world: &mut World) {
 
 #[when("the reference rate stands above the gem floor")]
 fn rate_above_gem_floor(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
     let floor = read_gem(&url, mined_gem(world)).floorPrice;
+
+    // A gem qualifies on a closed day it held in full, and these were issued minutes
+    // ago: stamp them behind the day about to be seeded.
+    let now = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee head timestamp");
+    for gem_id in [mined_gem(world), forfeited_gem(world)] {
+        eth::send_call(
+            &url,
+            addresses::GEM_ADDR,
+            DEPLOYER_KEY,
+            &IGemTestArming::backdateGemForTestCall {
+                gemId: gem_id,
+                issuedAt: now.saturating_sub(CALL_LOOKBACK_DAYS * 86_400),
+            },
+            None,
+        )
+        .expect("backdate the gem's issuance stamp");
+    }
+
     // Both gems share an entry price, so one floor decides them both.
-    crate::features::price_oracle::publish_controlled_quote(world, floor * U256::from(2));
+    test_issuance::seed_day_vwaps(
+        &url,
+        DEPLOYER_KEY,
+        settlement_currency::USD_ISO,
+        1,
+        floor * U256::from(2),
+    )
+    .expect("seed the closed day's VWAP");
 }
 
 #[then("both gems qualify")]

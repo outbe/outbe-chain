@@ -219,6 +219,12 @@ pub struct GemContract {
     /// slices skip it instead of re-reading a window they cannot use.
     #[attribute(order = 33)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+    #[attribute(order = 34)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 35)]
+    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 36)]
+    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

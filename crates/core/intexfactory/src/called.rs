@@ -11,6 +11,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
+use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -22,39 +23,79 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
+use crate::constants::{CALL_SWEEP, MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::qualified::ScanBudget;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::{Group, QualifiedBinTree};
 
-/// Open a Called sweep over the day the Oracle has just finalized and run its
-/// first slice. Returns the number of series force-called in that slice.
+/// Schedule the day the Oracle has just finalized: open a Called sweep over it and
+/// run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
+    let Some(last_closed_day) = closed_day(ctx)? else {
+        return Ok(0);
+    };
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let days = SweepDays {
+        current: factory.call_sweep_day.read()?,
+        pending: factory.call_pending_day.read()?,
+    };
+    match days.schedule(last_closed_day) {
+        (next, Scheduled::Opened) => {
+            start_call_sweep(ctx, &factory, next)?;
+            run_call_slice(ctx)
+        }
+        (next, Scheduled::Queued) => {
+            factory.call_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            factory.call_pending_day.write(next.pending)?;
+            crate::runtime::emit_event(
+                &ctx.storage,
+                crate::precompile::IIntexFactory::SweepDaySkipped {
+                    sweep: CALL_SWEEP,
+                    skippedDay: skipped,
+                    inFlightDay: next.current,
+                },
+            )?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
 
-    // Most recent fully-closed UTC day (finalized VWAP).
+/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
+pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same
     // block; a lagging watermark means the ordering broke - skip loudly
     // instead of misreading an unfinalized day as empty.
     // todo use api.rs
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    let finalized = OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
     if finalized < last_closed_day {
-        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
-        return Ok(0);
+        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "utc-day VWAP not finalized yet, skipping the day's sweeps");
+        return Ok(None);
     }
+    Ok(Some(last_closed_day))
+}
 
-    let factory = IntexFactoryContract::new(ctx.storage.clone());
-    factory.call_sweep_day.write(last_closed_day)?;
-    // A sweep in flight is superseded: its mid-range cursors would let the new one
-    // call itself done over bins it never walked.
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_call_sweep(
+    ctx: &BlockRuntimeContext,
+    factory: &IntexFactoryContract,
+    days: SweepDays,
+) -> Result<()> {
+    factory.call_sweep_day.write(days.current)?;
+    factory.call_pending_day.write(days.pending)?;
     factory.call_currency_cursor.write(0)?;
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
         factory.call_scan_cursor.write(&iso_code, 0)?;
     }
-    run_call_slice(ctx)
+    Ok(())
 }
 
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
@@ -66,52 +107,45 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
-        factory.call_sweep_day.write(0)?;
-        return Ok(0);
-    }
     let oracle = OracleContract::new(ctx.storage.clone());
     let start =
         crate::qualified::currency_position(&currencies, factory.call_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
-    // The first currency left unfinished, so the next slice picks up where this one
-    // gave out rather than re-walking the ones already closed behind it.
-    let mut resume_at = start;
-    let mut resumed = false;
-    let mut swept = true;
-    for offset in 0..currencies.len() {
-        let at = (start + offset) % currencies.len();
-        if budget.is_spent() {
-            if !resumed {
-                resume_at = at;
-            }
-            swept = false;
-            break;
-        }
-        let iso_code = currencies[at];
-        // No registered pair is an answer; a failed read is not.
-        let pair_index =
+    // One pass down the list: a currency closed behind the cursor is never walked
+    // again, so every sweep ends however much it leaves undecided.
+    for &iso_code in currencies.iter().skip(start) {
+        let finished = if budget.is_spent() {
+            false
+        } else {
+            // No registered pair is an answer; a failed read is not.
             match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-                Some(index) => index,
-                None => continue,
-            };
-        let (calls, finished) =
-            call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
-        called = called.saturating_add(calls);
-        if !finished && !resumed {
-            resume_at = at;
-            resumed = true;
+                None => true,
+                Some(pair_index) => {
+                    let (calls, finished) =
+                        call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
+                    called = called.saturating_add(calls);
+                    finished
+                }
+            }
+        };
+        if !finished {
+            factory.call_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(called);
         }
-        swept &= finished;
     }
-    factory
-        .call_currency_cursor
-        .write(u32::from(currencies[resume_at]))?;
-    if swept {
-        // Nothing left to walk: the next daily trigger opens a fresh sweep.
+
+    // The next day starts on the next block, so no slice mixes two days' prices.
+    let next = SweepDays {
+        current: pinned_day,
+        pending: factory.call_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
         factory.call_sweep_day.write(0)?;
+    } else {
+        start_call_sweep(ctx, &factory, next)?;
     }
     Ok(called)
 }
@@ -151,7 +185,14 @@ fn call_currency(
     let p_bin = match IntexFactoryContract::price_to_bin(window.p_star) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency");
+            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency for the day");
+            crate::runtime::emit_event(
+                &ctx.storage,
+                crate::precompile::IIntexFactory::CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: last_closed_day,
+                },
+            )?;
             return Ok((0, true));
         }
     };
@@ -223,8 +264,10 @@ fn call_currency(
     Ok((called, finished))
 }
 
-/// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
+/// Cycle daily-trigger entry: opens the day's qualification and Called sweeps,
+/// discarding the counts.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::qualified::scan_and_qualify(ctx)?;
     scan_and_call(ctx)?;
     Ok(())
 }

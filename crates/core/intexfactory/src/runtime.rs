@@ -108,7 +108,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         })
         .collect();
 
-    // Enroll into the unqualified floor-bin index for begin_block qualify.
+    // Enroll into the unqualified floor-bin index the daily qualify sweep walks.
     factory.insert_unqualified(
         params.series_id,
         params.reference_currency,

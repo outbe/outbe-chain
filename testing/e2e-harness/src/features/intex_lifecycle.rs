@@ -44,7 +44,7 @@ const REFERENCE_BYTE: u8 = b'U';
 /// sweep sees the period closed rather than exactly met.
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The sweep runs in begin-block; a handful of blocks is plenty.
+/// The daily trigger comes round every minute in e2e, then the mark waits on a drain.
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
 const QUALIFIED: u8 = 1;
@@ -279,9 +279,17 @@ fn rate_above_floor(world: &mut World) {
         .first()
         .expect("a series was issued");
 
-    // Both series share an entry price, so one floor decides the group.
+    // Both series share an entry price, so one floor decides the group. Qualification
+    // reads the closed day's VWAP, so that day is seeded like the call window's.
     let (_, floor, _) = venue_probes::series_prices(&url, nft, series).expect("series prices");
-    crate::features::price_oracle::publish_controlled_quote(world, U256::from(floor * 2));
+    test_issuance::seed_day_vwaps(
+        &url,
+        DEPLOYER_KEY,
+        settlement_currency::USD_ISO,
+        1,
+        U256::from(floor * 2),
+    )
+    .expect("seed the closed day's VWAP");
 }
 
 #[then("both series qualify in one group decision")]

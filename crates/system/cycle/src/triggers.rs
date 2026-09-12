@@ -18,11 +18,11 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
-    IntexCallDaily = 1,
+    IntexDaily = 1,
     /// Reserved historical identifier; no active trigger uses it.
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
-    GemCallDaily = 4,
+    GemDaily = 4,
     AuctionClearing = 5,
     IntexNotify = 6,
     CredisCallDaily = 7,
@@ -72,7 +72,7 @@ pub enum TriggerHandler {
     ProtocolCycle,
     IntexDaily,
     AuctionAdvance,
-    GemCallDaily,
+    GemDaily,
     AuctionClearing,
     IntexNotify,
     CredisCallDaily,
@@ -91,7 +91,7 @@ impl TriggerHandler {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
+            Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
@@ -111,29 +111,36 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
-/// The Called sweep is daily in production. An e2e run seeds the days it reads
-/// rather than living through them, so it needs the sweep to come round sooner.
+/// The qualify and Called sweeps are daily in production. An e2e run seeds the days
+/// they read rather than living through them, so they need to come round sooner.
 #[cfg(not(feature = "e2e-test"))]
-const INTEX_CALL_PERIOD_SECONDS: u64 = 86_400;
+const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
-const INTEX_CALL_PERIOD_SECONDS: u64 = 60;
+const INTEX_DAILY_PERIOD_SECONDS: u64 = 60;
 
-/// The gem call and position sweeps are daily in production; an e2e run seeds
+/// The gem sweeps are daily in production for the same reason; an e2e run seeds
 /// the days they read instead of living through them.
 #[cfg(not(feature = "e2e-test"))]
-const GEM_CALL_PERIOD_SECONDS: u64 = 86_400;
+const GEM_DAILY_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
-const GEM_CALL_PERIOD_SECONDS: u64 = 60;
+const GEM_DAILY_PERIOD_SECONDS: u64 = 60;
 #[cfg(not(feature = "e2e-test"))]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
 
-/// Cadence of the two outbound polls, shortened for the same reason.
+/// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 #[cfg(feature = "e2e-test")]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
+
+/// The daily sweeps queue their notices in a burst after midnight, so the drain
+/// comes round more often than the clearing poll.
+#[cfg(not(feature = "e2e-test"))]
+const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 300;
+#[cfg(feature = "e2e-test")]
+const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 
 /// Active trigger table. Order is informational only - the dispatcher
 /// fires triggers independently per slot.
@@ -157,14 +164,16 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::ProtocolCycle,
         },
         TriggerSpec {
-            id: TriggerId::IntexCallDaily.as_u32(),
-            label: "intex_call_daily",
-            period_seconds: INTEX_CALL_PERIOD_SECONDS,
+            id: TriggerId::IntexDaily.as_u32(),
+            label: "intex_daily",
+            period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history and marks series Called; no
+            // Reads finalized oracle VWAP history to qualify and call series; no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
+            // The sweeps take their day from the block clock, so a missed slot
+            // would only walk the same day again.
+            coalesces_backlog: true,
             handler: TriggerHandler::IntexDaily,
         },
         TriggerSpec {
@@ -182,15 +191,17 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionAdvance,
         },
         TriggerSpec {
-            id: TriggerId::GemCallDaily.as_u32(),
-            label: "gem_call_daily",
-            period_seconds: GEM_CALL_PERIOD_SECONDS,
+            id: TriggerId::GemDaily.as_u32(),
+            label: "gem_daily",
+            period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
+            // Reads finalized oracle VWAP history to qualify and force-call gems;
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
-            handler: TriggerHandler::GemCallDaily,
+            // The sweeps take their day from the block clock, so a missed slot
+            // would only walk the same day again.
+            coalesces_backlog: true,
+            handler: TriggerHandler::GemDaily,
         },
         TriggerSpec {
             id: TriggerId::AuctionClearing.as_u32(),
@@ -209,7 +220,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::IntexNotify.as_u32(),
             label: "intex_notify",
-            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
+            period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
@@ -294,8 +305,12 @@ mod protocol_parameter_tests {
         // The gem sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
-            (GEM_CALL_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
-            (86_400, 86_400)
+            (
+                GEM_DAILY_PERIOD_SECONDS,
+                GEM_POSITION_PERIOD_SECONDS,
+                INTEX_NOTIFY_PERIOD_SECONDS
+            ),
+            (86_400, 86_400, 300)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
@@ -303,16 +318,15 @@ mod protocol_parameter_tests {
         assert_eq!(configured[1].period_seconds, 86_400);
         assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds, GEM_CALL_PERIOD_SECONDS);
-        assert!(matches!(
-            configured[3].handler,
-            TriggerHandler::GemCallDaily
-        ));
+        assert_eq!(configured[3].period_seconds, GEM_DAILY_PERIOD_SECONDS);
+        assert!(matches!(configured[3].handler, TriggerHandler::GemDaily));
         assert_eq!(configured[4].period_seconds, 600);
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::AuctionClearing
         ));
+        assert_eq!(configured[5].period_seconds, INTEX_NOTIFY_PERIOD_SECONDS);
+        assert!(matches!(configured[5].handler, TriggerHandler::IntexNotify));
         assert_eq!(configured[6].period_seconds, 86_400);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(

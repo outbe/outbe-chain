@@ -9,7 +9,9 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
+};
 
 use crate::called;
 use crate::constants::{
@@ -112,7 +114,7 @@ fn qualify_day(
     let group = f
         .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
         .unwrap();
-    qualified::try_qualify_group(s, f, &group, rate).unwrap()
+    qualified::try_qualify_group(s, f, &group, rate, first_full_day(ISSUED_AT as u64)).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {
@@ -147,6 +149,21 @@ const EUR_PAIR_ID: u32 = 2;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
     alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// The finalized VWAP of the UTC day before `ts`, as the Oracle closes it.
+fn write_day_vwap(oracle: &OracleContract, iso_code: u16, pair_id: u32, ts: u64, vwap: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
+    let day = previous_date_key(timestamp_to_date_key(ts));
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&pair_id, vwap)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
 }
 
 fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {

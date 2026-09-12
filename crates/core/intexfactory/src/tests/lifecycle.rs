@@ -1172,6 +1172,178 @@ mod call_sweep {
             );
         });
     }
+
+    /// A trigger that finds the sweep unfinished queues its day rather than restarting
+    /// the walk, so the day in flight still reaches every bin against its own prices.
+    #[test]
+    fn a_trigger_during_a_running_sweep_queues_its_day() {
+        with_factory(|s| {
+            let oracle = OracleContract::new(s.clone());
+            let pair = setup_pair(&oracle);
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            let day = previous_date_key(timestamp_to_date_key(scan_ts));
+            fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
+            let groups = MAX_SERIES_ACTIONS_PER_BLOCK + MAX_SERIES_ACTIONS_PER_BLOCK / 2;
+            let days = 20260101..20260101 + groups;
+            for d in days.clone() {
+                seed_called_candidate(&s, d);
+            }
+            let factory = IntexFactoryContract::new(s.clone());
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            called::scan_and_call(&ctx).unwrap();
+            let cursor = factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap();
+            assert_ne!(cursor, 0, "the first slice gave out inside the range");
+
+            let next_ts = scan_ts + DAY;
+            let next_day = previous_date_key(timestamp_to_date_key(next_ts));
+            fill_window(&oracle, next_day, pair, U256::from(TRIGGER + 1));
+            let next = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
+                s.clone(),
+            );
+            assert_eq!(called::scan_and_call(&next).unwrap(), 0);
+            assert_eq!(factory.call_sweep_day.read().unwrap(), day);
+            assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
+            assert_eq!(
+                factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap(),
+                cursor,
+                "the walk in flight was not restarted"
+            );
+
+            // The next slice finishes the old day and hands the sweep to the queued one.
+            called::run_call_slice(&next).unwrap();
+            assert_eq!(called_count(&s, days), groups);
+            assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
+            assert_eq!(factory.call_pending_day.read().unwrap(), 0);
+        });
+    }
+
+    /// With a day already waiting, a newer one takes its place, and the day that will
+    /// never be walked is named.
+    #[test]
+    fn a_newer_day_pushes_out_the_waiting_one_and_names_it() {
+        use alloy_sol_types::SolEvent;
+        use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.set_timestamp(U256::from(ISSUED_AT as u64));
+        let (in_flight, skipped) = StorageHandle::enter(&mut storage, |s| {
+            crate::tests::select_prod_profile(&s);
+            let oracle = OracleContract::new(s.clone());
+            let pair = setup_pair(&oracle);
+            for d in 20260101..20260101 + MAX_SERIES_ACTIONS_PER_BLOCK + 1 {
+                seed_called_candidate(&s, d);
+            }
+            let mut closed = Vec::new();
+            for offset in 0..3 {
+                let ts = ISSUED_AT as u64 + (60 + offset) * DAY;
+                let day = previous_date_key(timestamp_to_date_key(ts));
+                fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
+                let ctx = BlockRuntimeContext::new(
+                    BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID),
+                    s.clone(),
+                );
+                called::scan_and_call(&ctx).unwrap();
+                closed.push(day);
+            }
+            let factory = IntexFactoryContract::new(s.clone());
+            assert_eq!(factory.call_sweep_day.read().unwrap(), closed[0]);
+            assert_eq!(factory.call_pending_day.read().unwrap(), closed[2]);
+            (closed[0], closed[1])
+        });
+
+        let events: Vec<_> = storage
+            .get_events(INTEX_FACTORY_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                crate::precompile::IIntexFactory::SweepDaySkipped::decode_log_data(log).ok()
+            })
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sweep, crate::constants::CALL_SWEEP);
+        assert_eq!(events[0].skippedDay, skipped);
+        assert_eq!(events[0].inFlightDay, in_flight);
+    }
+
+    /// Each currency is walked once a sweep. Were the ones closed behind the cursor
+    /// walked again, two currencies each holding more undecided groups than a slice
+    /// may decide would keep the sweep open for good.
+    #[test]
+    fn a_sweep_over_several_currencies_always_ends() {
+        with_factory(|s| {
+            let oracle = OracleContract::new(s.clone());
+            let first = setup_pair(&oracle);
+            let second = setup_second_pair(&oracle);
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            let day = previous_date_key(timestamp_to_date_key(scan_ts));
+            fill_window(&oracle, day, first, U256::from(TRIGGER + 1));
+            fill_window(&oracle, day, second, U256::from(TRIGGER + 1));
+
+            // Issued five days ago: every group is decided and left where it is.
+            let young_at = (scan_ts - 5 * DAY) as u32;
+            for d in 20260101..20260101 + MAX_GROUP_DECISIONS_PER_BLOCK + 1 {
+                seed_young_candidate_for(&s, REFERENCE_ISO, d, young_at);
+                seed_young_candidate_for(&s, SECOND_ISO, d, young_at);
+            }
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            called::scan_and_call(&ctx).unwrap();
+            for _ in 0..3 {
+                called::run_call_slice(&ctx).unwrap();
+            }
+            assert_eq!(
+                IntexFactoryContract::new(s.clone())
+                    .call_sweep_day
+                    .read()
+                    .unwrap(),
+                0,
+                "the sweep closed"
+            );
+        });
+    }
+
+    /// A Qualified group of `iso` issued at `issued_at`, its trigger under the window.
+    fn seed_young_candidate_for(
+        s: &StorageHandle<'_>,
+        iso: u16,
+        worldwide_day: u32,
+        issued_at: u32,
+    ) {
+        let series_id = SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, iso).unwrap();
+        let trigger = U256::from(TRIGGER);
+        outbe_intex::api::create_series(
+            s,
+            outbe_intex::CreateSeriesParams {
+                series_id,
+                worldwide_day: WorldwideDay::new(worldwide_day),
+                issued_intex_count: 100,
+                promis_load_minor: 1_000_000_000_000_000_000,
+                entry_price_minor: trigger,
+                floor_price_minor: trigger,
+                call_price_minor: trigger,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window: WINDOW_DAYS * DAY as u32,
+                    call_threshold: 21 * DAY as u32,
+                    call_notice_period: 7 * DAY as u32,
+                },
+                issued_at,
+                issuance_currency: 840,
+                reference_currency: iso,
+            },
+        )
+        .unwrap();
+        outbe_intex::api::mark_qualified(s, series_id).unwrap();
+        IntexFactoryContract::new(s.clone())
+            .insert_qualified_group(iso, WorldwideDay::new(worldwide_day), trigger, &[series_id])
+            .unwrap();
+    }
 }
 
 mod called_pstar {

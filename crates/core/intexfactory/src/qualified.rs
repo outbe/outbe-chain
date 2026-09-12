@@ -1,14 +1,14 @@
-//! Per-block qualification: drains floor-bins crossed by the live COEN rate and
-//! qualifies the Issued series they hold. Runs in `begin_block`.
-//! A floor compares only to its own currency's rate, so each currency walks its own
-//! trie with its own cursor; they share one per-block budget.
+//! Daily qualification: an Issued group qualifies when the finalized VWAP of a closed
+//! UTC day it held in full stands above its floor. The daily trigger opens the sweep
+//! and `begin_block` carries it on, each currency down its own trie with its own cursor.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for_opt, get_all_reference_currencies};
+use outbe_oracle::api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap};
+use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::storage::types::Storable;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -20,8 +20,9 @@ use outbe_intex::IntexState;
 
 use crate::constants::{
     MAX_GROUP_DECISIONS_PER_BLOCK, MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_ACTIONS_PER_BLOCK,
-    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS,
+    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS, QUALIFY_SWEEP,
 };
+use crate::precompile::IIntexFactory;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::{Group, UnqualifiedBinTree};
@@ -33,7 +34,7 @@ impl BlockLifecycle for IntexLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        scan_and_qualify(ctx)?;
+        run_qualify_slice(ctx)?;
         // A call sweep the daily trigger could not finish in one go carries on
         // here, block by block, rather than waiting a day for the next trigger.
         crate::called::run_call_slice(ctx)?;
@@ -50,37 +51,111 @@ impl BlockLifecycle for IntexLifecycle {
     }
 }
 
-/// Number of series promoted Issued -> Qualified this block. Every reference currency is
-/// scanned against its own rate, sharing one [`ScanBudget`]; an unpriced one is skipped
-/// for the block rather than halting it.
+/// Schedule the day the Oracle has just finalized: open a qualification sweep over it
+/// and run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let currencies = get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
+    let Some(day) = crate::called::closed_day(ctx)? else {
+        return Ok(0);
+    };
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let days = SweepDays {
+        current: factory.qualify_sweep_day.read()?,
+        pending: factory.qualify_pending_day.read()?,
+    };
+    match days.schedule(day) {
+        (next, Scheduled::Opened) => {
+            start_qualify_sweep(ctx, &factory, next)?;
+            run_qualify_slice(ctx)
+        }
+        (next, Scheduled::Queued) => {
+            factory.qualify_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            factory.qualify_pending_day.write(next.pending)?;
+            crate::runtime::emit_event(
+                &ctx.storage,
+                IIntexFactory::SweepDaySkipped {
+                    sweep: QUALIFY_SWEEP,
+                    skippedDay: skipped,
+                    inFlightDay: next.current,
+                },
+            )?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
+
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_qualify_sweep(
+    ctx: &BlockRuntimeContext,
+    factory: &IntexFactoryContract,
+    days: SweepDays,
+) -> Result<()> {
+    factory.qualify_sweep_day.write(days.current)?;
+    factory.qualify_pending_day.write(days.pending)?;
+    factory.qualify_currency_cursor.write(0)?;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        factory.qualify_scan_cursor.write(&iso_code, 0)?;
+    }
+    Ok(())
+}
+
+/// Advance an open qualification sweep by one slice, pinned to its day. Returns how
+/// many series were promoted.
+pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let pinned_day = factory.qualify_sweep_day.read()?;
+    if pinned_day == 0 {
         return Ok(0);
     }
-    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let currencies = get_all_reference_currencies(ctx)?;
     let start = currency_position(&currencies, factory.qualify_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut promoted: u32 = 0;
-    let mut resume_at = start;
-    for offset in 0..currencies.len() {
-        let at = (start + offset) % currencies.len();
-        if budget.is_spent() {
-            // Resume here, so a heavy currency cannot starve the ones behind it.
-            resume_at = at;
-            break;
-        }
-        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), currencies[at])? else {
-            continue;
+    // One pass down the list, as in the Called sweep, so every sweep ends.
+    for &iso_code in currencies.iter().skip(start) {
+        let finished = if budget.is_spent() {
+            false
+        } else {
+            match day_price(ctx, iso_code, pinned_day)? {
+                // No pair or no trade that day: nothing to decide by.
+                None => true,
+                Some(vwap) => {
+                    let (moved, finished) =
+                        qualify_currency(ctx, iso_code, vwap, pinned_day, &mut budget)?;
+                    promoted = promoted.saturating_add(moved);
+                    finished
+                }
+            }
         };
-        promoted =
-            promoted.saturating_add(qualify_currency(ctx, currencies[at], rate, &mut budget)?);
+        if !finished {
+            factory.qualify_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(promoted);
+        }
     }
-    factory
-        .qualify_currency_cursor
-        .write(u32::from(currencies[resume_at]))?;
+
+    // The next day starts on the next block, so no slice mixes two days' prices.
+    let next = SweepDays {
+        current: pinned_day,
+        pending: factory.qualify_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
+        factory.qualify_sweep_day.write(0)?;
+    } else {
+        start_qualify_sweep(ctx, &factory, next)?;
+    }
     Ok(promoted)
+}
+
+fn day_price(ctx: &BlockRuntimeContext, iso_code: u16, day: u32) -> Result<Option<U256>> {
+    match coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
+        Some(index) => get_utc_day_vwap(ctx.storage.clone(), day, index),
+        None => Ok(None),
+    }
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.
@@ -91,34 +166,40 @@ pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
         .unwrap_or(0)
 }
 
-/// Qualifies one reference currency's groups, drawing on the shared `budget`.
-/// Returns how many series were promoted.
+/// Qualifies one reference currency's groups against its `vwap` of `day`, drawing on
+/// the shared `budget`. Returns how many series were promoted and whether its eligible
+/// range was walked to the end.
 fn qualify_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
-    rate: U256,
+    vwap: U256,
+    day: u32,
     budget: &mut ScanBudget,
-) -> Result<u32> {
-    // Deterministic out-of-range rate: skip this currency instead of halting the block.
-    let r_bin = match IntexFactoryContract::price_to_bin(rate) {
+) -> Result<(u32, bool)> {
+    // Deterministic out-of-range price: settle the currency for the day instead of halting the block.
+    let r_bin = match IntexFactoryContract::price_to_bin(vwap) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "qualify scan: rate out of range, skipping currency");
-            return Ok(0);
+            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "qualify scan: day price out of range, skipping currency for the day");
+            crate::runtime::emit_event(
+                &ctx.storage,
+                IIntexFactory::QualifyScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: day,
+                },
+            )?;
+            return Ok((0, true));
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
 
     let mut promoted: u32 = 0;
-    // Cap per-block work and resume next block from a persisted bin cursor: the scan
-    // no longer scales with the active-series population. A group qualifies within one full
-    // sweep (bounded lag); the resulting state is unchanged.
     let mut cursor: u32 = factory.qualify_scan_cursor.read(&iso_code)?;
-    'bins: loop {
+    loop {
         if budget.is_spent() {
             // Between bins, so the next slice resumes at a bin it has not opened.
             factory.qualify_scan_cursor.write(&iso_code, cursor)?;
-            break;
+            return Ok((promoted, false));
         }
         let next = match tree_math::find_first_left_inclusive(
             &UnqualifiedBinTree(&factory, iso_code),
@@ -126,9 +207,8 @@ fn qualify_currency(
         )? {
             Some(b) if b <= r_bin => b,
             _ => {
-                // End of the eligible range: next block starts a fresh sweep from the bottom.
                 factory.qualify_scan_cursor.write(&iso_code, 0)?;
-                break;
+                return Ok((promoted, true));
             }
         };
 
@@ -138,14 +218,14 @@ fn qualify_currency(
             if !budget.admits_actions(group.members.len() as u32) {
                 // Qualified groups have left this bin, so resuming on it redoes nothing.
                 factory.qualify_scan_cursor.write(&iso_code, next)?;
-                break 'bins;
+                return Ok((promoted, false));
             }
             budget.spend_decision();
             // Per-group isolation: a deterministic Err rolls back and is logged, so one bad
             // group cannot halt the block; the structural reads above keep `?`.
-            let res = ctx
-                .storage
-                .with_checkpoint(|| try_qualify_group(&ctx.storage, &mut factory, &group, rate));
+            let res = ctx.storage.with_checkpoint(|| {
+                try_qualify_group(&ctx.storage, &mut factory, &group, vwap, day)
+            });
             match res {
                 Ok(applied) => {
                     budget.spend_actions(applied);
@@ -160,13 +240,11 @@ fn qualify_currency(
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
             _ => {
-                // Reached the top bin: wrap to a fresh sweep next block.
                 factory.qualify_scan_cursor.write(&iso_code, 0)?;
-                break;
+                return Ok((promoted, true));
             }
         };
     }
-    Ok(promoted)
 }
 
 /// Work one scan may do, split by cost: deciding a group is a single read,
@@ -210,13 +288,14 @@ impl ScanBudget {
     }
 }
 
-/// Qualify a whole group: one clearing issued the day with one floor, so a single
-/// read decides every member. Returns how many were promoted.
+/// Qualify a whole group on `day`'s `vwap`: one clearing issued the day with one floor,
+/// so a single read decides every member. Returns how many were promoted.
 pub(crate) fn try_qualify_group(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     group: &Group,
-    rate: U256,
+    vwap: U256,
+    day: u32,
 ) -> Result<u32> {
     let Some(&first) = group.members.first() else {
         return Ok(0);
@@ -225,7 +304,7 @@ pub(crate) fn try_qualify_group(
     if series.lifecycle_state()? != IntexState::Issued {
         return Ok(0);
     }
-    if rate <= series.floor_price_minor {
+    if day < first_full_day(u64::from(series.issued_at)) || vwap <= series.floor_price_minor {
         return Ok(0);
     }
 
@@ -240,8 +319,8 @@ pub(crate) fn try_qualify_group(
         &group.members,
     )?;
 
-    // This sweep runs in a block hook, which cannot call contracts: the notice
-    // leaves from the `intex_notify` cycle trigger instead.
+    // A slice of this sweep runs in a block hook, which cannot call contracts: the
+    // notice leaves from the `intex_notify` cycle trigger instead.
     enqueue_notice(
         factory,
         NOTICE_QUALIFIED,
@@ -441,9 +520,9 @@ fn send_notice(
     if members.is_empty() {
         return Ok(());
     }
-    // Charged before the send, and a group wider than the budget still goes whole:
-    // it has no cursor to resume from, so the overshoot is one group at most.
-    *messages = messages.saturating_add(router_calls(members.len()));
+    // The drain charged the first call on the way in. A group wider than the budget still
+    // goes whole: it has no cursor to resume from, so the overshoot is one group at most.
+    *messages = messages.saturating_add(router_calls(members.len()).saturating_sub(1));
     notify_qualified(storage, worldwide_day, &members)
 }
 
