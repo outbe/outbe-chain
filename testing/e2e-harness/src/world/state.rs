@@ -654,9 +654,8 @@ pub struct FixtureState {
     pub forfeited_gem: Option<alloy_primitives::U256>,
     /// Promis held before mining, so the mined load shows as a delta.
     pub promis_before_mining: Option<alloy_primitives::U256>,
-    /// Unallocated PROMIS before each return, for the same reason.
-    pub unallocated_before_forfeit: Option<alloy_primitives::U256>,
-    pub unallocated_before_position_expiry: Option<alloy_primitives::U256>,
+    /// Finalized height and unallocated PROMIS before either expiry return.
+    pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// Issued alongside them and never settled, so the call notice runs out on it.
@@ -707,8 +706,7 @@ impl Default for FixtureState {
             mined_gem: None,
             forfeited_gem: None,
             promis_before_mining: None,
-            unallocated_before_forfeit: None,
-            unallocated_before_position_expiry: None,
+            gem_expiry_baseline: None,
             lifecycle_series: Vec::new(),
             expiring_series: None,
             unallocated_before_expiry: None,

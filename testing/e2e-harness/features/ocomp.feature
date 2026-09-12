@@ -42,7 +42,8 @@ Feature: Off-chain computation and Metadosis
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
     And all four OCOMP domains use the production basedir contract
     And the fresh OCOMP domains retain their authenticated workers across the time changes
-    When a fresh post-activation Tribute completes through the V2 worker lane
+    When the feeder publishes a Nod qualification quote before the next UTC day
+    And a fresh post-activation Tribute completes through the V2 worker lane
     Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
