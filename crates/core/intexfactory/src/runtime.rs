@@ -19,8 +19,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
-    SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -303,21 +302,6 @@ pub(crate) fn settlement_units(
     };
     floor_to_asset_units(numerator, denominator, PRODUCT_DECIMALS, payment_decimals)
         .map_err(|e| IntexFactoryError::from(e).into())
-}
-
-/// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
-/// `holder` is the caller (the precompile passes its caller).
-pub fn set_authorized_settler(
-    storage: &StorageHandle<'_>,
-    holder: Address,
-    series_id: SeriesId,
-    settler: Address,
-) -> Result<()> {
-    if holder.is_zero() || settler.is_zero() {
-        return Err(IntexFactoryError::ZeroAddress.into());
-    }
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    factory.write_authorized_settler(holder, series_id, settler)
 }
 
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
@@ -789,25 +773,16 @@ pub fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
-    // Dual-wallet authorization: only the holder or its authorized settler.
-    let factory = IntexFactoryContract::new(storage.clone());
-    if intex_holder != settler
-        && factory.read_authorized_settler(intex_holder, series_id)? != settler
-    {
-        return Err(IntexFactoryError::NotAuthorized.into());
-    }
-
     // Last, so a doomed settle never pays for proof verification.
     discharge_cost(storage, &series, amount, settler, paynote_proof)?;
 
-    // Burn Issued from holder, issue Settled to the settler.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::settleCall {
             seriesId: series_id.into(),
             from: intex_holder,
-            to: settler,
+            to: intex_holder,
             amount,
         }
         .abi_encode()
@@ -823,7 +798,6 @@ pub fn settle(
         crate::precompile::IIntexFactory::Settled {
             seriesId: series_id.into(),
             intexHolder: intex_holder,
-            settler,
             amount,
         },
     )
@@ -1005,7 +979,10 @@ pub fn mine_promis(
     let mut factory = IntexFactoryContract::new(storage.clone());
     let seq = factory.read_mine_seq(series_id, holder)?;
     validate_pow(holder, promis_amount, series_id, seq, nonce)?;
-    factory.write_mine_seq(series_id, holder, seq + 1)?;
+    let next_seq = seq
+        .checked_add(1)
+        .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
+    factory.write_mine_seq(series_id, holder, next_seq)?;
 
     // Burn Settled from holder on the NFT.
     storage.call(
@@ -1044,6 +1021,10 @@ pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
 }
 
 /// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
+///
+/// `holder` and `seq` earn their place here, unlike in the shared scheme: the
+/// holder arrives as a call argument, and the sequence rises with every
+/// successful partial mining, so one solved nonce cannot serve the next.
 pub(crate) fn compute_pow_hash(
     holder: Address,
     promis_amount: U256,
@@ -1064,7 +1045,7 @@ pub(crate) fn compute_pow_hash(
     out
 }
 
-/// The PoW hash must have `POW_DIFFICULTY` leading zero bytes.
+/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
     holder: Address,
     promis_amount: U256,
@@ -1073,10 +1054,5 @@ pub(crate) fn validate_pow(
     nonce: u64,
 ) -> Result<()> {
     let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce);
-    for b in &hash[..POW_DIFFICULTY] {
-        if *b != 0 {
-            return Err(IntexFactoryError::InsufficientProofOfWork.into());
-        }
-    }
-    Ok(())
+    outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

@@ -887,11 +887,13 @@ fn settle_rejects_wrong_settlement_currency() {
 }
 
 #[test]
-fn settle_rejects_non_owner() {
+fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    let mut provider = test_storage(Some(rate));
+    let proof = note_proof(&mut provider, STABLE, BOB, NOTE_AMOUNT);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = issue_at_live_rate(
-            storage,
+            &storage,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -899,10 +901,25 @@ fn settle_rejects_non_owner() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
-        let res = runtime::settle_gem(storage, BOB, gem_id, &[]);
-        assert!(err_msg(res).contains("not gem owner"));
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        runtime::settle_gem(&storage, BOB, gem_id, &proof).unwrap();
+        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.state, GemState::Settled as u8);
+        assert_eq!(item.owner, ALICE, "paying never moves the gem");
+        gem_id
     });
+
+    let event = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSettled::decode_log(log).ok())
+        .next()
+        .expect("settlement emits GemSettled");
+    assert_eq!(event.gemId, gem_id);
+    assert_eq!(
+        event.owner, ALICE,
+        "the event names the owner, not the payer"
+    );
 }
 
 #[test]
@@ -940,8 +957,7 @@ fn mine_promis_full_genesis_flow() {
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
         let minted =
-            runtime::mine_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
-                .unwrap();
+            runtime::mine_promis(storage, gem_id, nonce, promis_auth(ALICE, load, 0)).unwrap();
         assert_eq!(minted, load);
 
         let gem = GemContract::new(storage.clone());
@@ -977,27 +993,28 @@ fn mine_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled - mine should reject before PoW.
-        let res = runtime::mine_promis(storage, ALICE, gem_id, 0, no_auth());
+        let res = runtime::mine_promis(storage, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
 
 #[test]
-fn mine_promis_rejects_non_owner() {
+fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
+    outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = issue_at_live_rate(
-            storage,
-            ALICE,
-            GemTypes::Genesis,
-            U256::from(10u64) * six_decimal_unit(),
-            840,
-            840,
-        )
-        .unwrap();
-        // mine_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_promis(storage, BOB, gem_id, 0, no_auth());
-        assert!(err_msg(res).contains("not gem owner"));
+        let load = U256::from(10u64) * six_decimal_unit();
+        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
+
+        let nonce = find_valid_nonce(gem_id);
+        let minted =
+            runtime::mine_promis(storage, gem_id, nonce, promis_auth(ALICE, load, 0)).unwrap();
+        assert_eq!(minted, load);
+        assert!(GemContract::new(storage.clone())
+            .get_gem(gem_id)
+            .unwrap()
+            .is_none());
     });
 }
 

@@ -45,6 +45,14 @@ const EXPECTED_FLOOR: u64 = 1_080_000; // ENTRY_PRICE * 108/100
 const EXPECTED_TRIGGER: u64 = 2_280_000; // ENTRY_PRICE * 228/100
 
 fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = factory_provider();
+    StorageHandle::enter(&mut storage, |handle| {
+        select_prod_profile(&handle);
+        f(handle)
+    })
+}
+
+fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     // Stub IntexNFT1155: void calls succeed; balanceOf returns 0 (32 bytes).
@@ -57,10 +65,7 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    StorageHandle::enter(&mut storage, |handle| {
-        select_prod_profile(&handle);
-        f(handle)
-    })
+    storage
 }
 
 /// These cases assert the PROD terms; an unset profile resolves by chain id, and

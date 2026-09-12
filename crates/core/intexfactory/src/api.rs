@@ -2,8 +2,7 @@
 //!
 //! `issue` is the clearing engine's (Desis) issuance hand-off - a Rust-to-Rust
 //! call, not a precompile selector, mirroring Intex's write API. The
-//! user-facing surface (settle / minePromis / setAuthorizedSettler) lives in
-//! the precompile.
+//! user-facing surface (settle / minePromis) lives in the precompile.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;

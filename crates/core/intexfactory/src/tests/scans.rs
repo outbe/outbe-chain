@@ -693,6 +693,34 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     });
 }
 
+/// A Called series with nothing realized, so expiry forfeits all of it.
+fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
+    let series_id = sid(worldwide_day);
+    outbe_intex::api::create_series(
+        s,
+        outbe_intex::schema::CreateSeriesParams {
+            series_id,
+            worldwide_day: WorldwideDay::new(worldwide_day),
+            issued_intex_count: 1,
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            entry_price_minor: U256::from(ENTRY_PRICE),
+            floor_price_minor: U256::from(ENTRY_PRICE),
+            call_price_minor: U256::from(ENTRY_PRICE),
+            call_trigger: outbe_intex::schema::IntexCallTrigger {
+                call_window: (28 * DAY) as u32,
+                call_threshold: (21 * DAY) as u32,
+                call_notice_period: (7 * DAY) as u32,
+            },
+            issued_at: ISSUED_AT,
+            issuance_currency: 840,
+            reference_currency: REFERENCE_ISO,
+        },
+    )
+    .unwrap();
+    outbe_intex::api::mark_called(s, series_id, ISSUED_AT).unwrap();
+    series_id
+}
+
 #[test]
 fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     with_factory(|s| {
@@ -701,9 +729,11 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         let far = WorldwideDay::new(20260101);
         let near = WorldwideDay::new(20260102);
 
-        f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[sid(1)])
+        let far_member = called_series(&s, 20260101);
+        let near_member = called_series(&s, 20260102);
+        f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[far_member])
             .unwrap();
-        f.push_called_group(REFERENCE_ISO, near, now + DAY, &[sid(2)])
+        f.push_called_group(REFERENCE_ISO, near, now + DAY, &[near_member])
             .unwrap();
 
         let ctx = BlockRuntimeContext::new(
@@ -777,7 +807,8 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
         let queued = crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK + 44;
         for index in 0..queued {
             let day = 20260101 + index;
-            f.push_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[sid(day)])
+            let member = called_series(&s, day);
+            f.push_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[member])
                 .unwrap();
         }
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), queued);
@@ -828,7 +859,8 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
         let deadline = now + 600;
         let day = WorldwideDay::new(20260101);
 
-        f.push_called_group(REFERENCE_ISO, day, deadline, &[sid(20260101)])
+        let member = called_series(&s, 20260101);
+        f.push_called_group(REFERENCE_ISO, day, deadline, &[member])
             .unwrap();
 
         let sweep = |at: u64| {
@@ -906,4 +938,103 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
             "the member that could expire still returns its load"
         );
     });
+}
+
+#[test]
+fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = factory_provider();
+    let retry_day = StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
+        let _f = qualify_series(&s, 7, sample(7));
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_days(
+            &oracle,
+            last_closed_day,
+            pair,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+
+        // A member the registry never issued cannot expire; the group must survive it.
+        let day = WorldwideDay::new(7);
+        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+        let f = IntexFactoryContract::new(s.clone());
+        f.called_group_members
+            .write(
+                &IntexFactoryContract::group_member_key(REFERENCE_ISO, day, 1),
+                sid(20260999).to_word(),
+            )
+            .unwrap();
+        f.called_group_count.write(&key, 2).unwrap();
+
+        let deadline = f.called_group_deadline.read(&key).unwrap();
+        let first_pass =
+            IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline));
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, first_pass, CHAIN_ID),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        let unallocated = |s: &StorageHandle<'_>| {
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+        let after_first = unallocated(&s);
+        assert!(
+            !after_first.is_zero(),
+            "the member that could expire returns its load"
+        );
+
+        let retry_day = IntexFactoryContract::deadline_bucket(first_pass) + 1;
+        assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 2);
+
+        // The phantom goes away and the retry finishes the group.
+        f.called_group_count.write(&key, 1).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        assert_eq!(
+            unallocated(&s),
+            after_first,
+            "a retry credits each load exactly once"
+        );
+        assert_eq!(f.first_expiry_day().unwrap(), None);
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 0);
+        retry_day
+    });
+
+    let sig = IIntexFactory::ExpiryDeferred::SIGNATURE_HASH;
+    let deferred: Vec<_> = provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter(|log| log.topics().first() == Some(&sig))
+        .map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).unwrap())
+        .collect();
+    assert_eq!(
+        deferred.len(),
+        1,
+        "one ExpiryDeferred for the unfinished pass"
+    );
+    assert_eq!(deferred[0].referenceCurrency, REFERENCE_ISO);
+    assert_eq!(deferred[0].worldwideDay, 7);
+    assert_eq!(
+        deferred[0].retryAt,
+        IntexFactoryContract::bucket_end(retry_day)
+    );
 }

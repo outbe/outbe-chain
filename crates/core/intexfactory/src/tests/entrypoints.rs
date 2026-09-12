@@ -1,31 +1,13 @@
 use super::*;
 
 #[test]
-fn dispatch_set_authorized_settler_round_trip() {
-    with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: sid(7).into(),
-            settler,
-        }
-        .abi_encode();
-        // Caller (holder) is taken from msg.sender, not the calldata.
-        precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).unwrap();
-        let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(
-            f.read_authorized_settler(holder(), sid(7)).unwrap(),
-            settler
-        );
-    });
-}
-
-#[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        let data = IIntexFactory::setAuthorizedSettlerCall {
+        let data = IIntexFactory::settleCall {
             seriesId: sid(7).into(),
-            settler,
+            intexHolder: holder(),
+            amount: U256::from(1),
+            payNoteProof: Default::default(),
         }
         .abi_encode();
         assert!(precompile::dispatch(s.clone(), &data, holder(), U256::from(1)).is_err());
@@ -38,6 +20,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
+            holder: holder(),
             amount: U256::from(1),
             nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),

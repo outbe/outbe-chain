@@ -372,10 +372,8 @@ fn failed_authorization_preserves_the_loaded_nod() {
             )
         })
         .unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason) if reason == &NodFactoryError::NotOwner.to_string()
-    ));
+    // The rejection is the authorization, not the sender.
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()

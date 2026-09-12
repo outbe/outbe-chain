@@ -53,23 +53,21 @@ interface INodFactory {
 
     /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
     ///
-    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
-    /// and so can always supply the mint authorization.
-    ///
     /// The Nod's cost is discharged here, by spending a PayNote.
     /// The underlying value already reached the reserve vault when the note
     /// was deposited, so this call moves no tokens: it books the note's nullifier,
     /// appends any change note to the pool, and logs `NodPaid` event.
     ///
-    /// @param nodId        Identifier of a Nod owned by the caller.
+    /// @param nodId        Identifier of the Nod. Any caller may submit; the
+    /// Gratis goes to the Nod's owner.
     /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
     /// MUST have the protocol's required leading zero bytes.
     /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
-    /// under the caller's Gratis modify key.
-    /// @param opNonce MUST equal the caller's current on-chain gratis op-nonce;
+    /// under the owner's Gratis modify key.
+    /// @param opNonce MUST equal the owner's current on-chain gratis op-nonce;
     /// binds `mac` to exactly this mint.
     /// @param payNoteProof `outbe.paynote` spend proof.
-    /// @return Gratis minor units minted to the caller.
+    /// @return Gratis minor units minted to the owner.
     function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
         external
         returns (uint256);

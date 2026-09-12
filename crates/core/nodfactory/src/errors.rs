@@ -16,9 +16,6 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
-    #[error("not the owner")]
-    NotOwner,
-
     #[error("nod is not qualified")]
     NodNotQualified,
 
