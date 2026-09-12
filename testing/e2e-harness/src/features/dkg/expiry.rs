@@ -15,6 +15,10 @@ const PHASE: &str = "dkg_expiry_halt_only";
 const FINALIZED: &str = "marshal-delivered block finalized and acked";
 const FCU: &str = "forkchoice update returned valid status";
 const EXPIRED: &str = "frozen DKG target missed VRF expiry: cycle ";
+// Cover pre-window progress with a founder offline, reaching expiry, natural
+// process exits, and the durable header scan within one finite budget. The SGX
+// run reached only height 52 of expiry 66 in 240 seconds due to missed proposers.
+const PROOF_BUDGET: Duration = Duration::from_secs(1200);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +60,8 @@ struct Telemetry {
 fn within(deadline: Instant) -> Result<()> {
     ensure!(
         Instant::now() < deadline,
-        "240-second DKG expiry proof budget exhausted"
+        "{}-second DKG expiry proof budget exhausted",
+        PROOF_BUDGET.as_secs()
     );
     Ok(())
 }
@@ -369,7 +374,7 @@ fn check_chain(
 }
 
 pub(super) fn observe(world: &mut World) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(240);
+    let deadline = Instant::now() + PROOF_BUDGET;
     ensure!(
         !world
             .state
@@ -435,24 +440,37 @@ pub(super) fn observe(world: &mut World) -> Result<()> {
         sleep(Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())));
     };
 
+    last_error = format!(
+        "target acquired: cycle={}, freeze={}, expiry={expiry}; waiting for natural exits",
+        target.cycle, target.freeze
+    );
     while !owners(world)? {
-        within(deadline).map_err(|error| eyre!("{error}; last RPC diagnostic: {last_error}"))?;
+        within(deadline)
+            .map_err(|error| eyre!("{error}; last expiry observation: {last_error}"))?;
+        let mut observations = Vec::new();
         // Each expected port stays in scope. An RPC failure is diagnostic, not
         // a negative membership observation or evidence that the node halted.
         for (&index, &port) in COHORT.iter().zip(&ports) {
             let expected_pid = world.state.lifecycle_incarnations[&index].node_pid;
             let (pid, status) = world.localnet.owned_validator_process(index)?;
             if checked_exit(expected_pid, pid, status)? {
+                observations.push(format!("validator-{index} exited with code 1"));
                 continue; // Typed exit, never a responsive-peer filter.
             }
             match world.rpc.finalized_result(port) {
-                Ok(height) => ensure!(height <= expiry, "live survivor finalized above expiry"),
-                Err(error) => last_error = error.to_string(),
+                Ok(height) => {
+                    ensure!(height <= expiry, "live survivor finalized above expiry");
+                    observations.push(format!(
+                        "validator-{index} live: finalized={height}, expiry={expiry}"
+                    ));
+                }
+                Err(error) => observations.push(format!("validator-{index} live: RPC {error}")),
             }
         }
+        last_error = observations.join("; ");
         sleep(Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())));
     }
-    within(deadline).map_err(|error| eyre!("{error}; last RPC diagnostic: {last_error}"))?;
+    within(deadline).map_err(|error| eyre!("{error}; last expiry observation: {last_error}"))?;
     let mut peers = Vec::new();
     let mut common_anchor = None;
     for index in COHORT {
