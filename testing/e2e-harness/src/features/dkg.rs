@@ -799,7 +799,10 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
     // This step belongs to the explicitly configured off-grid FullNode scenario.
     // Do not probe availability to decide whether its follower is required.
     capture_dkg_owner(world, FOLLOWER_SLOT).expect("required off-grid FullNode owner");
-    let deadline = Instant::now() + Duration::from_secs(270);
+    // This includes reaching the freeze height with one founder offline. Missed
+    // proposer views produced 17-32 second block intervals in the SGX run, so
+    // 270 seconds expired at planned + 1 despite continuing finality.
+    let deadline = Instant::now() + Duration::from_secs(600);
     let ports = dkg_ports(world, &[0, 1, 2]).expect("three survivors and the FullNode");
     let fresh = world
         .rpc
@@ -812,18 +815,19 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
             .wait_finalized_checkpoint(&ports, 0, 1)
             .expect("off-grid common checkpoint");
         let earliest = dkg_ready_height(world).expect("readiness receipt height");
+        let mut required_height = None;
         if let Some(target) =
             frozen_target(&dkg_log(world, 0).expect("current freeze log"), earliest)
                 .expect("decode freeze")
         {
-            if point.height
-                >= fresh.max(
-                    target
-                        .planned
-                        .checked_add(2)
-                        .expect("planned progress height"),
-                )
-            {
+            let required = fresh.max(
+                target
+                    .planned
+                    .checked_add(2)
+                    .expect("planned progress height"),
+            );
+            required_height = Some(required);
+            if point.height >= required {
                 finalize_dkg_receipts(world, &ports).expect("off-grid admission receipts");
                 let target = retain_frozen_target(world, &ports).expect("frozen target agreement");
                 let members = dkg_addresses(world, 5).expect("expected DKG addresses");
@@ -836,7 +840,9 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "old committee did not finalize beyond the planned activation"
+            "old committee did not finalize beyond the planned activation: \
+             finalized={}, required={required_height:?}, fresh={fresh}",
+            point.height
         );
         sleep(Duration::from_secs(5));
     }
