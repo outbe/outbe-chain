@@ -670,6 +670,23 @@ fn settled_burned_into_promis(world: &mut World) {
             Some(0),
             "series {series} still holds settled units after mining"
         );
+        // The engine counts what it burned, so the series' classes stay disjoint.
+        let counts = eth::read_call(
+            &url,
+            test_issuance::INTEX_FACTORY,
+            &IIntexFactoryCounts::seriesUnitCountsCall {
+                seriesId: (*series).into(),
+            },
+        )
+        .expect("series unit counts");
+        assert_eq!(
+            counts.exercisedUnits, UNITS,
+            "series {series} did not count its exercised units"
+        );
+        assert_eq!(
+            counts.settledUnits, 0,
+            "series {series} left units counted as settled"
+        );
     }
     let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
         .expect("derive holder Promis view key");
@@ -697,6 +714,21 @@ fn chain_b256(chain_id: u64) -> alloy_primitives::B256 {
 sol! {
     interface IPromisNonce {
         function opNonceOf(address account) external view returns (uint64);
+    }
+}
+
+sol! {
+    interface IIntexFactoryCounts {
+        struct UnitCounts {
+            uint32 issuedUnits;
+            uint32 activeUnits;
+            uint32 settledUnits;
+            uint32 exercisedUnits;
+            uint32 gemFactoryUnits;
+            uint32 forfeitedUnits;
+        }
+
+        function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
     }
 }
 

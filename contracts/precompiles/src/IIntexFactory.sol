@@ -95,6 +95,21 @@ interface IIntexFactory {
     ///         is leaf `256 * w + b`.
     function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
+    /// @notice The classes an issued unit can be in. Disjoint: they sum to
+    ///         `issuedUnits`. `activeUnits` is what is still unpaid before expiry,
+    ///         and `forfeitedUnits` is the same remainder once the series expired.
+    struct UnitCounts {
+        uint32 issuedUnits;
+        uint32 activeUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 forfeitedUnits;
+    }
+
+    /// @notice Read the disjoint unit counts of `seriesId`.
+    function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
+
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 

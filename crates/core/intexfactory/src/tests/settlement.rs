@@ -373,3 +373,23 @@ fn mine_promis_rejects_missing_series() {
         assert!(runtime::mine_promis(&s, sid(7), holder(), U256::from(1), 0, no_auth()).is_err());
     });
 }
+
+/// The view hands a reader the disjoint classes, so nobody has to redo the arithmetic
+/// against the cumulative ledgers.
+#[test]
+fn the_unit_counts_view_reports_the_disjoint_classes() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
+        outbe_intex::api::record_parked_units(&s, sid(7), 10).unwrap();
+        outbe_intex::api::record_exercised_units(&s, sid(7), 15).unwrap();
+
+        let counts = runtime::series_unit_counts(&s, sid(7)).unwrap();
+        assert_eq!(counts.issuedUnits, 100);
+        assert_eq!(counts.activeUnits, 50);
+        assert_eq!(counts.settledUnits, 25);
+        assert_eq!(counts.exercisedUnits, 15);
+        assert_eq!(counts.gemFactoryUnits, 10);
+        assert_eq!(counts.forfeitedUnits, 0);
+    });
+}

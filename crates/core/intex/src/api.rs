@@ -176,6 +176,71 @@ pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<
         .read(&series_id)
 }
 
+/// Units of `series_id` burned into Promis so far.
+pub fn exercised_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .exercised_units
+        .read(&series_id)
+}
+
+/// Record `units` exercised: their Settled balance was burned into Promis.
+pub fn record_exercised_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    let registry = IntexContract::new(storage.clone());
+    let exercised = registry
+        .exercised_units
+        .read(&series_id)?
+        .checked_add(units)
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+    // Exercising burns Settled, so passing the settled ledger means the two disagree.
+    if exercised > registry.settled_units.read(&series_id)? {
+        return Err(IntexError::RealizedUnitsOverflow.into());
+    }
+    registry.exercised_units.write(&series_id, exercised)
+}
+
+/// The disjoint classes an issued unit can be in. They sum to `issued`.
+pub struct UnitCounts {
+    pub issued: u32,
+    pub active: u32,
+    pub settled: u32,
+    pub exercised: u32,
+    pub gem_factory: u32,
+    pub forfeited: u32,
+}
+
+/// Derive the disjoint counts from the cumulative ledgers: `settled_units` counts
+/// every unit ever paid, including the ones later burned into Promis, and the unpaid
+/// remainder is active until expiry decides it is forfeited.
+pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<UnitCounts> {
+    let registry = IntexContract::new(storage.clone());
+    let record = registry.load_series(series_id)?;
+    let paid = registry.settled_units.read(&series_id)?;
+    let gem_factory = registry.parked_units.read(&series_id)?;
+    let exercised = registry.exercised_units.read(&series_id)?;
+    // Checked: an underflow is corrupt state, not an empty class.
+    let unpaid = record
+        .issued_intex_count
+        .checked_sub(paid)
+        .and_then(|left| left.checked_sub(gem_factory))
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+    let settled = paid
+        .checked_sub(exercised)
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+    let expired = record.lifecycle_state()? == IntexState::Expired;
+    Ok(UnitCounts {
+        issued: record.issued_intex_count,
+        active: if expired { 0 } else { unpaid },
+        settled,
+        exercised,
+        gem_factory,
+        forfeited: if expired { unpaid } else { 0 },
+    })
+}
+
 enum RealizedKind {
     Settled,
     Parked,

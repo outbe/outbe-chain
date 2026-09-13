@@ -472,6 +472,9 @@ pub struct IntexContract {
     /// series_id -> units parked into Gem positions.
     #[attribute(order = 28)]
     pub parked_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    /// series_id -> settled units burned into Promis so far.
+    #[attribute(order = 29)]
+    pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 }
 
 impl IntexContract<'_> {

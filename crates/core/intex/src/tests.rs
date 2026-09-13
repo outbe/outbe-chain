@@ -1200,3 +1200,80 @@ fn realized_units_can_never_exceed_the_issued_count() {
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
     });
 }
+
+#[test]
+fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
+    with_registry(|s| {
+        let id = called_series(&s, 50);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_parked_units(&s, id, 25).unwrap();
+        api::record_exercised_units(&s, id, 15).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.issued, 100);
+        assert_eq!(counts.active, 45);
+        assert_eq!(counts.settled, 15);
+        assert_eq!(counts.exercised, 15);
+        assert_eq!(counts.gem_factory, 25);
+        assert_eq!(counts.forfeited, 0);
+        assert_eq!(
+            counts.active
+                + counts.settled
+                + counts.exercised
+                + counts.gem_factory
+                + counts.forfeited,
+            counts.issued
+        );
+    });
+}
+
+#[test]
+fn expiry_moves_the_active_units_into_forfeited() {
+    with_registry(|s| {
+        let id = called_series(&s, 51);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_parked_units(&s, id, 25).unwrap();
+        api::record_exercised_units(&s, id, 30).unwrap();
+        api::expire_series(&s, id).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.forfeited, 45);
+        assert_eq!(counts.settled, 0);
+        assert_eq!(counts.exercised, 30);
+        assert_eq!(
+            counts.active
+                + counts.settled
+                + counts.exercised
+                + counts.gem_factory
+                + counts.forfeited,
+            counts.issued
+        );
+    });
+}
+
+#[test]
+fn a_series_mined_before_the_upgrade_counts_nothing_as_exercised() {
+    with_registry(|s| {
+        let id = called_series(&s, 52);
+        api::record_settled_units(&s, id, 40).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.exercised, 0);
+        assert_eq!(counts.settled, 40);
+        assert_eq!(counts.active, 60);
+    });
+}
+
+#[test]
+fn exercising_more_than_was_settled_is_refused() {
+    with_registry(|s| {
+        let id = called_series(&s, 53);
+        api::record_settled_units(&s, id, 10).unwrap();
+
+        assert!(api::record_exercised_units(&s, id, 11).is_err());
+        api::record_exercised_units(&s, id, 10).unwrap();
+        assert!(api::record_exercised_units(&s, id, 1).is_err());
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
+    });
+}

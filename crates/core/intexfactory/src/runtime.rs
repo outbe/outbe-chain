@@ -563,6 +563,22 @@ fn burn_late_proceeds(storage: &StorageHandle<'_>, worldwide_day: u32, amount: U
 }
 
 /// Progress of one day's payout round; all-zero when no round is open.
+/// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
+pub(crate) fn series_unit_counts(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+) -> Result<crate::precompile::IIntexFactory::UnitCounts> {
+    let counts = outbe_intex::api::unit_counts(storage, series_id)?;
+    Ok(crate::precompile::IIntexFactory::UnitCounts {
+        issuedUnits: counts.issued,
+        activeUnits: counts.active,
+        settledUnits: counts.settled,
+        exercisedUnits: counts.exercised,
+        gemFactoryUnits: counts.gem_factory,
+        forfeitedUnits: counts.forfeited,
+    })
+}
+
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -996,6 +1012,10 @@ pub fn mine_promis(
         .abi_encode()
         .into(),
     )?;
+
+    let exercised = u32::try_from(amount)
+        .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
+    outbe_intex::api::record_exercised_units(storage, series_id, exercised)?;
 
     // Promis is confidential: the mint runs inside the enclave, authorized by the
     // holder's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).

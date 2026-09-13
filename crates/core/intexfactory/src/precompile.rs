@@ -274,6 +274,9 @@ pub fn dispatch(
                 contributorPaidWord(c) => view(c, |c| {
                     outbe_intex::api::paid_leaves_word(&storage, c.worldwideDay, c.wordIndex)
                 }),
+                seriesUnitCounts(c) => view(c, |c| {
+                    runtime::series_unit_counts(&storage, c.seriesId.into())
+                }),
             }
         },
     )
