@@ -33,7 +33,7 @@ fn replay_receipt_rejects_reverts_and_missing_or_malformed_evidence() {
 fn case_one_dispatch_marker_requires_exact_job_and_production_event() {
     let job = B256::repeat_byte(0x31);
     let valid = format!(
-            "2026-09-05T19:46:15.099744Z  INFO exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex: embedded OCOMP computation started job_id={job:#x}"
+            "2026-09-05T19:46:15.099744Z  INFO exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::compute: embedded OCOMP computation started job_id={job:#x}"
         );
     assert_eq!(
         super::case_one_compute_started_line(&valid, job),
@@ -42,7 +42,15 @@ fn case_one_dispatch_marker_requires_exact_job_and_production_event() {
     assert!(super::case_one_compute_started_line(&valid, B256::repeat_byte(0x32)).is_none());
     for invalid in [
         valid.replace(" INFO ", " WARN "),
-        valid.replace("outbe_chain::ocomp_exex: ", "other_module: "),
+        valid.replace("outbe_chain::ocomp_exex::compute: ", "other_module: "),
+        valid.replace(
+            "outbe_chain::ocomp_exex::compute: ",
+            "outbe_chain::ocomp_exex: ",
+        ),
+        valid.replace(
+            "outbe_chain::ocomp_exex::compute: ",
+            "outbe_chain::ocomp_exex::compute_other: ",
+        ),
         valid.replace("computation started", "local result arrived"),
         format!("{valid}0"),
         format!("{valid} reason=\"checkpoint_pruned\""),
