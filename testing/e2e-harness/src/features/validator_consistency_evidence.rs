@@ -65,13 +65,6 @@ fn evidence_for(world: &World, victim_index: usize, epoch: u64) -> ConflictingNo
     .unwrap_or_else(|error| panic!("construct canonical conflicting-notarize evidence: {error}"))
 }
 
-fn wait_finalized_outcome(world: &World, outcome: &TxOutcome) {
-    world
-        .rpc
-        .finalize_outcome(outcome, &[primary(world)], 30)
-        .expect("evidence transaction must have a canonical finalized outcome");
-}
-
 fn parse_evidence_event(outcome: &TxOutcome) -> Option<EvidenceEvent> {
     let signature = format!(
         "{:#x}",
@@ -106,6 +99,88 @@ fn indexed_address(topic: &str) -> Option<Address> {
     (bytes.len() == 32).then(|| Address::from_slice(&bytes[12..]))
 }
 
+fn capture_felony_processes(world: &mut World) -> Vec<(u32, u32)> {
+    assert_eq!(world.validators.size(), 4, "four evidence participants");
+    (0..4)
+        .map(|index| {
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("capture live evidence participant and enclave")
+        })
+        .collect()
+}
+
+fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)]) {
+    assert_eq!(owned.len(), 4, "four captured evidence participants");
+    for (index, expected) in owned.iter().take(3).enumerate() {
+        assert_eq!(
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("every designated felony observer must remain live"),
+            *expected,
+            "felony observer or enclave was replaced"
+        );
+    }
+    assert_eq!(
+        world
+            .localnet
+            .live_enclave_pid(3)
+            .expect("victim enclave stays live"),
+        owned[3].1,
+        "victim enclave was replaced"
+    );
+}
+
+/// Call only after proving the canonical jail on the designated survivors.
+fn expect_felony_guard_shutdown(
+    world: &mut World,
+    owned: &[(u32, u32)],
+    outcome: &TxOutcome,
+    phase: &str,
+) {
+    let exit_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        assert_felony_survivors_live(world, owned);
+        let (pid, status) = world
+            .localnet
+            .owned_validator_process(3)
+            .expect("observe the exact owned jailed validator without signalling it");
+        assert_eq!(pid, owned[3].0, "jailed validator was replaced");
+        if let Some(status) = status {
+            assert!(status.success(), "jailed guard must stop cleanly: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "jailed validator did not stop"
+        );
+        sleep(Duration::from_millis(100));
+    }
+    let log = world
+        .localnet
+        .node_launch_log(3, owned[3].0)
+        .expect("read the jailed validator's exact incarnation log");
+    let guard = "outbe_chain: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.trim_end().ends_with(guard))
+            .count(),
+        1,
+        "owned victim must stop for exactly the canonical jail reason"
+    );
+    world.state.expected_tee_lease_guard_shutdown_validator = Some(3);
+    let ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": phase, "victim": 3, "owned_pids": owned, "ports": ports,
+        "jail_height": outcome.block_number().expect("felony receipt height"),
+        "jail_transaction": outcome.transaction_hash, "natural_exit_code": 0,
+    }));
+}
+
 fn submit_initial_felony(world: &mut World) {
     // A compact but valid rotation schedule lets the continuation of D-10
     // observe exclusion/recovery without changing any protocol invariant.
@@ -120,6 +195,10 @@ fn submit_initial_felony(world: &mut World) {
         ],
     );
 
+    let owned = capture_felony_processes(world);
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
     let port = primary(world);
     let (_, victim) = validator_key_and_address(world, 3);
     let (reporter_key, reporter) = validator_key_and_address(world, 0);
@@ -153,11 +232,15 @@ fn submit_initial_felony(world: &mut World) {
         "valid conflicting-notarize evidence must be accepted: {}",
         outcome.transaction_hash
     );
-    wait_finalized_outcome(world, &outcome);
+    world
+        .rpc
+        .finalize_outcome(&outcome, &survivor_ports, 40)
+        .expect("initial felony finalized on every designated observer");
+    let jail_height = outcome.block_number().expect("felony receipt height");
 
     let after = world
         .rpc
-        .validator_record(port, &victim)
+        .validator_record_at(port, &victim, jail_height)
         .expect("read jailed victim after evidence");
     assert_eq!(
         after.status, STATUS_JAILED,
@@ -176,6 +259,16 @@ fn submit_initial_felony(world: &mut World) {
         after.stake < before.stake,
         "the setup felony must slash bonded stake"
     );
+    for &observer in &survivor_ports {
+        assert_eq!(
+            world
+                .rpc
+                .validator_record_at(observer, &victim, jail_height),
+            Some(after.clone()),
+            "canonical initial punishment differs between observers"
+        );
+    }
+    expect_felony_guard_shutdown(world, &owned, &outcome, "initial_felony_guard_shutdown");
 
     world.state.joiner_addr = Some(victim);
     world.state.wwd = Some(reporter);
@@ -257,38 +350,10 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     // The accepted felony intentionally stops validator 3's node through its
     // production TEE guard. Pin all owners before the transaction; never choose
     // the replay observers by which RPC endpoints happen to remain responsive.
-    assert_eq!(world.validators.size(), 4, "four evidence participants");
-    let owned = (0..4)
-        .map(|index| {
-            world
-                .localnet
-                .live_validator_and_enclave_pids(index)
-                .expect("capture live evidence participant and enclave")
-        })
-        .collect::<Vec<_>>();
+    let owned = capture_felony_processes(world);
     let survivor_ports = (0..3)
         .map(|index| world.validators.http_port(index))
         .collect::<Vec<_>>();
-    let assert_survivors_live = |world: &mut World| {
-        for (index, expected) in owned.iter().take(3).enumerate() {
-            assert_eq!(
-                world
-                    .localnet
-                    .live_validator_and_enclave_pids(index)
-                    .expect("every designated replay observer must remain live"),
-                *expected,
-                "replay observer or enclave was replaced"
-            );
-        }
-        assert_eq!(
-            world
-                .localnet
-                .live_enclave_pid(3)
-                .expect("victim enclave stays live"),
-            owned[3].1,
-            "victim enclave was replaced"
-        );
-    };
 
     let first = world
         .rpc
@@ -349,42 +414,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         );
     }
 
-    let exit_deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        assert_survivors_live(world);
-        let (pid, status) = world
-            .localnet
-            .owned_validator_process(3)
-            .expect("observe the exact owned jailed validator without signalling it");
-        assert_eq!(pid, owned[3].0, "jailed validator was replaced");
-        if let Some(status) = status {
-            assert!(status.success(), "jailed guard must stop cleanly: {status}");
-            break;
-        }
-        assert!(
-            Instant::now() < exit_deadline,
-            "jailed validator did not stop"
-        );
-        sleep(Duration::from_millis(100));
-    }
-    let log = world
-        .localnet
-        .node_launch_log(3, owned[3].0)
-        .expect("read the jailed validator's exact incarnation log");
-    let guard = "outbe_chain: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
-    assert_eq!(
-        log.lines()
-            .filter(|line| line.trim_end().ends_with(guard))
-            .count(),
-        1,
-        "owned victim must stop for exactly the canonical jail reason"
-    );
-    world.state.expected_tee_lease_guard_shutdown_validator = Some(3);
-    world.state.restart_observations.push(serde_json::json!({
-        "phase": "felony_replay_observers", "victim": 3, "owned_pids": owned,
-        "ports": survivor_ports, "jail_height": jail_height,
-        "jail_transaction": first.transaction_hash, "natural_exit_code": 0,
-    }));
+    expect_felony_guard_shutdown(world, &owned, &first, "felony_replay_observers");
 
     let reporter_before = world
         .state
@@ -427,7 +457,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "an exact replay may charge gas but must not mint another reward"
     );
 
-    assert_survivors_live(world);
+    assert_felony_survivors_live(world, &owned);
     let reverse_replay = assert_mined_revert_reason_on(
         world,
         &survivor_ports,
@@ -448,7 +478,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         .rpc
         .balance_on(port, &reporter)
         .expect("reporter balance after reverse replay");
-    assert_survivors_live(world);
+    assert_felony_survivors_live(world, &owned);
     assert_eq!(
         reporter_after_reverse + reverse_fee,
         reporter_after_exact,
@@ -616,11 +646,20 @@ fn partial_jailed_unstake_does_not_exit(world: &mut World) {
 #[when("it requests unjail before an exclusion boundary")]
 fn requests_early_unjail(world: &mut World) {
     let victim_key = world.validators.get(3).evm_key().expect("victim key");
+    assert_eq!(
+        world.state.expected_tee_lease_guard_shutdown_validator,
+        Some(3),
+        "initial felony must prove the owned victim's shutdown"
+    );
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
     // This exact guard is reached only after Staking verifies the minimum.
     // Exclusion during the observation window must fail this retained-member
     // scenario, rather than accepting a different cooldown/status rejection.
-    let outcome = assert_mined_revert_reason(
+    let outcome = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         STK_ADDR,
         &victim_key,
         &IStaking::unjailValidatorCall {},
