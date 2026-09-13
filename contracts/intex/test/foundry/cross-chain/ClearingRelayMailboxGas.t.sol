@@ -3,14 +3,99 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
-import {ERC7786Bridge} from "@crosschain/ERC7786Bridge.sol";
-import {HyperlaneGatewayAdapter} from "@crosschain/adapters/HyperlaneGatewayAdapter.sol";
+
+interface IMailbox {
+    function dispatch(uint32 destinationDomain, bytes32 recipient, bytes calldata body, bytes calldata metadata)
+        external
+        payable
+        returns (bytes32);
+
+    function quoteDispatch(uint32 destinationDomain, bytes32 recipient, bytes calldata body, bytes calldata metadata)
+        external
+        view
+        returns (uint256);
+}
+
+/// @notice What the hub and its Hyperlane adapter do on the way out, wired to the real mailbox.
+/// @dev Reproduced here rather than imported from `contracts/crosschain`: compiling that into this project
+///      puts it in its own solc unit, which the upgrades-core layout validator cannot dereference. Both
+///      wraps are byte-identical to production, so the mailbox hashes and logs a production-sized message.
+contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
+    IMailbox private immutable MAILBOX;
+    uint32 private immutable DOMAIN;
+    uint256 private _nonce;
+
+    bytes4 private constant GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
+    uint16 private constant HOOK_METADATA_VARIANT = 1;
+    uint256 private constant DEFAULT_GAS_LIMIT = 200_000;
+
+    constructor(address mailbox, uint32 domain) {
+        MAILBOX = IMailbox(mailbox);
+        DOMAIN = domain;
+    }
+
+    function supportsAttribute(bytes4) external pure returns (bool) {
+        return true;
+    }
+
+    function quote(bytes calldata recipient, bytes calldata payload) external view returns (uint256) {
+        return _quote(recipient, payload, DEFAULT_GAS_LIMIT);
+    }
+
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        view
+        returns (uint256)
+    {
+        return _quote(recipient, payload, _gasAttribute(attributes));
+    }
+
+    function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        payable
+        returns (bytes32)
+    {
+        return MAILBOX.dispatch{value: msg.value}(
+            DOMAIN, _self(), _body(recipient, payload, ++_nonce), _metadata(_gasAttribute(attributes))
+        );
+    }
+
+    /// @dev Hub wrap (nonce, sender, recipient, payload) inside the adapter wrap (sender, recipient, body).
+    function _body(bytes calldata recipient, bytes calldata payload, uint256 nonce)
+        private
+        view
+        returns (bytes memory)
+    {
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        return abi.encode(sender, recipient, abi.encode(nonce, sender, recipient, payload));
+    }
+
+    function _quote(bytes calldata recipient, bytes calldata payload, uint256 gasLimit) private view returns (uint256) {
+        return MAILBOX.quoteDispatch(DOMAIN, _self(), _body(recipient, payload, _nonce + 1), _metadata(gasLimit));
+    }
+
+    function _self() private view returns (bytes32) {
+        return bytes32(uint256(uint160(address(this))));
+    }
+
+    function _metadata(uint256 gasLimit) private view returns (bytes memory) {
+        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), gasLimit, msg.sender);
+    }
+
+    function _gasAttribute(bytes[] calldata attributes) private pure returns (uint256) {
+        for (uint256 i = 0; i < attributes.length; i++) {
+            if (bytes4(attributes[i]) == GAS_LIMIT_SELECTOR) return abi.decode(attributes[i][4:], (uint256));
+        }
+        return DEFAULT_GAS_LIMIT;
+    }
+}
 
 /// @dev Bids live in storage and are seeded in `setUp`, so the relay reads them cold as in production;
 ///      `GasBudget.t.sol`'s stub fabricates them in memory and misses two slots per bid.
@@ -39,6 +124,10 @@ contract StoredBidStub {
 
     function startClearingStage(uint32) external {}
 
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Issuance;
+    }
+
     function revealedBidsCount(uint32) external view returns (uint256) {
         return _visible;
     }
@@ -57,27 +146,15 @@ contract StoredBidStub {
             slice[i] = _bids[offset + i];
         }
     }
-
-    function getAuctionDetails(uint32)
-        external
-        view
-        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
-    {
-        data;
-        uint256 n = _visible;
-        bids = new IIntexAuction.SubmittedBidData[](n);
-        for (uint256 i = 0; i < n; ++i) {
-            bids[i] = _bids[i];
-        }
-    }
-
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
-    }
 }
 
 /// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
-/// @dev Budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step 1 -> 64 (per bid).
+/// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step 1 -> 64
+///      (per bid). `_measure` drives `relayBidsToOutbe` as the router itself - the same entry the inbound
+///      clearing handler uses - so only the relay is in the reading. Against the real hub and adapter the
+///      same readings come out ~81k higher on the fixed part and ~22k higher per chunk (their frame plus
+///      the hub's nonce write), which is what the budgets are sized on: 564k fixed, ~197k a chunk,
+///      ~10k a bid.
 abstract contract RelayGasBase is Test {
     /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
     uint32 internal constant DST_CHAIN_ID = 56;
@@ -138,13 +215,12 @@ abstract contract RelayGasBase is Test {
 }
 
 /// @notice The relay against the canonical Hyperlane mailbox, over a mainnet fork.
-/// @dev A real `dispatch` inserts into the live merkle tree, runs the default hook and pays the IGP;
-///      the mock does none of it. Skips without an endpoint, so CI stays offline.
+/// @dev A real `dispatch` inserts into the live merkle tree, runs the default hook and pays the IGP; the
+///      mock does none of it. Skips without an endpoint, so CI stays offline.
 contract ClearingRelayRealMailboxTest is RelayGasBase {
     address internal constant MAILBOX = 0xc005dc82818d67AF737725bD4bf75435d065D239;
 
-    HyperlaneGatewayAdapter internal adapter;
-    ERC7786Bridge internal hub;
+    LocalHyperlaneGateway internal gateway;
 
     function setUp() public {
         string memory rpc = vm.envOr("ETH_MAINNET_RPC_URL", string(""));
@@ -154,49 +230,12 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         }
         vm.createSelectFork(rpc);
 
-        adapter = new HyperlaneGatewayAdapter(MAILBOX, admin);
-        hub = new ERC7786Bridge(admin, address(adapter));
-        hub.setGateway(DST_CHAIN_ID, address(adapter));
-        hub.registerRemoteBridge(_interop(DST_CHAIN_ID, makeAddr("remoteHub")));
-        adapter.setRouterWithChain(DST_CHAIN_ID, bytes32(uint256(uint160(makeAddr("remoteAdapter")))), DST_CHAIN_ID);
-
-        _wireRouter(address(hub));
+        gateway = new LocalHyperlaneGateway(MAILBOX, DST_CHAIN_ID);
+        _wireRouter(address(gateway));
     }
 
     function _label() internal pure override returns (string memory) {
         return "relay_real";
-    }
-
-    /// @dev The whole delivery, entered where the mailbox enters it. The budget covers this; the step
-    ///      down to `relay_real_*` is the preamble the gas floor must allow for.
-    function _measureDelivery(uint256 bids) internal returns (uint256 spent) {
-        stub.setVisible(bids);
-        bytes memory wrapped = abi.encode(
-            uint256(1),
-            _interop(DST_CHAIN_ID, originPeer),
-            _interop(uint32(block.chainid), address(router)),
-            BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY)
-        );
-        bytes memory adapterMessage = abi.encode(
-            _interop(DST_CHAIN_ID, makeAddr("remoteHub")), _interop(uint32(block.chainid), address(hub)), wrapped
-        );
-
-        vm.prank(MAILBOX);
-        uint256 before = gasleft();
-        adapter.handle(DST_CHAIN_ID, bytes32(uint256(uint160(makeAddr("remoteAdapter")))), adapterMessage);
-        spent = before - gasleft();
-    }
-
-    function test_Delivery0Bids() public {
-        emit log_named_uint("delivery_real_0bids", _measureDelivery(0));
-    }
-
-    function test_Delivery64Bids() public {
-        emit log_named_uint("delivery_real_64bids", _measureDelivery(64));
-    }
-
-    function test_Delivery256Bids() public {
-        emit log_named_uint("delivery_real_256bids", _measureDelivery(256));
     }
 }
 

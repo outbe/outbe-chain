@@ -45,6 +45,9 @@ library IntexGas {
     /// @dev 88k.
     uint256 internal constant BIDS_DONE = 135_000;
 
+    /// @dev The remainder report a stopped relay sends home; the origin answers it with another round.
+    uint256 internal constant BIDS_REMAINING = 135_000;
+
     /// @dev The one budget no test can measure - the receiver forwards into the Desis precompile. Derived
     ///      from its tariff (read 100, write 2,900, six per bid), 17.6k on the generation-reset branch and
     ///      the router's measured 144k share: ~921k for 64 bids. Replace with a live receipt.

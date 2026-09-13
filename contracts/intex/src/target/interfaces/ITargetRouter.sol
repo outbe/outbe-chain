@@ -80,6 +80,20 @@ interface ITargetRouter {
     /// @param totalBatches Chunks the day's relay spans.
     event BidsRelayIncomplete(uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
 
+    /// @notice Emitted when an unfinished day is reported home for another round.
+    /// @param sendId Transport id of the report.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param nextBatch First chunk still to send.
+    /// @param totalBatches Chunks the day's relay spans.
+    event BidsRemainingSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
+
+    /// @notice Emitted when the report itself could not be sent - an empty relay float, most likely - so the
+    ///         day waits for a hand-pushed `relayBids` instead of another round.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param nextBatch First chunk still to send.
+    /// @param totalBatches Chunks the day's relay spans.
+    event BidsRemainingUnreported(uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
+
     /// @notice Emitted when the day's last chunk and its completeness marker have left.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param totalBatches Chunks the day's relay spanned.

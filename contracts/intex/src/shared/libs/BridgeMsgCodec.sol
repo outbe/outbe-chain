@@ -27,6 +27,8 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
     uint8 internal constant MSG_MARK_CALLED = 8;
     uint8 internal constant MSG_MARK_QUALIFIED = 9;
+    /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
+    uint8 internal constant MSG_BIDS_REMAINING = 10;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
@@ -75,6 +77,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_MARK_QUALIFIED = HEADER_LEN + 128;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
+    // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
+    uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -590,6 +594,41 @@ library BridgeMsgCodec {
 
     // --- Decoding ---
 
+    /// @notice Encodes a BIDS_REMAINING report: the day's relay on `_srcChainId` has sent chunks up to
+    ///         `_nextBatch` of `_totalBatches` and needs another round for the rest.
+    /// @param _worldwideDay Worldwide day (yyyymmdd).
+    /// @param _srcChainId Chain the relay is running on.
+    /// @param _nextBatch First chunk still to send.
+    /// @param _totalBatches Chunks the day's relay spans.
+    /// @return The wire-encoded BIDS_REMAINING message.
+    function encodeBidsRemaining(uint32 _worldwideDay, uint32 _srcChainId, uint16 _nextBatch, uint16 _totalBatches)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return
+            abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_REMAINING, _worldwideDay, _srcChainId, _nextBatch, _totalBatches);
+    }
+
+    /// @notice Decodes a BIDS_REMAINING report.
+    /// @param _msg The wire-encoded BIDS_REMAINING message.
+    /// @return worldwideDay Worldwide day (yyyymmdd).
+    /// @return srcChainId Chain the relay is running on.
+    /// @return nextBatch First chunk still to send.
+    /// @return totalBatches Chunks the day's relay spans.
+    function decodeBidsRemaining(bytes calldata _msg)
+        internal
+        pure
+        returns (uint32 worldwideDay, uint32 srcChainId, uint16 nextBatch, uint16 totalBatches)
+    {
+        _assertExactLength(_msg, MSG_BIDS_REMAINING, MIN_LEN_BIDS_REMAINING);
+        _assertBodyVersion(_msg);
+        worldwideDay = uint32(bytes4(_msg[2:6]));
+        srcChainId = uint32(bytes4(_msg[6:10]));
+        nextBatch = uint16(bytes2(_msg[10:12]));
+        totalBatches = uint16(bytes2(_msg[12:14]));
+    }
+
     /// @notice Decodes a BIDS_DONE marker.
     /// @param _msg The wire-encoded BIDS_DONE message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
@@ -865,6 +904,7 @@ library BridgeMsgCodec {
         if (_msgType == MSG_MARK_QUALIFIED) return MIN_LEN_MARK_QUALIFIED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
         if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
+        if (_msgType == MSG_BIDS_REMAINING) return MIN_LEN_BIDS_REMAINING;
         if (_msgType == MSG_REFUND_INSTRUCTIONS) return MIN_LEN_REFUND_INSTRUCTIONS;
         if (_msgType == MSG_ISSUANCE_INSTRUCTIONS) return MIN_LEN_ISSUANCE_INSTRUCTIONS;
         return 0;

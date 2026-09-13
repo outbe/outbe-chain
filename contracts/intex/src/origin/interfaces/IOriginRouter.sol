@@ -19,6 +19,20 @@ interface IOriginRouter {
     /// @param bidsCount Number of bids received.
     event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 bidsCount);
 
+    /// @notice Emitted when a target's unfinished relay is answered with another round.
+    /// @param sendId Transport id of the CLEARING that carries the round.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param dstChainId Chain whose relay carries on.
+    /// @param nextBatch First chunk the target still has to send.
+    /// @param totalBatches Chunks the day's relay spans.
+    event BidsRelayRoundSent(
+        bytes32 indexed sendId,
+        uint32 indexed worldwideDay,
+        uint32 indexed dstChainId,
+        uint16 nextBatch,
+        uint16 totalBatches
+    );
+
     /// @notice Emitted when a BIDS_DONE completeness marker is received from a target chain.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).

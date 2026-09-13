@@ -245,6 +245,19 @@ contract TargetRouter is
         _relayBids(worldwideDay);
     }
 
+    /// @notice Self-call shim that reports an unfinished day home, so the origin can send another round.
+    ///         Only callable by this contract itself; isolated so a failed report cannot take the round
+    ///         that just succeeded with it.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose remainder is reported.
+    function reportBidsRemaining(uint32 worldwideDay) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+        bytes memory message =
+            BridgeMsgCodec.encodeBidsRemaining(worldwideDay, uint32(block.chainid), p.nextBatch, p.totalBatches);
+        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_REMAINING);
+        emit BidsRemainingSent(sendId, worldwideDay, p.nextBatch, p.totalBatches);
+    }
+
     /// @notice Permissionless push for a day whose bids have not all left - the hand for a relay float that
     ///         ran dry. Only a day the auction has moved past its reveal accepts this: that stage is set by
     ///         the inbound CLEARING alone, so this can start nothing the origin did not ask for.
@@ -255,7 +268,21 @@ contract TargetRouter is
         if ($.auction.getAuctionStage(worldwideDay) != IIntexAuction.AuctionStage.Issuance) {
             revert NoBidsToRelay(worldwideDay);
         }
+        uint16 batchBefore = $.bidsRelay[worldwideDay].nextBatch;
         _relayBids(worldwideDay);
+        _reportIfAdvanced(worldwideDay, batchBefore);
+    }
+
+    /// @dev Report the remainder only when the round moved: a round that sent nothing would have the origin
+    ///      answer with the same budget for the same outcome, and that is a loop, not a recovery.
+    function _reportIfAdvanced(uint32 worldwideDay, uint16 batchBefore) internal {
+        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+        if (p.done || p.nextBatch <= batchBefore) return;
+        // solhint-disable-next-line no-empty-blocks
+        try this.reportBidsRemaining(worldwideDay) {}
+        catch {
+            emit BidsRemainingUnreported(worldwideDay, p.nextBatch, p.totalBatches);
+        }
     }
 
     /// @notice Relay the day's revealed bids to Outbe in chunked BIDS_BATCH sends, resuming where the

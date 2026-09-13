@@ -412,6 +412,8 @@ contract OriginRouter is
             _handleBidsBatch(srcChainId, payload);
         } else if (msgType == BridgeMsgCodec.MSG_BIDS_DONE) {
             _handleBidsDone(srcChainId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_BIDS_REMAINING) {
+            _handleBidsRemaining(srcChainId, payload);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
@@ -450,6 +452,20 @@ contract OriginRouter is
         IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
+    }
+
+    /// @dev A target whose relay stopped part way asks for another round. Answered by sending the day's
+    ///      CLEARING again - the target resumes from the chunk it left, so the same message carries on
+    ///      rather than starting over. Parked like any other send when the relay float is empty.
+    function _handleBidsRemaining(uint32 srcChainId, bytes calldata payload) private {
+        (uint32 worldwideDay, uint32 bodySrcChainId, uint16 nextBatch, uint16 totalBatches) =
+            BridgeMsgCodec.decodeBidsRemaining(payload);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
+
+        bytes32 sendId = _sendOrPark(
+            srcChainId, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
+        );
+        emit BidsRelayRoundSent(sendId, worldwideDay, srcChainId, nextBatch, totalBatches);
     }
 
     /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge

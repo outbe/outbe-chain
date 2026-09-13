@@ -193,6 +193,41 @@ contract PatternADeferTest is CrossChainTest {
         bnbRouter.relayBids(SERIES_ID_DAY);
     }
 
+    /// @dev A round that moved but could not finish reports the remainder home, and the origin answers that
+    ///      with another round - so a heavy day needs no hand at all.
+    function test_TM_AStoppedRoundReportsWhatIsLeft() public {
+        stubAuction.setBidCount(130); // three chunks
+        vm.deal(address(bnbRouter), 10 ether);
+
+        // Deliver with enough gas for a chunk or two, not for the day: exactly what a tight budget does.
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY);
+        (bool delivered,) = address(bridge).call{gas: 4_500_000}(
+            abi.encodeCall(
+                bridge.deliverAs,
+                (_interop(OUTBE_CHAIN_ID, outbePeer), _interop(uint32(block.chainid), address(bnbRouter)), packet)
+            )
+        );
+        assertTrue(delivered, "the delivery itself must survive");
+
+        (uint16 nextBatch, uint16 totalBatches, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        assertFalse(done, "the day is unfinished");
+        assertGt(nextBatch, 0, "the round moved");
+        assertLt(nextBatch, totalBatches, "and left chunks behind");
+
+        bytes memory reported = bridge.lastPayload();
+        assertEq(uint8(reported[1]), BridgeMsgCodec.MSG_BIDS_REMAINING, "the last thing sent is the report");
+    }
+
+    /// @dev A round that sent nothing must not report: the origin would answer with the same budget for the
+    ///      same outcome, and that is a loop rather than a recovery.
+    function test_TM_ARoundThatSentNothingDoesNotReport() public {
+        // Zero float, so the round reverts whole before any chunk leaves.
+        assertEq(address(bnbRouter).balance, 0);
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+
+        assertEq(bridge.lastPayload().length, 0, "nothing was sent, so nothing was reported");
+    }
+
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
         bnbRouter.relayBidsToOutbe(SERIES_ID_DAY);

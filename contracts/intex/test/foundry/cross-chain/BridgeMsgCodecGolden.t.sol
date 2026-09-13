@@ -39,6 +39,13 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
 
+    function test_Golden_BidsRemaining() public pure {
+        assertEq(
+            BridgeMsgCodec.encodeBidsRemaining(0x0A0B0C0D, 0x01020304, 0x0011, 0x0022),
+            hex"010a0a0b0c0d0102030400110022"
+        );
+    }
+
     function test_Golden_AuctionStageClearing() public pure {
         assertEq(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D), hex"01040a0b0c0d");
     }

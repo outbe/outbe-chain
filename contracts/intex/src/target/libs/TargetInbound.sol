@@ -23,6 +23,7 @@ import {
 ///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
+    function reportBidsRemaining(uint32 worldwideDay) external;
     function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
     function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
@@ -111,6 +112,15 @@ library TargetInbound {
             catch {
                 // The round rolled back whole, so progress reads as it did before it started.
                 emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
+            }
+            // Report on the gas held back, but only if the round moved: an unmoved round would have the
+            // origin answer with the same budget for the same outcome, which is a loop, not a recovery.
+            if (!relay.done && relay.nextBatch > batchBefore) {
+                // solhint-disable-next-line no-empty-blocks
+                try ITargetRouterShims(address(this)).reportBidsRemaining(worldwideDay) {}
+                catch {
+                    emit ITargetRouter.BidsRemainingUnreported(worldwideDay, relay.nextBatch, relay.totalBatches);
+                }
             }
         }
 

@@ -168,6 +168,37 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
+    /// @dev A target whose relay stopped part way reports the remainder; the origin answers with another
+    ///      CLEARING round to that chain alone, so a heavy day finishes without a hand.
+    function test_inbound_bidsRemaining_sendsAnotherRound() public {
+        _fireStart(DAY);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+
+        _deliver(TARGET_A, peerA, address(origin), pkt);
+
+        assertEq(
+            uint8(bridge.lastPayload()[1]),
+            BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING,
+            "the answer is another clearing round"
+        );
+        assertEq(
+            keccak256(bridge.lastRecipient()),
+            keccak256(_interop(TARGET_A, peerA)),
+            "and it goes only to the chain that asked"
+        );
+    }
+
+    function test_inbound_bidsRemaining_ignoreNonSnapshotSource() public {
+        _fireStart(DAY);
+        origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        bytes32 key = bytes32((uint256(DAY) << 32) | 9);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, 9, 1, 2);
+
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.NOT_FOUND);
+        _deliver(9, address(0x9999), address(origin), pkt);
+    }
+
     function test_inbound_bids_ignoreNonSnapshotSource() public {
         _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
         origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
