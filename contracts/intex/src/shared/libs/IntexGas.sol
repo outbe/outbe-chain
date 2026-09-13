@@ -12,9 +12,15 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @dev Sized for the bids relay it fires, not the 452k stage flip. Recalibrated with the resumable
-    ///      relay: a round that cannot finish the day reports the remainder and the next one carries on.
-    uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
+    /// @notice Floor for a CLEARING round. Desis sizes each round from the chain's own recent bid counts;
+    ///         this is what a chain with no history gets, and what the router clamps a smaller ask up to.
+    ///         Covers the flip, a relay of 32 bids and the marker: 564k fixed + one chunk + 32 x 10k, x1.5.
+    uint256 internal constant AUCTION_STAGE_CLEARING = 1_400_000;
+
+    /// @notice Ceiling for a CLEARING round, under the tightest per-transaction gas cap our target chains
+    ///         enforce (Ethereum's EIP-7825 is 16 777 216). A round asking for more would never be
+    ///         delivered, so the day walks itself there in several rounds instead.
+    uint256 internal constant AUCTION_STAGE_CLEARING_MAX = 14_000_000;
 
     /// @dev 147k.
     uint256 internal constant AUCTION_RESULT = 225_000;

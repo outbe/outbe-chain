@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -285,7 +286,7 @@ contract LocalLoopbackTest is Test {
         //    back through the loopback to the origin - three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
-        origin.sendAuctionStageClearing(DAY);
+        origin.sendAuctionStageClearing(DAY, local, IntexGas.AUCTION_STAGE_CLEARING);
         assertEq(desis.bidsCount(), 2, "bids not relayed");
         assertEq(desis.lastDay(), DAY, "relay day");
         assertEq(desis.lastSrcChainId(), local, "relay source chain");

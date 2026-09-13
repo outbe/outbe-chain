@@ -64,6 +64,9 @@ contract OriginRouter is
         mapping(uint256 idx => ParkedMessage) parkedMessages;
         /// @dev Next index to assign in `parkedMessages`.
         uint256 nextParkedMessageIdx;
+        /// @dev Gas a day's CLEARING round asks of each chain, as desis sized it from that chain's recent
+        ///      bid counts. Later rounds of the same day reuse it, so a remainder report needs no sizing.
+        mapping(uint32 worldwideDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -261,14 +264,25 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageClearing(uint32 worldwideDay) external payable onlyRole(DESIS_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
-        if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay);
-        for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_CLEARING);
-            emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
-        }
+    function sendAuctionStageClearing(uint32 worldwideDay, uint32 dstChainId, uint256 gasLimit)
+        external
+        payable
+        onlyRole(DESIS_ROLE)
+    {
+        if (!_isSeriesTarget(worldwideDay, dstChainId)) revert NoTargets();
+        uint64 budget = _clearingBudget(gasLimit);
+        // Remembered so the rounds that follow a remainder report ask for the same gas as the first one.
+        _os().clearingGas[worldwideDay][dstChainId] = budget;
+        bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), budget);
+        emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+    }
+
+    /// @dev Keep the ask inside what a round is worth: below the floor a round could not even flip the
+    ///      stage, and above the cap no target chain would accept the delivery.
+    function _clearingBudget(uint256 gasLimit) private pure returns (uint64) {
+        if (gasLimit < IntexGas.AUCTION_STAGE_CLEARING) return uint64(IntexGas.AUCTION_STAGE_CLEARING);
+        if (gasLimit > IntexGas.AUCTION_STAGE_CLEARING_MAX) return uint64(IntexGas.AUCTION_STAGE_CLEARING_MAX);
+        return uint64(gasLimit);
     }
 
     /// @inheritdoc IOriginRouter
@@ -462,8 +476,11 @@ contract OriginRouter is
             BridgeMsgCodec.decodeBidsRemaining(payload);
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
 
+        uint64 budget = _os().clearingGas[worldwideDay][srcChainId];
         bytes32 sendId = _sendOrPark(
-            srcChainId, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), IntexGas.AUCTION_STAGE_CLEARING
+            srcChainId,
+            BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay),
+            budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget
         );
         emit BidsRelayRoundSent(sendId, worldwideDay, srcChainId, nextBatch, totalBatches);
     }

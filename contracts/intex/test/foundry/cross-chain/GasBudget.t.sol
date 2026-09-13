@@ -535,7 +535,10 @@ contract AuctionGasBudgetTest is CrossChainTest {
     }
 }
 
-/// @dev CLEARING's budget is dominated by the bids relay it fires: the day's revealed bids leave as
+/// @dev These readings go through the mock, which stores the message body and so inflates a chunk about
+///      twelvefold; the budgets are sized on `ClearingRelayMailboxGas.t.sol` instead. What is pinned here
+///      is the behaviour: a day within a round finishes, a day beyond one stops and resumes.
+///      CLEARING's cost is dominated by the bids relay it fires: the day's revealed bids leave as
 ///      chunks of `MAX_PAYLOAD_ARRAY_LEN`, and every chunk is an outbound send paid from this same
 ///      delivery. A stub auction supplies the bids so the slope is measurable without the reveal flow.
 contract ClearingRelayGasTest is CrossChainTest {
@@ -576,31 +579,26 @@ contract ClearingRelayGasTest is CrossChainTest {
         spent = before - gasleft();
     }
 
-    function test_TheQuoteCoversClearingWithAFullChunkOfBids() public {
-        uint256 spent = _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    function test_OneChunkOfBidsRelaysInOneRound() public {
+        emit log_named_uint("clearing_one_chunk", _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        emit log_named_uint("clearing_one_chunk", spent);
         (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
         assertTrue(done, "the day relayed whole");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "one full chunk must fit the quote");
     }
 
-    function test_TheQuoteCoversClearingWithFourChunksOfBids() public {
-        uint256 spent = _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    function test_FourChunksOfBidsRelayInOneRound() public {
+        emit log_named_uint("clearing_four_chunks", _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        emit log_named_uint("clearing_four_chunks", spent);
         (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
         assertTrue(done, "the day relayed whole");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "four chunks must fit the quote");
     }
 
     /// @dev A day too heavy for one delivery keeps the stage flip and stops mid-relay, so the next round
     ///      carries on from the chunk it left rather than starting the day over.
     function test_ADayTooHeavyToRelayStopsPartWayThrough() public {
-        assertTrue(
-            _clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, IntexGas.AUCTION_STAGE_CLEARING),
-            "the delivery itself must survive"
-        );
+        // Through the mock a chunk costs about 2.4M - it stores the whole body - so a round of this size
+        // buys a couple of chunks. The real cost lives in `ClearingRelayMailboxGas.t.sol`.
+        assertTrue(_clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 6_000_000), "the delivery must survive");
 
         (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
         emit log_named_uint("clearing_1024bids_batches_sent", nextBatch);

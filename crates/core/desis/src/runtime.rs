@@ -16,12 +16,13 @@ use outbe_intexfactory::schema::IssuanceParams;
 use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
-    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
-    MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_DEADBAND_BPS,
-    PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
-    SETTLEMENT_WINDOW_SECONDS,
+    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BIDS_PER_CHUNK, CLEARING_BID_GAS,
+    CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS,
+    COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN, DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND,
+    IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO,
+    PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
+    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -568,15 +569,21 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     contract.push_gate_active(worldwide_day)?;
     contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendAuctionStageClearingCall {
-            worldwideDay: worldwide_day.into(),
-        }
-        .abi_encode()
-        .into(),
-    )?;
+    // Addressed per chain: each one's round is sized from its own recent bid counts, and a chain that
+    // cannot finish in the round it gets reports the remainder and is sent another.
+    for chain_id in fetch_targets(storage, worldwide_day)? {
+        storage.call(
+            ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+            IOriginRouter::sendAuctionStageClearingCall {
+                worldwideDay: worldwide_day.into(),
+                dstChainId: chain_id,
+                gasLimit: U256::from(clearing_round_gas(storage, worldwide_day, chain_id)?),
+            }
+            .abi_encode()
+            .into(),
+        )?;
+    }
     Ok(())
 }
 
@@ -883,6 +890,29 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// The day's frozen target snapshot, read from the OriginRouter registry
+/// Gas one CLEARING round asks of `chain_id`, from the busiest of that chain's last
+/// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth. The router clamps
+/// the ask to what a round is worth, so this only has to be close.
+pub(crate) fn clearing_round_gas(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+    chain_id: u32,
+) -> Result<u64> {
+    let contract = storage.contract::<DesisContract>();
+    let mut bids = CLEARING_MIN_BIDS;
+    let mut day = worldwide_day.value();
+    for _ in 0..CLEARING_HISTORY_DAYS {
+        day = outbe_primitives::time::previous_date_key(day);
+        let key = DesisContract::chain_key(WorldwideDay::new(day), chain_id);
+        bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
+    }
+    let chunks = bids.div_ceil(CLEARING_BIDS_PER_CHUNK).max(1);
+    let cost = CLEARING_FIXED_GAS
+        .saturating_add(chunks.saturating_mul(CLEARING_CHUNK_GAS))
+        .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
+    Ok(cost.saturating_mul(3) / 2)
+}
+
 /// (deterministic: frozen at STAGE_START).
 fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<Vec<u32>> {
     let ret = storage.staticcall(

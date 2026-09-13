@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
@@ -189,7 +190,7 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, "");
         vm.prank(address(desisMock));
-        origin.sendAuctionStageClearing(day);
+        origin.sendAuctionStageClearing(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING);
 
         OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);

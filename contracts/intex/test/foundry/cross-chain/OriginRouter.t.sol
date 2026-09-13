@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
@@ -171,7 +172,9 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionStageClearing_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageClearing{value: 0.1 ether}(WORLDWIDE_DAY);
+        originRouter.sendAuctionStageClearing{value: 0.1 ether}(
+            WORLDWIDE_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING
+        );
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {

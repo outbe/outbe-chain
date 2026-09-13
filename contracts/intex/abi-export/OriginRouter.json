@@ -538,6 +538,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "gasLimit",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "outputs": [],

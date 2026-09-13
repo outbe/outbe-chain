@@ -80,3 +80,18 @@ pub const MAX_REFERENCE_PRICES: usize = 6;
 pub const IGNORED_OBSOLETE: u8 = 2;
 pub const IGNORED_CONFLICT: u8 = 3;
 pub const IGNORED_NOT_FOUND: u8 = 4;
+
+/// What a CLEARING round costs on a target chain, measured against the canonical Hyperlane mailbox
+/// (`contracts/intex/test/foundry/cross-chain/ClearingRelayMailboxGas.t.sol`): the delivery's fixed part,
+/// one outbound chunk, and one bid. A round is sized from these plus the usual 1.5x margin.
+pub const CLEARING_FIXED_GAS: u64 = 564_000;
+pub const CLEARING_CHUNK_GAS: u64 = 197_000;
+pub const CLEARING_BID_GAS: u64 = 10_000;
+
+/// Bids one BIDS_BATCH carries; mirrors `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
+pub const CLEARING_BIDS_PER_CHUNK: u64 = 64;
+
+/// Days of a chain's own history a round is sized from, and the floor it is never sized below. A miss
+/// costs one more round, not a stuck day, so the estimate can be this plain.
+pub const CLEARING_HISTORY_DAYS: u32 = 7;
+pub const CLEARING_MIN_BIDS: u64 = 32;

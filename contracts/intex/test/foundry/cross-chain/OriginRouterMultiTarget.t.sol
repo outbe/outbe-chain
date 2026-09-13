@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -112,13 +113,44 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendAuctionStageStart(_params(DAY));
     }
 
-    function test_clearing_broadcastsOverSnapshot_notLiveRegistry() public {
+    /// @dev Clearing is addressed per chain now (each round is sized from that chain's own history), so
+    ///      membership is what the frozen snapshot says - a mid-day removal must not close a chain out.
+    function test_clearing_addressesTheSnapshot_notLiveRegistry() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
         vm.recordLogs();
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY);
-        assertEq(_countStageSent(), 2, "clearing still fans to the frozen snapshot");
+        origin.sendAuctionStageClearing(DAY, TARGET_B, IntexGas.AUCTION_STAGE_CLEARING);
+        assertEq(_countStageSent(), 1, "the removed target still takes the day's clearing");
+
+        vm.prank(desis);
+        vm.expectRevert(IOriginRouter.NoTargets.selector);
+        origin.sendAuctionStageClearing(DAY, 4242, IntexGas.AUCTION_STAGE_CLEARING);
+    }
+
+    /// @dev A round smaller than a round is worth comes back up to the floor, and one above what a target
+    ///      chain would accept comes down to the cap.
+    function test_clearing_clampsTheAskToWhatARoundIsWorth() public {
+        _fireStart(DAY);
+        vm.prank(desis);
+        origin.sendAuctionStageClearing(DAY, TARGET_A, 1);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING, "clamped up to the floor");
+
+        vm.prank(desis);
+        origin.sendAuctionStageClearing(DAY, TARGET_A, 100_000_000);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING_MAX, "clamped down to the cap");
+    }
+
+    function _lastGasAttribute() internal view returns (uint256) {
+        bytes[] memory attrs = bridge.getLastAttributes();
+        return abi.decode(_slice(attrs[0]), (uint256));
+    }
+
+    function _slice(bytes memory attribute) internal pure returns (bytes memory body) {
+        body = new bytes(attribute.length - 4);
+        for (uint256 i = 0; i < body.length; ++i) {
+            body[i] = attribute[i + 4];
+        }
     }
 
     // --- Addressed-send membership ---
