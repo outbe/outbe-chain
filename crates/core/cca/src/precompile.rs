@@ -1,44 +1,42 @@
-//! ABI decode, dispatch and encode for the CCA registry precompile.
-//!
-//! A Checkout Credis Agent originates Credis positions on behalf of card owners.
-//! `CredisFactory` needs to gate origination on the agent's standing, so the
-//! query side of that contract - [`ICca`] - is published and routed now; the
-//! registry that would answer it truthfully is not built yet.
-//!
-//! Until it is, every address reads back `Active`, which keeps the pre-registry
-//! behaviour (nobody is gated) while callers migrate onto the real ABI.
-
+//! ABI decode, dispatch and encode for the CCA registry.
+use crate::{api, runtime};
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
-
-use outbe_primitives::dispatch::{dispatch_call, reject_value, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-
-/// Selectors on this precompile that accept native value. The route table binds
-/// this to the address's `ValuePolicy` at compile time, so a selector added here
-/// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+use alloy_sol_types::{sol, SolCall, SolInterface};
+use outbe_primitives::dispatch::{
+    dispatch_call, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+};
+use outbe_primitives::{erc::ERC165_INTERFACE_ID, error::Result, storage::StorageHandle};
 
 sol!("../../../contracts/precompiles/src/ICca.sol");
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICca::bondCall::SELECTOR];
 
-/// Routes reads into [`crate::api`], which owns the (currently stubbed) answer.
 pub fn dispatch(
-    storage: StorageHandle,
+    storage: StorageHandle<'_>,
     data: &[u8],
-    _caller: Address,
+    caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    reject_value(&value)?;
+    reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, ICca::ICcaCalls::abi_decode, |call| {
         use ICca::ICcaCalls::*;
         match call {
-            getCcaState(c) => view(c, |c| crate::api::cca_state(&storage, c.cca)),
-            supportsInterface(c) => view(c, |c| {
-                let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID)
+            bond(c) => {
+                mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, _, amount| {
+                    runtime::bond(storage.clone(), sender, amount)
+                })
+            }
+            unbond(c) => mutate_void(c, caller, |sender, _| {
+                runtime::unbond(storage.clone(), sender)
             }),
+            claimUnbonded(c) => mutate_void(c, caller, |sender, _| {
+                runtime::claim_unbonded(storage.clone(), sender)
+            }),
+            claimRewards(c) => mutate_void(c, caller, |sender, _| {
+                runtime::claim_rewards(storage.clone(), sender)
+            }),
+            getCca(c) => view(c, |c| api::get_cca(&storage, c.cca)),
+            getCcaState(c) => view(c, |c| api::cca_state(&storage, c.cca)),
+            supportsInterface(c) => view(c, |c| Ok(c.interfaceId.0 == ERC165_INTERFACE_ID)),
         }
     })
 }

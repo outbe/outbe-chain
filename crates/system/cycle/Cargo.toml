@@ -30,6 +30,7 @@ alloy-sol-types.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-cca.workspace = true
 proptest.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }

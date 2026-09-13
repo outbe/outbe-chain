@@ -843,25 +843,24 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
         // No tributes for any AgentReward pool, so all three
         // WAA/SRA/CCA amounts are accounted for.
-        // burn parity: WAA + SRA pools are pre-funded then burned in
-        // their no-tribute branch; CCA lands on its own
-        // accumulator address. AGENT_REWARD balance is therefore
-        // zero (no claimable was credited).
+        // Empty WAA/SRA pools burn their backing; an empty CCA pool mints
+        // nothing. All three allocations return to terminal Metadosis.
         let agent_reward_balance = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
-        // The CCA accumulator received its 4 %. The exact amount comes
-        // from `day_emission_limit(0) * 4 / 100` which is fully covered
-        // by emissionlimit pinned tests; here we only assert it is
-        // non-zero.
+        // No eligible CCA: its full allocation goes to terminal Metadosis.
         let cca = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::CCA_ADDRESS)
             .unwrap();
-        assert!(!cca.is_zero(), "CCA accumulator received its 4 %");
+        assert_eq!(
+            cca,
+            U256::ZERO,
+            "no eligible CCA weight; pool goes to Metadosis"
+        );
     });
 }
 
@@ -964,6 +963,11 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             .checked_add(amount_for(
                 outbe_emissionlimit::allocation::EmissionSinkId::Sra,
             ))
+            .and_then(|amount| {
+                amount.checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                ))
+            })
             .unwrap();
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         let planned = rewards
@@ -1049,6 +1053,11 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
                         outbe_emissionlimit::allocation::EmissionSinkId::Sra,
                     ))
                 })
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                    ))
+                })
                 .unwrap();
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
@@ -1068,6 +1077,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
     storage.enter(|handle| {
         let anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle);
         anchor_genesis(&anchor);
+        seed_reward_cca(&anchor.storage);
         dispatch_triggers(&anchor).unwrap();
     });
 
@@ -1114,8 +1124,8 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             fire.storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)
                 .unwrap(),
-            U256::ZERO,
-            "CCA credit before the terminal failure must roll back"
+            outbe_cca::runtime::BOND_REQUIREMENT,
+            "CCA reward credit must roll back, preserving the bond"
         );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
@@ -1181,10 +1191,11 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)
                 .unwrap(),
-            outbe_primitives::units::checked_protocol_to_native(amount_for(
-                outbe_emissionlimit::allocation::EmissionSinkId::Cca,
-            ))
-            .unwrap(),
+            outbe_cca::runtime::BOND_REQUIREMENT
+                + outbe_primitives::units::checked_protocol_to_native(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                ))
+                .unwrap(),
             "retry must credit CCA exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
@@ -1293,6 +1304,11 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
                         outbe_emissionlimit::allocation::EmissionSinkId::Sra,
                     ))
                 })
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                    ))
+                })
                 .unwrap();
         let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
         assert_eq!(
@@ -1312,6 +1328,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
     storage.enter(|handle| {
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
         anchor_genesis(&ctx_anchor);
+        seed_reward_cca(&ctx_anchor.storage);
         dispatch_triggers(&ctx_anchor).unwrap();
 
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
@@ -1332,7 +1349,10 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
-        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
+        assert!(
+            cca_after_first > outbe_cca::runtime::BOND_REQUIREMENT,
+            "first fire credited CCA"
+        );
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early - no double-mint.
@@ -1801,4 +1821,16 @@ fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
         })
         .unwrap();
     });
+}
+
+fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
+    let cca = Address::repeat_byte(0xc1);
+    storage
+        .increase_balance(
+            outbe_primitives::addresses::CCA_ADDRESS,
+            outbe_cca::runtime::BOND_REQUIREMENT,
+        )
+        .unwrap();
+    outbe_cca::runtime::bond(storage.clone(), cca, outbe_cca::runtime::BOND_REQUIREMENT).unwrap();
+    outbe_cca::api::position_opened(storage, cca, U256::ONE).unwrap();
 }

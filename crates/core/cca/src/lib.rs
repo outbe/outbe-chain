@@ -1,9 +1,11 @@
-//! Checkout Credis Agent (CCA) registry precompile.
-//!
-//! Stub: the ABI of `ICca.sol` is live and routed, but there is no registry
-//! behind it yet - every address reads back `Active`. See [`precompile`].
+//! Bonded Checkout Credis Agent registry and origination rewards.
 pub mod api;
+pub mod emission_sink;
+pub mod errors;
 pub mod precompile;
+pub mod runtime;
+pub mod schema;
+mod state;
 
 #[cfg(test)]
 mod tests;

@@ -393,6 +393,9 @@ contract CCAFlow is BaseAATest {
         address[] memory bundleSenders = new address[](1);
         bundleSenders[0] = vault;
         (address attackerAddr,) = makeAddrAndKey("attacker2");
+        vm.deal(attackerAddr, 1_000_000_000 ether);
+        vm.prank(attackerAddr);
+        ccaRegistry.bond{value: 1_000_000_000 ether}();
         address attackerSA = factory.createAccount(attackerAddr, attackerAddr, bundleTokens, bundleSenders, 99);
 
         bytes32 execMode = _execMode();

@@ -376,6 +376,15 @@ pub fn env() -> HashMapStorageProvider {
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    StorageHandle::enter(&mut storage, |handle| {
+        handle
+            .increase_balance(
+                outbe_primitives::addresses::CCA_ADDRESS,
+                outbe_cca::runtime::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_cca::runtime::bond(handle, cca(), outbe_cca::runtime::BOND_REQUIREMENT).unwrap();
+    });
     storage
 }
 

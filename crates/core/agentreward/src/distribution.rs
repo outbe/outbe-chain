@@ -174,8 +174,7 @@ pub enum PoolKind {
     /// SRA (signer-of-record-attestation) capped distribution pool. Uses
     /// tribute counts kept in `sra_*` storage fields.
     Sra,
-    /// CCA accumulator. The amount is simply added to `CCA_ADDRESS`'s
-    /// native balance; there is no distribution logic in v1.
+    /// CCA weighted origination rewards, owned by the CCA registry.
     Cca,
 }
 
@@ -187,8 +186,7 @@ pub enum PoolKind {
 /// Excess accounting (per pool kind):
 /// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
 ///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: always zero - this pool is a pure accumulator on
-///   `CCA_ADDRESS`.
+/// * `Cca`: rounding residue, or the whole pool when no active weight exists.
 ///
 /// Mint/burn parity is enforced inside the WAA/SRA helpers: each pool
 /// is minted onto `AGENT_REWARD_ADDRESS` before distribution, and the
@@ -205,10 +203,7 @@ pub fn distribute_daily(
         let excess = match kind {
             PoolKind::Waa => distribute_capped(ctx, prev_day, PoolKind::Waa, *amount)?,
             PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
-            PoolKind::Cca => {
-                accumulate_to_address(ctx, outbe_primitives::addresses::CCA_ADDRESS, *amount)?;
-                U256::ZERO
-            }
+            PoolKind::Cca => outbe_cca::emission_sink::distribute_daily(ctx, prev_day, *amount)?,
         };
         total_excess = total_excess.checked_add(excess).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Revert(
@@ -284,19 +279,4 @@ fn distribute_capped(
         _ => unreachable!(),
     }
     Ok(excess)
-}
-
-/// Converts the six-decimal emission `amount` and mints it onto `target`'s
-/// native balance. Used for the CCA pool, which is a plain accumulator in v1.
-fn accumulate_to_address(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-    target: alloy_primitives::Address,
-    amount: U256,
-) -> Result<()> {
-    if !amount.is_zero() {
-        let native_amount = checked_protocol_to_native(amount)
-            .ok_or_else(|| PrecompileError::Revert("native CCA reward overflow".into()))?;
-        ctx.storage.increase_balance(target, native_amount)?;
-    }
-    Ok(())
 }

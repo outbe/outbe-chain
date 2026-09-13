@@ -760,16 +760,16 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn cca_simply_accumulates_to_address_no_excess() {
+    fn cca_without_eligible_weight_returns_the_pool() {
         run(|ctx| {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(400u64))]).unwrap();
-            assert_eq!(excess, U256::ZERO);
+            assert_eq!(excess, U256::from(400));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                native(400)
+                U256::ZERO
             );
             assert_eq!(
                 ctx.storage
@@ -781,14 +781,27 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn cca_accumulates_across_calls() {
+    fn cca_accrues_claimable_rewards_across_days() {
         run(|ctx| {
+            let cca = address!("00000000000000000000000000000000000000a1");
+            let bond = outbe_cca::runtime::BOND_REQUIREMENT;
+            ctx.storage
+                .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, bond)
+                .unwrap();
+            outbe_cca::runtime::bond(ctx.storage.clone(), cca, bond).unwrap();
+            outbe_cca::api::position_opened(&ctx.storage, cca, U256::ONE).unwrap();
             distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
-            distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(50u64))]).unwrap();
+            distribute_daily(ctx, 20240102.into(), &[(PoolKind::Cca, U256::from(50u64))]).unwrap();
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
+                bond + native(150)
+            );
+            assert_eq!(
+                outbe_cca::api::get_cca(&ctx.storage, cca)
+                    .unwrap()
+                    .claimableRewards,
                 native(150)
             );
         });
@@ -797,7 +810,7 @@ mod distribute_daily_tests {
     #[test]
     fn full_three_pool_dispatch_sums_excesses() {
         run(|ctx| {
-            // Seed only WAA; SRA empty; CCA pure mint.
+            // Seed only WAA; SRA empty; CCA empty.
             let alice = address!("0x1111111111111111111111111111111111111111");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
             c.increment_waa_tribute(DAY, alice).unwrap();
@@ -808,19 +821,19 @@ mod distribute_daily_tests {
                 &[
                     (PoolKind::Waa, U256::from(1000u64)), // alice capped 320 -> excess 680
                     (PoolKind::Sra, U256::from(500u64)),  // no tribute -> excess 500
-                    (PoolKind::Cca, U256::from(100u64)),  // no excess
+                    (PoolKind::Cca, U256::from(100u64)),  // no eligible CCA
                 ],
             )
             .unwrap();
 
-            assert_eq!(excess, U256::from(1180u64)); // 680 + 500
+            assert_eq!(excess, U256::from(1280u64)); // 680 + 500 + 100
             let c2 = AgentRewardContract::new(ctx.storage.clone());
             assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                native(100)
+                U256::ZERO
             );
             // burn parity: AGENT_REWARD holds exactly alice's
             // 320 claimable; the SRA no-tribute 500 was burned.

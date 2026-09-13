@@ -47,6 +47,12 @@ plus `@noble/curves` for X25519. `npm run generate-types` stages the ABIs and ru
 typechain; `npx tsc --noEmit` is clean.
 
 
+CCA registration requires a separate **1,000,000,000 COEN** self-bond. The
+`setup-native` step funds the remaining bond and calls `ICca.bond()` using
+`CCA_PRIVATE_KEY`; its funding wallet must hold that amount plus operating funds.
+Partial bonds accumulate, but smart-account creation and origination require the
+full bond. Pending unbonds must be claimed before registration can resume.
+
 ### First-run quickstart
 
 ```bash

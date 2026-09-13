@@ -14,6 +14,7 @@ const outDir = resolve(projectRoot, "abi");
 
 // Output name (typechain consumes this as the contract type name) -> source path.
 const MAPPING = {
+  ICca: "precompiles/abi-export/ICca.json",
   IGratis: "precompiles/abi-export/IGratis.json",
   IGratisFactory: "precompiles/abi-export/IGratisFactory.json",
   IPromis: "precompiles/abi-export/IPromis.json",

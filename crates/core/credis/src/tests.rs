@@ -66,7 +66,17 @@ fn handle(tag: u8) -> U256 {
 fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
-    StorageHandle::enter(&mut storage, f)
+    StorageHandle::enter(&mut storage, |storage| {
+        storage
+            .increase_balance(
+                outbe_primitives::addresses::CCA_ADDRESS,
+                outbe_cca::runtime::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_cca::runtime::bond(storage.clone(), cca(), outbe_cca::runtime::BOND_REQUIREMENT)
+            .unwrap();
+        f(storage)
+    })
 }
 
 fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
@@ -1175,6 +1185,14 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut storage, |handle| {
+        handle
+            .increase_balance(
+                outbe_primitives::addresses::CCA_ADDRESS,
+                outbe_cca::runtime::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_cca::runtime::bond(handle.clone(), cca(), outbe_cca::runtime::BOND_REQUIREMENT)
+            .unwrap();
         let mut credis = CredisContract::new(handle);
         open_pos(&mut credis, 1)
     });
@@ -1218,5 +1236,49 @@ fn precompile_supports_erc165() {
         .abi_encode();
         let out = dispatch(storage, &data, alice(), U256::ZERO).unwrap();
         assert!(ICredis::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
+    });
+}
+
+#[test]
+fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = open_pos(&mut credis, 1);
+        let initial = collateral();
+        assert_eq!(
+            outbe_cca::api::get_cca(&storage, cca())
+                .unwrap()
+                .rewardWeight,
+            initial
+        );
+        // A duplicate opening must not accrue twice.
+        assert!(credis.open_position(params(handle(1), alice())).is_err());
+        credis
+            .settle(id, U256::from(PRINCIPAL / 2), ORIGINATED_AT)
+            .unwrap();
+        assert_eq!(
+            outbe_cca::api::get_cca(&storage, cca())
+                .unwrap()
+                .rewardWeight,
+            initial
+        );
+        outbe_cca::runtime::unbond(storage.clone(), cca()).unwrap();
+        assert!(credis.open_position(params(handle(2), alice())).is_err());
+        credis.mark_called(id, ORIGINATED_AT).unwrap();
+        let deadline = settlement_deadline(&credis.get_position(id).unwrap());
+        let void = credis.void_position(id, deadline).unwrap();
+        assert_eq!(
+            outbe_cca::api::get_cca(&storage, cca())
+                .unwrap()
+                .rewardWeight,
+            initial - void.gratis_burned
+        );
+        assert!(credis.void_position(id, deadline).is_err());
+        assert_eq!(
+            outbe_cca::api::get_cca(&storage, cca())
+                .unwrap()
+                .rewardWeight,
+            initial - void.gratis_burned
+        );
     });
 }

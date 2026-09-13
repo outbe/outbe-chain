@@ -53,13 +53,12 @@ pub fn request_credis(
     reference_currency: u16,
     stake: U256,
 ) -> Result<(U256, U256)> {
+    let checkpoint = storage.checkpoint_guard();
     if smart_account.is_zero() {
         return Err(CredisFactoryError::InvalidSmartAccount.into());
     }
 
-    // Origination is a CCA action, not an open one: the caller must be in good
-    // standing at the registry. Today's registry is a stub that reports every address
-    // active, so this rejects nothing yet - it is the seam the real one drops into.
+    // Origination requires an active, fully bonded CCA.
     if !outbe_cca::api::is_active(&storage, caller)? {
         return Err(CredisFactoryError::CcaNotActive.into());
     }
@@ -156,6 +155,7 @@ pub fn request_credis(
         }),
     )?;
 
+    checkpoint.commit();
     Ok((position_id, terms.stables_amount))
 }
 
@@ -264,12 +264,14 @@ pub fn settle(
 /// accrued interest simply cease to exist, and the burned collateral becomes invest-side
 /// capacity instead.
 pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
+    let checkpoint = storage.checkpoint_guard();
     let now = storage.timestamp()?.to::<u64>();
     let void = CredisContract::new(storage.clone()).void_position(position_id, now)?;
 
     // Rounded-up partial returns can exhaust collateral before the debt. The
     // write-off still completes, but there is no burn, Fidelity sale or credit.
     if void.gratis_burned.is_zero() {
+        checkpoint.commit();
         return Ok(());
     }
 
@@ -299,6 +301,7 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(void.gratis_burned)?;
 
+    checkpoint.commit();
     Ok(())
 }
 

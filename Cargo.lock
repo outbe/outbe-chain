@@ -8211,6 +8211,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-cca",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -8224,7 +8225,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-macros",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8416,6 +8419,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-cca",
  "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
@@ -8451,6 +8455,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-cca",
  "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-credisfactory",
@@ -9487,6 +9492,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "hex",
+ "outbe-cca",
  "outbe-compressed-entities",
  "outbe-credis",
  "outbe-credisfactory",

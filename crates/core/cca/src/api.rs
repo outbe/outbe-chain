@@ -1,32 +1,39 @@
-//! Cross-module API for the CCA registry.
-//!
-//! Neighbouring modules (CredisFactory) ask about an agent's standing through
-//! here rather than through the precompile ABI, and the precompile answers from
-//! the same function - so the two views cannot diverge, and the stub below is
-//! the single place the real registry has to replace.
-
-use alloy_primitives::Address;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-
+//! Shared registry queries and trusted position-accounting entrypoints.
 pub use crate::precompile::ICca;
+pub use crate::runtime::{position_opened, position_voided};
+use crate::{schema::CcaContract, state::decode_state};
+use alloy_primitives::{Address, U256};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
-/// Registration state of `cca`.
-///
-/// TODO(cca): implement the registry. This must become a storage lookup that
-/// returns [`ICca::State::Unknown`] for an address that never registered and the
-/// recorded state otherwise. `Unknown` exists in the ABI precisely so an
-/// unregistered agent is distinguishable from an active one - the stub cannot
-/// make that distinction, so no caller may treat `Active` as proof of
-/// registration until this is replaced.
-pub fn cca_state(_storage: &StorageHandle<'_>, _cca: Address) -> Result<ICca::State> {
-    Ok(ICca::State::Active)
+pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::State> {
+    match CcaContract::new(storage.clone()).records.get(cca)? {
+        Some(record) => decode_state(record.state),
+        None => Ok(ICca::State::Unknown),
+    }
 }
 
-/// Whether `cca` is in good standing and may originate.
-///
-/// Compares discriminants because the bare `sol!` enum derives no `PartialEq`;
-/// adding `extra_derives` for one comparison is not worth the macro surface.
 pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
     Ok(cca_state(storage, cca)? as u8 == ICca::State::Active as u8)
+}
+
+pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {
+    let record = CcaContract::new(storage.clone()).records.get(cca)?;
+    match record {
+        Some(r) => Ok(ICca::Cca {
+            state: decode_state(r.state)?,
+            selfBond: r.self_bond,
+            unbondAmount: r.unbond_amount,
+            unbondCompleteTime: r.unbond_complete_time,
+            rewardWeight: r.reward_weight,
+            claimableRewards: r.claimable_rewards,
+        }),
+        None => Ok(ICca::Cca {
+            state: ICca::State::Unknown,
+            selfBond: U256::ZERO,
+            unbondAmount: U256::ZERO,
+            unbondCompleteTime: 0,
+            rewardWeight: U256::ZERO,
+            claimableRewards: U256::ZERO,
+        }),
+    }
 }
