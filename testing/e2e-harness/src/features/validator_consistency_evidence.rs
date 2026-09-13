@@ -138,6 +138,13 @@ fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)], victim:
     );
 }
 
+fn felony_guard_shutdown_count(log: &str) -> usize {
+    let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    log.lines()
+        .filter(|line| line.trim_end().ends_with(guard))
+        .count()
+}
+
 /// Call only after proving the canonical jail on the designated survivors.
 pub(super) fn expect_felony_guard_shutdown(
     world: &mut World,
@@ -168,11 +175,8 @@ pub(super) fn expect_felony_guard_shutdown(
         .localnet
         .node_launch_log(victim, owned[victim].0)
         .expect("read the jailed validator's exact incarnation log");
-    let guard = "outbe_chain: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
     assert_eq!(
-        log.lines()
-            .filter(|line| line.trim_end().ends_with(guard))
-            .count(),
+        felony_guard_shutdown_count(&log),
         1,
         "owned victim must stop for exactly the canonical jail reason"
     );
@@ -1166,6 +1170,26 @@ fn wait_until(mut condition: impl FnMut() -> bool, attempts: usize, label: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn felony_guard_matches_current_owned_shutdown_record_exactly_once() {
+        let record = "2026-09-13T21:01:55.310776Z ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+        assert_eq!(felony_guard_shutdown_count(record), 1);
+        assert_eq!(felony_guard_shutdown_count(""), 0);
+        assert_eq!(
+            felony_guard_shutdown_count(&format!("{record}\n{record}")),
+            2
+        );
+        for changed in [
+            record.replace("outbe_chain::launch::node:", "outbe_chain:"),
+            record.replace("outbe_chain::launch::node:", "another_module:"),
+            record.replace("ERROR", "INFO"),
+            record.replace("validator is jailed", "finalized TEE lease expired"),
+            format!("{record} unexpected suffix"),
+        ] {
+            assert_eq!(felony_guard_shutdown_count(&changed), 0, "{changed}");
+        }
+    }
 
     #[test]
     fn jailed_partial_unstake_remainder_is_positive_and_below_the_minimum() {
