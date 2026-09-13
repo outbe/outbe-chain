@@ -702,10 +702,17 @@ fn recover_unjailed_process(world: &mut World) -> Vec<(u32, u32)> {
         .localnet
         .live_enclave_pid(3)
         .expect("preserved enclave");
-    world
+    let lease = world
         .localnet
-        .join_node_enclave(3)
-        .expect("ordinary post-unjail TEE join");
+        .node_renewal_status(3)
+        .expect("preserved finalized enclave lease");
+    assert!(
+        lease.valid_until > lease.finalized_timestamp,
+        "this recovery fixture requires a live lease"
+    );
+    // Jail stops the node without expiring its binding. Certified follower
+    // startup authenticates the existing identity at a fresh upstream anchor;
+    // it can replay the historical jail before arming the local lease guard.
     let follower = world
         .localnet
         .launch_validator_recovery_follower(3, 0)
