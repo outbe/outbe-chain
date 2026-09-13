@@ -59,8 +59,8 @@ Feature: Intex from auction to Promis
   # module's own unit tests do. The sweep still walks its index, checks the
   # finalized watermark and counts the breach days itself.
   #
-  # The rate, by contrast, is published through the real feeder: qualification
-  # reads it with a freshness check that a seeded value would fail.
+  # Qualification reads a closed day's VWAP as well, so that day is seeded the
+  # same way; the sweep still walks its index and compares the floor itself.
   #
   # Two more series are left to run out instead of being settled whole: one is settled
   # in part and one is never touched at all, so the sweep has to return the load of the

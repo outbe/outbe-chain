@@ -214,7 +214,7 @@ mod group_scans {
     use outbe_intex::{IntexState, SeriesId};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::time::WorldwideDay;
+    use outbe_primitives::time::{first_full_day, WorldwideDay};
 
     use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
     use crate::qualified::{self, ScanBudget};
@@ -281,6 +281,11 @@ mod group_scans {
         }
     }
 
+    /// The first day every series issued in these cases held in full.
+    fn full_day() -> u32 {
+        first_full_day(ISSUED_AT as u64)
+    }
+
     fn above_floor() -> U256 {
         U256::from(EXPECTED_FLOOR) + U256::from(1)
     }
@@ -291,7 +296,7 @@ mod group_scans {
         rate: U256,
     ) -> outbe_primitives::error::Result<u32> {
         let group = f.unqualified_group(REFERENCE_ISO, day())?;
-        qualified::try_qualify_group(s, f, &group, rate)
+        qualified::try_qualify_group(s, f, &group, rate, full_day())
     }
 
     #[test]
@@ -361,7 +366,8 @@ mod group_scans {
                 .unqualified_group(REFERENCE_ISO, WorldwideDay::new(other))
                 .unwrap();
             assert_eq!(
-                qualified::try_qualify_group(&s, &mut f, &group, above_floor()).unwrap(),
+                qualified::try_qualify_group(&s, &mut f, &group, above_floor(), full_day())
+                    .unwrap(),
                 3
             );
         });
@@ -377,7 +383,8 @@ mod group_scans {
                 members: Vec::new(),
             };
             assert_eq!(
-                qualified::try_qualify_group(&s, &mut f, &empty, above_floor()).unwrap(),
+                qualified::try_qualify_group(&s, &mut f, &empty, above_floor(), full_day())
+                    .unwrap(),
                 0
             );
         });
