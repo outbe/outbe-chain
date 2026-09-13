@@ -476,20 +476,13 @@ fn begin_block_drain_isolates_failing_series() {
 fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
-    let calls = [
-        IIntexFactory::settleCall {
-            seriesId: Default::default(),
-            intexHolder: Address::ZERO,
-            amount: U256::ZERO,
-            payNoteProof: Default::default(),
-        }
-        .abi_encode(),
-        IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: Default::default(),
-            settler: Address::ZERO,
-        }
-        .abi_encode(),
-    ];
+    let calls = [IIntexFactory::settleCall {
+        seriesId: Default::default(),
+        intexHolder: Address::ZERO,
+        amount: U256::ZERO,
+        payNoteProof: Default::default(),
+    }
+    .abi_encode()];
 
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {

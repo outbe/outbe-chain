@@ -638,10 +638,10 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_callable_index() {
     });
 }
 
-// --- Index parity ----------------------------------------------------------
+// --- Member index ----------------------------------------------------------
 
 #[test]
-fn the_member_index_tracks_the_bucket_body_count() {
+fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
     harness(|storage, scope, parent| {
         // Two owners on the same worldwide day share one bucket: identical floor
         // price and currency.
@@ -653,15 +653,12 @@ fn the_member_index_tracks_the_bucket_body_count() {
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&a.bucket_key).unwrap(), 2);
         let bucket_id = WwdEntityId::from_day_and_digest(a.worldwide_day, a.bucket_key.0);
-        assert_eq!(
-            api::get_bucket(storage, scope, parent, bucket_id)
-                .unwrap()
-                .unwrap()
-                .total_nods,
-            2
-        );
+        let original = nod
+            .get_bucket_verified(scope, parent, bucket_id)
+            .unwrap()
+            .unwrap();
 
-        // Removing one keeps both counts in step and clears only its own entry.
+        // Removing one keeps the bucket unchanged and clears only its own entry.
         let item = api::load_item(storage, scope, parent, a.nod_id)
             .unwrap()
             .unwrap();
@@ -673,11 +670,10 @@ fn the_member_index_tracks_the_bucket_body_count() {
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&a.bucket_key).unwrap(), 1);
         assert_eq!(
-            api::get_bucket(storage, scope, parent, bucket_id)
+            nod.get_bucket_verified(scope, parent, bucket_id)
                 .unwrap()
-                .unwrap()
-                .total_nods,
-            1
+                .unwrap(),
+            original
         );
         assert_eq!(
             nod.bucket_nod_index.read(&a.nod_id).unwrap(),

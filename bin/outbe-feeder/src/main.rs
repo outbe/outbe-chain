@@ -125,7 +125,7 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
         health::start_health_server(&health_bind, health.clone()).await?;
     }
 
-    let mut last_voted_period: u64 = 0;
+    let mut pending_vote = None;
     let base_interval = std::time::Duration::from_secs(config.oracle.poll_interval_secs);
     let mut backoff = base_interval;
     let max_backoff = std::time::Duration::from_secs(60);
@@ -133,16 +133,16 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
     let mut shutdown = std::pin::pin!(shutdown_signal());
 
     loop {
-        // Poll current block height via JSON-RPC
+        // Pin the period calculation and preflight to the same chain state.
         let block_number = tokio::select! {
-            result = oracle_client::get_block_number(&config.chain.rpc_endpoint) => result,
+            result = oracle_client::get_vote_head(&config.chain.rpc_endpoint) => result,
             reason = &mut shutdown => {
                 info!(signal = reason.as_str(), "shutdown signal received during block polling, exiting gracefully");
                 return Ok(());
             }
         };
 
-        let height = match block_number {
+        let head = match block_number {
             Ok(h) => {
                 backoff = base_interval; // reset on success
                 h
@@ -161,20 +161,48 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
             }
         };
 
-        // Check if next block is a vote period boundary
-        let next_block = height + 1;
-        // vote_period > 0 is guaranteed by config.validate() at startup
-        let current_period = next_block / vote_period;
+        let height = head.height;
+        let current_period = observed_vote_period(height, vote_period);
 
         health.set_period(current_period);
 
-        if current_period > last_voted_period {
+        if let Some(tx_hash) = pending_vote {
+            let status = tokio::select! {
+                result = oracle_client::vote_status(&config.chain.rpc_endpoint, tx_hash) => result,
+                reason = &mut shutdown => {
+                    info!(signal = reason.as_str(), "shutdown while observing pending vote");
+                    return Ok(());
+                }
+            };
+            match status {
+                Ok(oracle_client::VoteStatus::Pending) => {}
+                Ok(oracle_client::VoteStatus::Included { height, success }) => {
+                    pending_vote = None;
+                    if success {
+                        health.record_success(height);
+                        info!(%tx_hash, height, "oracle vote included");
+                    } else {
+                        health.record_failure();
+                        warn!(%tx_hash, height, "oracle vote reverted; recheck state before retry");
+                    }
+                }
+                Ok(oracle_client::VoteStatus::Missing) => {
+                    pending_vote = None;
+                    warn!(%tx_hash, "oracle vote absent from chain and pool; recheck state before retry");
+                }
+                Err(error) => {
+                    warn!(%tx_hash, %error, "pending vote lookup failed; retaining transaction")
+                }
+            }
+            // Even after resolution, fetch a new head before another preflight.
+        } else {
             // Preflight: check on-chain oracle params before spending gas
             let preflight = tokio::select! {
                 result = oracle_client::preflight_check(
                     &config.chain.rpc_endpoint,
                     vote_period,
                     &config.account.validator_address,
+                    head.block,
                 ) => result,
                 reason = &mut shutdown => {
                     info!(signal = reason.as_str(), "shutdown signal received during preflight, exiting gracefully");
@@ -185,7 +213,6 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
             match preflight {
                 oracle_client::PreflightResult::Skip(reason) => {
                     warn!(reason, "preflight check failed, skipping vote");
-                    last_voted_period = current_period;
                     tokio::select! {
                         _ = tokio::time::sleep(base_interval) => {},
                         reason = &mut shutdown => {
@@ -200,9 +227,8 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
 
             info!(
                 height,
-                next_block,
                 period = current_period,
-                "vote period boundary - submitting"
+                "observed vote period has no vote - submitting"
             );
 
             // Fetch prices from all providers
@@ -213,10 +239,6 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
                     return Ok(());
                 }
             };
-
-            // Always advance period after attempting - prevents retry storms
-            // on persistent failures (nonce conflicts, RPC errors, etc.).
-            last_voted_period = current_period;
 
             match prices {
                 Ok(aggregated) if !aggregated.is_empty() => {
@@ -238,11 +260,11 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
                     .await
                     {
                         Ok(tx_hash) => {
+                            pending_vote = Some(tx_hash);
                             info!(%tx_hash, pairs = aggregated.len(), "oracle vote submitted");
-                            health.record_success(height);
                         }
                         Err(e) => {
-                            error!(error = ?e, "failed to submit oracle vote, skipping period");
+                            error!(error = ?e, "failed to submit oracle vote; retry after poll interval");
                             health.record_failure();
                         }
                     }
@@ -266,6 +288,12 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
     }
 }
 
+fn observed_vote_period(height: u64, vote_period: u64) -> u64 {
+    // The boundary block clears old votes at begin-block. Its parent still
+    // belongs to the old period; looking ahead would poison the next period.
+    height / vote_period
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +302,19 @@ mod tests {
     fn shutdown_reason_labels_are_stable() {
         assert_eq!(ShutdownReason::Sigint.as_str(), "SIGINT");
         assert_eq!(ShutdownReason::Sigterm.as_str(), "SIGTERM");
+    }
+
+    #[test]
+    fn boundary_parent_does_not_consume_the_next_vote_period() {
+        assert_eq!(observed_vote_period(87, 8), 10);
+        assert_eq!(observed_vote_period(88, 8), 11);
+        assert_eq!(observed_vote_period(89, 8), 11);
+        assert_eq!(observed_vote_period(95, 8), 11);
+        assert_eq!(observed_vote_period(96, 8), 12);
+        // Startup must also be able to submit before the first tally.
+        assert_eq!(observed_vote_period(0, 8), 0);
+        assert_eq!(observed_vote_period(7, 8), 0);
+        assert_eq!(observed_vote_period(1, 1), 1);
+        assert_eq!(observed_vote_period(2, 1), 2);
     }
 }

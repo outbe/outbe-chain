@@ -808,6 +808,30 @@ fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
     );
 }
 
+#[when("the feeder publishes a Nod qualification quote before the next UTC day")]
+fn publish_nod_qualification_quote(world: &mut World) {
+    let key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("public Tribute owner key");
+    let owner = world
+        .rpc
+        .address_of(&key)
+        .expect("public Tribute owner address")
+        .parse::<Address>()
+        .expect("canonical owner address");
+    let (_, body) = wait_for_materialized_nod(world, world.validators.primary_port(), owner);
+    // NodDaily consumes the completed previous UTC day's VWAP. Publish before
+    // the scenario's existing V2 day transition, with room for earlier samples.
+    let rate = body
+        .floorPriceMinor
+        .checked_mul(U256::from(3))
+        .expect("qualification quote fits scale-6 amount");
+    assert!(rate > body.floorPriceMinor);
+    crate::features::price_oracle::publish_controlled_quote(world, rate);
+}
+
 #[then("the public Tribute owner settles its Nod and redeems its exact Gratis into COEN")]
 fn owner_redeems_materialized_nod(world: &mut World) {
     let key = world
@@ -823,21 +847,66 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         .expect("canonical public Tribute owner address");
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
-    let (nod_id, mut body) = wait_for_materialized_nod(world, port, owner);
+    let (nod_id, _) = wait_for_materialized_nod(world, port, owner);
+    let ports = world.validators.committee_ports();
+    let height = world
+        .rpc
+        .finalized(port)
+        .expect("Nod settlement finalized height");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 20)
+        .expect("Nod qualification common finalized checkpoint");
+    let timestamp = world
+        .rpc
+        .block_timestamp(port, checkpoint.height)
+        .expect("Nod qualification checkpoint timestamp");
+    let previous_day = outbe_primitives::time::timestamp_to_date_key(
+        timestamp.checked_sub(86_400).expect("previous UTC day"),
+    );
+    let mut expected_vwap = None;
+    let mut qualified_body = None;
+    for &peer in &ports {
+        let peer_url = world.rpc.url(peer);
+        let body = eth::read_call_at_result(
+            &peer_url,
+            addresses::NOD_ADDR,
+            &eth::INod::nodDataCall {
+                nodId: U256::from_be_slice(&nod_id),
+            },
+            checkpoint.height,
+        )
+        .expect("finalized original Nod body");
+        let vwap = eth::read_call_at_result(
+            &peer_url,
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getUtcDayVwapCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(USD_ISO),
+                utcDay: previous_day,
+            },
+            checkpoint.height,
+        )
+        .expect("completed previous UTC day must have finalized VWAP");
+        assert!(
+            expected_vwap.is_none_or(|expected| expected == vwap),
+            "daily VWAP differs across validators"
+        );
+        expected_vwap = Some(vwap);
+        assert!(vwap > body.floorPriceMinor, "qualification fixture requires completed-day VWAP above Nod floor: day={previous_day} vwap={vwap} floor={}", body.floorPriceMinor);
+        assert!(
+            body.isQualified,
+            "Nod must be qualified at common finalized checkpoint on port {peer}"
+        );
+        qualified_body = Some(body);
+    }
+    let body = qualified_body.expect("nonempty validator committee");
     assert!(
         !body.costAmountMinor.is_zero(),
         "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
 
-    if !body.isQualified {
-        let qualifying_rate = body
-            .floorPriceMinor
-            .checked_add(U256::ONE)
-            .expect("Nod floor price admits one exact higher scale-6 quote");
-        crate::features::price_oracle::publish_controlled_quote(world, qualifying_rate);
-        body = wait_for_qualified_materialized_nod(world, port, owner, &nod_id);
-    }
     assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
     let fixture = deploy_settlement_fixture(world);
@@ -978,46 +1047,6 @@ fn wait_for_materialized_nod(
                 world.rpc.finalized(port)
             ),
         }
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn wait_for_qualified_materialized_nod(
-    world: &World,
-    port: u16,
-    owner: Address,
-    expected_nod_id: &[u8],
-) -> crate::internal::eth::INod::NodData {
-    let deadline = Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
-    loop {
-        let (candidate, observation) = match world.rpc.materialized_nod_for_owner(port, owner) {
-            Ok(Some((nod_id, body))) => {
-                let observation = format!(
-                    "nod_id=0x{} qualified={} floor={}",
-                    hex::encode(&nod_id),
-                    body.isQualified,
-                    body.floorPriceMinor,
-                );
-                (Some((nod_id, body)), observation)
-            }
-            Ok(None) => (None, "Nod not found".to_owned()),
-            Err(error) => (None, format!("Nod lookup error: {error}")),
-        };
-        if let Some((nod_id, body)) = candidate {
-            assert_eq!(
-                nod_id, expected_nod_id,
-                "owner's materialized Nod changed while awaiting qualification"
-            );
-            if body.isQualified {
-                return body;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "materialized Nod did not qualify within {MATERIALIZED_NOD_TIMEOUT_SECS}s: owner={owner:#x} {observation} head={:?} finalized={:?}",
-            world.rpc.head(port),
-            world.rpc.finalized(port),
-        );
         sleep(Duration::from_millis(250));
     }
 }

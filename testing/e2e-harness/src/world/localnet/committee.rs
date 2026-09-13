@@ -556,11 +556,13 @@ impl Localnet {
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
-        // Dropping the owned guard sends SIGKILL and synchronously reaps the node.
+        // Preserve graceful restart semantics and reap only this run's child.
+        // Process-name matching can also kill the same slot in another network.
+        self.validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} has no owned stop target"))?
+            .stop_and_reap()?;
         self.validators.remove(&i);
-        // Backstop in case the owned handle was ever lost.
-        let pat = format!("outbe-chain node.*validator-{i}/data");
-        self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
     }
 
@@ -1183,6 +1185,62 @@ mod owned_committee_tests {
         localnet.validators.insert(0, node);
         localnet.enclaves.insert(0, enclave);
         (directory, localnet, pids)
+    }
+
+    #[test]
+    fn kill_validator_preserves_another_runs_same_slot_and_the_enclave() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        let mut command = Command::new("bash");
+        command.args([
+            "-c",
+            "exec -a \"$1\" sleep 60",
+            "fixture",
+            "outbe-chain node --datadir /another-run/validator-0/data",
+        ]);
+        let mut survivor = ChildGuard::spawn("other-run-validator-0", command).unwrap();
+        // Let bash replace itself so the child has the formerly matched argv.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let observed = Command::new("ps")
+                .args(["-p", &survivor.pid().to_string(), "-o", "args="])
+                .output()
+                .unwrap();
+            assert!(
+                observed.status.success(),
+                "owned fixture must still be alive"
+            );
+            let argv = String::from_utf8(observed.stdout).unwrap();
+            if argv
+                .trim_start()
+                .starts_with("outbe-chain node --datadir /another-run/validator-0/data ")
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            sleep(Duration::from_millis(10));
+        }
+        localnet.kill_validator(0).unwrap();
+        let stopped = Command::new("ps")
+            .args(["-p", &pids.0.to_string(), "-o", "pid="])
+            .output()
+            .unwrap();
+        assert!(!stopped.status.success() && stopped.stdout.is_empty());
+        assert!(!localnet.validators.contains_key(&0));
+        assert_eq!(localnet.enclaves.get(&0).unwrap().pid(), pids.1);
+        assert!(localnet
+            .enclaves
+            .get_mut(&0)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
+        assert!(survivor.exit_status().unwrap().is_none());
+        assert!(localnet
+            .kill_validator(0)
+            .unwrap_err()
+            .to_string()
+            .contains("no owned stop target"));
+        assert!(survivor.exit_status().unwrap().is_none());
     }
 
     #[test]

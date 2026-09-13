@@ -487,7 +487,6 @@ impl Localnet {
     /// Read only this incarnation's output, including messages emitted before
     /// the caller began polling. This binds the launch, not liveness: callers
     /// must separately verify the expected PID is their current owned process.
-    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn node_launch_log(&mut self, index: usize, expected_pid: u32) -> Result<String> {
         let (pid, log) = self
             .node_launch_logs
