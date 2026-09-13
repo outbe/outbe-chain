@@ -43,8 +43,8 @@ pub fn dispatch(
                 let series_id = SeriesId::from(c.seriesId);
                 let record = registry.load_series(series_id)?;
                 let settled = registry.settled_units.read(&series_id)?;
-                let parked = registry.parked_units.read(&series_id)?;
-                to_abi_data(&record, settled, parked)
+                let gem_factory = registry.gem_factory_units.read(&series_id)?;
+                to_abi_data(&record, settled, gem_factory)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
@@ -79,7 +79,7 @@ fn to_abi_generation(
     )
 }
 
-fn to_abi_data(r: &SeriesRecord, settled: u32, parked: u32) -> Result<IIntex::SeriesData> {
+fn to_abi_data(r: &SeriesRecord, settled: u32, gem_factory: u32) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
         seriesId: r.series_id.into(),
         promisLoadMinor: r.promis_load_minor,
@@ -97,6 +97,6 @@ fn to_abi_data(r: &SeriesRecord, settled: u32, parked: u32) -> Result<IIntex::Se
         referenceCurrency: r.reference_currency,
         worldwideDay: r.worldwide_day.into(),
         settledUnits: settled,
-        parkedUnits: parked,
+        gemFactoryUnits: gem_factory,
     })
 }

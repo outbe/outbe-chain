@@ -113,7 +113,7 @@ pub struct Forfeited {
     pub promis_load_minor: U256,
 }
 
-/// `Called -> Expired`. Every unit still unsettled and unparked is forfeited, and
+/// `Called -> Expired`. Every unit still unsettled and not sent to the Gem Factory is forfeited, and
 /// its load is the caller's to return to the pool.
 pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
     let mut registry = IntexContract::new(storage.clone());
@@ -127,12 +127,12 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     }
 
     let settled = registry.settled_units.read(&series_id)?;
-    let parked = registry.parked_units.read(&series_id)?;
+    let gem_factory = registry.gem_factory_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
         .issued_intex_count
         .checked_sub(settled)
-        .and_then(|left| left.checked_sub(parked))
+        .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
 
     record.state = IntexState::Expired as u8;
@@ -153,13 +153,13 @@ pub fn record_settled_units(
     add_realized_units(storage, series_id, units, RealizedKind::Settled)
 }
 
-/// Record `units` parked: their load moved into the Gem position.
-pub fn record_parked_units(
+/// Record `units` sent to the Gem Factory: their load moved into the position.
+pub fn record_gem_factory_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     units: u32,
 ) -> Result<()> {
-    add_realized_units(storage, series_id, units, RealizedKind::Parked)
+    add_realized_units(storage, series_id, units, RealizedKind::GemFactory)
 }
 
 /// Units settled so far against `series_id`.
@@ -169,10 +169,10 @@ pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
         .read(&series_id)
 }
 
-/// Units parked into Gem positions from `series_id`.
-pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+/// Units of `series_id` sent to the Gem Factory.
+pub fn gem_factory_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
     IntexContract::new(storage.clone())
-        .parked_units
+        .gem_factory_units
         .read(&series_id)
 }
 
@@ -219,7 +219,7 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
     let registry = IntexContract::new(storage.clone());
     let record = registry.load_series(series_id)?;
     let paid = registry.settled_units.read(&series_id)?;
-    let gem_factory = registry.parked_units.read(&series_id)?;
+    let gem_factory = registry.gem_factory_units.read(&series_id)?;
     let exercised = registry.exercised_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not an empty class.
     let unpaid = record
@@ -243,7 +243,7 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
 
 enum RealizedKind {
     Settled,
-    Parked,
+    GemFactory,
 }
 
 fn add_realized_units(
@@ -263,25 +263,25 @@ fn add_realized_units(
         .issued_intex_count()
         .read()?;
     let settled = registry.settled_units.read(&series_id)?;
-    let parked = registry.parked_units.read(&series_id)?;
+    let gem_factory = registry.gem_factory_units.read(&series_id)?;
 
-    let (settled, parked) = match kind {
+    let (settled, gem_factory) = match kind {
         RealizedKind::Settled => (
             settled
                 .checked_add(units)
                 .ok_or(IntexError::RealizedUnitsOverflow)?,
-            parked,
+            gem_factory,
         ),
-        RealizedKind::Parked => (
+        RealizedKind::GemFactory => (
             settled,
-            parked
+            gem_factory
                 .checked_add(units)
                 .ok_or(IntexError::RealizedUnitsOverflow)?,
         ),
     };
     // Crossing the issued count means the two ledgers disagree.
     if settled
-        .checked_add(parked)
+        .checked_add(gem_factory)
         .is_none_or(|realized| realized > issued)
     {
         return Err(IntexError::RealizedUnitsOverflow.into());
@@ -289,7 +289,7 @@ fn add_realized_units(
 
     match kind {
         RealizedKind::Settled => registry.settled_units.write(&series_id, settled),
-        RealizedKind::Parked => registry.parked_units.write(&series_id, parked),
+        RealizedKind::GemFactory => registry.gem_factory_units.write(&series_id, gem_factory),
     }
 }
 

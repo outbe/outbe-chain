@@ -50,7 +50,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
         outbe_intex::api::record_contributors(
             &s,
             WorldwideDay::new(7),
-            &[(holder(), U256::from(100u64))],
+            &[(owner(), U256::from(100u64))],
         )
         .unwrap();
         let mut p = sample(7);
@@ -72,14 +72,14 @@ fn issuance_legs_route_winners_to_their_own_chain() {
     // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
-    p.recipients = vec![holder(), other];
+    p.recipients = vec![owner(), other];
     p.quantities = vec![U256::from(1), U256::from(2)];
     p.recipient_chains = vec![10, 20];
     p.snapshot_chains = vec![10, 20, 30];
 
     let legs = runtime::issuance_legs(&p);
     assert_eq!(legs.len(), 3);
-    assert_eq!(legs[0], (10, vec![holder()], vec![U256::from(1)]));
+    assert_eq!(legs[0], (10, vec![owner()], vec![U256::from(1)]));
     assert_eq!(legs[1], (20, vec![other], vec![U256::from(2)]));
     assert_eq!(legs[2], (30, vec![], vec![])); // create-only leg
 }

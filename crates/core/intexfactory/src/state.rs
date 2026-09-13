@@ -19,18 +19,18 @@ use crate::schema::IntexFactoryContract;
 impl IntexFactoryContract<'_> {
     // --- mineSeq ---
 
-    pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {
-        let key = Self::mine_seq_key(series_id, holder);
+    pub(crate) fn read_mine_seq(&self, series_id: SeriesId, owner: Address) -> Result<u32> {
+        let key = Self::mine_seq_key(series_id, owner);
         self.mine_seq.read(&key)
     }
 
     pub(crate) fn write_mine_seq(
         &mut self,
         series_id: SeriesId,
-        holder: Address,
+        owner: Address,
         value: u32,
     ) -> Result<()> {
-        let key = Self::mine_seq_key(series_id, holder);
+        let key = Self::mine_seq_key(series_id, owner);
         self.mine_seq.write(&key, value)
     }
 

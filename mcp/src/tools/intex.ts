@@ -330,7 +330,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
       "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
       "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
-      "and how the issued units split into settled, parked and still-outstanding.",
+      "and how the issued units split into settled, sent to the Gem Factory and still-outstanding.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -353,9 +353,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedIntexCount: Number(d.issuedIntexCount),
         settledUnits: Number(d.settledUnits),
-        parkedUnits: Number(d.parkedUnits),
+        gemFactoryUnits: Number(d.gemFactoryUnits),
         // Unrealized units lose their load to the pool when the call window closes.
-        unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.parkedUnits),
+        unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.gemFactoryUnits),
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),

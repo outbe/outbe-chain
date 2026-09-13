@@ -122,15 +122,15 @@ pub fn issue_gem_position(
 
     // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
     // burned count (and reverts on a non-parkable state or a zero amount).
-    let units = burn_parked_intex(storage, caller, source_intex_id, amount)?;
+    let units = burn_intex_into_gem_factory(storage, caller, source_intex_id, amount)?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
         .ok_or(GemFactoryError::Overflow)?;
 
     // Their load moved into the position, so the source series cannot forfeit them.
-    let parked_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
-    outbe_intex::api::record_parked_units(storage, source_intex_id, parked_units)?;
+    let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
+    outbe_intex::api::record_gem_factory_units(storage, source_intex_id, gem_factory_units)?;
 
     let parked_at = storage.timestamp()?.to::<u64>();
     let position_id =
@@ -164,7 +164,7 @@ pub fn issue_gem_position(
 /// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
 /// non-parkable (non-Issued/Qualified) state or `amount` is zero.
-fn burn_parked_intex(
+fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
     series_id: SeriesId,

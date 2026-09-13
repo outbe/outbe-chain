@@ -612,7 +612,7 @@ mod call_sweep {
             let series_id =
                 SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
             outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
-            outbe_intex::api::record_parked_units(&s, series_id, 25).unwrap();
+            outbe_intex::api::record_gem_factory_units(&s, series_id, 25).unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
             sweep_at(&s, due(deadline));

@@ -1111,7 +1111,7 @@ fn parking_marks_the_units_realized_on_the_source_series() {
         // Their load lives in the position now, so the source series can no
         // longer forfeit them.
         assert_eq!(
-            outbe_intex::api::parked_units(storage, source_intex_id()).unwrap(),
+            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
             PARK_UNITS as u32
         );
     });

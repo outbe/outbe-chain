@@ -955,7 +955,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     });
 }
 
-/// Its holder paid the strike, so the load is theirs.
+/// Its owner paid the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {

@@ -37,7 +37,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 0)]
     pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 
-    /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
+    /// `keccak256(series_id ++ owner)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
@@ -195,11 +195,11 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.
-    pub fn mine_seq_key(series_id: SeriesId, holder: Address) -> B256 {
+    /// Composite key for `mine_seq`: `keccak256(series_id ++ owner)`.
+    pub fn mine_seq_key(series_id: SeriesId, owner: Address) -> B256 {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
-        buf[SERIES_ID_LEN..].copy_from_slice(holder.as_slice());
+        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
         keccak256(buf)
     }
 }

@@ -39,8 +39,8 @@ interface IIntex {
         uint32 worldwideDay;
         /// @notice Units settled so far; their load belongs to the settler.
         uint32 settledUnits;
-        /// @notice Units parked into Gem positions; their load moved with them.
-        uint32 parkedUnits;
+        /// @notice Units sent to the Gem Factory; their load moved with them.
+        uint32 gemFactoryUnits;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

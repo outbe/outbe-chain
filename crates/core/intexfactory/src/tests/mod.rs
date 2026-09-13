@@ -28,7 +28,7 @@ use crate::state::Group;
 const REFERENCE_ISO: u16 = 840;
 const DAY: u64 = 24 * 60 * 60;
 
-fn holder() -> Address {
+fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 

@@ -5,12 +5,12 @@ fn dispatch_rejects_value() {
     with_factory(|s| {
         let data = IIntexFactory::settleIntexCall {
             seriesId: sid(7).into(),
-            intexOwner: holder(),
+            intexOwner: owner(),
             amount: U256::from(1),
             payNoteProof: Default::default(),
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::from(1)).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::from(1)).is_err());
     });
 }
 
@@ -20,14 +20,14 @@ fn dispatch_mine_promis_routes_to_runtime() {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
-            owner: holder(),
+            owner: owner(),
             amount: U256::from(1),
             nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
             opNonce: 0,
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::ZERO).is_err());
     });
 }
 

@@ -156,7 +156,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "parkedUnits",
+            "name": "gemFactoryUnits",
             "type": "uint32",
             "internalType": "uint32"
           }
