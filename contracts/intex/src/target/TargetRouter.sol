@@ -269,6 +269,9 @@ contract TargetRouter is
             revert NoBidsToRelay(worldwideDay);
         }
         uint16 batchBefore = $.bidsRelay[worldwideDay].nextBatch;
+        // The relay's sends go to the immutable bridge and the writes after them are the relay's own
+        // progress; the function is `nonReentrant` on top of that.
+        // slither-disable-next-line reentrancy-eth
         _relayBids(worldwideDay);
         _reportIfAdvanced(worldwideDay, batchBefore);
     }
