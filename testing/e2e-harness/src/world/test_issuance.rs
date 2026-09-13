@@ -96,7 +96,7 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(bytes14 seriesId, address holder, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
             returns (uint256 promisAmount);
     }
@@ -320,12 +320,17 @@ pub fn mine_promis(
     mac: [u8; 32],
     op_nonce: u64,
 ) -> Result<()> {
+    let signer: alloy_signer_local::PrivateKeySigner = holder_key
+        .parse()
+        .map_err(|error| eyre!("invalid holder key: {error}"))?;
+    let holder = alloy_signer::Signer::address(&signer);
     send_checked(
         url,
         INTEX_FACTORY,
         holder_key,
         &IPromisMining::minePromisCall {
             seriesId: series,
+            holder,
             amount: U256::from(amount),
             nonce,
             mac: mac.into(),

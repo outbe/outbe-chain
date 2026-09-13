@@ -13,7 +13,7 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  * PromisMined(series, holder) events. promisAmount = series.promisLoadMinor * amount.
  */
 
-export const POW_DIFFICULTY = 1; // crates/core/intexfactory/src/constants.rs
+export const POW_DIFFICULTY = 1; // crates/core/common/src/pow.rs
 
 /** The raw preimage bytes, matching the Rust concatenation. */
 function preimage(holder: Address, promisAmount: bigint, seriesId: Hex, seq: number): Uint8Array {

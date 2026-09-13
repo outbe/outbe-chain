@@ -175,6 +175,72 @@ fn settlement_quote_dispatch() {
     });
 }
 
+/// A settle from a stranger must succeed and book the units to the holder.
+#[test]
+fn anyone_may_settle_and_the_units_stay_with_the_holder() {
+    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
+    use alloy_sol_types::SolEvent;
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let payer = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+    let units = U256::from(2u64);
+    // Two units of `sample(7)` at six decimals; the note covers exactly that.
+    let cost = U256::from(2_000_000u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(2),
+    );
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(840),
+    );
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
+
+    let fixture = outbe_paynote::test_support::note_and_spend_proof(
+        CHAIN_ID,
+        payment_token(),
+        payer,
+        cost,
+        cost,
+    );
+    outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
+        runtime::settle(&s, sid(7), holder(), payer, units, &fixture.proof).unwrap();
+
+        assert_eq!(
+            outbe_intex::api::settled_units(&s, sid(7)).unwrap(),
+            2,
+            "the units are booked settled"
+        );
+    });
+
+    let sig = IIntexFactory::Settled::SIGNATURE_HASH;
+    let settled: Vec<_> = storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter(|log| log.topics().first() == Some(&sig))
+        .map(|log| IIntexFactory::Settled::decode_log_data(log).unwrap())
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].intexHolder, holder(), "the payer keeps nothing");
+    assert_eq!(settled[0].amount, units);
+}
+
 // ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
@@ -224,19 +290,6 @@ fn settle_rejects_expired_deadline() {
         outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle(&s, sid(7), holder(), holder(), U256::from(1), &[]).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
-    });
-}
-
-#[test]
-fn set_authorized_settler_round_trip() {
-    with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        runtime::set_authorized_settler(&s, holder(), sid(7), settler).unwrap();
-        let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(
-            f.read_authorized_settler(holder(), sid(7)).unwrap(),
-            settler
-        );
     });
 }
 

@@ -10,16 +10,17 @@ interface IGemFactory {
     ///         capacity. Only the position's merchant (the caller) may call.
     function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
-    /// @notice Settle a gem by spending a PayNote for its cost.
+    /// @notice Settle a gem by spending a PayNote for its cost. Any caller may
+    ///         pay; the gem stays with its owner.
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a settlement asset the gem accepts, and cover the cost.
     function settleGem(uint256 gemId, bytes calldata payNoteProof) external;
-    /// @notice Burn a settled gem and mint confidential Promis to the caller,
-    ///         gated by off-chain proof of work. Authorized by the caller's Promis
-    ///         modify key: `mac = HMAC(modifyKey, op-preimage)` where `opNonce`
-    ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
+    /// @notice Burn a settled gem and mint confidential Promis to its owner,
+    ///         gated by off-chain proof of work. Any caller may submit. Authorized
+    ///         by the owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
