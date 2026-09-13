@@ -556,6 +556,19 @@ contract ClearingRelayGasTest is CrossChainTest {
         vm.deal(address(router), 100 ether);
     }
 
+    /// @dev Deliver with exactly the budget's gas, as the transport does, so the relay stops where it
+    ///      would stop in production rather than running on the test frame's whole allowance.
+    function _clearingWithin(uint256 bids, uint256 gasCap) internal returns (bool delivered) {
+        stub.setBidCount(bids);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
+        (delivered,) = address(bridge).call{gas: gasCap}(
+            abi.encodeCall(
+                bridge.deliverAs,
+                (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(router)), packet)
+            )
+        );
+    }
+
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
         stub.setBidCount(bids);
         uint256 before = gasleft();
@@ -567,7 +580,8 @@ contract ClearingRelayGasTest is CrossChainTest {
         uint256 spent = _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
 
         emit log_named_uint("clearing_one_chunk", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
+        (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(done, "the day relayed whole");
         assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "one full chunk must fit the quote");
     }
 
@@ -575,18 +589,30 @@ contract ClearingRelayGasTest is CrossChainTest {
         uint256 spent = _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
 
         emit log_named_uint("clearing_four_chunks", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
+        (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(done, "the day relayed whole");
         assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "four chunks must fit the quote");
     }
 
-    /// @dev Past the relay's ceiling the stage still transitions and the relay parks, so the day is
-    ///      recoverable by a flush rather than stuck in redelivery.
-    function test_ADayTooHeavyToRelayParksInsteadOfFailing() public {
-        uint256 spent = _clearingCost(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    /// @dev A day too heavy for one delivery keeps the stage flip and stops mid-relay, so the next round
+    ///      carries on from the chunk it left rather than starting the day over.
+    function test_ADayTooHeavyToRelayStopsPartWayThrough() public {
+        assertTrue(
+            _clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, IntexGas.AUCTION_STAGE_CLEARING),
+            "the delivery itself must survive"
+        );
 
-        emit log_named_uint("clearing_1024bids", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 1, "the relay parked");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "the capped delivery still fits the quote");
+        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        emit log_named_uint("clearing_1024bids_batches_sent", nextBatch);
+        assertFalse(done, "the day is not finished");
+        assertEq(totalBatches, 16, "the span is frozen by the first round");
+        assertGt(nextBatch, 0, "the round sent what it could afford");
+        assertLt(nextBatch, totalBatches, "and left the rest");
+
+        // The next round picks the day up where this one stopped.
+        router.relayBids(WORLDWIDE_DAY);
+        (uint16 after_,, bool doneAfter) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(after_ > nextBatch || doneAfter, "the second round carried on");
     }
 }
 
@@ -616,6 +642,36 @@ contract BidStub {
                 referenceCurrency: 840
             });
         }
+    }
+
+    function revealedBidsCount(uint32) external view returns (uint256) {
+        return bidCount;
+    }
+
+    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        uint256 length = bidCount;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = IIntexAuction.SubmittedBidData({
+                bidderAddress: address(uint160(0xCAFE + offset + i)),
+                intexQuantity: 1,
+                intexBidRate: 100e6,
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
+            });
+        }
+    }
+
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Issuance;
     }
 }
 

@@ -10,9 +10,9 @@ import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
+    BidsRelayProgress,
     ChunkProgress,
     ParkedMark,
-    PendingBidsRelay,
     ParkedIssuance,
     ParkedProceeds,
     RefundProgress,
@@ -98,15 +98,19 @@ library TargetInbound {
             return;
         }
 
-        // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
-        if (!$.clearingRelayed[worldwideDay]) {
-            $.clearingRelayed[worldwideDay] = true;
+        // Carry the relay as far as this delivery's gas allows, holding back enough to report an
+        // unfinished day. The self-call keeps a failed round from taking the stage flip with it, and a
+        // redelivered CLEARING resumes the same generation rather than starting a new one.
+        BidsRelayProgress storage relay = $.bidsRelay[worldwideDay];
+        if (!relay.done && gasleft() > IntexGas.RELAY_REPORT_GAS) {
+            uint16 batchBefore = relay.nextBatch;
             // solhint-disable-next-line no-empty-blocks
-            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: IntexGas.RELAY_BIDS_CAP}(worldwideDay) {}
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingBidsRelayIdx++;
-                $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
-                emit ITargetRouter.BidsRelayDeferred(idx, worldwideDay, reason);
+            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: gasleft() - IntexGas.RELAY_REPORT_GAS}(
+                worldwideDay
+            ) {}
+            catch {
+                // The round rolled back whole, so progress reads as it did before it started.
+                emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
             }
         }
 

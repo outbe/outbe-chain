@@ -55,8 +55,8 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IParkedWork {
         struct ParkedMessage { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
-        function nextPendingBidsRelayIdx() external view returns (uint256);
-        function flushPendingBidsRelay(uint256 idx) external;
+        function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done);
+        function relayBids(uint32 worldwideDay) external;
         function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
         function resendParkedMessage(uint256 idx) external;
         function nextParkedIdx() external view returns (uint256);
@@ -182,11 +182,14 @@ pub(crate) fn parked_work(
     venue_url: &str,
     router: Address,
     venue_router: Address,
+    worldwide_day: u32,
 ) -> String {
-    let relays = eth::read_call(
+    let relay = eth::read_call(
         venue_url,
         venue_router,
-        &IParkedWork::nextPendingBidsRelayIdxCall {},
+        &IParkedWork::bidsRelayCall {
+            worldwideDay: worldwide_day,
+        },
     );
     let parked = eth::read_call(
         url,
@@ -215,23 +218,28 @@ pub(crate) fn parked_work(
         Some(_) => "origin parked nothing".to_owned(),
         None => "origin did not report parked sends".to_owned(),
     };
-    let relay_note = match relays {
-        Some(count) if count > U256::ZERO => {
-            // Retrying a parked relay is permissionless, and its revert carries
-            // the reason the venue swallowed when it parked.
-            let flush = eth::send_call(
+    let relay_note = match relay {
+        Some(progress) if !progress.done => {
+            // Carrying an unfinished relay on is permissionless, and its revert carries
+            // the reason the venue stopped where it did.
+            let push = eth::send_call(
                 venue_url,
                 venue_router,
                 crate::world::forge::DEPLOYER_KEY,
-                &IParkedWork::flushPendingBidsRelayCall { idx: U256::ZERO },
+                &IParkedWork::relayBidsCall {
+                    worldwideDay: worldwide_day,
+                },
                 None,
             );
             format!(
-                "venue parked {count} bid relays, retry says {:?}",
-                flush.err().map(|error| error.to_string())
+                "venue relayed {} of {} bid batches, push says {:?}",
+                progress.nextBatch,
+                progress.totalBatches,
+                push.err().map(|error| error.to_string())
             )
         }
-        _ => format!("venue parked bid relays {relays:?}"),
+        Some(_) => "venue relayed every bid batch".to_owned(),
+        None => "venue did not report its bids relay".to_owned(),
     };
     format!("{parked_note}, {relay_note}")
 }

@@ -137,6 +137,35 @@
     },
     {
       "type": "function",
+      "name": "bidsRelay",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "nextBatch",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalBatches",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "done",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "escrowAdapter",
       "inputs": [],
       "outputs": [
@@ -147,19 +176,6 @@
         }
       ],
       "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -345,19 +361,6 @@
     },
     {
       "type": "function",
-      "name": "nextPendingBidsRelayIdx",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "originRouter",
       "inputs": [],
       "outputs": [
@@ -489,35 +492,6 @@
     },
     {
       "type": "function",
-      "name": "pendingBidsRelays",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "exists",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "done",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "proxiableUUID",
       "inputs": [],
       "outputs": [
@@ -581,6 +555,19 @@
         }
       ],
       "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "relayBids",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -922,14 +909,8 @@
     },
     {
       "type": "event",
-      "name": "BidsRelayDeferred",
+      "name": "BidsRelayComplete",
       "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
         {
           "name": "worldwideDay",
           "type": "uint32",
@@ -937,29 +918,35 @@
           "internalType": "uint32"
         },
         {
-          "name": "reason",
-          "type": "bytes",
+          "name": "totalBatches",
+          "type": "uint16",
           "indexed": false,
-          "internalType": "bytes"
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
     },
     {
       "type": "event",
-      "name": "BidsRelayFlushed",
+      "name": "BidsRelayIncomplete",
       "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
         {
           "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
+        },
+        {
+          "name": "nextBatch",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalBatches",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
@@ -1578,6 +1565,17 @@
     },
     {
       "type": "error",
+      "name": "NoBidsToRelay",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NoParkedMark",
       "inputs": [
         {
@@ -1601,17 +1599,6 @@
     {
       "type": "error",
       "name": "NoSuchParkedProceeds",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingBidsRelay",
       "inputs": [
         {
           "name": "idx",

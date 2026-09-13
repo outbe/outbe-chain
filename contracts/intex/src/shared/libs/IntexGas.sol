@@ -12,7 +12,8 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @dev Sized for the bids relay it fires, not the 452k stage flip: 5.0M once `RELAY_BIDS_CAP` binds.
+    /// @dev Sized for the bids relay it fires, not the 452k stage flip. Recalibrated with the resumable
+    ///      relay: a round that cannot finish the day reports the remainder and the next one carries on.
     uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
 
     /// @dev 147k.
@@ -29,9 +30,14 @@ library IntexGas {
     ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
     uint256 internal constant MARK_APPLY_CAP = 60_000;
 
-    /// @notice Ceiling on the bids relay an inbound CLEARING fires. The origin cannot know the day's bid
-    ///         count, so past this the relay parks.
-    uint256 internal constant RELAY_BIDS_CAP = 5_000_000;
+    /// @notice Gas one more BIDS_BATCH needs, quoted with margin over the ~197k a send costs against the
+    ///         canonical Hyperlane mailbox (`ClearingRelayMailboxGas.t.sol`). A relay round sends chunks
+    ///         while it can still afford this, then leaves the rest to the next round.
+    uint256 internal constant RELAY_CHUNK_GAS = 300_000;
+
+    /// @notice Gas a CLEARING delivery holds back from the relay so it can still report an unfinished day:
+    ///         the 63/64 rule leaves the outer frame far too little to send a message of its own.
+    uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;

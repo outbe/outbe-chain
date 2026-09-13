@@ -333,6 +333,21 @@ interface IIntexAuction {
     /// @return auctionData Auction information including schedule, params and result.
     function getAuctionInfo(uint32 worldwideDay) external view returns (AuctionData memory auctionData);
 
+    /// @notice How many bids the day has revealed.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @return count Revealed bid count.
+    function revealedBidsCount(uint32 worldwideDay) external view returns (uint256 count);
+
+    /// @notice A window of the day's revealed bids, so a relay can read only what it is about to send.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param offset First bid to return.
+    /// @param limit How many bids at most.
+    /// @return slice The bids in `[offset, offset + limit)`, clipped to what the day holds.
+    function revealedBidsSlice(uint32 worldwideDay, uint256 offset, uint256 limit)
+        external
+        view
+        returns (SubmittedBidData[] memory slice);
+
     /// @notice Get auction information plus the revealed bids by series id.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return auctionData Auction information.

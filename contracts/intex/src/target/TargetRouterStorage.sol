@@ -6,11 +6,11 @@ import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 
-/// @notice A bids relay parked because its outbound send reverted (e.g. relay float too low); retried via
-///         `flushPendingBidsRelay`. Bids stay in auction state, so only the worldwideDay is snapshotted.
-struct PendingBidsRelay {
-    uint32 worldwideDay;
-    bool exists;
+/// @notice How far a day's bids relay has got: the span the first round froze, the next chunk to send and
+///         whether the completeness marker has left. Five bytes, so one slot.
+struct BidsRelayProgress {
+    uint16 nextBatch;
+    uint16 totalBatches;
     bool done;
 }
 
@@ -51,13 +51,8 @@ struct TargetRouterStorage {
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
-    /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
-    /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-    uint256 nextPendingBidsRelayIdx;
-    /// @dev Monotonic per-series counter stamped on every BIDS_BATCH send/flush. The Outbe receiver
-    ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
-    ///      relay cannot double-count demand.
+    /// @dev Per-day counter stamped on every BIDS_BATCH of the day's relay. Bumped once, when the first
+    ///      round starts: every round of the same day shares it, so the receiver collects them together.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
     /// @dev Parked issuances awaiting permissionless retry, keyed by enqueue index.
     mapping(uint256 idx => ParkedIssuance) parkedIssuance;
@@ -71,9 +66,8 @@ struct TargetRouterStorage {
     mapping(uint256 idx => ParkedProceeds) parkedProceeds;
     /// @dev Next index to assign in `parkedProceeds`; also the count ever enqueued.
     uint256 nextParkedProceedsIdx;
-    /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
-    ///      re-relays under a fresh generation.
-    mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
+    /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
+    mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;

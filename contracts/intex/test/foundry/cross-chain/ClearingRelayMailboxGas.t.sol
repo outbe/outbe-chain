@@ -39,6 +39,25 @@ contract StoredBidStub {
 
     function startClearingStage(uint32) external {}
 
+    function revealedBidsCount(uint32) external view returns (uint256) {
+        return _visible;
+    }
+
+    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        uint256 length = _visible;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = _bids[offset + i];
+        }
+    }
+
     function getAuctionDetails(uint32)
         external
         view
@@ -50,6 +69,10 @@ contract StoredBidStub {
         for (uint256 i = 0; i < n; ++i) {
             bids[i] = _bids[i];
         }
+    }
+
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Issuance;
     }
 }
 

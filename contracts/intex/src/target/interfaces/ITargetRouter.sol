@@ -73,17 +73,17 @@ interface ITargetRouter {
     /// @param seriesId Series identifier.
     event MarkQualifiedReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
-    /// @notice Emitted when the outbound bids relay from `_handleAuctionStageClearing` reverts and
-    ///         the worldwideDay is parked for later retry via `flushPendingBidsRelay`.
-    /// @param idx Index of the parked relay slot.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose bids could not be forwarded.
-    /// @param reason Raw revert bytes from the failed send (e.g. insufficient relay float).
-    event BidsRelayDeferred(uint256 indexed idx, uint32 indexed worldwideDay, bytes reason);
+    /// @notice Emitted when a round of the day's bids relay leaves chunks behind: the gas it was given
+    ///         ran out, or a send reverted and the round rolled back.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param nextBatch First chunk still to send.
+    /// @param totalBatches Chunks the day's relay spans.
+    event BidsRelayIncomplete(uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
 
-    /// @notice Emitted when `flushPendingBidsRelay` successfully forwards a previously deferred relay.
-    /// @param idx Index of the parked relay slot that was flushed.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose bids were forwarded.
-    event BidsRelayFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
+    /// @notice Emitted when the day's last chunk and its completeness marker have left.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param totalBatches Chunks the day's relay spanned.
+    event BidsRelayComplete(uint32 indexed worldwideDay, uint16 totalBatches);
 
     /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
     event ProceedsRouted(uint32 indexed worldwideDay, uint256 amount);
@@ -127,8 +127,9 @@ interface ITargetRouter {
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice Self-call shim was invoked by an external caller; only `address(this)` is allowed.
     error NotSelf();
-    /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
-    error NoSuchPendingBidsRelay(uint256 idx);
+    /// @notice `relayBids` called for a day whose relay never started or has already finished.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    error NoBidsToRelay(uint32 worldwideDay);
     /// @notice No parked proceeds route at `idx`.
     error NoSuchParkedProceeds(uint256 idx);
     /// @notice `applyParkedIssuance` called for an index that was never enqueued.

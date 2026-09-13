@@ -514,6 +514,29 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
+    function revealedBidsCount(uint32 worldwideDay) external view override returns (uint256) {
+        return _s().revealedBids[worldwideDay].length;
+    }
+
+    /// @inheritdoc IIntexAuction
+    function revealedBidsSlice(uint32 worldwideDay, uint256 offset, uint256 limit)
+        external
+        view
+        override
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        IIntexAuction.SubmittedBidData[] storage bids = _s().revealedBids[worldwideDay];
+        uint256 length = bids.length;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; i++) {
+            slice[i] = bids[offset + i];
+        }
+    }
+
+    /// @inheritdoc IIntexAuction
     function getAuctionDetails(uint32 worldwideDay)
         external
         view

@@ -20,7 +20,7 @@ import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
     ParkedMark,
-    PendingBidsRelay,
+    BidsRelayProgress,
     ParkedIssuance,
     ParkedProceeds,
     RefundProgress,
@@ -118,15 +118,11 @@ contract TargetRouter is
         return _ts().nextParkedProceedsIdx;
     }
 
-    /// @notice Parked BIDS_BATCH relay by enqueue index.
-    function pendingBidsRelays(uint256 idx) external view returns (uint32 worldwideDay, bool exists, bool done) {
-        PendingBidsRelay storage p = _ts().pendingBidsRelays[idx];
-        return (p.worldwideDay, p.exists, p.done);
-    }
-
-    /// @notice Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-    function nextPendingBidsRelayIdx() external view returns (uint256) {
-        return _ts().nextPendingBidsRelayIdx;
+    /// @notice How far the day's bids relay has got.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done) {
+        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+        return (p.nextBatch, p.totalBatches, p.done);
     }
 
     /// @notice Parked issuance at `idx`.
@@ -241,79 +237,102 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself -
-    ///         exposing it externally would let anyone trigger relayed bids without going through
-    ///         the auction-stage handler.
+    /// @notice Self-call shim around the relay, so an inbound delivery can bound its gas and keep the
+    ///         stage flip even when the relay cannot finish. Only callable by this contract itself.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
     function relayBidsToOutbe(uint32 worldwideDay) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _doSendBidsToOutbe(worldwideDay);
+        _relayBids(worldwideDay);
     }
 
-    /// @notice Permissionless retry of a previously deferred bids relay.
-    /// @param idx Index of the parked relay to flush.
-    function flushPendingBidsRelay(uint256 idx) external nonReentrant {
-        PendingBidsRelay storage p = _ts().pendingBidsRelays[idx];
-        if (!p.exists) revert NoSuchPendingBidsRelay(idx);
-        if (p.done) revert AlreadyResolved(idx);
-        p.done = true;
-        _doSendBidsToOutbe(p.worldwideDay);
-        emit BidsRelayFlushed(idx, p.worldwideDay);
-    }
-
-    /// @notice Fetch revealed bids from Auction and relay them to Outbe in chunked BIDS_BATCH sends.
-    /// @dev Chunks of `MAX_PAYLOAD_ARRAY_LEN` share one `generation` and carry `batchIndex`/`totalBatches`, so the
-    ///      unordered bridge can deliver them in any order and the receiver collects the whole generation before
-    ///      finalizing. No bids -> one empty batch (0 of 1) as the completion signal. Any chunk reverting reverts the
-    ///      whole call, so a `flushPendingBidsRelay` retry re-sends the full set under a fresh generation.
-    function _doSendBidsToOutbe(uint32 worldwideDay) internal {
+    /// @notice Permissionless push for a day whose bids have not all left - the hand for a relay float that
+    ///         ran dry. Only a day the auction has moved past its reveal accepts this: that stage is set by
+    ///         the inbound CLEARING alone, so this can start nothing the origin did not ask for.
+    /// @param worldwideDay Worldwide day (yyyymmdd) to carry on relaying.
+    function relayBids(uint32 worldwideDay) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        // First tuple component (AuctionData) is unused here; tuple destructure intentionally drops it.
-        // slither-disable-next-line unused-return
-        (, IIntexAuction.SubmittedBidData[] memory bids) = $.auction.getAuctionDetails(worldwideDay);
-        uint256 bidsCount = bids.length;
-        // One generation per flush; every chunk of this flush carries it so the receiver can replace
-        // a prior (partial or complete) relay rather than appending to it.
-        uint32 gen = ++$.bidsRelayGeneration[worldwideDay];
+        if ($.bidsRelay[worldwideDay].done) revert NoBidsToRelay(worldwideDay);
+        if ($.auction.getAuctionStage(worldwideDay) != IIntexAuction.AuctionStage.Issuance) {
+            revert NoBidsToRelay(worldwideDay);
+        }
+        _relayBids(worldwideDay);
+    }
 
-        if (bidsCount == 0) {
-            _sendOneBidsBatch(worldwideDay, gen, 0, 1, new address[](0), new uint256[](0));
-            // Trusted bridge immutable; the flagged write is the erc7201 pointer load.
-            // slither-disable-next-line reentrancy-eth
-            _sendBidsDone(worldwideDay, gen, 1, 0);
+    /// @notice Relay the day's revealed bids to Outbe in chunked BIDS_BATCH sends, resuming where the
+    ///         last round stopped.
+    /// @dev Chunks of `MAX_PAYLOAD_ARRAY_LEN` share the day's `generation` and carry
+    ///      `batchIndex`/`totalBatches`, so the unordered bridge can deliver them in any order and the
+    ///      receiver collects the whole generation before finalizing. The span and the generation are
+    ///      frozen by the first round: reveals are closed by then, so the chunk a bid belongs to never
+    ///      moves. A round sends while it can still afford another chunk and leaves the rest to the next
+    ///      one; the marker goes with the last chunk, never before it. No bids -> one empty batch (0 of 1).
+    function _relayBids(uint32 worldwideDay) internal {
+        TargetRouterStorage storage $ = _ts();
+        BidsRelayProgress storage progress = $.bidsRelay[worldwideDay];
+        if (progress.done) return;
+
+        uint256 bidsCount = $.auction.revealedBidsCount(worldwideDay);
+        uint16 totalBatches = progress.totalBatches;
+        uint32 generation;
+        if (totalBatches == 0) {
+            uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+            totalBatches = bidsCount == 0 ? 1 : SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
+            // The receiver tracks batch arrival in a 256-bit mask, so it rejects any generation with more
+            // than 256 batches. Fail here instead of sending a doomed generation it drops batch by batch.
+            if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
+            progress.totalBatches = totalBatches;
+            generation = ++$.bidsRelayGeneration[worldwideDay];
+        } else {
+            generation = $.bidsRelayGeneration[worldwideDay];
+        }
+
+        uint16 batch = progress.nextBatch;
+        while (batch < totalBatches && gasleft() > IntexGas.RELAY_CHUNK_GAS) {
+            _sendBidsChunk(worldwideDay, generation, batch, totalBatches, bidsCount);
+            ++batch;
+        }
+        progress.nextBatch = batch;
+
+        if (batch < totalBatches) {
+            emit BidsRelayIncomplete(worldwideDay, batch, totalBatches);
             return;
         }
 
+        progress.done = true;
+        // Completeness marker in the same round as the last chunk, so it can never outrun a lost sibling.
+        // slither-disable-next-line reentrancy-eth
+        _sendBidsDone(worldwideDay, generation, totalBatches, SafeCast.toUint32(bidsCount));
+        emit BidsRelayComplete(worldwideDay, totalBatches);
+    }
+
+    /// @dev Read and send one chunk: only the bids it carries are pulled from the auction.
+    function _sendBidsChunk(
+        uint32 worldwideDay,
+        uint32 generation,
+        uint16 batchIndex,
+        uint16 totalBatches,
+        uint256 bidsCount
+    ) private {
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
-        uint16 totalBatches = SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
-        // The receiver tracks batch arrival in a 256-bit mask, so it rejects any generation with more
-        // than 256 batches. Fail loudly here (the caller parks the relay) instead of sending a doomed
-        // generation that the receiver drops batch-by-batch, silently excluding the whole chain-day.
-        if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
-        uint16 batchIndex = 0;
-        for (uint256 start = 0; start < bidsCount; start += maxChunk) {
-            uint256 end = start + maxChunk;
-            if (end > bidsCount) end = bidsCount;
-            uint256 chunkLen = end - start;
+        uint256 offset = uint256(batchIndex) * maxChunk;
+        uint256 chunkLen = bidsCount > offset ? bidsCount - offset : 0;
+        if (chunkLen > maxChunk) chunkLen = maxChunk;
 
-            address[] memory bidderAddresses = new address[](chunkLen);
-            uint256[] memory packedBids = new uint256[](chunkLen);
-
+        address[] memory bidderAddresses = new address[](chunkLen);
+        uint256[] memory packedBids = new uint256[](chunkLen);
+        if (chunkLen != 0) {
+            IIntexAuction.SubmittedBidData[] memory bids =
+                _ts().auction.revealedBidsSlice(worldwideDay, offset, chunkLen);
             for (uint256 i = 0; i < chunkLen; i++) {
-                IIntexAuction.SubmittedBidData memory bid = bids[start + i];
+                IIntexAuction.SubmittedBidData memory bid = bids[i];
                 bidderAddresses[i] = bid.bidderAddress;
                 packedBids[i] = BridgeMsgCodec.packBid(
                     bid.intexQuantity, bid.intexBidRate, bid.timestamp, bid.issuanceCurrency, bid.referenceCurrency
                 );
             }
-
-            _sendOneBidsBatch(worldwideDay, gen, batchIndex, totalBatches, bidderAddresses, packedBids);
-            batchIndex++;
         }
 
-        // Completeness marker in the same tx/generation as the chunks, so it can never outrun a lost sibling.
-        // slither-disable-next-line reentrancy-eth
-        _sendBidsDone(worldwideDay, gen, totalBatches, SafeCast.toUint32(bidsCount));
+        _sendOneBidsBatch(worldwideDay, generation, batchIndex, totalBatches, bidderAddresses, packedBids);
     }
 
     /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day/generation. Carries this chain's chainId

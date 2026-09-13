@@ -359,7 +359,8 @@ contract LocalLoopbackTest is Test {
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
-        assertEq(target.nextPendingBidsRelayIdx(), 0, "bids relay parked");
+        (,, bool bidsRelayed) = target.bidsRelay(DAY);
+        assertTrue(bidsRelayed, "bids relay finished");
         (,, bool proceedsParked,) = target.parkedProceeds(0);
         assertFalse(proceedsParked, "proceeds route parked");
         assertEq(target.parkedIssuanceCount(), 0, "issuance mint parked");

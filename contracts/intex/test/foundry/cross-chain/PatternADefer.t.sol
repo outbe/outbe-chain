@@ -51,6 +51,42 @@ contract StubAuctionWithBids {
         // `data` left default - TM's `_doSendBidsToOutbe` drops the first tuple component.
         data;
     }
+
+    function revealedBidsCount(uint32) external view returns (uint256) {
+        return bidCount;
+    }
+
+    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        uint256 length = bidCount;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = IIntexAuction.SubmittedBidData({
+                bidderAddress: address(uint160(0xCAFE + offset + i)),
+                intexQuantity: 1,
+                intexBidRate: 100e6,
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
+            });
+        }
+    }
+
+    IIntexAuction.AuctionStage public stage = IIntexAuction.AuctionStage.Issuance;
+
+    function setStage(IIntexAuction.AuctionStage s) external {
+        stage = s;
+    }
+
+    function getAuctionStage(uint32) external view returns (IIntexAuction.AuctionStage) {
+        return stage;
+    }
 }
 
 /// @title PatternADeferTest
@@ -113,47 +149,48 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter - bids relay defer + flush
+    // TargetRouter - bids relay: a round that cannot pay leaves the day resumable
     // ---------------------------------------------------------------
 
-    function test_TM_BidsRelayDeferredOnInsufficientBalance() public {
+    function test_TM_BidsRelayStopsWhenTheFloatCannotPay() public {
         // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
         assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
 
-        // First parked slot.
-        (uint32 worldwideDay, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
-        assertEq(worldwideDay, SERIES_ID_DAY, "deferred worldwideDay");
-        assertTrue(exists);
-        assertFalse(done);
-        assertEq(bnbRouter.nextPendingBidsRelayIdx(), 1);
+        (uint16 nextBatch, uint16 totalBatches, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        assertEq(nextBatch, 0, "the round rolled back whole");
+        assertEq(totalBatches, 0, "including the span it had frozen");
+        assertFalse(done, "and the day stays open for the next round");
     }
 
-    function test_TM_FlushBidsRelaySucceedsAfterTopUp() public {
+    function test_TM_RelayBidsFinishesTheDayAfterTopUp() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
 
-        // Top up TM float generously so the retry can pay the bridge fee.
+        // Top up TM float generously so the resumed round can pay the bridge fee.
         vm.deal(address(bnbRouter), 10 ether);
+        bnbRouter.relayBids(SERIES_ID_DAY);
 
-        bnbRouter.flushPendingBidsRelay(0);
-
-        (,, bool done) = bnbRouter.pendingBidsRelays(0);
-        assertTrue(done, "flushed slot marked done");
+        (,, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        assertTrue(done, "the day relayed whole");
     }
 
-    function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyResolved() public {
+    function test_TM_RelayBidsOnAFinishedDayReverts() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
-        bnbRouter.flushPendingBidsRelay(0);
+        bnbRouter.relayBids(SERIES_ID_DAY);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, 0));
-        bnbRouter.flushPendingBidsRelay(0);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoBidsToRelay.selector, SERIES_ID_DAY));
+        bnbRouter.relayBids(SERIES_ID_DAY);
     }
 
-    function test_TM_FlushBidsRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingBidsRelay.selector, 42));
-        bnbRouter.flushPendingBidsRelay(42);
+    /// @dev A day the auction has not moved past its reveal is nobody's to relay: that stage is set by the
+    ///      inbound CLEARING alone.
+    function test_TM_RelayBidsBeforeClearingReverts() public {
+        stubAuction.setStage(IIntexAuction.AuctionStage.RevealingBids);
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoBidsToRelay.selector, SERIES_ID_DAY));
+        bnbRouter.relayBids(SERIES_ID_DAY);
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
@@ -169,7 +206,7 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbRouter.flushPendingBidsRelay(0);
+        bnbRouter.relayBids(SERIES_ID_DAY);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 1, "exactly one batch even with no bids");
@@ -184,7 +221,7 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
-        bnbRouter.flushPendingBidsRelay(0);
+        bnbRouter.relayBids(SERIES_ID_DAY);
         uint256[] memory sizes = _bidsBatchSentSizes(vm.getRecordedLogs());
 
         assertEq(sizes.length, 3, "ceil(130 / 64) = 3 chunks");
