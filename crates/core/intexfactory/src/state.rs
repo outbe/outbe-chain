@@ -17,27 +17,6 @@ use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
 impl IntexFactoryContract<'_> {
-    // --- authorizedSettler ---
-
-    pub(crate) fn read_authorized_settler(
-        &self,
-        holder: Address,
-        series_id: SeriesId,
-    ) -> Result<Address> {
-        let key = Self::authorized_settler_key(holder, series_id);
-        self.authorized_settler.read(&key)
-    }
-
-    pub(crate) fn write_authorized_settler(
-        &mut self,
-        holder: Address,
-        series_id: SeriesId,
-        settler: Address,
-    ) -> Result<()> {
-        let key = Self::authorized_settler_key(holder, series_id);
-        self.authorized_settler.write(&key, settler)
-    }
-
     // --- mineSeq ---
 
     pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {
@@ -271,8 +250,27 @@ impl IntexFactoryContract<'_> {
         }
         self.called_group_count.write(&key, members.len() as u32)?;
         self.called_group_deadline.write(&key, deadline)?;
+        self.place_in_expiry_bucket(key, Self::deadline_bucket(deadline))
+    }
 
-        let day = Self::deadline_bucket(deadline);
+    /// Move a group the sweep could not finish into a later bucket. Its members
+    /// and deadline stay put; only where the sweep next finds it changes.
+    pub(crate) fn defer_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        day: u32,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let packed = self.called_group_slot.read(&key)?;
+        if packed != 0 {
+            let (old_day, old_slot) = Self::unpack_slot(packed);
+            self.release_expiry_slot(old_day, old_slot, key)?;
+        }
+        self.place_in_expiry_bucket(key, day)
+    }
+
+    fn place_in_expiry_bucket(&mut self, key: u64, day: u32) -> Result<()> {
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), key)?;

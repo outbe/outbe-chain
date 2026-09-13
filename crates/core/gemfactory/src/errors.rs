@@ -9,9 +9,6 @@ pub enum GemFactoryError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("not gem owner")]
-    NotGemOwner,
-
     #[error("invalid state for action")]
     InvalidState,
 

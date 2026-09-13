@@ -13,9 +13,6 @@ pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRE
 #[cfg(feature = "e2e-test")]
 pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-/// minePromis PoW difficulty: required leading zero bytes of the work hash.
-pub const POW_DIFFICULTY: usize = 1;
-
 /// Max contributor payouts per `distribute` pass (pagination chunk size).
 /// Large series are drained across several blocks by the begin-block hook.
 pub const DIST_CHUNK_LIMIT: u32 = 200;
