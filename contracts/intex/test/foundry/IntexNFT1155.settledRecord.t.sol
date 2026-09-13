@@ -28,7 +28,7 @@ contract IntexNFT1155SettledRecordTest is Test {
 
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");
-    address internal holder = makeAddr("holder");
+    address internal owner = makeAddr("owner");
 
     IntexNFT1155 internal nft;
     uint256 internal iTok;
@@ -73,10 +73,10 @@ contract IntexNFT1155SettledRecordTest is Test {
     function test_SettledRecord_BridgeGuardsUnchanged() public {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
-        nft.crosschainMint(holder, sTok, 1);
+        nft.crosschainMint(owner, sTok, 1);
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
-        nft.crosschainBurn(holder, holder, sTok, 1);
+        nft.crosschainBurn(owner, owner, sTok, 1);
     }
 }

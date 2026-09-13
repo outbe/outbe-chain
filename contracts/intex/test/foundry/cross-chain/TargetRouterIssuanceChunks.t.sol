@@ -75,8 +75,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         );
     }
 
-    function _balance(bytes14 seriesId, address holder) internal view returns (uint256) {
-        return intex.balanceOf(holder, intex.issuedTokenId(seriesId));
+    function _balance(bytes14 seriesId, address owner) internal view returns (uint256) {
+        return intex.balanceOf(owner, intex.issuedTokenId(seriesId));
     }
 
     // --- repeats ---
@@ -113,7 +113,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
         // Parking frees supply-cap room; the per-winner record is what keeps a later chunk from re-minting
         // (a repeat of the same chunk index never gets this far - the chunk guard drops it first).
-        intex.parkIntex(alice, USD, 7);
+        intex.sendToGemFactory(alice, USD, 7);
         assertEq(_balance(USD, alice), 0, "parked");
 
         _deliver(1, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));

@@ -3,9 +3,9 @@ use super::*;
 #[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let data = IIntexFactory::settleCall {
+        let data = IIntexFactory::settleIntexCall {
             seriesId: sid(7).into(),
-            intexHolder: holder(),
+            intexOwner: holder(),
             amount: U256::from(1),
             payNoteProof: Default::default(),
         }
@@ -20,7 +20,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
-            holder: holder(),
+            owner: holder(),
             amount: U256::from(1),
             nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),

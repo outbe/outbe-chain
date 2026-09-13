@@ -33,7 +33,7 @@ sol!(
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleCall::SELECTOR) => ZK_VERIFY_GAS,
+        Some(&IIntexFactory::settleIntexCall::SELECTOR) => ZK_VERIFY_GAS,
         _ => PRECOMPILE_BASE_GAS,
     }
 }
@@ -204,11 +204,11 @@ pub fn dispatch(
         |call| {
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
-                settle(c) => mutate_void(c, caller, |sender, c| {
+                settleIntex(c) => mutate_void(c, caller, |sender, c| {
                     runtime::settle(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexHolder,
+                        c.intexOwner,
                         sender,
                         c.amount,
                         &c.payNoteProof,
@@ -238,7 +238,7 @@ pub fn dispatch(
                     runtime::mine_promis(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.holder,
+                        c.owner,
                         c.amount,
                         c.nonce,
                         auth,

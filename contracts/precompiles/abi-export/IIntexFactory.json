@@ -92,7 +92,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -258,7 +258,7 @@
   },
   {
     "type": "function",
-    "name": "settle",
+    "name": "settleIntex",
     "inputs": [
       {
         "name": "seriesId",
@@ -266,7 +266,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
+        "name": "intexOwner",
         "type": "address",
         "internalType": "address"
       },
@@ -508,7 +508,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -640,7 +640,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
+        "name": "intexOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"

@@ -98,7 +98,7 @@ pub fn issue_gem(
 }
 
 /// Park a merchant's whole Intex series and issue a GemPosition NFT. Burns the
-/// merchant's entire Issued holding on IntexNFT1155 (`parkIntex`, GEM_ROLE)
+/// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
 /// and records the position with a snapshot of the source entry/floor and the
 /// resulting Promis capacity. Returns the issued `position_id`.
 pub fn issue_gem_position(
@@ -120,7 +120,7 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `amount` of the merchant's Intex units; `parkIntex` returns the
+    // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
     // burned count (and reverts on a non-parkable state or a zero amount).
     let units = burn_parked_intex(storage, caller, source_intex_id, amount)?;
     let capacity = series
@@ -161,28 +161,28 @@ pub fn issue_gem_position(
     Ok(position_id)
 }
 
-/// Burn `amount` of the merchant's Issued Intex units via `parkIntex`
+/// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
 /// non-parkable (non-Issued/Qualified) state or `amount` is zero.
 fn burn_parked_intex(
     storage: &StorageHandle<'_>,
-    holder: Address,
+    owner: Address,
     series_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     let ret = storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
-        IIntexNFT1155::parkIntexCall {
-            holder,
+        IIntexNFT1155::sendToGemFactoryCall {
+            owner,
             seriesId: series_id.into(),
             amount,
         }
         .abi_encode()
         .into(),
     )?;
-    IIntexNFT1155::parkIntexCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("parkIntex return undecodable".into()))
+    IIntexNFT1155::sendToGemFactoryCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("sendToGemFactory return undecodable".into()))
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.

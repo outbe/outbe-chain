@@ -158,11 +158,11 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         (,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillExists, "entry consumed on reclaim");
 
-        // Deliver the reverse SEND_MULTI on A -> holder re-minted, global supply conserved end-to-end.
+        // Deliver the reverse SEND_MULTI on A -> owner re-minted, global supply conserved end-to-end.
         _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), bridge.lastPayload());
         assertEq(tokenA.totalSupply(parkTokenId), minted, "A restored via reclaim");
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B holds nothing");
-        assertEq(tokenA.balanceOf(user, parkTokenId), minted, "holder whole on origin");
+        assertEq(tokenA.balanceOf(user, parkTokenId), minted, "owner whole on origin");
 
         // A second reclaim reverts - the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));

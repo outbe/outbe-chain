@@ -46,9 +46,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         Settled
     }
 
-    /// @notice Per-holder, per-series balance pair. Widths match the `uint32` supply cap so a
+    /// @notice Per-owner, per-series balance pair. Widths match the `uint32` supply cap so a
     ///         balance accumulated above `type(uint16).max` is reported without truncation.
-    struct HolderBalances {
+    struct OwnerBalances {
         uint32 issued;
         uint32 settled;
     }
@@ -89,7 +89,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 issuedAt;
         /// @notice Timestamp when the series entered the Called state (UNIX seconds, 0 if not called).
         uint32 calledAt;
-        /// @notice Total supply of this token id across all holders.
+        /// @notice Total supply of this token id across all owners.
         uint32 totalSupply;
         /// @notice Token classification (Issued or Settled).
         IntexStatus status;
@@ -132,15 +132,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Emitted when Settled Intex are consumed to mine Promis.
     /// @param seriesId Series identifier.
-    /// @param holder Holder whose Settled tokens were burned.
+    /// @param owner Owner whose Settled tokens were burned.
     /// @param amount Amount of Settled tokens burned.
-    event IntexCompleted(bytes14 indexed seriesId, address indexed holder, uint256 amount);
+    event IntexCompleted(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
     /// @notice Emitted when Issued Intex are burned on parking in the Gem Factory.
     /// @param seriesId Series identifier.
-    /// @param holder Holder whose Issued tokens were burned.
+    /// @param owner Owner whose Issued tokens were burned.
     /// @param amount Amount of Issued tokens burned.
-    event IntexParked(bytes14 indexed seriesId, address indexed holder, uint256 amount);
+    event IntexParked(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
     // --- Errors ---
 
@@ -164,7 +164,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
-    /// @notice Holder-to-holder transfer attempted while the series is Called.
+    /// @notice Owner-to-owner transfer attempted while the series is Called.
     error TransferOnCalledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
@@ -223,27 +223,27 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
     /// @param seriesId Series identifier.
-    /// @param from Holder whose Issued tokens are burned.
+    /// @param from Owner whose Issued tokens are burned.
     /// @param to Recipient of the newly minted Settled tokens.
     /// @param amount Amount of Issued burned and Settled minted.
-    function settle(bytes14 seriesId, address from, address to, uint256 amount) external;
+    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount) external;
 
-    /// @notice Burn `amount` Settled Intex from `holder`.
+    /// @notice Burn `amount` Settled Intex from `owner`.
     /// @dev Promis-facade entry point under PROMIS_ROLE.
-    /// @param holder Holder whose Settled tokens are burned.
+    /// @param owner Owner whose Settled tokens are burned.
     /// @param seriesId Series identifier.
     /// @param amount Amount of Settled tokens to burn.
-    function burnSettled(address holder, bytes14 seriesId, uint256 amount) external;
+    function burnSettled(address owner, bytes14 seriesId, uint256 amount) external;
 
-    /// @notice Burn `amount` Issued Intex from `holder` when the tokens are parked in the Gem Factory.
+    /// @notice Burn `amount` Issued Intex from `owner` when the tokens are parked in the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
     ///      (Issued or Qualified - no Call Event yet). The parked capacity record lives in the
     ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
-    /// @param holder Holder whose Issued tokens are burned.
+    /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param amount Amount of Issued tokens to burn.
     /// @return The amount of burned tokens.
-    function parkIntex(address holder, bytes14 seriesId, uint256 amount) external returns (uint256);
+    function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
     // --- Reads ---
 
@@ -288,15 +288,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);
 
-    /// @notice Issued and Settled balances for a holder in a given series.
+    /// @notice Issued and Settled balances for an owner in a given series.
     /// @param seriesId Series identifier.
-    /// @param holder Holder address to read.
-    /// @return The holder's Issued and Settled balance pair.
-    function holderBalances(bytes14 seriesId, address holder) external view returns (HolderBalances memory);
+    /// @param owner Owner address to read.
+    /// @return The owner's Issued and Settled balance pair.
+    function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.
-    /// @return The total supply of that token id across all holders.
+    /// @return The total supply of that token id across all owners.
     function totalSupply(uint256 tokenId) external view returns (uint256);
 
     /// @notice Token URI with on-chain metadata.

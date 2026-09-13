@@ -59,7 +59,7 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     }
 }
 
-/// Units the stubbed `parkIntex` reports as burned (its `uint256` return).
+/// Units the stubbed `sendToGemFactory` reports as burned (its `uint256` return).
 const PARK_UNITS: u64 = 100;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
@@ -89,7 +89,7 @@ fn stub_stablecoin(
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    // Stub IntexNFT1155: `parkIntex` returns PARK_UNITS (32-byte uint256).
+    // Stub IntexNFT1155: `sendToGemFactory` returns PARK_UNITS (32-byte uint256).
     storage.stub_sub_call_at(
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
@@ -1045,7 +1045,7 @@ fn six_decimal_u128() -> u128 {
 }
 
 /// Whole-position capacity for a series with `promis_load` per unit: the stubbed
-/// `parkIntex` burns `PARK_UNITS`, so capacity = `promis_load x PARK_UNITS`.
+/// `sendToGemFactory` burns `PARK_UNITS`, so capacity = `promis_load x PARK_UNITS`.
 fn parked_capacity(promis_load: u128) -> U256 {
     U256::from(promis_load) * U256::from(PARK_UNITS)
 }

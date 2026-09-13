@@ -91,7 +91,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         outbeRouter.addTarget(BNB_CHAIN_ID);
     }
 
-    /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE holder) so its bids pass the inbound
+    /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE owner) so its bids pass the inbound
     ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
     function _freezeSnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;

@@ -237,7 +237,7 @@ fn anyone_may_settle_and_the_units_stay_with_the_holder() {
         .map(|log| IIntexFactory::Settled::decode_log_data(log).unwrap())
         .collect();
     assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].intexHolder, holder(), "the payer keeps nothing");
+    assert_eq!(settled[0].intexOwner, holder(), "the payer keeps nothing");
     assert_eq!(settled[0].amount, units);
 }
 

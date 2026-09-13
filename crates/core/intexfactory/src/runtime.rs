@@ -752,12 +752,12 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
 pub fn settle(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    intex_holder: Address,
+    intex_owner: Address,
     settler: Address,
     amount: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    if intex_holder.is_zero() || settler.is_zero() {
+    if intex_owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -781,7 +781,7 @@ pub fn settle(
 
     // Issued balance (NFT). Issued token id = uint256(seriesId).
     let issued_token_id = U256::from_be_slice(series_id.as_bytes());
-    let balance = nft_balance_of(storage, intex_holder, issued_token_id)?;
+    let balance = nft_balance_of(storage, intex_owner, issued_token_id)?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
@@ -795,10 +795,10 @@ pub fn settle(
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
-        IIntexNFT1155::settleCall {
+        IIntexNFT1155::settleIntexCall {
             seriesId: series_id.into(),
-            from: intex_holder,
-            to: intex_holder,
+            from: intex_owner,
+            to: intex_owner,
             amount,
         }
         .abi_encode()
@@ -813,7 +813,7 @@ pub fn settle(
         storage,
         crate::precompile::IIntexFactory::Settled {
             seriesId: series_id.into(),
-            intexHolder: intex_holder,
+            intexOwner: intex_owner,
             amount,
         },
     )
@@ -963,17 +963,17 @@ fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
         .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
 }
 
-/// minePromis: PoW-gated burn of Settled then mint of Promis. `holder` is the
+/// minePromis: PoW-gated burn of Settled then mint of Promis. `owner` is the
 /// caller.
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    holder: Address,
+    owner: Address,
     amount: U256,
     nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    if holder.is_zero() {
+    if owner.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -981,7 +981,7 @@ pub fn mine_promis(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let settled = nft_balance_of(storage, holder, settled_token_id(series_id))?;
+    let settled = nft_balance_of(storage, owner, settled_token_id(series_id))?;
     if settled < amount {
         return Err(IntexFactoryError::InsufficientSettled.into());
     }
@@ -991,21 +991,21 @@ pub fn mine_promis(
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("promis amount overflow".into()))?;
 
-    // PoW over the per-(series, holder) sequence; bump it on success.
+    // PoW over the per-(series, owner) sequence; bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
-    let seq = factory.read_mine_seq(series_id, holder)?;
-    validate_pow(holder, promis_amount, series_id, seq, nonce)?;
+    let seq = factory.read_mine_seq(series_id, owner)?;
+    validate_pow(owner, promis_amount, series_id, seq, nonce)?;
     let next_seq = seq
         .checked_add(1)
         .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
-    factory.write_mine_seq(series_id, holder, next_seq)?;
+    factory.write_mine_seq(series_id, owner, next_seq)?;
 
-    // Burn Settled from holder on the NFT.
+    // Burn Settled from owner on the NFT.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::burnSettledCall {
-            holder,
+            owner,
             seriesId: series_id.into(),
             amount,
         }
@@ -1018,14 +1018,14 @@ pub fn mine_promis(
     outbe_intex::api::record_exercised_units(storage, series_id, exercised)?;
 
     // Promis is confidential: the mint runs inside the enclave, authorized by the
-    // holder's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
-    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount, auth)?;
+    // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
+    outbe_promisfactory::api::mint(storage.clone(), owner, promis_amount, auth)?;
 
     emit_event(
         storage,
         crate::precompile::IIntexFactory::PromisMined {
             seriesId: series_id.into(),
-            holder,
+            owner,
             amount,
             promisAmount: promis_amount,
         },
@@ -1040,20 +1040,20 @@ pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
     U256::from_be_slice(series_id.as_bytes()) | SETTLED_TAG
 }
 
-/// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
+/// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
 ///
-/// `holder` and `seq` earn their place here, unlike in the shared scheme: the
-/// holder arrives as a call argument, and the sequence rises with every
+/// `owner` and `seq` earn their place here, unlike in the shared scheme: the
+/// owner arrives as a call argument, and the sequence rises with every
 /// successful partial mining, so one solved nonce cannot serve the next.
 pub(crate) fn compute_pow_hash(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
     nonce: u64,
 ) -> [u8; 32] {
     let mut data = Vec::with_capacity(20 + 32 + SERIES_ID_LEN + 4 + 8);
-    data.extend_from_slice(holder.as_slice());
+    data.extend_from_slice(owner.as_slice());
     data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
     data.extend_from_slice(series_id.as_bytes());
     data.extend_from_slice(&seq.to_be_bytes());
@@ -1067,12 +1067,12 @@ pub(crate) fn compute_pow_hash(
 
 /// The preimage is Intex's own; the difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
     nonce: u64,
 ) -> Result<()> {
-    let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce);
+    let hash = compute_pow_hash(owner, promis_amount, series_id, seq, nonce);
     outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

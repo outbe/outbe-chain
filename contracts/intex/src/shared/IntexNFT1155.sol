@@ -31,7 +31,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
-    /// @notice Gem factory role; allowed to call `parkIntex`.
+    /// @notice Gem factory role; allowed to call `sendToGemFactory`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
 
     /// @dev Bit that marks a Settled token id. A series id is 14 bytes, so the issued space ends at
@@ -271,8 +271,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Bridge crosschainBurn gating:
     ///      - Settled token ids are soulbound - always reverts.
     ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
-    ///        (voluntary, holder-initiated moves while the series is tradable).
-    ///      - Series state `Called`: allowed only when the destination holder is the source holder -
+    ///        (voluntary, owner-initiated moves while the series is tradable).
+    ///      - Series state `Called`: allowed only when the destination owner is the source owner -
     ///        ownership is frozen once a series is Called - and only inside the call window.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (_isSettledTokenId(tokenId)) {
@@ -283,7 +283,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (from == address(0)) revert ZeroAddress("from", from);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // A bridge hop that changes holder is a transfer, which Called forbids.
+            // A bridge hop that changes owner is a transfer, which Called forbids.
             if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances freeze,
             // so no hop may still move one out (or `crosschainMint` re-inflate one back in).
@@ -319,7 +319,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             }
         }
 
-        // A crosschainMinted balance can be a holder's full transferable balance (<= totalSupply, uint32).
+        // A crosschainMinted balance can be an owner's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
         // Bridge-in cap: enforce `totalSupply + amount <= issuedIntexCount` at all times. The
@@ -340,7 +340,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function settle(bytes14 seriesId, address from, address to, uint256 amount) external onlyRole(SETTLEMENT_ROLE) {
+    function settleIntex(bytes14 seriesId, address from, address to, uint256 amount)
+        external
+        onlyRole(SETTLEMENT_ROLE)
+    {
         if (from == address(0)) revert ZeroAddress("from", from);
         if (to == address(0)) revert ZeroAddress("to", to);
         if (amount == 0) revert ZeroAmount();
@@ -377,8 +380,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnSettled(address holder, bytes14 seriesId, uint256 amount) external onlyRole(PROMIS_ROLE) {
-        if (holder == address(0)) revert ZeroAddress("holder", holder);
+    function burnSettled(address owner, bytes14 seriesId, uint256 amount) external onlyRole(PROMIS_ROLE) {
+        if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (amount == 0) revert ZeroAmount();
 
         IntexNFT1155Storage storage $ = _s();
@@ -401,14 +404,18 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // (to == address(0)), so no read-only-reentrancy surface here.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= settled balance <= totalSupply (uint32); _burn reverts otherwise
         $.settledSupply[sTok] -= uint32(amount);
-        _burn(holder, sTok, amount);
+        _burn(owner, sTok, amount);
 
-        emit IntexCompleted(seriesId, holder, amount);
+        emit IntexCompleted(seriesId, owner, amount);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function parkIntex(address holder, bytes14 seriesId, uint256 amount) external onlyRole(GEM_ROLE) returns (uint256) {
-        if (holder == address(0)) revert ZeroAddress("holder", holder);
+    function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount)
+        external
+        onlyRole(GEM_ROLE)
+        returns (uint256)
+    {
+        if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (amount == 0) revert ZeroAmount();
 
         uint256 iTok = _issuedTokenId(seriesId);
@@ -421,9 +428,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
-        _burn(holder, iTok, amount);
+        _burn(owner, iTok, amount);
 
-        emit IntexParked(seriesId, holder, amount);
+        emit IntexParked(seriesId, owner, amount);
         return amount;
     }
 
@@ -501,16 +508,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function holderBalances(bytes14 seriesId, address holder)
-        external
-        view
-        returns (IIntexNFT1155.HolderBalances memory)
-    {
+    function ownerBalances(bytes14 seriesId, address owner) external view returns (IIntexNFT1155.OwnerBalances memory) {
         uint256 iTok = _issuedTokenId(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
-        return IIntexNFT1155.HolderBalances({
-            issued: uint32(balanceOf(holder, iTok)), settled: uint32(balanceOf(holder, sTok))
-        });
+        return
+            IIntexNFT1155.OwnerBalances({
+                issued: uint32(balanceOf(owner, iTok)), settled: uint32(balanceOf(owner, sTok))
+            });
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -544,11 +548,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
-    ///      - Holder-to-holder transfers:
+    ///      - Owner-to-owner transfers:
     ///          * Settled token ids are soulbound - always reverts.
     ///          * Issued token ids are transferable while the series is Issued or Qualified.
-    ///            A Called series freezes holder-to-holder transfers: the settlement
-    ///            obligation stays with the holder and cannot be passed on. Bridge gating
+    ///            A Called series freezes owner-to-owner transfers: the settlement
+    ///            obligation stays with the owner and cannot be passed on. Bridge gating
     ///            is separate and lives in `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).

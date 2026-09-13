@@ -10,8 +10,8 @@ pragma solidity ^0.8.30;
 ///         settlement bookkeeping and the autonomous qualification index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexHolder`. Any caller may pay; the settled units stay with
-    ///         the holder. Allowed in Qualified (voluntary) and Called (forced).
+    ///         `intexOwner`. Any caller may pay; the settled units stay with
+    ///         the owner. Allowed in Qualified (voluntary) and Called (forced).
     /// @dev The cost is paid by spending a PayNote, so this call moves no
     ///      tokens: the underlying assets reached the reserve vault when the
     ///      note was deposited.
@@ -19,7 +19,7 @@ interface IIntexFactory {
     ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and cover the settlement cost. The issuance
     ///        currency converts through COEN and needs fresh rates.
-    function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;
+    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof) external;
 
     /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
     ///         and which of the series' two currencies that token settles on. Priced
@@ -34,13 +34,13 @@ interface IIntexFactory {
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit; the units burn from
-    ///         `holder` and the Promis is minted to them. Authorized by the
-    ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
-    ///         where `opNonce` MUST equal the holder's current on-chain promis
+    ///         `owner` and the Promis is minted to them. Authorized by the
+    ///         owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the owner's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
-    function minePromis(bytes14 seriesId, address holder, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
 
@@ -114,10 +114,10 @@ interface IIntexFactory {
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed intexHolder, uint256 amount);
+    event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
+    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
 
     /// @notice The series qualified (Issued -> Qualified).
     event SeriesQualified(bytes14 indexed seriesId);

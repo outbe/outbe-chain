@@ -339,9 +339,9 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         (,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillParked, "entry consumed");
 
-        // Deliver the reverse packet on A -> holder re-minted, cross-chain supply conserved.
+        // Deliver the reverse packet on A -> owner re-minted, cross-chain supply conserved.
         _deliverBToA();
-        assertEq(tokenA.balanceOf(user, failTokenId), AMOUNT, "holder re-minted on origin");
+        assertEq(tokenA.balanceOf(user, failTokenId), AMOUNT, "owner re-minted on origin");
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
 
         // A second reclaim reverts - the entry is gone.

@@ -66,7 +66,7 @@ sol! {
     }
 
     interface IIntexSettlement {
-        function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes payNoteProof) external;
+        function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, bytes payNoteProof) external;
         function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits);
     }
 
@@ -257,19 +257,19 @@ pub fn quote_cost(
 /// asset, so this takes no payment token.
 pub fn settle(
     url: &str,
-    holder_key: &str,
+    owner_key: &str,
     series: FixedBytes<14>,
-    holder: Address,
+    owner: Address,
     amount: u32,
     paynote_proof: &[u8],
 ) -> Result<()> {
     send_checked(
         url,
         INTEX_FACTORY,
-        holder_key,
-        &IIntexSettlement::settleCall {
+        owner_key,
+        &IIntexSettlement::settleIntexCall {
             seriesId: series,
-            intexHolder: holder,
+            intexOwner: owner,
             amount: U256::from(amount),
             payNoteProof: paynote_proof.to_vec().into(),
         },
