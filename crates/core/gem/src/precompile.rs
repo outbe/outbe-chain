@@ -17,13 +17,31 @@ sol!(
 );
 
 // A gem is stamped live, so only a throwaway build can move its issuance back
-// behind the closed days a scenario seeds for the call sweep.
+// behind the closed days a scenario seeds for the call sweep. The forfeit sweep
+// opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves
+// a deadline that has already lapsed into one the sweep will open on the next block.
 #[cfg(feature = "e2e-test")]
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IGemTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
+        function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
     }
+}
+
+/// Move a called gem onto `deadline`, and with it into that deadline's bucket.
+#[cfg(feature = "e2e-test")]
+fn requeue_called_gem(
+    storage: outbe_primitives::storage::StorageHandle,
+    gem_id: U256,
+    deadline: u64,
+) -> Result<()> {
+    let mut gem = GemContract::new(storage);
+    if gem.called_deadline.read(&gem_id)? == 0 {
+        return Err(GemError::InvalidState.into());
+    }
+    gem.remove_called(gem_id)?;
+    gem.push_called(gem_id, deadline)
 }
 
 pub fn dispatch(
@@ -44,6 +62,13 @@ pub fn dispatch(
             .ok_or(GemError::GemNotFound)?;
         item.issued_at = call.issuedAt;
         gem.gem_items.update(&item)?;
+        return Ok(Bytes::new());
+    }
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) =
+        <IGemTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
+    {
+        requeue_called_gem(storage.clone(), call.gemId, call.deadline)?;
         return Ok(Bytes::new());
     }
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
