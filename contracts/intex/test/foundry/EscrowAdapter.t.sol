@@ -30,7 +30,7 @@ contract EscrowAdapterTest is Test {
     uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
 
     /// @dev Stand-in for the inbound bridge message id that carries refund instructions. Threaded
-    ///      through `finalizeAuction`/`retryFinalize` into the emitted events.
+    ///      through `finalizeAuction` into the emitted events.
     bytes32 constant RECEIVE_ID = bytes32(uint256(0xDEADBEEF));
 
     /// @dev Live ERC6909 balance held by the escrow in The Compact for the active lockId.
@@ -299,58 +299,19 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
-    function test_OmittedBidder_RevertsBeforeAbandon() public {
-        _finalizeOmittingBidder1();
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, worldwideDay1, bidder1));
-        escrow.claimRefund(worldwideDay1, bidder1);
-    }
-
-    function test_OmittedBidder_RecoversAfterAbandon() public {
+    function test_OmittedBidder_RecoversFullPrincipal() public {
         _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
+        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
         escrow.claimRefund(worldwideDay1, bidder1); // permissionless
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized), "lock finalized");
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(totalLocked, 0, "totalLocked cleared (bidder2 refunded at finalize, bidder1 at abandon)");
+        assertEq(totalLocked, 0, "totalLocked cleared (bidder2 at finalize, bidder1 on claim)");
 
-        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(worldwideDay1, bidder1);
-    }
-
-    /// @dev The batch path accumulates released locks and writes the day's total once after its loop, so
-    ///      `retryFinalize` has to decrement for itself. Miss that and the day keeps a phantom lock that
-    ///      blocks nothing visibly while over-reporting what the escrow still holds.
-    function test_RetryFinalize_ReleasesTheDaysLockedTotal() public {
-        _finalizeOmittingBidder1();
-        (,, uint128 lockedBefore) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(lockedBefore, LOCK_AMOUNT, "the omitted bidder's lock is still counted");
-
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
-
-        (,, uint128 lockedAfter) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(lockedAfter, 0, "the retried lock leaves the day's total");
-    }
-
-    function test_RetryFinalizePreemptsAbandon() public {
-        _finalizeOmittingBidder1();
-
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
-
-        // bidder1 settled -> abandon path can never fire.
-        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         escrow.claimRefund(worldwideDay1, bidder1);
     }
@@ -484,7 +445,7 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
-        // bidder1's lock is still recoverable via retryFinalize (relayer) / claimRefund.
+        // bidder1's lock is still recoverable by the bidder through claimRefund.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
@@ -837,9 +798,9 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
     }
 
-    function test_ClaimRefund_PostFinalize_RevertsSplitNotRecorded() public {
-        // An amount-mismatch failure records no valid split, so claimRefund cannot pay out - the
-        // relayer must retryFinalize with a correct split.
+    /// @dev An amount-mismatch failure records no split, and nobody can reconstruct one, so the lock is
+    ///      terminal at the full principal: the fan-out was ours to get right, not the bidder's.
+    function test_ClaimRefund_PostFinalize_NoSplit_RefundsFullPrincipal() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
@@ -850,128 +811,20 @@ contract EscrowAdapterTest is Test {
         vm.prank(bridger);
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
-        vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, worldwideDay1, bidder1));
+        uint32 claimableAt = finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY();
+        vm.warp(claimableAt - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
+        );
         escrow.claimRefund(worldwideDay1, bidder1);
-    }
 
-    function test_ClaimRefund_AfterRetry_RevertsLockNotActive() public {
-        // Retry moves lock to Finalized; subsequent claimRefund must revert.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1,
-            refundedAmount: 0,
-            paidAmount: LOCK_AMOUNT - 1 // mismatch
-        });
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // Relayer retries with the correct split.
-        vm.prank(bridger);
-        escrow.retryFinalize(
-            worldwideDay1,
-            RECEIVE_ID,
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0})
-        );
-
-        // 7d later, claimRefund must still revert (already Finalized).
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
-        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        uint256 balanceBefore = paymentToken.balanceOf(bidder1);
+        vm.warp(claimableAt);
         escrow.claimRefund(worldwideDay1, bidder1);
-    }
 
-    // --- retryFinalize ---
-
-    function test_RetryFinalize_HappyPath_AfterFailedIteration() public {
-        // Two bidders: bidder1's initial finalize iteration fails (amount mismatch); bidder2 succeeds.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1,
-            refundedAmount: LOCK_AMOUNT / 2,
-            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch - will fail
-        });
-        instructions[1] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // bidder1 stayed Locked; bidder2 finalized.
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
-
-        // Relayer retries bidder1 with the correct split.
-        IEscrowAdapter.FinalizationInstruction memory retryInst = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: LOCK_AMOUNT / 2, paidAmount: LOCK_AMOUNT - LOCK_AMOUNT / 2
-        });
-
-        uint256 bidder1BalanceBefore = paymentToken.balanceOf(bidder1);
-
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRetried(
-            RECEIVE_ID, worldwideDay1, bidder1, retryInst.refundedAmount, retryInst.paidAmount
-        );
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, retryInst);
-
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        assertEq(paymentToken.balanceOf(bidder1), bidder1BalanceBefore + retryInst.refundedAmount);
-    }
-
-    function test_RetryFinalize_Reverts_BeforeFinalize() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.NotFinalizedYet.selector, worldwideDay1));
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
-    }
-
-    function test_RetryFinalize_Reverts_OnAlreadyFinalizedLock() public {
-        // Successful finalize moves lock to Finalized; retrying it reverts LockNotActive.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, instructions[0]);
-    }
-
-    function test_RetryFinalize_OnlyRelayer() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // Now bidder1 sits in Locked (the iteration failed on amount mismatch). Outsider can't retry.
-        vm.expectRevert();
-        vm.prank(outsider);
-        escrow.retryFinalize(
-            worldwideDay1,
-            RECEIVE_ID,
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0})
-        );
+        assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, LOCK_AMOUNT, "full principal returned");
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(totalLocked, 0, "the day's total releases with it");
     }
 
     // --- message-id threading ---
@@ -1001,35 +854,5 @@ contract EscrowAdapterTest is Test {
 
         vm.prank(bridger);
         escrow.finalizeAuction(worldwideDay1, packet, instructions, true);
-    }
-
-    /// @dev A relayer retry is its own inbound packet: `retryFinalize` must stamp the retry's RECEIVE_ID
-    ///      (not the original finalize RECEIVE_ID) onto its events, so a re-sent packet is independently
-    ///      attributable. Proves the receiveId is the threaded argument, not an echoed constant.
-    function test_GuidThreading_RetryCarriesItsOwnGuid() public {
-        bytes32 originalPacket = keccak256("inbound-packet-original");
-        bytes32 retryPacket = keccak256("inbound-packet-retry");
-
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        // First finalize fails on an amount mismatch (lock stays Locked), stamped with originalPacket.
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
-        vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(originalPacket, worldwideDay1, bidder1, "");
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, originalPacket, instructions, true);
-
-        // Relayer retries under a distinct bridge message id; the retry events must carry retryPacket.
-        IEscrowAdapter.FinalizationInstruction memory fixInst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(retryPacket, worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.BidderRetried(retryPacket, worldwideDay1, bidder1, LOCK_AMOUNT, 0);
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, retryPacket, fixInst);
     }
 }

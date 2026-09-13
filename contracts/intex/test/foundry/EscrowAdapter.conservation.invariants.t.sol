@@ -58,18 +58,6 @@ contract EscrowConservationHandler is Test {
         try escrow.finalizeAuction(s, keccak256(abi.encode(s, b)), ins, true) {} catch {}
     }
 
-    function retry(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {
-        uint32 s = _series(seriesSeed);
-        address b = _bidder(bidderSeed);
-        IEscrowAdapter.BidLock memory l = escrow.getBidLock(s, b);
-        uint128 refunded = l.lockedAmount == 0 ? 0 : uint128(bound(refundSeed, 0, l.lockedAmount));
-        IEscrowAdapter.FinalizationInstruction memory inst = IEscrowAdapter.FinalizationInstruction({
-            bidder: b, refundedAmount: refunded, paidAmount: l.lockedAmount - refunded
-        });
-        vm.prank(bridger);
-        try escrow.retryFinalize(s, keccak256(abi.encode(s, b)), inst) {} catch {}
-    }
-
     function claim(uint256 seriesSeed, uint256 bidderSeed) external {
         try escrow.claimRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
@@ -136,15 +124,14 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
         handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, worldwideDays);
 
-        bytes4[] memory selectors = new bytes4[](8);
+        bytes4[] memory selectors = new bytes4[](7);
         selectors[0] = EscrowConservationHandler.lock.selector;
         selectors[1] = EscrowConservationHandler.finalize.selector;
-        selectors[2] = EscrowConservationHandler.retry.selector;
-        selectors[3] = EscrowConservationHandler.claim.selector;
-        selectors[4] = EscrowConservationHandler.warp.selector;
-        selectors[5] = EscrowConservationHandler.lockBond.selector;
-        selectors[6] = EscrowConservationHandler.releaseBond.selector;
-        selectors[7] = EscrowConservationHandler.claimAbandonedBond.selector;
+        selectors[2] = EscrowConservationHandler.claim.selector;
+        selectors[3] = EscrowConservationHandler.warp.selector;
+        selectors[4] = EscrowConservationHandler.lockBond.selector;
+        selectors[5] = EscrowConservationHandler.releaseBond.selector;
+        selectors[6] = EscrowConservationHandler.claimAbandonedBond.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
