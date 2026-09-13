@@ -254,48 +254,6 @@ interface IOriginRouter {
     /// @param amount Amount in wei to sweep; must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
-    // --- Quote ---
-    /// @notice Native fee to broadcast auction stage start (summed over the registered targets).
-    function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256 fee);
-    /// @notice Native fee to broadcast auction stage clearing (summed over the registered targets).
-    function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256 fee);
-    /// @notice Native fee to send auction result to a single target chain.
-    function quoteSendAuctionResult(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint32 issuedIntexCount,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to send one issuance chunk to `dstChainId`.
-    function quoteSendIssuanceInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        IssuanceInstructionsParams[] calldata series
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
-    function quoteSendRefundInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds)
-        external
-        view
-        returns (uint256 fee);
-    /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
-    function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
-        external
-        view
-        returns (uint256 fee);
-
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
     ///         Restricted to `DESIS_ROLE`.

@@ -84,7 +84,7 @@ contract MarkBatchWireTest is CrossChainTest {
         _createBoth();
         bytes14[] memory batch = MarkBatchLib.two(USD_SERIES, EUR_SERIES);
 
-        uint256 fee = outbeRouter.quoteSendMarkQualified(WORLDWIDE_DAY, batch);
+        uint256 fee = bridge.fee();
         vm.deal(intexFactory, fee);
         vm.prank(intexFactory);
         outbeRouter.sendMarkQualified{value: fee}(WORLDWIDE_DAY, batch);
