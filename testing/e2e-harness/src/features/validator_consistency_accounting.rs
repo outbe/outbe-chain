@@ -27,6 +27,10 @@ use crate::world::World;
 const COEN: u128 = 1_000_000_000_000_000_000;
 const REGISTRATION_FUNDING_COEN: u64 = 100;
 const PERIODIC_EXCLUSION_TRIES: u32 = 240;
+// Accounting deliberately removes one old-set proposer through jail. Allow
+// missed leader rounds before the same scheduled exclusion, without changing
+// the ordinary all-online lifecycle observation budget.
+const ACCOUNTING_EXCLUSION_TRIES: u32 = 450;
 const S08_UNBONDING_SECS: u64 = 240;
 const S08_STAGGER_SECS: u64 = 20;
 
@@ -141,10 +145,11 @@ fn wait_for_periodic_exclusion(
     world: &World,
     address: &str,
     deactivation_epoch: u64,
+    tries: u32,
 ) -> ValidatorRecord {
     let primary = world.validators.primary_port();
 
-    for _ in 0..PERIODIC_EXCLUSION_TRIES {
+    for _ in 0..tries {
         let epoch_advanced = world
             .rpc
             .epoch_on(primary)
@@ -170,9 +175,16 @@ fn wait_for_periodic_exclusion(
 
     panic!(
         "validator {address} was not excluded by a periodic DKG boundary after epoch \
-         {deactivation_epoch}; current epoch: {:?}, primary record: {:?}",
+         {deactivation_epoch} within {tries} polls; current epoch: {:?}, primary record: {:?}, \
+         finalized heights: {:?}",
         world.rpc.epoch_on(primary),
-        world.rpc.validator_record(primary, address)
+        world.rpc.validator_record(primary, address),
+        world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| (port, world.rpc.finalized(port)))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -353,8 +365,12 @@ fn claim_and_reregister_in_one_block(world: &mut World) {
         .expect("reregistration scratch")
         .take()
         .expect("D-06 setup");
-    let unbonding =
-        wait_for_periodic_exclusion(world, &scratch.address, scratch.deactivation_epoch);
+    let unbonding = wait_for_periodic_exclusion(
+        world,
+        &scratch.address,
+        scratch.deactivation_epoch,
+        PERIODIC_EXCLUSION_TRIES,
+    );
     assert!(!unbonding.has_bls_share);
     let drained = wait_zero_bonded_stake(world, &scratch.address, 20);
     wait_timestamp(world, drained.unbonding_end, 30);
@@ -755,7 +771,12 @@ fn run_accounting_lifecycle(world: &mut World) {
         .expect("deactivate validator");
     assert_observers_live(world);
     assert_accounting(world, claims, "deactivate");
-    wait_for_periodic_exclusion(world, &exiting_address, deactivation_epoch);
+    wait_for_periodic_exclusion(
+        world,
+        &exiting_address,
+        deactivation_epoch,
+        ACCOUNTING_EXCLUSION_TRIES,
+    );
     assert_observers_live(world);
     let drained = wait_zero_bonded_stake(world, &exiting_address, 20);
     claims += exit_stake;
@@ -849,7 +870,12 @@ fn exclusion_moves_to_unbonding(world: &mut World) {
         .expect("unbonding scratch")
         .take()
         .expect("S-08 setup");
-    wait_for_periodic_exclusion(world, &scratch.address, scratch.deactivation_epoch);
+    wait_for_periodic_exclusion(
+        world,
+        &scratch.address,
+        scratch.deactivation_epoch,
+        PERIODIC_EXCLUSION_TRIES,
+    );
     scratch.final_end = wait_zero_bonded_stake(world, &scratch.address, 20).unbonding_end;
     assert!(scratch.final_end > scratch.second_end);
     *UNBONDING.lock().expect("unbonding scratch") = Some(scratch);
