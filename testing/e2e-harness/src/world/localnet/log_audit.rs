@@ -813,7 +813,7 @@ fn expected_ocomp_full_node_mismatch_records(
         };
         let lines = content.lines().collect::<Vec<_>>();
         let prefix = format!(
-            "ERROR outbe_chain: embedded OCOMP requested node shutdown failure_class=Other failure=embedded OCOMP job {job_id:#x}: local result "
+            "ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure=embedded OCOMP job {job_id:#x}: local result "
         );
         let pairs = lines
             .iter()
@@ -841,8 +841,8 @@ fn expected_ocomp_full_node_mismatch_records(
         // Each sink spans the initial mismatch exit and one sticky-fatal restart.
         // Only stderr (node.log) receives the returned error and its cause.
         let mut expected = vec![
-            (1, format!("ERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail={detail}"), false),
-            (1, format!("ERROR outbe_chain: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"), false),
+            (1, format!("ERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::failure: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail={detail}"), false),
+            (1, format!("ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"), false),
         ];
         if sink == "node.log" {
             expected.push((
@@ -852,8 +852,8 @@ fn expected_ocomp_full_node_mismatch_records(
             ));
         }
         expected.extend([
-            (2, format!("ERROR outbe_chain: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"), true),
-            (2, format!("ERROR outbe_chain: consensus stack failed during shutdown error={recovery}"), true),
+            (2, format!("ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"), true),
+            (2, format!("ERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"), true),
         ]);
         if sink == "node.log" {
             expected.extend([
@@ -1164,13 +1164,13 @@ fn expected_tee_lease_full_node_shutdown_records(
 fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end().ends_with(
-        "outbe_chain: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
+        "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
     ) && line.contains("error")
         && !contains_nonfatal_alarm(&line)
 }
 
 fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
-    const PREFIX: &str = "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const PREFIX: &str = "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();
@@ -1189,7 +1189,7 @@ fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
 fn exact_consensus_stack_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end()
-        .ends_with("outbe_chain: consensus stack shutting down")
+        .ends_with("outbe_chain::launch::node: consensus stack shutting down")
         && line.contains("info")
         && !contains_nonfatal_alarm(&line)
 }
@@ -1674,17 +1674,17 @@ mod tests {
             "embedded OCOMP job {job_id:#x}: local result {local:#x} differs from canonical result {canonical:#x}"
         );
         let initial = format!(
-            "{start}\nERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail=local result {local:#x} differs from canonical result {canonical:#x}\nERROR outbe_chain: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"
+            "{start}\nERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::failure: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail=local result {local:#x} differs from canonical result {canonical:#x}\nERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"
         );
         let sticky = format!(
             "embedded OCOMP persisted fatal evidence: job_id={job_id:#x}\nlocal_result_digest={local:#x}\ncanonical_result_digest={canonical:#x}"
         );
         let anchor = format!(
-            "ERROR outbe_chain: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"
+            "ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"
         );
         let recovery = format!("OCOMP recovery readiness failed (Other): {sticky}");
         let restart = format!(
-            "{start}\n{anchor}\nERROR outbe_chain: consensus stack failed during shutdown error={recovery}"
+            "{start}\n{anchor}\nERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"
         );
         let expected = vec![
             (
@@ -1733,7 +1733,7 @@ mod tests {
         let mut unrelated_fatal = expected.clone();
         unrelated_fatal[0]
             .1
-            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+            .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
         assert!(!audit_loaded_logs_with_expectations(
             &unrelated_fatal,
             4,
@@ -1758,6 +1758,23 @@ mod tests {
             !audit_loaded_logs_with_expectations(&duplicated, 4, None, None, Some(job_id))
                 .is_clean()
         );
+
+        for (current, obsolete) in [
+            ("outbe_chain::launch::node:", "outbe_chain:"),
+            (
+                "outbe_chain::ocomp_exex::failure:",
+                "outbe_chain::ocomp_exex:",
+            ),
+        ] {
+            let stale = expected
+                .iter()
+                .map(|(path, content)| (path.clone(), content.replace(current, obsolete)))
+                .collect::<Vec<_>>();
+            assert!(
+                !audit_loaded_logs_with_expectations(&stale, 4, None, None, Some(job_id))
+                    .is_clean()
+            );
+        }
 
         for altered in [
             expected
@@ -1810,9 +1827,10 @@ mod tests {
     }
 
     fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
-        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
+        let guard =
+            "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown \
             reason=validator is jailed; complete ordinary unjail and then run tee join";
-        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
@@ -1828,8 +1846,8 @@ mod tests {
     }
 
     fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
-        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
-        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
+        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
@@ -1880,10 +1898,10 @@ mod tests {
         let mut later_unrelated_shutdown = expected.clone();
         later_unrelated_shutdown[0]
             .1
-            .push_str("\nINFO outbe_chain: consensus stack shutting down");
+            .push_str("\nINFO outbe_chain::launch::node: consensus stack shutting down");
         later_unrelated_shutdown[1].1.push_str(
             "\nINFO reth::cli: Starting Reth version=1.2.3\n\
-             INFO outbe_chain: consensus stack shutting down",
+             INFO outbe_chain::launch::node: consensus stack shutting down",
         );
         let accepted_with_later_shutdown = audit_loaded_logs_with_all_expectations(
             &later_unrelated_shutdown,
@@ -1962,8 +1980,8 @@ mod tests {
                 (
                     path.clone(),
                     content.replacen(
-                        "\nINFO outbe_chain: consensus stack shutting down",
-                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain: consensus stack shutting down",
+                        "\nINFO outbe_chain::launch::node: consensus stack shutting down",
+                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain::launch::node: consensus stack shutting down",
                         1,
                     ),
                 )
@@ -1983,7 +2001,7 @@ mod tests {
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
-            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+            .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
         assert!(!audit_loaded_logs_with_all_expectations(
             &extra_fatal,
             4,
@@ -2088,12 +2106,12 @@ mod tests {
             }
         }
         for replacement in [
-            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain: consensus stack shutting down",
-            "INFO outbe_chain: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
+            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain::launch::node: consensus stack shutting down",
+            "INFO outbe_chain::launch::node: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
         ] {
             let mut bad = baseline.clone();
             bad[1].1 = bad[1].1.replace(
-                "INFO outbe_chain: consensus stack shutting down",
+                "INFO outbe_chain::launch::node: consensus stack shutting down",
                 replacement,
             );
             assert!(!check(&bad));
@@ -2103,12 +2121,14 @@ mod tests {
             "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: shutdown signal received, terminating engine");
         assert!(!check(&reordered));
         for replacement in [
-            "WARN outbe_chain:",
+            "WARN outbe_chain::launch::node:",
             "ERROR other:",
-            "ERROR outbe_chain: unrelated reason ",
+            "ERROR outbe_chain::launch::node: unrelated reason ",
         ] {
             let mut bad = baseline.clone();
-            bad[0].1 = bad[0].1.replace("ERROR outbe_chain:", replacement);
+            bad[0].1 = bad[0]
+                .1
+                .replace("ERROR outbe_chain::launch::node:", replacement);
             assert!(!check(&bad));
         }
         let mut too_far = baseline.clone();
