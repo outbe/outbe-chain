@@ -10477,12 +10477,30 @@ mod tests {
                         U256::from(450_000_000u64),
                     )
                     .expect("seed compact Nod scheduling state");
-                    // Keep the rate fresh at the block that qualifies this bucket.
+                    // Make the daily Nod trigger due and supply its finalized
+                    // prior-day VWAP. A live spot rate alone does not qualify Nod.
+                    let block_ts = TEST_BLOCK_TIMESTAMP_BASE + 2;
+                    let previous_day = outbe_primitives::time::previous_date_key(
+                        outbe_primitives::time::timestamp_to_date_key(block_ts),
+                    );
+                    outbe_cycle::schema::Cycle::new(storage.clone())
+                        .last_executed_at
+                        .write(
+                            &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
+                            block_ts - 86_400,
+                        )
+                        .unwrap();
                     let (.., pair_index) =
                         outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
-                    outbe_oracle::schema::OracleContract::new(storage.clone())
-                        .exchange_rate_timestamp
-                        .write(&pair_index, TEST_BLOCK_TIMESTAMP_BASE + 1)
+                    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+                    oracle
+                        .utc_day_vwap_last_finalized
+                        .write(previous_day)
+                        .unwrap();
+                    oracle
+                        .utc_day_vwap_value
+                        .get_nested(&previous_day)
+                        .write(&pair_index, U256::from(1_000_000u64))
                         .unwrap();
                     staged = Some(
                         outbe_compressed_entities::end_block(storage, &scope)
@@ -10574,6 +10592,16 @@ mod tests {
                     .expect("begin-zone transaction must execute");
             }
             let receipts = executor.receipts().to_vec();
+            assert!(
+                receipts
+                    .iter()
+                    .any(|receipt| receipt.logs.iter().any(|log| {
+                        log.address == NOD_ADDRESS
+                            && log.data.topics().first()
+                                == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                    })),
+                "fixture must mutate a Nod bucket before testing CE cleanup"
+            );
             let cleanup_hook_observation = Arc::new(Mutex::new(None));
             let cleanup_hook_capture = cleanup_hook_observation.clone();
             executor.evm_mut().db_mut().set_state_hook(Some(Box::new(
