@@ -5,13 +5,15 @@
 //! this module are enforced by the main suite.
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use cucumber::{given, then, when};
 
 use crate::features::common::boot_localnet;
-use crate::features::negative_assertions::assert_mined_revert_reason;
+use crate::features::negative_assertions::{
+    assert_mined_revert_reason, assert_mined_revert_reason_on,
+};
 use crate::internal::{
     addresses::{SLASH_ADDR, STK_ADDR},
     eth::{ISlashIndicator, IStaking},
@@ -252,6 +254,42 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     let reporter_address: Address = reporter.parse().expect("parse reporter address");
     let victim_address: Address = victim.parse().expect("parse victim address");
 
+    // The accepted felony intentionally stops validator 3's node through its
+    // production TEE guard. Pin all owners before the transaction; never choose
+    // the replay observers by which RPC endpoints happen to remain responsive.
+    assert_eq!(world.validators.size(), 4, "four evidence participants");
+    let owned = (0..4)
+        .map(|index| {
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("capture live evidence participant and enclave")
+        })
+        .collect::<Vec<_>>();
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
+    let assert_survivors_live = |world: &mut World| {
+        for (index, expected) in owned.iter().take(3).enumerate() {
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(index)
+                    .expect("every designated replay observer must remain live"),
+                *expected,
+                "replay observer or enclave was replaced"
+            );
+        }
+        assert_eq!(
+            world
+                .localnet
+                .live_enclave_pid(3)
+                .expect("victim enclave stays live"),
+            owned[3].1,
+            "victim enclave was replaced"
+        );
+    };
+
     let first = world
         .rpc
         .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block1, &evidence.block2)
@@ -283,7 +321,70 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         !event.submitter_reward.is_zero(),
         "the first evidence must reward its reporter"
     );
-    wait_finalized_outcome(world, &first);
+    world
+        .rpc
+        .finalize_outcome(&first, &survivor_ports, 40)
+        .expect("first felony finalized on every designated replay observer");
+    let jail_height = first.block_number().expect("felony receipt height");
+    let jailed = world
+        .rpc
+        .validator_record_at(port, &victim, jail_height)
+        .expect("canonical jailed victim record");
+    assert_eq!(jailed.status, STATUS_JAILED);
+    assert_eq!(
+        jailed.stake,
+        world.state.slash_stake_before.expect("stake before") - event.slashed_amount
+    );
+    assert_eq!(
+        jailed.slash_count,
+        world.state.slash_count_before.expect("slash count before") + 1
+    );
+    for &observer in &survivor_ports {
+        assert_eq!(
+            world
+                .rpc
+                .validator_record_at(observer, &victim, jail_height),
+            Some(jailed.clone()),
+            "canonical punishment differs between replay observers"
+        );
+    }
+
+    let exit_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        assert_survivors_live(world);
+        let (pid, status) = world
+            .localnet
+            .owned_validator_process(3)
+            .expect("observe the exact owned jailed validator without signalling it");
+        assert_eq!(pid, owned[3].0, "jailed validator was replaced");
+        if let Some(status) = status {
+            assert!(status.success(), "jailed guard must stop cleanly: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "jailed validator did not stop"
+        );
+        sleep(Duration::from_millis(100));
+    }
+    let log = world
+        .localnet
+        .node_launch_log(3, owned[3].0)
+        .expect("read the jailed validator's exact incarnation log");
+    let guard = "outbe_chain: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.trim_end().ends_with(guard))
+            .count(),
+        1,
+        "owned victim must stop for exactly the canonical jail reason"
+    );
+    world.state.expected_tee_lease_guard_shutdown_validator = Some(3);
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "felony_replay_observers", "victim": 3, "owned_pids": owned,
+        "ports": survivor_ports, "jail_height": jail_height,
+        "jail_transaction": first.transaction_hash, "natural_exit_code": 0,
+    }));
 
     let reporter_before = world
         .state
@@ -300,8 +401,9 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "reporter balance must change only by its emitted reward minus exact gas"
     );
 
-    let exact_replay = assert_mined_revert_reason(
+    let exact_replay = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         SLASH_ADDR,
         &reporter_key,
         &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
@@ -325,8 +427,10 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "an exact replay may charge gas but must not mint another reward"
     );
 
-    let reverse_replay = assert_mined_revert_reason(
+    assert_survivors_live(world);
+    let reverse_replay = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         SLASH_ADDR,
         &reporter_key,
         &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
@@ -344,6 +448,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         .rpc
         .balance_on(port, &reporter)
         .expect("reporter balance after reverse replay");
+    assert_survivors_live(world);
     assert_eq!(
         reporter_after_reverse + reverse_fee,
         reporter_after_exact,
