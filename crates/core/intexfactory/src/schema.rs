@@ -179,6 +179,12 @@ pub struct IntexFactoryContract {
     pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 44)]
     pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// Where the parked-message sweep resumes: every index below it is sent or empty.
+    #[attribute(order = 45)]
+    pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    /// As `parked_message_cursor`, for the proceeds the factory refused.
+    #[attribute(order = 46)]
+    pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl IntexFactoryContract<'_> {

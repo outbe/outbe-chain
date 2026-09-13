@@ -28,6 +28,7 @@ pub enum TriggerId {
     CredisCallDaily = 7,
     NodCallDaily = 8,
     GemPositionDaily = 9,
+    IntexParked = 10,
 }
 
 impl TriggerId {
@@ -78,6 +79,7 @@ pub enum TriggerHandler {
     CredisCallDaily,
     NodDaily,
     GemPositionDaily,
+    IntexParked,
 }
 
 impl TriggerHandler {
@@ -97,6 +99,7 @@ impl TriggerHandler {
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
+            Self::IntexParked => outbe_intexfactory::parked::drain(ctx),
         }
     }
 }
@@ -146,7 +149,7 @@ const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -260,10 +263,22 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: false,
             handler: TriggerHandler::GemPositionDaily,
         },
+        TriggerSpec {
+            id: TriggerId::IntexParked.as_u32(),
+            label: "intex_parked",
+            // Polls what the origin router parked, on the same cadence as the other outbound polls.
+            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
+            start_offset_seconds: 0,
+            // Reads the router's own queues; no dependency on the parent block's accounting.
+            requires_accounting_window: false,
+            // A poll has nothing to replay: a gap collapses to one sweep.
+            coalesces_backlog: true,
+            handler: TriggerHandler::IntexParked,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -342,6 +357,10 @@ mod protocol_parameter_tests {
             configured[8].handler,
             TriggerHandler::GemPositionDaily
         ));
+
+        assert_eq!(configured[9].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
+        assert_eq!(configured[9].id, TriggerId::IntexParked.as_u32());
+        assert!(matches!(configured[9].handler, TriggerHandler::IntexParked));
 
         let defaults =
             active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
