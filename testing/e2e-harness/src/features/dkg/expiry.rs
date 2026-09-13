@@ -199,7 +199,7 @@ fn telemetry(log: &str, target: &FrozenTarget, expiry: u64) -> Result<Telemetry>
     for line in log.lines() {
         if line.contains(FINALIZED) || line.contains(FCU) {
             ensure!(
-                line.contains(" INFO outbe_consensus::executor::actor: "),
+                line.contains(" INFO outbe_consensus::executor::actor::finalization: "),
                 "wrong finalization record source"
             );
             let (height, hash, map) = if line.contains(FINALIZED) {
@@ -233,7 +233,8 @@ fn telemetry(log: &str, target: &FrozenTarget, expiry: u64) -> Result<Telemetry>
             // The same error can also appear in the terminal eyre cause chain.
             // Validate every copy, but only the production tracing record is
             // positive evidence that this stack selected its expiry branch.
-            saw_expiry |= line.contains(" ERROR outbe_chain: consensus stack failed ");
+            saw_expiry |=
+                line.contains(" ERROR outbe_chain::launch::node: consensus stack failed ");
         }
     }
     ensure!(saw_expiry, "missing exact frozen-target stack error");
@@ -703,12 +704,12 @@ mod tests {
     fn log(headers: &[HeaderWitness]) -> String {
         let mut log = String::new();
         for header in headers {
-            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor: {FCU} finalized_height={} finalized_block_hash={}\n",
+            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor::finalization: {FCU} finalized_height={} finalized_block_hash={}\n",
                 header.height, header.block_hash));
-            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor: {FINALIZED} height={} digest={}\n",
+            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor::finalization: {FINALIZED} height={} digest={}\n",
                 header.height, header.block_hash));
         }
-        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
+        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain::launch::node: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
         log
     }
 
@@ -766,8 +767,21 @@ mod tests {
             good.replace("deadline 66", "deadline 67"),
             good.replace("height=66 ", "height=oops "),
             good.replace("height=66 ", "height=66 height=66 "),
-            good.replace("outbe_consensus::executor::actor:", "another_actor:"),
-            good.replace(" ERROR outbe_chain:", " ERROR another_process:"),
+            good.replace(
+                "outbe_consensus::executor::actor::finalization:",
+                "another_actor:",
+            ),
+            good.replace(
+                " ERROR outbe_chain::launch::node:",
+                " ERROR another_process:",
+            ),
+            good.replace(
+                "outbe_consensus::executor::actor::finalization:",
+                "outbe_consensus::executor::actor:",
+            ),
+            good.replace(" ERROR outbe_chain::launch::node:", " ERROR outbe_chain:"),
+            good.replace(" INFO ", " DEBUG "),
+            good.replace(" ERROR ", " WARN "),
             good.replace("deadline 66", "deadline 18446744073709551616"),
             good.trim_end().to_owned(),
             good.replace("digest=0x", "digest=xx"),
@@ -780,6 +794,20 @@ mod tests {
             .map(|line| format!("{line}\n"))
             .collect();
         assert!(telemetry(&missing, &proof.target, proof.expiry).is_err());
+    }
+
+    #[test]
+    fn terminal_log_accepts_current_production_finalization_and_expiry_records() {
+        let captured = "2026-09-13T19:38:27.057012Z  INFO outbe_consensus::executor::actor::finalization: marshal-delivered block finalized and acked height=66 digest=0x82b8a3fa749f55a368d7ce6a2c2ad2b73bcd1110304f1d59a20ded5de6e2dc00\n\
+            2026-09-13T19:39:49.404497Z ERROR outbe_chain::launch::node: consensus stack failed e=frozen DKG target missed VRF expiry: cycle 1, height 66, deadline 66\n";
+        let records = telemetry(captured, &target(), 66).unwrap();
+        assert_eq!(records.finalized.len(), 1);
+        assert_eq!(
+            records.finalized[&66],
+            "0x82b8a3fa749f55a368d7ce6a2c2ad2b73bcd1110304f1d59a20ded5de6e2dc00"
+                .parse::<B256>()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -820,7 +848,7 @@ mod tests {
         ] {
             assert!(telemetry(
                 &format!(
-                    "{good}2026-09-05T12:00:01Z  INFO outbe_consensus::executor::actor: {extra}\n"
+                    "{good}2026-09-05T12:00:01Z  INFO outbe_consensus::executor::actor::finalization: {extra}\n"
                 ),
                 &proof.target,
                 proof.expiry
