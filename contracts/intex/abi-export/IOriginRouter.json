@@ -16,7 +16,7 @@
     },
     {
       "type": "function",
-      "name": "flushPendingSend",
+      "name": "distributeParkedProceeds",
       "inputs": [
         {
           "name": "idx",
@@ -42,6 +42,60 @@
           "name": "",
           "type": "bool",
           "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "parkedMessage",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.ParkedMessage",
+          "components": [
+            {
+              "name": "dstChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "gasLimit",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "sent",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "payload",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "parkedMessageCount",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -89,41 +143,13 @@
     },
     {
       "type": "function",
-      "name": "parkedSend",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
+      "name": "parkedProceedsCount",
+      "inputs": [],
       "outputs": [
         {
           "name": "",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.ParkedSend",
-          "components": [
-            {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "gasLimit",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "sent",
-              "type": "bool",
-              "internalType": "bool"
-            },
-            {
-              "name": "payload",
-              "type": "bytes",
-              "internalType": "bytes"
-            }
-          ]
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -527,7 +553,7 @@
     },
     {
       "type": "function",
-      "name": "retryProceeds",
+      "name": "resendParkedMessage",
       "inputs": [
         {
           "name": "idx",
@@ -1267,6 +1293,31 @@
     },
     {
       "type": "event",
+      "name": "MessageParked",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "NativeSwept",
       "inputs": [
         {
@@ -1286,7 +1337,7 @@
     },
     {
       "type": "event",
-      "name": "PendingSendFlushed",
+      "name": "ParkedMessageResent",
       "inputs": [
         {
           "name": "idx",
@@ -1305,6 +1356,31 @@
           "type": "bytes32",
           "indexed": false,
           "internalType": "bytes32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ParkedProceedsDistributed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -1331,31 +1407,6 @@
     {
       "type": "event",
       "name": "ProceedsParked",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "amount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ProceedsRetried",
       "inputs": [
         {
           "name": "idx",
@@ -1418,31 +1469,6 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "SendParked",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "dstChainId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": false,
-          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -1517,7 +1543,7 @@
     },
     {
       "type": "error",
-      "name": "NoParkedProceeds",
+      "name": "NoParkedMessage",
       "inputs": [
         {
           "name": "idx",
@@ -1528,7 +1554,7 @@
     },
     {
       "type": "error",
-      "name": "NoParkedSend",
+      "name": "NoParkedProceeds",
       "inputs": [
         {
           "name": "idx",

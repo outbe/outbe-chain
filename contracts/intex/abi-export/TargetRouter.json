@@ -98,7 +98,20 @@
     },
     {
       "type": "function",
-      "name": "applyPendingMark",
+      "name": "applyParkedIssuance",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "applyParkedMark",
       "inputs": [
         {
           "name": "seriesId",
@@ -138,32 +151,6 @@
     {
       "type": "function",
       "name": "flushPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingIssuance",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingProceedsRoute",
       "inputs": [
         {
           "name": "idx",
@@ -371,19 +358,6 @@
     },
     {
       "type": "function",
-      "name": "nextPendingIssuanceIdx",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "originRouter",
       "inputs": [],
       "outputs": [
@@ -397,36 +371,7 @@
     },
     {
       "type": "function",
-      "name": "pendingBidsRelays",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "exists",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "done",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "pendingIssuances",
+      "name": "parkedIssuance",
       "inputs": [
         {
           "name": "idx",
@@ -465,7 +410,20 @@
     },
     {
       "type": "function",
-      "name": "pendingMark",
+      "name": "parkedIssuanceCount",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "parkedMark",
       "inputs": [
         {
           "name": "seriesId",
@@ -484,7 +442,7 @@
     },
     {
       "type": "function",
-      "name": "pendingProceedsRoutes",
+      "name": "parkedProceeds",
       "inputs": [
         {
           "name": "idx",
@@ -502,6 +460,48 @@
           "name": "amount",
           "type": "uint128",
           "internalType": "uint128"
+        },
+        {
+          "name": "exists",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "done",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "parkedProceedsCount",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pendingBidsRelays",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
           "name": "exists",
@@ -627,6 +627,19 @@
           "name": "callerConfirmation",
           "type": "address",
           "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "resendParkedProceeds",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "outputs": [],
@@ -1016,7 +1029,32 @@
     },
     {
       "type": "event",
-      "name": "IssuanceDeferred",
+      "name": "IssuanceInstructionsReceived",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "recipientsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceParked",
       "inputs": [
         {
           "name": "idx",
@@ -1047,50 +1085,6 @@
     },
     {
       "type": "event",
-      "name": "IssuanceFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IssuanceInstructionsReceived",
-      "inputs": [
-        {
-          "name": "srcChainId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "recipientsCount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "MarkCalledReceived",
       "inputs": [
         {
@@ -1104,6 +1098,25 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkParked",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -1129,25 +1142,6 @@
     },
     {
       "type": "event",
-      "name": "MarkSlotted",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "NativeSwept",
       "inputs": [
         {
@@ -1167,7 +1161,26 @@
     },
     {
       "type": "event",
-      "name": "PendingMarkApplied",
+      "name": "ParkedIssuanceApplied",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ParkedMarkApplied",
       "inputs": [
         {
           "name": "seriesId",
@@ -1186,7 +1199,26 @@
     },
     {
       "type": "event",
-      "name": "ProceedsRouteDeferred",
+      "name": "ParkedProceedsResent",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProceedsParked",
       "inputs": [
         {
           "name": "idx",
@@ -1211,25 +1243,6 @@
           "type": "bytes",
           "indexed": false,
           "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ProceedsRouteFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
         }
       ],
       "anonymous": false
@@ -1438,7 +1451,7 @@
     },
     {
       "type": "error",
-      "name": "AlreadyFlushed",
+      "name": "AlreadyResolved",
       "inputs": [
         {
           "name": "idx",
@@ -1565,7 +1578,7 @@
     },
     {
       "type": "error",
-      "name": "NoPendingMark",
+      "name": "NoParkedMark",
       "inputs": [
         {
           "name": "seriesId",
@@ -1576,29 +1589,29 @@
     },
     {
       "type": "error",
+      "name": "NoSuchParkedIssuance",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoSuchParkedProceeds",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NoSuchPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingIssuance",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingProceedsRoute",
       "inputs": [
         {
           "name": "idx",

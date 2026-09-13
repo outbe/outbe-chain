@@ -142,12 +142,12 @@ contract PatternADeferTest is CrossChainTest {
         assertTrue(done, "flushed slot marked done");
     }
 
-    function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyFlushed() public {
+    function test_TM_FlushBidsRelayDoubleFlushRevertsAlreadyResolved() public {
         _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
         bnbRouter.flushPendingBidsRelay(0);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, 0));
         bnbRouter.flushPendingBidsRelay(0);
     }
 

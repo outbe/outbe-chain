@@ -203,7 +203,7 @@ contract UpgradeDrillTest is CrossChainTest {
         uint32[] memory snapshot = origin.targetsOf(day);
         assertEq(snapshot.length, 1, "day snapshot lost");
         assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
-        IOriginRouter.ParkedSend memory parked = origin.parkedSend(0);
+        IOriginRouter.ParkedMessage memory parked = origin.parkedMessage(0);
         assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
         assertFalse(parked.sent, "parked send flag lost");
 
@@ -211,8 +211,8 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        origin.flushPendingSend(0);
-        assertTrue(origin.parkedSend(0).sent, "flush broken after upgrade");
+        origin.resendParkedMessage(0);
+        assertTrue(origin.parkedMessage(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {

@@ -54,11 +54,11 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IParkedWork {
-        struct ParkedSend { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
+        struct ParkedMessage { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
         function nextPendingBidsRelayIdx() external view returns (uint256);
         function flushPendingBidsRelay(uint256 idx) external;
-        function parkedSend(uint256 idx) external view returns (ParkedSend memory);
-        function flushPendingSend(uint256 idx) external;
+        function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
+        function resendParkedMessage(uint256 idx) external;
         function nextParkedIdx() external view returns (uint256);
         function retryDelivery(uint256 idx) external;
     }
@@ -191,7 +191,7 @@ pub(crate) fn parked_work(
     let parked = eth::read_call(
         url,
         router,
-        &IParkedWork::parkedSendCall { idx: U256::ZERO },
+        &IParkedWork::parkedMessageCall { idx: U256::ZERO },
     );
     let parked_note = match parked {
         Some(send) if !send.payload.is_empty() => {
@@ -201,7 +201,7 @@ pub(crate) fn parked_work(
                 url,
                 router,
                 crate::world::forge::DEPLOYER_KEY,
-                &IParkedWork::flushPendingSendCall { idx: U256::ZERO },
+                &IParkedWork::resendParkedMessageCall { idx: U256::ZERO },
                 None,
             );
             format!(
@@ -525,7 +525,7 @@ pub(crate) fn parked_origin_sends(world: &World) -> u32 {
         let Some(send) = eth::read_call(
             &url,
             contracts.origin_router,
-            &IParkedWork::parkedSendCall {
+            &IParkedWork::parkedMessageCall {
                 idx: U256::from(idx),
             },
         ) else {
@@ -573,8 +573,8 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
-        function pendingMark(bytes14 seriesId) external view returns (uint8);
-        function applyPendingMark(bytes14 seriesId) external;
+        function parkedMark(bytes14 seriesId) external view returns (uint8);
+        function applyParkedMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -608,7 +608,7 @@ pub(crate) fn issued_series(
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn deferred_issuances(url: &str, venue_router: Address) -> usize {
     let topic0 =
-        alloy_primitives::keccak256(b"IssuanceDeferred(uint256,bytes14,address,bytes)".as_slice());
+        alloy_primitives::keccak256(b"IssuanceParked(uint256,bytes14,address,bytes)".as_slice());
     logs_of(
         url,
         venue_router,

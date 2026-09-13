@@ -15,8 +15,8 @@ struct PendingBidsRelay {
 }
 
 /// @notice An issuance parked because a recipient's ERC-1155 receiver hook reverted; retried via
-///         `flushPendingIssuance`.
-struct PendingIssuance {
+///         `applyParkedIssuance`.
+struct ParkedIssuance {
     bytes14 seriesId;
     address recipient;
     uint256 quantity;
@@ -25,7 +25,7 @@ struct PendingIssuance {
 }
 
 /// @notice A lifecycle mark waiting for its series, with the origin's call time for a Called one.
-struct PendingMark {
+struct ParkedMark {
     uint8 msgType;
     uint32 calledAt;
 }
@@ -60,17 +60,17 @@ struct TargetRouterStorage {
     ///      relay cannot double-count demand.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
     /// @dev Parked issuances awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingIssuance) pendingIssuances;
-    /// @dev Next index to assign in `pendingIssuances`; also the count ever enqueued.
-    uint256 nextPendingIssuanceIdx;
+    mapping(uint256 idx => ParkedIssuance) parkedIssuance;
+    /// @dev Next index to assign in `parkedIssuance`; also the count ever enqueued.
+    uint256 nextParkedIssuanceIdx;
     /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
     IERC7786TokenBridge tokenBridge;
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
     address originRouter;
     /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
-    /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
-    uint256 nextPendingProceedsRouteIdx;
+    mapping(uint256 idx => ParkedProceeds) parkedProceeds;
+    /// @dev Next index to assign in `parkedProceeds`; also the count ever enqueued.
+    uint256 nextParkedProceedsIdx;
     /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
     ///      re-relays under a fresh generation.
     mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
@@ -84,10 +84,10 @@ struct TargetRouterStorage {
     ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
-    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`. Carries the
+    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyParkedMark`. Carries the
     ///      origin's call time so a slot applied later still derives the deadline settlement honours rather
     ///      than one from its own arrival. Five bytes, so the pair shares a slot and is cleared in one write.
-    mapping(bytes14 seriesId => PendingMark) pendingMarks;
+    mapping(bytes14 seriesId => ParkedMark) parkedMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
@@ -99,8 +99,8 @@ struct TargetRouterStorage {
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
-///         via `flushPendingProceedsRoute`. The WCOEN is already held here, so only series+amount is snapshotted.
-struct PendingProceedsRoute {
+///         via `resendParkedProceeds`. The WCOEN is already held here, so only series+amount is snapshotted.
+struct ParkedProceeds {
     uint32 worldwideDay;
     uint128 amount;
     bool exists;

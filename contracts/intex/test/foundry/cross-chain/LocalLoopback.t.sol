@@ -360,9 +360,9 @@ contract LocalLoopbackTest is Test {
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
         assertEq(target.nextPendingBidsRelayIdx(), 0, "bids relay parked");
-        (,, bool proceedsParked,) = target.pendingProceedsRoutes(0);
+        (,, bool proceedsParked,) = target.parkedProceeds(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(target.nextPendingIssuanceIdx(), 0, "issuance mint parked");
-        assertEq(origin.parkedSend(0).payload.length, 0, "origin leg parked");
+        assertEq(target.parkedIssuanceCount(), 0, "issuance mint parked");
+        assertEq(origin.parkedMessage(0).payload.length, 0, "origin leg parked");
     }
 }

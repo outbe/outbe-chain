@@ -8,7 +8,7 @@ pragma solidity 0.8.30;
 /// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. The target set is
 ///      a registry (see {addTarget}); it is snapshotted per day at STAGE_START so a mid-day membership change never
 ///      reshapes an in-flight auction. Broadcast sends fan out over the snapshot; addressed sends carry a leading
-///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) - a single failing leg
+///      `dstChainId` and are checked against it. Every leg is isolated (see {resendParkedMessage}) - a single failing leg
 ///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
 ///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
@@ -37,9 +37,9 @@ interface IOriginRouter {
     /// @param idx Parked-send index.
     /// @param dstChainId Destination chainId of the parked leg.
     /// @param msgType Codec message type of the parked payload.
-    event SendParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
+    event MessageParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
     /// @notice Emitted when a parked outbound leg is flushed successfully.
-    event PendingSendFlushed(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
+    event ParkedMessageResent(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
 
     /// @notice Emitted when an auction stage message is sent to a target chain.
     /// @param sendId Bridge send identifier.
@@ -97,7 +97,7 @@ interface IOriginRouter {
     /// @notice Emitted when distribution failed and the proceeds were parked for retry.
     event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when a parked distribution was retried successfully.
-    event ProceedsRetried(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
+    event ParkedProceedsDistributed(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
@@ -118,7 +118,7 @@ interface IOriginRouter {
     }
 
     /// @notice An outbound leg that failed to dispatch, retained for a permissionless flush.
-    struct ParkedSend {
+    struct ParkedMessage {
         uint32 dstChainId;
         uint64 gasLimit;
         bool sent;
@@ -203,7 +203,7 @@ interface IOriginRouter {
     /// @notice `sendLeg` is an internal self-call seam; caller was not this contract.
     error OnlySelf();
     /// @notice No live parked send at `idx`.
-    error NoParkedSend(uint256 idx);
+    error NoParkedMessage(uint256 idx);
     /// @notice Array lengths do not match.
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
@@ -341,9 +341,12 @@ interface IOriginRouter {
     function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
-    function flushPendingSend(uint256 idx) external;
+    function resendParkedMessage(uint256 idx) external;
     /// @notice Parked outbound leg by index.
-    function parkedSend(uint256 idx) external view returns (ParkedSend memory);
+    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
+
+    /// @notice How many messages have ever parked; `sent` in {parkedMessage} tells which are resolved.
+    function parkedMessageCount() external view returns (uint256);
 
     // --- Proceeds ---
     /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
@@ -354,6 +357,9 @@ interface IOriginRouter {
     function wcoen() external view returns (address);
     /// @notice Parked proceeds awaiting retry, by enqueue index.
     function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
+
+    /// @notice How many proceeds have ever parked; `settled` in {parkedProceeds} tells which are resolved.
+    function parkedProceedsCount() external view returns (uint256);
     /// @notice Permissionless retry of a parked distribution.
-    function retryProceeds(uint256 idx) external;
+    function distributeParkedProceeds(uint256 idx) external;
 }

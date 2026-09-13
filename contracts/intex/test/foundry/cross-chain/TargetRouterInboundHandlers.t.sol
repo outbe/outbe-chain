@@ -241,8 +241,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
         assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
-        assertEq(bnbRouter.nextPendingIssuanceIdx(), 1, "one mint parked");
-        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuances(0);
+        assertEq(bnbRouter.parkedIssuanceCount(), 1, "one mint parked");
+        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.parkedIssuance(0);
         assertEq(s, SERIES_ID);
         assertEq(r, address(bad));
         assertEq(q, 3);
@@ -250,7 +250,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertFalse(done);
     }
 
-    function test_flushPendingIssuance_afterFix() public {
+    function test_applyParkedIssuance_afterFix() public {
         RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
         address[] memory recipients = new address[](2);
         recipients[0] = bidder;
@@ -262,15 +262,15 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         // Recipient stops reverting; the parked mint is retried permissionlessly.
         bad.setReject(false);
-        bnbRouter.flushPendingIssuance(0);
+        bnbRouter.applyParkedIssuance(0);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
-        (,,,, bool done) = bnbRouter.pendingIssuances(0);
+        (,,,, bool done) = bnbRouter.parkedIssuance(0);
         assertTrue(done);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
-        bnbRouter.flushPendingIssuance(0);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
+        bnbRouter.applyParkedIssuance(0);
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---

@@ -88,23 +88,23 @@ interface ITargetRouter {
     /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
     event ProceedsRouted(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
-    event ProceedsRouteDeferred(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount, bytes reason);
-    /// @notice Emitted when `flushPendingProceedsRoute` routed a previously deferred amount.
-    event ProceedsRouteFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
+    event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount, bytes reason);
+    /// @notice Emitted when `resendParkedProceeds` routed a previously deferred amount.
+    event ParkedProceedsResent(uint256 indexed idx, uint32 indexed worldwideDay);
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
 
     /// @notice Emitted when an issuance is parked after a recipient's ERC-1155 hook reverts.
-    event IssuanceDeferred(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
-    /// @notice Emitted when `flushPendingIssuance` successfully retries a parked issuance.
-    event IssuanceFlushed(uint256 indexed idx, bytes14 indexed seriesId);
+    event IssuanceParked(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
+    /// @notice Emitted when `applyParkedIssuance` successfully retries a parked issuance.
+    event ParkedIssuanceApplied(uint256 indexed idx, bytes14 indexed seriesId);
 
     /// @notice Emitted when a lifecycle mark waits in its series' slot because the series has not landed here yet.
     /// @param seriesId Series the mark is for.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
-    event MarkSlotted(bytes14 indexed seriesId, uint8 indexed msgType);
+    event MarkParked(bytes14 indexed seriesId, uint8 indexed msgType);
     /// @notice Emitted when a slotted mark is applied to its series.
-    event PendingMarkApplied(bytes14 indexed seriesId, uint8 indexed msgType);
+    event ParkedMarkApplied(bytes14 indexed seriesId, uint8 indexed msgType);
 
     /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
     /// @param to Recipient of the swept native balance.
@@ -130,13 +130,13 @@ interface ITargetRouter {
     /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice No parked proceeds route at `idx`.
-    error NoSuchPendingProceedsRoute(uint256 idx);
-    /// @notice `flushPendingIssuance` called for an index that was never enqueued.
-    error NoSuchPendingIssuance(uint256 idx);
-    /// @notice `applyPendingMark` called for a series with nothing waiting in its slot.
-    error NoPendingMark(bytes14 seriesId);
+    error NoSuchParkedProceeds(uint256 idx);
+    /// @notice `applyParkedIssuance` called for an index that was never enqueued.
+    error NoSuchParkedIssuance(uint256 idx);
+    /// @notice `applyParkedMark` called for a series with nothing waiting in its slot.
+    error NoParkedMark(bytes14 seriesId);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
-    error AlreadyFlushed(uint256 idx);
+    error AlreadyResolved(uint256 idx);
 
     // --- Admin ---
     /// @notice Wire contract dependencies.

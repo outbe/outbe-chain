@@ -19,10 +19,10 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
-    PendingMark,
+    ParkedMark,
     PendingBidsRelay,
-    PendingIssuance,
-    PendingProceedsRoute,
+    ParkedIssuance,
+    ParkedProceeds,
     RefundProgress,
     TargetRouterStorage
 } from "./TargetRouterStorage.sol";
@@ -104,13 +104,18 @@ contract TargetRouter is
     }
 
     /// @notice Parked proceeds route by enqueue index.
-    function pendingProceedsRoutes(uint256 idx)
+    function parkedProceeds(uint256 idx)
         external
         view
         returns (uint32 worldwideDay, uint128 amount, bool exists, bool done)
     {
-        PendingProceedsRoute storage p = _ts().pendingProceedsRoutes[idx];
+        ParkedProceeds storage p = _ts().parkedProceeds[idx];
         return (p.worldwideDay, p.amount, p.exists, p.done);
+    }
+
+    /// @notice How many proceeds routes have ever parked here; `done` in the view tells which are resolved.
+    function parkedProceedsCount() external view returns (uint256) {
+        return _ts().nextParkedProceedsIdx;
     }
 
     /// @notice Parked BIDS_BATCH relay by enqueue index.
@@ -125,18 +130,18 @@ contract TargetRouter is
     }
 
     /// @notice Parked issuance at `idx`.
-    function pendingIssuances(uint256 idx)
+    function parkedIssuance(uint256 idx)
         external
         view
         returns (bytes14 seriesId, address recipient, uint256 quantity, bool exists, bool done)
     {
-        PendingIssuance storage p = _ts().pendingIssuances[idx];
+        ParkedIssuance storage p = _ts().parkedIssuance[idx];
         return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
     }
 
-    /// @notice Next index to assign in `pendingIssuances`.
-    function nextPendingIssuanceIdx() external view returns (uint256) {
-        return _ts().nextPendingIssuanceIdx;
+    /// @notice How many issuances have ever parked here; `done` in the view tells which are resolved.
+    function parkedIssuanceCount() external view returns (uint256) {
+        return _ts().nextParkedIssuanceIdx;
     }
 
     /// @notice Whether `recipient` has already been issued its allocation of `seriesId` here.
@@ -166,8 +171,8 @@ contract TargetRouter is
     }
 
     /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
-    function pendingMark(bytes14 seriesId) external view returns (uint8) {
-        return _ts().pendingMarks[seriesId].msgType;
+    function parkedMark(bytes14 seriesId) external view returns (uint8) {
+        return _ts().parkedMarks[seriesId].msgType;
     }
 
     // --- Admin ---
@@ -250,7 +255,7 @@ contract TargetRouter is
     function flushPendingBidsRelay(uint256 idx) external nonReentrant {
         PendingBidsRelay storage p = _ts().pendingBidsRelays[idx];
         if (!p.exists) revert NoSuchPendingBidsRelay(idx);
-        if (p.done) revert AlreadyFlushed(idx);
+        if (p.done) revert AlreadyResolved(idx);
         p.done = true;
         _doSendBidsToOutbe(p.worldwideDay);
         emit BidsRelayFlushed(idx, p.worldwideDay);
@@ -347,13 +352,13 @@ contract TargetRouter is
     }
 
     /// @notice Permissionless retry of a previously deferred issuance.
-    function flushPendingIssuance(uint256 idx) external nonReentrant {
-        PendingIssuance storage p = _ts().pendingIssuances[idx];
-        if (!p.exists) revert NoSuchPendingIssuance(idx);
-        if (p.done) revert AlreadyFlushed(idx);
+    function applyParkedIssuance(uint256 idx) external nonReentrant {
+        ParkedIssuance storage p = _ts().parkedIssuance[idx];
+        if (!p.exists) revert NoSuchParkedIssuance(idx);
+        if (p.done) revert AlreadyResolved(idx);
         p.done = true;
         _ts().intex.issue(p.recipient, p.quantity, p.seriesId);
-        emit IssuanceFlushed(idx, p.seriesId);
+        emit ParkedIssuanceApplied(idx, p.seriesId);
     }
 
     /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
@@ -372,19 +377,19 @@ contract TargetRouter is
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
     ///         series still will not take it, leaving the slot in place.
     /// @param seriesId Series whose slotted mark to apply.
-    function applyPendingMark(bytes14 seriesId) external nonReentrant {
+    function applyParkedMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        PendingMark memory waiting = $.pendingMarks[seriesId];
+        ParkedMark memory waiting = $.parkedMarks[seriesId];
         uint8 msgType = waiting.msgType;
-        if (msgType == 0) revert NoPendingMark(seriesId);
+        if (msgType == 0) revert NoParkedMark(seriesId);
         uint32 calledAt = waiting.calledAt;
-        delete $.pendingMarks[seriesId];
+        delete $.parkedMarks[seriesId];
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             $.intex.markQualified(seriesId);
         } else {
             $.intex.markCalled(seriesId, calledAt);
         }
-        emit PendingMarkApplied(seriesId, msgType);
+        emit ParkedMarkApplied(seriesId, msgType);
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
@@ -395,13 +400,13 @@ contract TargetRouter is
 
     /// @notice Permissionless retry of a previously deferred proceeds route.
     /// @param idx Index of the parked route to flush.
-    function flushPendingProceedsRoute(uint256 idx) external nonReentrant {
-        PendingProceedsRoute storage p = _ts().pendingProceedsRoutes[idx];
-        if (!p.exists) revert NoSuchPendingProceedsRoute(idx);
-        if (p.done) revert AlreadyFlushed(idx);
+    function resendParkedProceeds(uint256 idx) external nonReentrant {
+        ParkedProceeds storage p = _ts().parkedProceeds[idx];
+        if (!p.exists) revert NoSuchParkedProceeds(idx);
+        if (p.done) revert AlreadyResolved(idx);
         p.done = true;
         _doRouteProceeds(p.worldwideDay, p.amount);
-        emit ProceedsRouteFlushed(idx, p.worldwideDay);
+        emit ParkedProceedsResent(idx, p.worldwideDay);
     }
 
     /// @dev Approve the token bridge and route `amount` WCOEN to the OriginRouter with the series id, self-funding

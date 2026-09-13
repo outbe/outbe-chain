@@ -107,8 +107,8 @@ contract MarkBatchWireTest is CrossChainTest {
         );
 
         assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Qualified), "the known series applied");
-        assertEq(bnbRouter.pendingMark(EUR_SERIES), BridgeMsgCodec.MSG_MARK_QUALIFIED, "only the missing one waits");
-        assertEq(bnbRouter.pendingMark(USD_SERIES), 0, "the applied one has no slot");
+        assertEq(bnbRouter.parkedMark(EUR_SERIES), BridgeMsgCodec.MSG_MARK_QUALIFIED, "only the missing one waits");
+        assertEq(bnbRouter.parkedMark(USD_SERIES), 0, "the applied one has no slot");
     }
 
     /// @dev The destination gas the router buys has to follow the batch it is sending, not the

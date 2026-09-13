@@ -144,19 +144,19 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.setRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails; A still routes
         _fireStart(DAY);
 
-        IOriginRouter.ParkedSend memory p = origin.parkedSend(0);
+        IOriginRouter.ParkedMessage memory p = origin.parkedMessage(0);
         assertEq(p.dstChainId, TARGET_B);
         assertEq(p.sent, false);
         assertGt(p.payload.length, 0);
 
         origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
-        origin.flushPendingSend(0);
-        assertTrue(origin.parkedSend(0).sent);
+        origin.resendParkedMessage(0);
+        assertTrue(origin.parkedMessage(0).sent);
     }
 
     function test_flush_revert_unknown() public {
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedSend.selector, uint256(0)));
-        origin.flushPendingSend(0);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedMessage.selector, uint256(0)));
+        origin.resendParkedMessage(0);
     }
 
     // --- Inbound BIDS_DONE ---

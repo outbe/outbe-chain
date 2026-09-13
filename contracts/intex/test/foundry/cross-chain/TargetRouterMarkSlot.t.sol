@@ -85,27 +85,27 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.MarkSlotted(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
+        emit ITargetRouter.MarkParked(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
         _deliver(_qualified());
-        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_QUALIFIED, "slotted");
+        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_QUALIFIED, "slotted");
     }
 
     function test_IssuanceCreatingTheSeriesAppliesTheSlottedMark() public {
         _deliver(_qualified());
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.PendingMarkApplied(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
+        emit ITargetRouter.ParkedMarkApplied(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
         _deliver(_issuance());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Qualified), "applied on creation");
-        assertEq(router.pendingMark(series), 0, "slot cleared");
+        assertEq(router.parkedMark(series), 0, "slot cleared");
     }
 
     function test_CalledOverridesAWaitingQualifiedButNotTheReverse() public {
         _deliver(_qualified());
         _deliver(_called());
-        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called wins");
+        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called wins");
         _deliver(_qualified());
-        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Qualified cannot demote it");
+        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Qualified cannot demote it");
     }
 
     /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
@@ -115,7 +115,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_issuance());
 
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
-        assertEq(router.pendingMark(series), 0, "nothing waits any more");
+        assertEq(router.parkedMark(series), 0, "nothing waits any more");
     }
 
     function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
@@ -124,29 +124,29 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         // The bridge redelivers the mark: it applies directly now, so nothing may keep waiting.
         _deliver(_called());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");
-        assertEq(router.pendingMark(series), 0, "the settled slot is cleared");
+        assertEq(router.parkedMark(series), 0, "the settled slot is cleared");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoPendingMark.selector, series));
-        router.applyPendingMark(series);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
+        router.applyParkedMark(series);
     }
 
-    function test_ApplyPendingMarkIsThePermissionlessValve() public {
+    function test_ApplyParkedMarkIsThePermissionlessValve() public {
         _deliver(_called());
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
         vm.prank(makeAddr("anyone"));
-        router.applyPendingMark(series);
+        router.applyParkedMark(series);
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoPendingMark.selector, series));
-        router.applyPendingMark(series);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
+        router.applyParkedMark(series);
     }
 
-    function test_ApplyPendingMarkRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
+    function test_ApplyParkedMarkRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
         _deliver(_called());
         vm.expectRevert();
-        router.applyPendingMark(series);
-        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "slot kept");
+        router.applyParkedMark(series);
+        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "slot kept");
     }
 
     // --- already there / superseded ---
@@ -156,7 +156,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_qualified());
         _expectIgnored(BridgeMsgCodec.MSG_MARK_QUALIFIED, InboundReason.DUPLICATE);
         _deliver(_qualified());
-        assertEq(router.pendingMark(series), 0, "nothing slotted");
+        assertEq(router.parkedMark(series), 0, "nothing slotted");
     }
 
     function test_ARepeatedCalledIsADuplicate() public {
@@ -172,7 +172,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _expectIgnored(BridgeMsgCodec.MSG_MARK_QUALIFIED, InboundReason.OBSOLETE);
         _deliver(_qualified());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "Called stands");
-        assertEq(router.pendingMark(series), 0, "nothing slotted");
+        assertEq(router.parkedMark(series), 0, "nothing slotted");
     }
 
     function test_ACalledAfterQualifiedApplies() public {

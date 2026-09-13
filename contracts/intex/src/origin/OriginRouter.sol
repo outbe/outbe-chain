@@ -61,9 +61,9 @@ contract OriginRouter is
         /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
-        mapping(uint256 idx => ParkedSend) parkedSends;
-        /// @dev Next index to assign in `parkedSends`.
-        uint256 nextParkedSendIdx;
+        mapping(uint256 idx => ParkedMessage) parkedMessages;
+        /// @dev Next index to assign in `parkedMessages`.
+        uint256 nextParkedMessageIdx;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -191,27 +191,32 @@ contract OriginRouter is
             sendId = id;
         } catch {
             OriginRouterStorage storage $ = _os();
-            uint256 idx = $.nextParkedSendIdx++;
-            ParkedSend storage p = $.parkedSends[idx];
+            uint256 idx = $.nextParkedMessageIdx++;
+            ParkedMessage storage p = $.parkedMessages[idx];
             p.dstChainId = dstChainId;
             p.gasLimit = SafeCast.toUint64(gasLimit);
             p.payload = payload;
-            emit SendParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
+            emit MessageParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
         }
     }
 
     /// @inheritdoc IOriginRouter
-    function flushPendingSend(uint256 idx) external nonReentrant {
-        ParkedSend storage p = _os().parkedSends[idx];
-        if (p.payload.length == 0 || p.sent) revert NoParkedSend(idx);
+    function resendParkedMessage(uint256 idx) external nonReentrant {
+        ParkedMessage storage p = _os().parkedMessages[idx];
+        if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
         p.sent = true; // CEI; a revert in `_send` rolls this back, keeping the entry retryable
         bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
-        emit PendingSendFlushed(idx, p.dstChainId, sendId);
+        emit ParkedMessageResent(idx, p.dstChainId, sendId);
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedSend(uint256 idx) external view returns (ParkedSend memory) {
-        return _os().parkedSends[idx];
+    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory) {
+        return _os().parkedMessages[idx];
+    }
+
+    /// @inheritdoc IOriginRouter
+    function parkedMessageCount() external view returns (uint256) {
+        return _os().nextParkedMessageIdx;
     }
 
     /// @dev Whether `chainId` is in the series' STAGE_START snapshot (the frozen day-of target set).
@@ -676,6 +681,11 @@ contract OriginRouter is
         return _os().parkedProceeds[idx];
     }
 
+    /// @inheritdoc IOriginRouter
+    function parkedProceedsCount() external view returns (uint256) {
+        return _os().nextParkedProceedsIdx;
+    }
+
     /// @inheritdoc IERC7786TokenReceiver
     /// @dev The token bridge credits WCOEN before this call; we unwrap it and hand the native to the factory
     ///      precompile, which pays the series' creators. A distribution failure parks the native for retry so
@@ -703,12 +713,12 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function retryProceeds(uint256 idx) external nonReentrant {
+    function distributeParkedProceeds(uint256 idx) external nonReentrant {
         ParkedProceeds storage p = _os().parkedProceeds[idx];
         if (p.amount == 0 || p.settled) revert NoParkedProceeds(idx);
         p.settled = true;
         IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.worldwideDay, p.srcChainId);
-        emit ProceedsRetried(idx, p.worldwideDay, p.amount);
+        emit ParkedProceedsDistributed(idx, p.worldwideDay, p.amount);
     }
 
     /// @dev Hand native proceeds to the factory precompile; park them for retry on failure. `srcChainId` lets the

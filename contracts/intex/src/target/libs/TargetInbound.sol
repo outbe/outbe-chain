@@ -11,10 +11,10 @@ import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     ChunkProgress,
-    PendingMark,
+    ParkedMark,
     PendingBidsRelay,
-    PendingIssuance,
-    PendingProceedsRoute,
+    ParkedIssuance,
+    ParkedProceeds,
     RefundProgress,
     TargetRouterStorage
 } from "../TargetRouterStorage.sol";
@@ -322,11 +322,11 @@ library TargetInbound {
             // Per-recipient self-call: a reverting receiver hook parks only that issuance, not the whole batch.
             try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, quantity) {}
             catch (bytes memory reason) {
-                uint256 idx = $.nextPendingIssuanceIdx++;
-                $.pendingIssuances[idx] = PendingIssuance({
+                uint256 idx = $.nextParkedIssuanceIdx++;
+                $.parkedIssuance[idx] = ParkedIssuance({
                     seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
                 });
-                emit ITargetRouter.IssuanceDeferred(idx, payload.seriesId, recipient, reason);
+                emit ITargetRouter.IssuanceParked(idx, payload.seriesId, recipient, reason);
             }
         }
 
@@ -451,7 +451,7 @@ library TargetInbound {
 
     /// @dev Apply one lifecycle mark through its self-call shim. A series this chain has not seen keeps the mark
     ///      in its slot; a mark the series already carries (or one a later mark superseded) is acknowledged
-    ///      without effect; any other failure slots the mark for `applyPendingMark`.
+    ///      without effect; any other failure slots the mark for `applyParkedMark`.
     function _applyMark(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -485,9 +485,9 @@ library TargetInbound {
         // independently, and the Called is the later decision even when it lands second.
         if (
             msgType == BridgeMsgCodec.MSG_MARK_CALLED
-                || $.pendingMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
+                || $.parkedMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
         ) {
-            delete $.pendingMarks[seriesId];
+            delete $.parkedMarks[seriesId];
         }
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
@@ -508,42 +508,42 @@ library TargetInbound {
     ) private returns (bool slotted) {
         if (
             msgType != BridgeMsgCodec.MSG_MARK_CALLED
-                && $.pendingMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
+                && $.parkedMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
         ) {
             _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
             return false;
         }
-        $.pendingMarks[seriesId] = PendingMark({msgType: msgType, calledAt: calledAt});
-        emit ITargetRouter.MarkSlotted(seriesId, msgType);
+        $.parkedMarks[seriesId] = ParkedMark({msgType: msgType, calledAt: calledAt});
+        emit ITargetRouter.MarkParked(seriesId, msgType);
         return true;
     }
 
     /// @dev Apply the mark waiting for a series that has just been created. A mark is a state flip and
     ///      moves no balances, so Called applies here as readily as Qualified. A failure re-announces the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
-        PendingMark memory waiting = $.pendingMarks[seriesId];
+        ParkedMark memory waiting = $.parkedMarks[seriesId];
         uint8 msgType = waiting.msgType;
         if (msgType == 0) return;
         uint32 calledAt = waiting.calledAt;
-        delete $.pendingMarks[seriesId];
+        delete $.parkedMarks[seriesId];
         try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {
-            emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
+            emit ITargetRouter.ParkedMarkApplied(seriesId, msgType);
         } catch {
-            $.pendingMarks[seriesId] = waiting;
-            emit ITargetRouter.MarkSlotted(seriesId, msgType);
+            $.parkedMarks[seriesId] = waiting;
+            emit ITargetRouter.MarkParked(seriesId, msgType);
         }
     }
 
     /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
-    ///      back the finalization (the WCOEN is already held here). Retried via `flushPendingProceedsRoute`.
+    ///      back the finalization (the WCOEN is already held here). Retried via `resendParkedProceeds`.
     function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint128 amount) private {
         // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {}
         catch (bytes memory reason) {
-            uint256 idx = $.nextPendingProceedsRouteIdx++;
-            $.pendingProceedsRoutes[idx] =
-                PendingProceedsRoute({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
-            emit ITargetRouter.ProceedsRouteDeferred(idx, worldwideDay, amount, reason);
+            uint256 idx = $.nextParkedProceedsIdx++;
+            $.parkedProceeds[idx] =
+                ParkedProceeds({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
+            emit ITargetRouter.ProceedsParked(idx, worldwideDay, amount, reason);
         }
     }
 }
