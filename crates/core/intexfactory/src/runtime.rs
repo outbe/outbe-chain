@@ -863,7 +863,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 /// What settling `amount` units of `series_id` with `payment_token` costs, and
 /// which of the series' two currencies that token settles on. Priced exactly as
-/// `settle` charges it. Rejects a token the series does not accept.
+/// `settleIntex` charges it. Rejects a token the series does not accept.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,

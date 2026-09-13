@@ -1,6 +1,6 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` name the
+//! Routing only: decode -> runtime -> encode. `settleIntex` / `minePromis` name the
 //! owner they act for, so `caller = msg.sender` only binds the PayNote spent.
 //! None accept value, except `distribute`, which credits auction proceeds.
 
@@ -28,7 +28,7 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
-/// Base gas charged by the registry before invoking [`dispatch`]: `settle`
+/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntex`
 /// verifies a PayNote spend proof, which is real native work every validator
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {

@@ -177,7 +177,7 @@ fn settlement_quote_dispatch() {
 
 /// A settle from a stranger must succeed and book the units to the owner.
 #[test]
-fn anyone_may_settle_and_the_units_stay_with_the_holder() {
+fn anyone_may_settle_and_the_units_stay_with_the_owner() {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use alloy_sol_types::SolEvent;
     use outbe_vaultrouter::api::IVaultRouter;
@@ -383,7 +383,18 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         outbe_intex::api::record_gem_factory_units(&s, sid(7), 10).unwrap();
         outbe_intex::api::record_exercised_units(&s, sid(7), 15).unwrap();
 
-        let counts = runtime::series_unit_counts(&s, sid(7)).unwrap();
+        // Through dispatch, so the selector and the struct encoding are covered too.
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::seriesUnitCountsCall {
+                seriesId: sid(7).into(),
+            }
+            .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        let counts = IIntexFactory::seriesUnitCountsCall::abi_decode_returns(&out).unwrap();
         assert_eq!(counts.issuedUnits, 100);
         assert_eq!(counts.activeUnits, 50);
         assert_eq!(counts.settledUnits, 25);

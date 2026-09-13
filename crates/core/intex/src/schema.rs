@@ -472,6 +472,7 @@ pub struct IntexContract {
     /// series_id -> units sent to the Gem Factory.
     #[attribute(order = 28)]
     pub gem_factory_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
     /// series_id -> settled units burned into Promis so far.
     #[attribute(order = 29)]
     pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,

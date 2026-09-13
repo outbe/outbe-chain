@@ -37,7 +37,7 @@ interface IIntex {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 worldwideDay;
-        /// @notice Units settled so far; their load belongs to the settler.
+        /// @notice Units settled so far, mined ones included; their load belongs to the settler.
         uint32 settledUnits;
         /// @notice Units sent to the Gem Factory; their load moved with them.
         uint32 gemFactoryUnits;

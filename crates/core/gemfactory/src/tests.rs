@@ -791,7 +791,7 @@ fn two_merchants_parking_one_series_in_a_block_get_separate_positions() {
     assert_ne!(
         GemFactoryContract::generate_position_id(ALICE, series, block),
         GemFactoryContract::generate_position_id(BOB, series, block),
-        "a series has many holders and any of them may park it"
+        "a series has many owners and any of them may send units to the Gem Factory"
     );
 }
 

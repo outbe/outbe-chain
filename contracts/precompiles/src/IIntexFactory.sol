@@ -23,7 +23,7 @@ interface IIntexFactory {
 
     /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
     ///         and which of the series' two currencies that token settles on. Priced
-    ///         exactly as `settle` charges it. Reverts for a token the series does
+    ///         exactly as `settleIntex` charges it. Reverts for a token the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
@@ -96,8 +96,10 @@ interface IIntexFactory {
     function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
-    ///         `issuedUnits`. `activeUnits` is what is still unpaid before expiry,
-    ///         and `forfeitedUnits` is the same remainder once the series expired.
+    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
+    ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
+    ///         `settledUnits` here is what is paid and not yet mined, unlike the
+    ///         cumulative `settledUnits` of `IIntex.seriesData`.
     struct UnitCounts {
         uint32 issuedUnits;
         uint32 activeUnits;

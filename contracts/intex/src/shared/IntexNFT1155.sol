@@ -27,7 +27,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @notice Bridge relayer role; gates series lifecycle, issue, and
     ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
-    /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
+    /// @notice Settlement contract role; allowed to call `settleIntex` (burn Issued + mint Settled).
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
@@ -390,7 +390,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Series must exist; we look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
 
-        // Mirror `settle`'s precondition: Settled balances only exist after a settle, which
+        // Mirror `settleIntex`'s precondition: Settled balances only exist after a settle, which
         // is only permitted from Qualified or Called. Making the gate explicit (instead of
         // relying on `_burn`'s zero-balance revert) keeps a future change that pre-mints
         // Settled tokens - e.g. an airdrop variant - from accidentally opening an early-burn
@@ -546,7 +546,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens and freezes Called series.
     /// @dev Transfer lock and soulbound enforcement.
-    ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
+    ///      - Mint/burn paths (from/to address(0)) are always allowed (settleIntex, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
     ///      - Owner-to-owner transfers:
     ///          * Settled token ids are soulbound - always reverts.
