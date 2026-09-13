@@ -27,14 +27,15 @@ pub struct IssuanceParams {
     pub snapshot_chains: Vec<u32>,
 }
 
-/// EVM storage layout: settlement bookkeeping (authorized_settler, mine_seq), the
+/// EVM storage layout: settlement bookkeeping (mine_seq), the
 /// lifecycle bin indexes and the queue of called groups awaiting their deadline.
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// `keccak256(holder ++ series_id)` -> authorized settler address.
+    /// Retired and never read; the slot stays declared so the fields after it
+    /// keep their numbers on an upgraded chain. Not to be reused.
     #[attribute(order = 0)]
-    pub authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
+    pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 
     /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
@@ -175,14 +176,6 @@ pub struct IntexFactoryContract {
 }
 
 impl IntexFactoryContract<'_> {
-    /// Composite key for `authorized_settler`: `keccak256(holder ++ series_id)`.
-    pub fn authorized_settler_key(holder: Address, series_id: SeriesId) -> B256 {
-        let mut buf = [0u8; 20 + SERIES_ID_LEN];
-        buf[0..20].copy_from_slice(holder.as_slice());
-        buf[20..].copy_from_slice(series_id.as_bytes());
-        keccak256(buf)
-    }
-
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64

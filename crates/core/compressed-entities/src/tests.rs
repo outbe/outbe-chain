@@ -16,7 +16,7 @@ use crate::{
 };
 use crate::{schema::CompressedEntitiesSchema, state::State};
 
-#[path = "tests/adr007.rs"]
+#[path = "tests/adr007/mod.rs"]
 mod adr007;
 #[path = "tests/adr008_scope.rs"]
 mod adr008_scope;

@@ -1,8 +1,8 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` /
-//! `setAuthorizedSettler` are user-facing with `caller = msg.sender`. None
-//! accept value, except `distribute`, which credits auction proceeds.
+//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` name the
+//! holder they act for, so `caller = msg.sender` only binds the PayNote spent.
+//! None accept value, except `distribute`, which credits auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -61,7 +61,46 @@ sol! {
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
+        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline) external;
     }
+}
+
+/// Move a called group onto `deadline`, and with it into that deadline's bucket. The
+/// sweep opens a bucket only once its hour has closed, so a notice that lapsed minutes
+/// ago would otherwise idle out the rest of the hour.
+#[cfg(feature = "e2e-test")]
+fn requeue_called_group(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    worldwide_day: u32,
+    deadline: u64,
+) -> Result<()> {
+    use crate::schema::IntexFactoryContract;
+    use outbe_primitives::storage::types::Storable;
+    use outbe_primitives::time::WorldwideDay;
+
+    let mut factory = IntexFactoryContract::new(storage.clone());
+    let worldwide_day = WorldwideDay::from(worldwide_day);
+    let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
+    let count = factory.called_group_count.read(&key)?;
+    if count == 0 {
+        return Err(outbe_primitives::error::PrecompileError::Revert(
+            "closeCallNoticeForTest: no called group".into(),
+        ));
+    }
+    let mut members = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let word = factory
+            .called_group_members
+            .read(&IntexFactoryContract::group_member_key(
+                iso_code,
+                worldwide_day,
+                index,
+            ))?;
+        members.push(SeriesId::from_word(word));
+    }
+    factory.remove_called_group(iso_code, worldwide_day)?;
+    factory.push_called_group(iso_code, worldwide_day, deadline, &members)
 }
 
 pub fn dispatch(
@@ -145,6 +184,11 @@ pub fn dispatch(
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]
+    if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
+        requeue_called_group(&storage, call.isoCode, call.worldwideDay, call.deadline)?;
+        return Ok(Bytes::new());
+    }
+    #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
         outbe_intex::api::arm_proceeds(
             &storage,
@@ -184,9 +228,9 @@ pub fn dispatch(
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
-                // has POW_DIFFICULTY leading zero bytes; `seq` is the on-chain
+                // has the protocol's leading zero bytes; `seq` is the on-chain
                 // per-(series, holder) counter.
-                minePromis(c) => mutate(c, caller, |sender, c| {
+                minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
@@ -194,18 +238,10 @@ pub fn dispatch(
                     runtime::mine_promis(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        sender,
+                        c.holder,
                         c.amount,
                         c.nonce,
                         auth,
-                    )
-                }),
-                setAuthorizedSettler(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::set_authorized_settler(
-                        &storage,
-                        sender,
-                        SeriesId::from(c.seriesId),
-                        c.settler,
                     )
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)

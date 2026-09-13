@@ -182,10 +182,7 @@ fn mine_gratis_inner(
         auth,
         paynote_proof,
     } = input;
-    if caller != item.body().owner {
-        return Err(NodFactoryError::NotOwner.into());
-    }
-
+    // Anyone may submit; the note is bound to the caller, the Gratis to the owner.
     validate_pow(nod_id, nonce)?;
 
     if !bucket.body().is_qualified {
@@ -229,7 +226,7 @@ fn mine_gratis_inner(
     emit_event(
         storage,
         INodFactory::NodBurned {
-            owner: caller,
+            owner,
             nodId: nod_id.to_u256(),
             gratisLoadMinor: gratis_load_minor,
         },

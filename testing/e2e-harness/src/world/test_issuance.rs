@@ -47,6 +47,8 @@ pub const INTEX_FACTORY: Address =
 sol! {
     interface IIntexFactoryTestArming {
         function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
+        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline)
+            external;
         function issueForTest(
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
@@ -96,7 +98,7 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(bytes14 seriesId, address holder, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
             returns (uint256 promisAmount);
     }
@@ -320,12 +322,17 @@ pub fn mine_promis(
     mac: [u8; 32],
     op_nonce: u64,
 ) -> Result<()> {
+    let signer: alloy_signer_local::PrivateKeySigner = holder_key
+        .parse()
+        .map_err(|error| eyre!("invalid holder key: {error}"))?;
+    let holder = alloy_signer::Signer::address(&signer);
     send_checked(
         url,
         INTEX_FACTORY,
         holder_key,
         &IPromisMining::minePromisCall {
             seriesId: series,
+            holder,
             amount: U256::from(amount),
             nonce,
             mac: mac.into(),
@@ -403,6 +410,28 @@ pub fn seed_day_vwaps(
             value,
         },
         "seedDayVwapsForTest",
+    )
+}
+
+/// Re-queue a called group on a deadline already behind a closed expiry bucket, so
+/// the sweep reaches it on the next block instead of idling out the rest of the hour.
+pub fn close_call_notice(
+    url: &str,
+    sender_key: &str,
+    iso_code: u16,
+    worldwide_day: u32,
+    deadline: u64,
+) -> Result<()> {
+    send_checked(
+        url,
+        INTEX_FACTORY,
+        sender_key,
+        &IIntexFactoryTestArming::closeCallNoticeForTestCall {
+            isoCode: iso_code,
+            worldwideDay: worldwide_day,
+            deadline,
+        },
+        "closeCallNoticeForTest",
     )
 }
 
