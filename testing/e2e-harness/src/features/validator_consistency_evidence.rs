@@ -696,6 +696,111 @@ fn early_unjail_is_rejected_while_retained(world: &mut World) {
     );
 }
 
+fn recover_unjailed_process(world: &mut World) -> Vec<(u32, u32)> {
+    let port = world.validators.http_port(3);
+    let enclave = world
+        .localnet
+        .live_enclave_pid(3)
+        .expect("preserved enclave");
+    world
+        .localnet
+        .join_node_enclave(3)
+        .expect("ordinary post-unjail TEE join");
+    let follower = world
+        .localnet
+        .launch_validator_recovery_follower(3, 0)
+        .expect("recover the preserved validator datadir through certified sync");
+    let follower_pid = world
+        .localnet
+        .live_follower_pid(&follower)
+        .expect("owned recovery follower");
+    let target = world
+        .rpc
+        .finalized_result(primary(world))
+        .expect("recovery target");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(primary(world), target)
+        .expect("canonical recovery checkpoint");
+    wait_until(
+        || {
+            assert_eq!(
+                world
+                    .localnet
+                    .live_follower_pid(&follower)
+                    .expect("live recovery follower"),
+                follower_pid
+            );
+            assert_eq!(
+                world
+                    .localnet
+                    .live_enclave_pid(3)
+                    .expect("live preserved enclave"),
+                enclave
+            );
+            world
+                .rpc
+                .finalized(port)
+                .is_some_and(|height| height >= target)
+                && world
+                    .rpc
+                    .checkpoint_at(port, target)
+                    .is_ok_and(|observed| observed == checkpoint)
+                && world
+                    .localnet
+                    .node_launch_log(3, follower_pid)
+                    .expect("owned recovery log")
+                    .contains("local TEE lease guard armed at authenticated catch-up anchor")
+        },
+        180,
+        "certified recovery checkpoint and authenticated admission",
+    );
+    world
+        .localnet
+        .stop_follower(&follower)
+        .expect("stop recovery database owner");
+    world
+        .localnet
+        .restart_validator(3)
+        .expect("restore the original validator role");
+    let owned = capture_felony_processes(world);
+    assert_eq!(owned[3].1, enclave, "recovery replaced the enclave");
+    wait_until(
+        || {
+            assert_felony_survivors_live(world, &owned);
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(3)
+                    .expect("live recovered validator"),
+                owned[3]
+            );
+            world
+                .rpc
+                .finalized(port)
+                .is_some_and(|height| height >= target)
+                && world
+                    .rpc
+                    .checkpoint_at(port, target)
+                    .is_ok_and(|observed| observed == checkpoint)
+                && crate::internal::eth::raw_json_result(
+                    &world.rpc.url(port),
+                    "outbe_consensusStatus",
+                    serde_json::json!([]),
+                )
+                .is_ok_and(|status| status["hasThresholdShares"].as_bool() == Some(false))
+        },
+        180,
+        "live shareless validator caught up before readiness",
+    );
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "early_unjail_recovered_before_readiness", "owned_pids": owned,
+        "follower_pid": follower_pid, "height": checkpoint.height,
+        "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
+    }));
+    owned
+}
+
 #[then(
     "the validator cannot participate until readiness is reconfirmed and a fresh reshare commits"
 )]
@@ -749,6 +854,41 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         "unconfirmed PENDING validator must stay excluded"
     );
 
+    // Readiness must describe a running recovered player, not an offline
+    // identity whose share would be disclosed by the next ceremony.
+    let owned = recover_unjailed_process(world);
+    let ports = world.validators.committee_ports();
+    let local_port = world.validators.http_port(3);
+    let before_ready = world
+        .rpc
+        .wait_finalized_checkpoint(
+            &ports,
+            world
+                .rpc
+                .finalized_result(port)
+                .expect("pre-readiness height"),
+            60,
+        )
+        .expect("all four nodes caught up before readiness");
+    for &observer in &ports {
+        let record = world
+            .rpc
+            .validator_record_at(observer, &victim, before_ready.height)
+            .expect("recovered PENDING record");
+        assert_eq!(record.status, STATUS_PENDING);
+        assert!(!record.has_bls_share, "recovery bypassed readiness");
+    }
+    let material = |rpc_port| {
+        crate::internal::eth::raw_json_result(
+            &format!("http://127.0.0.1:{rpc_port}"),
+            "outbe_consensusStatus",
+            serde_json::json!([]),
+        )
+        .expect("local consensus material")
+    };
+    let before_material = material(local_port);
+    assert_eq!(before_material["hasThresholdShares"].as_bool(), Some(false));
+    assert!(!before_material["vrfMaterialVersion"].is_null());
     let confirmation = world
         .rpc
         .confirm_ready_outcome(&victim_key, 3)
@@ -757,12 +897,32 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         confirmation.success,
         "readiness reconfirmation must succeed"
     );
+    world
+        .rpc
+        .finalize_outcome(&confirmation, &ports, 60)
+        .expect("canonical readiness on all recovered nodes");
     wait_until(
         || {
-            world
-                .rpc
-                .is_participant(port, &victim)
-                .expect("observe consensus participation")
+            assert_felony_survivors_live(world, &owned);
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(3)
+                    .expect("recovered DKG player remains live"),
+                owned[3]
+            );
+            let local = material(local_port);
+            let healthy = material(port);
+            local["hasThresholdShares"].as_bool() == Some(true)
+                && local["vrfMaterialVersion"] != before_material["vrfMaterialVersion"]
+                && !local["vrfMaterialVersion"].is_null()
+                && local["vrfMaterialVersion"] == healthy["vrfMaterialVersion"]
+                && !local["lastDkgActivationHeight"].is_null()
+                && local["lastDkgActivationHeight"] == healthy["lastDkgActivationHeight"]
+                && world
+                    .rpc
+                    .is_participant(port, &victim)
+                    .expect("observe consensus participation")
         },
         180,
         "fresh reshare after readiness reconfirmation",
@@ -773,6 +933,36 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         .expect("validator after recovery reshare");
     assert_eq!(recovered.status, STATUS_ACTIVE, "recovered status");
     assert!(recovered.has_bls_share, "recovered validator share");
+    let target = world
+        .rpc
+        .finalized_result(port)
+        .expect("post-recovery height")
+        + 3;
+    let final_checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("all recovered nodes continue canonical finalization");
+    for &observer in &ports {
+        let record = world
+            .rpc
+            .validator_record_at(observer, &victim, final_checkpoint.height)
+            .expect("canonical recovered validator");
+        assert_eq!(record.status, STATUS_ACTIVE);
+        assert!(record.has_bls_share);
+    }
+    assert_felony_survivors_live(world, &owned);
+    assert_eq!(
+        world
+            .localnet
+            .live_validator_and_enclave_pids(3)
+            .expect("recovered validator remains live"),
+        owned[3]
+    );
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "early_unjail_live_recovery_complete", "owned_pids": owned,
+        "height": final_checkpoint.height, "block_hash": final_checkpoint.block_hash,
+        "state_root": final_checkpoint.state_root, "local_material": material(local_port),
+    }));
 }
 
 #[given("valid conflicting-notarize evidence is retained for the current epoch")]
