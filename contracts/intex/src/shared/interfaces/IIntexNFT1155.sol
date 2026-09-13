@@ -130,12 +130,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when settlement burns Issued and mints Settled.
-    /// @param seriesId Series identifier.
-    /// @param to Recipient of the newly minted Settled tokens.
-    /// @param amount Amount of Issued burned and Settled minted.
-    event IntexSettled(bytes14 indexed seriesId, address indexed to, uint256 amount);
-
     /// @notice Emitted when Settled Intex are consumed to mine Promis.
     /// @param seriesId Series identifier.
     /// @param holder Holder whose Settled tokens were burned.

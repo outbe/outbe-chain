@@ -374,8 +374,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- amount mirrors the issued amount burned above
         $.settledSupply[sTok] += uint32(amount);
         _mint(to, sTok, amount, "");
-
-        emit IntexSettled(seriesId, to, amount);
     }
 
     /// @inheritdoc IIntexNFT1155

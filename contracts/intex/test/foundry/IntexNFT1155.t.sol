@@ -672,19 +672,6 @@ contract IntexNFT1155Test is Test {
         nft.settle(SERIES_ID_1, user, user, 1);
     }
 
-    function test_Settle_EmitsIntexSettled() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        vm.stopPrank();
-        _grantSettlementRole(address(this));
-
-        vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.IntexSettled(SERIES_ID_1, user, 4);
-        nft.settle(SERIES_ID_1, user, user, 4);
-    }
-
     function test_Settled_IsSoulbound() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
