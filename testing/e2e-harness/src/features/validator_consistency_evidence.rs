@@ -99,7 +99,7 @@ fn indexed_address(topic: &str) -> Option<Address> {
     (bytes.len() == 32).then(|| Address::from_slice(&bytes[12..]))
 }
 
-fn capture_felony_processes(world: &mut World) -> Vec<(u32, u32)> {
+pub(super) fn capture_felony_processes(world: &mut World) -> Vec<(u32, u32)> {
     assert_eq!(world.validators.size(), 4, "four evidence participants");
     (0..4)
         .map(|index| {
@@ -111,9 +111,14 @@ fn capture_felony_processes(world: &mut World) -> Vec<(u32, u32)> {
         .collect()
 }
 
-fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)]) {
+fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)], victim: usize) {
     assert_eq!(owned.len(), 4, "four captured evidence participants");
-    for (index, expected) in owned.iter().take(3).enumerate() {
+    assert!(victim < owned.len(), "captured felony victim");
+    for (index, expected) in owned
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != victim)
+    {
         assert_eq!(
             world
                 .localnet
@@ -126,28 +131,29 @@ fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)]) {
     assert_eq!(
         world
             .localnet
-            .live_enclave_pid(3)
+            .live_enclave_pid(victim)
             .expect("victim enclave stays live"),
-        owned[3].1,
+        owned[victim].1,
         "victim enclave was replaced"
     );
 }
 
 /// Call only after proving the canonical jail on the designated survivors.
-fn expect_felony_guard_shutdown(
+pub(super) fn expect_felony_guard_shutdown(
     world: &mut World,
     owned: &[(u32, u32)],
     outcome: &TxOutcome,
     phase: &str,
+    victim: usize,
 ) {
     let exit_deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        assert_felony_survivors_live(world, owned);
+        assert_felony_survivors_live(world, owned, victim);
         let (pid, status) = world
             .localnet
-            .owned_validator_process(3)
+            .owned_validator_process(victim)
             .expect("observe the exact owned jailed validator without signalling it");
-        assert_eq!(pid, owned[3].0, "jailed validator was replaced");
+        assert_eq!(pid, owned[victim].0, "jailed validator was replaced");
         if let Some(status) = status {
             assert!(status.success(), "jailed guard must stop cleanly: {status}");
             break;
@@ -160,7 +166,7 @@ fn expect_felony_guard_shutdown(
     }
     let log = world
         .localnet
-        .node_launch_log(3, owned[3].0)
+        .node_launch_log(victim, owned[victim].0)
         .expect("read the jailed validator's exact incarnation log");
     let guard = "outbe_chain: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
     assert_eq!(
@@ -170,12 +176,13 @@ fn expect_felony_guard_shutdown(
         1,
         "owned victim must stop for exactly the canonical jail reason"
     );
-    world.state.expected_tee_lease_guard_shutdown_validator = Some(3);
-    let ports = (0..3)
+    world.state.expected_tee_lease_guard_shutdown_validator = Some(victim);
+    let ports = (0..4)
+        .filter(|index| *index != victim)
         .map(|index| world.validators.http_port(index))
         .collect::<Vec<_>>();
     world.state.restart_observations.push(serde_json::json!({
-        "phase": phase, "victim": 3, "owned_pids": owned, "ports": ports,
+        "phase": phase, "victim": victim, "owned_pids": owned, "ports": ports,
         "jail_height": outcome.block_number().expect("felony receipt height"),
         "jail_transaction": outcome.transaction_hash, "natural_exit_code": 0,
     }));
@@ -268,7 +275,7 @@ fn submit_initial_felony(world: &mut World) {
             "canonical initial punishment differs between observers"
         );
     }
-    expect_felony_guard_shutdown(world, &owned, &outcome, "initial_felony_guard_shutdown");
+    expect_felony_guard_shutdown(world, &owned, &outcome, "initial_felony_guard_shutdown", 3);
 
     world.state.joiner_addr = Some(victim);
     world.state.wwd = Some(reporter);
@@ -414,7 +421,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         );
     }
 
-    expect_felony_guard_shutdown(world, &owned, &first, "felony_replay_observers");
+    expect_felony_guard_shutdown(world, &owned, &first, "felony_replay_observers", 3);
 
     let reporter_before = world
         .state
@@ -457,7 +464,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "an exact replay may charge gas but must not mint another reward"
     );
 
-    assert_felony_survivors_live(world, &owned);
+    assert_felony_survivors_live(world, &owned, 3);
     let reverse_replay = assert_mined_revert_reason_on(
         world,
         &survivor_ports,
@@ -478,7 +485,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         .rpc
         .balance_on(port, &reporter)
         .expect("reporter balance after reverse replay");
-    assert_felony_survivors_live(world, &owned);
+    assert_felony_survivors_live(world, &owned, 3);
     assert_eq!(
         reporter_after_reverse + reverse_fee,
         reporter_after_exact,
@@ -774,7 +781,7 @@ fn recover_unjailed_process(world: &mut World) -> Vec<(u32, u32)> {
     assert_eq!(owned[3].1, enclave, "recovery replaced the enclave");
     wait_until(
         || {
-            assert_felony_survivors_live(world, &owned);
+            assert_felony_survivors_live(world, &owned, 3);
             assert_eq!(
                 world
                     .localnet
@@ -910,7 +917,7 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         .expect("canonical readiness on all recovered nodes");
     wait_until(
         || {
-            assert_felony_survivors_live(world, &owned);
+            assert_felony_survivors_live(world, &owned, 3);
             assert_eq!(
                 world
                     .localnet
@@ -957,7 +964,7 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         assert_eq!(record.status, STATUS_ACTIVE);
         assert!(record.has_bls_share);
     }
-    assert_felony_survivors_live(world, &owned);
+    assert_felony_survivors_live(world, &owned, 3);
     assert_eq!(
         world
             .localnet

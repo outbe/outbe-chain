@@ -14,6 +14,9 @@ use crate::features::common::start_bootstrapped_localnet;
 use crate::features::negative_assertions::{
     assert_mined_revert_reason, assert_registration_revert,
 };
+use crate::features::validator_consistency_evidence::{
+    capture_felony_processes, expect_felony_guard_shutdown,
+};
 use crate::internal::{addresses::STK_ADDR, eth::IStaking};
 use crate::validator_evidence::conflicting_notarize_for_validator;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
@@ -583,6 +586,7 @@ fn isolated_accounting_validators(world: &mut World) {
 
 #[when("the harness finalizes stake, rejected stake, slash, exit, and claim actions")]
 fn run_accounting_lifecycle(world: &mut World) {
+    let owned = capture_felony_processes(world);
     let port = world.validators.primary_port();
     let victim = world.validators.get(2);
     let victim_key = victim.evm_key().expect("slash victim key");
@@ -634,6 +638,110 @@ fn run_accounting_lifecycle(world: &mut World) {
         .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block1, &evidence.block2)
         .expect("submit slash evidence");
     assert!(slash.success, "canonical slash evidence reverted");
+    let survivors = [0, 1, 3].map(|index| world.validators.http_port(index));
+    let jail = world
+        .rpc
+        .finalize_outcome(&slash, &survivors, 60)
+        .expect("canonical felony jail on every surviving validator");
+    let jailed = world
+        .rpc
+        .validator_record_at(port, &victim_address, jail.height)
+        .expect("canonical jailed accounting victim");
+    assert_eq!(jailed.status, 6, "felony must jail its victim");
+    for &observer in &survivors {
+        assert_eq!(
+            world
+                .rpc
+                .validator_record_at(observer, &victim_address, jail.height),
+            Some(jailed.clone())
+        );
+    }
+    expect_felony_guard_shutdown(world, &owned, &slash, "accounting_felony_guard_shutdown", 2);
+
+    // Keep all four accounting observers. The jailed identity remains jailed;
+    // its preserved node resumes only certified follower execution, never
+    // validator authority. No readiness, unjail or fresh TEE lease is needed.
+    let follower = world
+        .localnet
+        .launch_validator_recovery_follower(2, 0)
+        .expect("resume jailed node as an authority-free accounting observer");
+    let follower_pid = world
+        .localnet
+        .live_follower_pid(&follower)
+        .expect("owned accounting follower");
+    let follower_port = world.validators.http_port(2);
+    let assert_observers_live = |world: &mut World| {
+        for index in [0, 1, 3] {
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(index)
+                    .expect("live original accounting observer"),
+                owned[index]
+            );
+        }
+        assert_eq!(
+            world
+                .localnet
+                .live_follower_pid(&follower)
+                .expect("live owned accounting follower"),
+            follower_pid
+        );
+        assert_eq!(
+            world
+                .localnet
+                .live_enclave_pid(2)
+                .expect("preserved accounting enclave"),
+            owned[2].1
+        );
+    };
+    let target = world
+        .rpc
+        .finalized_result(port)
+        .expect("accounting recovery target");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(port, target)
+        .expect("accounting recovery checkpoint");
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        assert_observers_live(world);
+        let caught_up = world
+            .rpc
+            .finalized(follower_port)
+            .is_some_and(|height| height >= target)
+            && world
+                .rpc
+                .checkpoint_at(follower_port, target)
+                .is_ok_and(|observed| observed == checkpoint);
+        let admitted = world
+            .localnet
+            .node_launch_log(2, follower_pid)
+            .expect("owned accounting follower log")
+            .contains("local TEE lease guard armed at authenticated catch-up anchor");
+        if caught_up && admitted {
+            let status = crate::internal::eth::raw_json_result(
+                &world.rpc.url(follower_port),
+                "outbe_consensusStatus",
+                serde_json::json!([]),
+            )
+            .expect("accounting follower consensus status");
+            assert_eq!(status["isValidator"].as_bool(), Some(false));
+            assert_eq!(status["hasThresholdShares"].as_bool(), Some(false));
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "accounting follower did not reach its authenticated checkpoint"
+        );
+        sleep(Duration::from_secs(1));
+    }
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "jailed_accounting_node_resumed_as_follower", "victim": 2,
+        "original_pids": owned, "follower_pid": follower_pid,
+        "ports": world.validators.committee_ports(), "height": checkpoint.height,
+        "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
+    }));
     assert_accounting(world, claims, "evidence slash");
 
     let exit_stake = world
@@ -645,8 +753,10 @@ fn run_accounting_lifecycle(world: &mut World) {
         .rpc
         .deactivate(&exiting_key)
         .expect("deactivate validator");
+    assert_observers_live(world);
     assert_accounting(world, claims, "deactivate");
     wait_for_periodic_exclusion(world, &exiting_address, deactivation_epoch);
+    assert_observers_live(world);
     let drained = wait_zero_bonded_stake(world, &exiting_address, 20);
     claims += exit_stake;
     assert_accounting(world, claims, "exit drain");
@@ -659,6 +769,7 @@ fn run_accounting_lifecycle(world: &mut World) {
     let fee = crate::world::rpc::Rpc::receipt_gas_cost(&receipt).expect("claim gas cost");
     assert!(fee < whole_coen(1), "unexpectedly large localnet claim fee");
     claims -= exit_stake;
+    assert_observers_live(world);
     assert_accounting(world, claims, "final claim");
     *ACCOUNTING_COMPLETE.lock().expect("accounting scratch") = true;
 }
