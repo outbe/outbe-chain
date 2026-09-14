@@ -133,7 +133,7 @@ pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> 
     })
 }
 
-/// Trusted Rust entrypoint; called once by Credis with its sealed origination day.
+/// Trusted Rust entrypoint; called once by Credis with Cycle’s active settlement day.
 pub fn position_opened(
     storage: &StorageHandle<'_>,
     cca: Address,
@@ -146,16 +146,16 @@ pub fn position_opened(
             return Err(CcaError::NotActive.into());
         }
         let key = CcaContract::reward_weight_key(cca, day);
-        let deficit = contract.reward_deficits.read(&key)?;
+        let deficit = contract.gratis_deficits_per_wwd.read(&key)?;
         let offset = gratis.min(deficit);
         let weight = contract
-            .reward_weights
+            .gratis_sum_per_wwd
             .read(&key)?
             .checked_add(gratis - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis and deficit, so both subtractions are exact.
-        contract.reward_deficits.write(&key, deficit - offset)?;
-        contract.reward_weights.write(&key, weight)
+        contract.gratis_deficits_per_wwd.write(&key, deficit - offset)?;
+        contract.gratis_sum_per_wwd.write(&key, weight)
     })
 }
 
@@ -171,16 +171,16 @@ pub fn position_voided(
         let contract = CcaContract::new(storage.clone());
         contract.load(cca)?;
         let key = CcaContract::reward_weight_key(cca, day);
-        let weight = contract.reward_weights.read(&key)?;
+        let weight = contract.gratis_sum_per_wwd.read(&key)?;
         let offset = gratis_burned.min(weight);
         let deficit = contract
-            .reward_deficits
+            .gratis_deficits_per_wwd
             .read(&key)?
             .checked_add(gratis_burned - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis_burned and weight; retain any excess as a deficit.
         let weight = weight - offset;
-        contract.reward_deficits.write(&key, deficit)?;
-        contract.reward_weights.write(&key, weight)
+        contract.gratis_deficits_per_wwd.write(&key, deficit)?;
+        contract.gratis_sum_per_wwd.write(&key, weight)
     })
 }

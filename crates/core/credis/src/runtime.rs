@@ -7,7 +7,9 @@
 
 use alloy_primitives::{Address, U256};
 
+use outbe_primitives::cycle::Cycle;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
@@ -18,9 +20,11 @@ use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
 
-/// Bound the date before the shared helper adds UTC+14 and encodes YYYYMMDD.
-fn reward_day(timestamp: u64) -> WorldwideDay {
-    WorldwideDay::from_timestamp(timestamp) // todo check it's correct
+/// Use the bucket owned by Cycle, including while its day transition is pending.
+fn reward_day(storage: &StorageHandle<'_>) -> Result<WorldwideDay> {
+    let active_day = Cycle::new(storage.clone()).active_utc_day.read()?;
+    let day = WorldwideDay::new(active_day);
+    Ok(day)
 }
 
 /// Terms captured when a position opens. Grouped rather than passed positionally
@@ -181,7 +185,7 @@ impl CredisContract<'_> {
             outbe_cca::api::position_opened(
                 &self.storage,
                 params.cca,
-                reward_day(params.originated_at),
+                reward_day(&self.storage)?,
                 params.collateral,
             )?;
             self.create_position_record(&position)?;
@@ -358,7 +362,7 @@ impl CredisContract<'_> {
             outbe_cca::api::position_voided(
                 &self.storage,
                 position.cca,
-                reward_day(now),
+                reward_day(&self.storage)?,
                 gratis_burned,
             )?;
             position.outstanding = U256::ZERO;

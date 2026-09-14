@@ -19,7 +19,7 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
 /// Raw GRATIS in one activity-day bucket; normalized only during distribution.
 pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: WorldwideDay) -> Result<U256> {
     CcaContract::new(storage.clone())
-        .reward_weights
+        .gratis_sum_per_wwd
         .read(&CcaContract::reward_weight_key(cca, day))
 }
 

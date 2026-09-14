@@ -528,13 +528,13 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         assert!(runtime::position_voided(&storage, ALICE, DAY, U256::ONE).is_err());
         let contract = CcaContract::new(storage.clone());
         let key = CcaContract::reward_weight_key(ALICE, DAY);
-        assert_eq!(contract.reward_deficits.read(&key).unwrap(), U256::MAX);
+        assert_eq!(contract.gratis_deficits_per_wwd.read(&key).unwrap(), U256::MAX);
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
         runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
-        assert_eq!(contract.reward_deficits.read(&key).unwrap(), U256::ZERO);
+        assert_eq!(contract.gratis_deficits_per_wwd.read(&key).unwrap(), U256::ZERO);
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO

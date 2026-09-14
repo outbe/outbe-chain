@@ -34,10 +34,10 @@ pub struct CcaContract {
     pub active: outbe_primitives::storage::dsl::Set<Address>,
     /// Six-decimal net GRATIS per WWD. At most one of weight/deficit is nonzero.
     #[attribute(order = 2)]
-    pub reward_weights: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub gratis_sum_per_wwd: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Excess burns offset later openings for the same CCA and WWD only.
     #[attribute(order = 3)]
-    pub reward_deficits: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub gratis_deficits_per_wwd: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Claimable native COEN atomic units, independent of the bond.
     #[attribute(order = 4)]
     pub reward_amounts: outbe_primitives::storage::dsl::Map<Address, U256>,

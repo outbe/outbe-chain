@@ -24,7 +24,7 @@ pub fn distribute_daily(
         let mut total = U256::ZERO;
         for cca in contract.active.read_all()? {
             let weight = contract
-                .reward_weights
+                .gratis_sum_per_wwd
                 .read(&CcaContract::reward_weight_key(cca, day))?;
             total = total.checked_add(weight).ok_or(CcaError::Arithmetic)?;
             weights.push((cca, weight));

@@ -1,4 +1,5 @@
 extern crate alloc;
+extern crate self as outbe_primitives;
 
 pub mod accounting_progress;
 pub mod address_pair;
@@ -10,6 +11,7 @@ pub mod consensus;
 pub mod consensus_metadata;
 pub mod consensus_p2p;
 pub mod crypto;
+pub mod cycle;
 pub mod dispatch;
 pub mod erc;
 pub mod error;
