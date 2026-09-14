@@ -30,8 +30,7 @@ impl RpcModuleValidator for OutbeRpcModuleValidator {
 impl ChainSpecParser for OutbeChainSpecParser {
     type ChainSpec = ChainSpec<OutbeHeader>;
 
-    const SUPPORTED_CHAINS: &'static [&'static str] =
-        reth_ethereum::cli::chainspec::SUPPORTED_CHAINS;
+    const SUPPORTED_CHAINS: &'static [&'static str] = &["dev"];
 
     fn default_value() -> Option<&'static str> {
         None
