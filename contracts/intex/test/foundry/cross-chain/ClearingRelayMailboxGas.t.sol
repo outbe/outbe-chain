@@ -151,10 +151,10 @@ contract StoredBidStub {
 /// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
 /// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step 1 -> 64
 ///      (per bid). `_measure` drives `relayBidsToOutbe` as the router itself - the same entry the inbound
-///      clearing handler uses - so only the relay is in the reading. Against the real hub and adapter the
-///      same readings come out ~81k higher on the fixed part and ~22k higher per chunk (their frame plus
-///      the hub's nonce write), which is what the budgets are sized on: 564k fixed, ~197k a chunk,
-///      ~10k a bid.
+///      clearing handler uses - so only the relay is in the reading. Against the real hub and adapter a
+///      bid-less relay came out 81k higher over its two sends - their frames plus the hub's nonce write -
+///      so the budgets carry ~40k a send on top of what this measures: 564k fixed, ~215k a send, ~8.7k a
+///      bid.
 abstract contract RelayGasBase is Test {
     /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
     uint32 internal constant DST_CHAIN_ID = 56;
