@@ -588,6 +588,9 @@ pub(in crate::world::ocomp) fn capacity_tribute_private_keys(count: usize) -> Re
 /// Seed explicitly listed bulk operators through the production registry API
 /// before launch, avoiding a governance window per owner. Returns whether the
 /// genesis changed; existing registrations must match the requested fixture.
+///
+/// Each owner gets a fixture chain id and its deterministic
+/// root-signing key, used to sign the offer's Merkle root.
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
     genesis: &mut serde_json::Value,
@@ -608,13 +611,12 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
         let operator_chain_id = CAPACITY_OPERATOR_L2_CHAIN_ID_BASE
             .checked_add(u64::try_from(index)?)
             .ok_or_else(|| eyre::eyre!("bulk L2 chain id overflow"))?;
-        // The stored key must be a valid MinSig G2 group key. The non-ZK path
-        // never verifies a signature against it, but the registry admits only
-        // group-valid keys, so each registration carries a real one.
+        u32::try_from(operator_chain_id)
+            .map_err(|_| eyre::eyre!("bulk L2 chain id exceeds the offer selector width"))?;
         registrations.push((
             operator_chain_id,
             l1_address,
-            capacity_operator_bls_public_key(index)?,
+            crate::internal::l2_fixture::root_signing_public_key(operator_chain_id),
         ));
     }
 
@@ -647,7 +649,6 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
                 eyre::ensure!(
                     record.l1_address == *l1_address
                         && record.public_key_bytes().as_slice() == public_key.as_slice()
-                        && !record.zk_enabled
                         && registry.l1_to_chain.read(l1_address)? == *operator_chain_id,
                     "conflicting bulk L2 registration for chain {operator_chain_id}"
                 );
@@ -670,7 +671,10 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
         Some(key) => key,
         None => {
             let key = format!("{L2_REGISTRY_ADDRESS:x}");
-            alloc.insert(key.clone(), serde_json::json!({ "storage": {} }));
+            alloc.insert(
+                key.clone(),
+                serde_json::json!({ "balance": "0x0", "code": "0xef", "storage": {} }),
+            );
             key
         }
     };
@@ -694,27 +698,9 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
     Ok(true)
 }
 
-/// Chain ids reserved for the genesis-seeded bulk owner registrations. The base
-/// sits above the ids the governance path allocates, so a later governed
-/// registration can never collide with a seeded one.
+/// Bulk fixture ids use a separate namespace from governed operators.
 #[cfg(feature = "ocomp-integration")]
 const CAPACITY_OPERATOR_L2_CHAIN_ID_BASE: u64 = 0xE2E1_0000;
-
-/// Deterministic MinSig G2 public key for bulk owner `index`.
-///
-/// Distinct per owner and reproducible across runs, so the seeded genesis stays
-/// a stable artifact for a given owner population.
-#[cfg(feature = "ocomp-integration")]
-fn capacity_operator_bls_public_key(index: usize) -> Result<Vec<u8>> {
-    use commonware_codec::Encode;
-    use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
-
-    let mut seed = [0x5a_u8; 32];
-    seed[..8].copy_from_slice(&u64::try_from(index)?.to_be_bytes());
-    let mut rng = <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed(seed);
-    let (_, public) = ops::keypair::<_, MinSig>(&mut rng);
-    Ok(public.encode().to_vec())
-}
 
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn fund_capacity_tribute_accounts(

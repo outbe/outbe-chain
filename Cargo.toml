@@ -364,3 +364,10 @@ alloy-evm = { path = "vendor/alloy-evm" }
 
 [patch."https://github.com/paradigmxyz/reth.git"]
 reth-transaction-pool = { path = "vendor/reth-transaction-pool" }
+
+# Use the sibling circuit registry changes pending their next release.
+[patch."https://github.com/outbe/outbe-circuits.git"]
+outbe-zk-canonical = { path = "../outbe-circuits/crates/outbe-zk-canonical" }
+outbe-zk-backend = { path = "../outbe-circuits/crates/outbe-zk-backend" }
+outbe-protocol = { path = "../outbe-circuits/crates/outbe-protocol" }
+outbe-protocol-derive = { path = "../outbe-circuits/crates/outbe-protocol-derive" }

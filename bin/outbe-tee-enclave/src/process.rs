@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn zk_enabled_offer_returns_expected_hashes_bound_to_owner_and_sender() {
+    fn offer_returns_expected_hashes_bound_to_owner_and_sender() {
         let sender = Address::repeat_byte(0xAB);
         let mut offer = make_tribute_offer(sender, GOOD_JSON);
         offer.zk_context = Some(zk_context());

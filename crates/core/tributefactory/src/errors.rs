@@ -24,7 +24,7 @@ pub enum TributeFactoryError {
     #[error("caller {caller} is not a registered L2 operator")]
     UnregisteredL2Operator { caller: alloy_primitives::Address },
 
-    #[error("zkProof is required when ZK verification is enabled")]
+    #[error("zkProof is required")]
     ZkProofRequired,
 
     #[error("circuit chain {provided} does not match registered L2 chain {registered}")]

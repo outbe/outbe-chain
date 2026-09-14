@@ -1,6 +1,8 @@
 //! Cross-module surface: ZK merkle-root signature verification for
 //! `TributeFactory.offerTribute`.
 
+use std::sync::LazyLock;
+
 use alloy_primitives::Address;
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
@@ -8,6 +10,7 @@ use commonware_cryptography::bls12381::primitives::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_zk_canonical::{CircuitStatus, L2CircuitVersion};
 
 use crate::errors::L2RegistryError;
 use crate::runtime::decode_public_key;
@@ -23,8 +26,6 @@ pub const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 pub enum ZkOfferCheck {
     /// The caller is not a registered L2 operator address.
     NotRegistered,
-    /// The caller's network is registered with ZK verification disabled.
-    Disabled { chain_id: u64 },
     /// The signature over `zkMerkleRoot` verified against the network key.
     Verified { chain_id: u64 },
 }
@@ -33,9 +34,8 @@ pub enum ZkOfferCheck {
 /// `l1_address`.
 ///
 /// - Caller not registered as an L1 operator: [`ZkOfferCheck::NotRegistered`].
-/// - Registered with `zk_enabled == false`: [`ZkOfferCheck::Disabled`].
-/// - Registered with `zk_enabled == true`: `zk_merkle_root` must be 32 bytes
-///   and `signature` must be a valid BLS MinSig G1 signature over it under
+/// - Registered caller: `zk_merkle_root` must be 32 bytes and `signature`
+///   must be a valid BLS MinSig G1 signature over it under
 ///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
@@ -48,9 +48,6 @@ pub fn check_zk_merkle_root_signature(
         return Ok(ZkOfferCheck::NotRegistered);
     };
     let chain_id = record.chain_id;
-    if !record.zk_enabled {
-        return Ok(ZkOfferCheck::Disabled { chain_id });
-    }
     if zk_merkle_root.len() != 32 {
         return Err(L2RegistryError::ZkMerkleRootRequired.into());
     }
@@ -60,4 +57,34 @@ pub fn check_zk_merkle_root_signature(
     verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
         .map_err(|_| L2RegistryError::InvalidZkSignature)?;
     Ok(ZkOfferCheck::Verified { chain_id })
+}
+
+/// Exact deployment bindings, with a development-only stub for unbound L2s.
+///
+/// Only the local Devnet host chain may use the stub. It selects the frozen
+/// FullProof 1.1.0 key; registration, root signatures, and real proof
+/// verification remain mandatory. Explicit deployment bindings take precedence.
+pub fn l2_circuits(host_chain_id: u64, l2_chain_id: u64) -> &'static [L2CircuitVersion] {
+    let declared = outbe_zk_canonical::l2_circuits(l2_chain_id);
+    if !declared.is_empty()
+        || !outbe_primitives::chain::is_devnet(host_chain_id)
+        || l2_chain_id == 0
+    {
+        return declared;
+    }
+    static DEVELOPMENT: LazyLock<Option<L2CircuitVersion>> = LazyLock::new(|| {
+        outbe_zk_canonical::noir::CIRCUIT_REGISTRY
+            .iter()
+            .find(|entry| {
+                entry.label == "outbe.full_proof"
+                    && entry.version == "1.1.0"
+                    && entry.status != CircuitStatus::Revoked
+            })
+            .map(|entry| L2CircuitVersion {
+                version: entry.version,
+                circuit_hash: entry.circuit_hash,
+                vk_hash: entry.vk_hash,
+            })
+    });
+    DEVELOPMENT.as_slice()
 }

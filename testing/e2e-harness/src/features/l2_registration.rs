@@ -1,19 +1,22 @@
 //! Explicit L2 registration prerequisites for Tribute offer fixtures.
 //!
 //! Small fixtures use validator governance; bulk owner sets are seeded in
-//! genesis. Neither path changes production clients or bypasses admission.
+//! genesis. Both store the deterministic per-chain root-signing key used by
+//! their real offer proofs.
 
 use std::collections::BTreeSet;
 use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use commonware_codec::Encode;
-use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
 
 use crate::internal::addresses::L2_REGISTRY_ADDR;
+use crate::internal::l2_fixture;
 use crate::world::validators::Validator;
 use crate::world::World;
+
+/// Keep governed fixture ids disjoint from genesis-seeded bulk operator ids.
+const GOVERNED_FIXTURE_CHAIN_ID_END: u64 = 0xE2E0_FFFF;
 
 /// EOA behind one operator key used by a CLI or raw-ABI offer path.
 pub(super) fn operator_address(world: &World, key: &str) -> Address {
@@ -31,43 +34,39 @@ pub(super) fn ensure_tribute_offer_operators(world: &mut World, keys: &[String])
         .iter()
         .map(|key| operator_address(world, key))
         .collect();
-    ensure_zk_disabled_operators(world, &addresses);
+    ensure_registered_operators(world, &addresses);
 }
 
 /// Register the single operator key that is about to submit a Tribute offer.
 pub(super) fn ensure_tribute_offer_operator(world: &mut World, key: &str) {
     let address = operator_address(world, key);
-    ensure_zk_disabled_operators(world, &[address]);
+    ensure_registered_operators(world, &[address]);
 }
 
-/// Register every `l1_address` that has no L2Registry entry yet as a network
-/// with zk verification disabled, then prove the registration is canonical.
-///
-/// Existing registrations must already have ZK disabled. This helper never
-/// changes an existing network's verification policy.
-fn ensure_zk_disabled_operators(world: &mut World, l1_addresses: &[Address]) {
+/// Register missing operators; existing entries must carry the fixture key.
+fn ensure_registered_operators(world: &mut World, l1_addresses: &[Address]) {
     for l1_address in l1_addresses.iter().copied().collect::<BTreeSet<_>>() {
         let mut chain_id = world
             .rpc
             .l2_chain_by_l1_address(l1_address)
             .expect("read the L2Registry mapping for the offer operator");
         if chain_id == 0 {
-            chain_id = world.state.l2_next_disabled_chain_id;
-            world.state.l2_next_disabled_chain_id =
+            chain_id = world.state.l2_next_governed_chain_id;
+            assert!(
+                chain_id <= GOVERNED_FIXTURE_CHAIN_ID_END,
+                "governed fixture chain ids exhausted their reserved namespace"
+            );
+            world.state.l2_next_governed_chain_id =
                 chain_id.checked_add(1).expect("harness L2 chain id space");
-            let payload = zk_disabled_registration_payload(l1_address, chain_id);
+            let payload = registration_payload(l1_address, chain_id);
             govern_l2_registry_payload(world, &payload);
         }
-        assert_registered_zk_disabled(world, l1_address, chain_id);
+        assert_registered_operator(world, l1_address, chain_id);
     }
 }
 
-/// Prove an operator resolves to `chain_id` with zk verification disabled.
-///
-/// The Tribute offer guard reads exactly this state, so every offer fixture
-/// asserts the precondition rather than assuming that seeding or governance
-/// produced it.
-fn assert_registered_zk_disabled(world: &World, l1_address: Address, chain_id: u64) {
+/// Check the operator mapping and the key used to verify its offer roots.
+fn assert_registered_operator(world: &World, l1_address: Address, chain_id: u64) {
     assert_eq!(
         world
             .rpc
@@ -76,7 +75,7 @@ fn assert_registered_zk_disabled(world: &World, l1_address: Address, chain_id: u
         chain_id,
         "operator {l1_address:#x} is not registered as chain {chain_id}"
     );
-    let (registered_address, _, zk_enabled) = world
+    let (registered_address, public_key) = world
         .rpc
         .l2_network(chain_id)
         .expect("read the registered L2 network");
@@ -84,17 +83,19 @@ fn assert_registered_zk_disabled(world: &World, l1_address: Address, chain_id: u
         registered_address, l1_address,
         "chain {chain_id} is not owned by the operator that offers"
     );
-    assert!(
-        !zk_enabled,
-        "chain {chain_id} must keep zk verification disabled for the non-ZK offer path"
+    assert_eq!(
+        public_key,
+        l2_fixture::root_signing_public_key(chain_id),
+        "chain {chain_id} is registered under a different key than the fixture signs with"
     );
 }
 
 /// Propose `payload` to L2Registry and drive it to `approved`, returning the
 /// proposal id the vote module allocated.
 ///
-/// Used by the governed zk-gate scenarios: a later `setZkEnabled` proposal must
-/// observe the registration it toggles, so the two cannot share one deadline.
+/// Used by the governed zk-gate scenarios: the registration must be approved and
+/// observable before the scenario's offers run, so it is driven to its deadline
+/// here rather than left pending.
 pub(super) fn govern_l2_registry_payload(world: &mut World, payload: &str) -> u64 {
     let proposer = active_validators(world)
         .into_iter()
@@ -148,21 +149,13 @@ fn active_validators(world: &World) -> Vec<Validator> {
     validators
 }
 
-/// `zk_enabled = false` registration payload for `l1_address`.
-///
-/// The stored key must be a valid MinSig G2 group key even though the non-ZK
-/// path never verifies a signature against it, so each registration carries a
-/// freshly generated one.
-fn zk_disabled_registration_payload(l1_address: Address, chain_id: u64) -> String {
-    let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
-        rand_commonware::rngs::SysRng,
-    ));
+/// Register the same fixture key that signs the offer's Merkle root.
+fn registration_payload(l1_address: Address, chain_id: u64) -> String {
     serde_json::json!({
         "operation": "register",
         "chainId": chain_id,
         "l1Address": format!("{l1_address:#x}"),
-        "publicKey": format!("0x{}", hex::encode(public.encode())),
-        "zkEnabled": false,
+        "publicKey": format!("0x{}", hex::encode(l2_fixture::root_signing_public_key(chain_id))),
     })
     .to_string()
 }

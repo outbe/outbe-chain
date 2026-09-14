@@ -70,7 +70,8 @@ pub enum TributeCmd {
     },
     /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
-    /// sends `offerTribute`; requires `--private-key`.
+    /// sends `offerTribute`; requires `--private-key` and the ZK offer inputs
+    /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
     Offer {
         /// WorldwideDay (must be in OFFERING status), e.g. 20241220
         worldwide_day: WorldwideDay,
@@ -86,14 +87,15 @@ pub enum TributeCmd {
         /// Exclude the resulting Tribute from Intex issuance
         #[arg(long, default_value_t = false)]
         exclude_from_intex_issuance: bool,
-        /// L2 zkMerkleRoot bytes (`0x`-hex). Required together with
-        /// `--signature` when the sender is a registered L2 operator whose
-        /// network has ZK verification enabled in the L2Registry.
-        #[arg(long, default_value = "0x")]
+        /// L2 zkMerkleRoot bytes (`0x`-hex). Required; `0x` is accepted only for
+        /// a deliberate negative transaction, which the node then rejects.
+        #[arg(long)]
         zk_merkle_root: String,
         /// Combined Tribute proof bytes (`0x`-hex), including its four public
         /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
-        #[arg(long, default_value = "0x")]
+        /// Required; `0x` is accepted only for a deliberate negative
+        /// transaction, which the node then rejects.
+        #[arg(long)]
         zk_proof: String,
         /// L2 chain id selecting the circuit that verifies `--zk-proof`. Must
         /// match the caller's registered L2. Defaults to the caller's
@@ -116,8 +118,10 @@ pub enum TributeCmd {
         #[arg(long)]
         su_hash: Option<String>,
         /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
-        /// produced with the network key registered in the L2Registry.
-        #[arg(long, default_value = "0x")]
+        /// produced with the network key registered in the L2Registry. Required;
+        /// `0x` is accepted only for a deliberate negative transaction, which the
+        /// node then rejects.
+        #[arg(long)]
         signature: String,
     },
 }
@@ -345,7 +349,8 @@ async fn offer(
     println!("offer key (DKG-derived): 0x{}", hex::encode(offer_pub));
 
     // 2. Build the plaintext payload. The draft id + su hash must match the
-    //    proof's private input; without a proof they are fresh random.
+    //    proof's private input; without a proof (deliberate negative
+    //    transaction) they are fresh random.
     let wwd: u32 = worldwide_day.into();
     // worldwide_day + currency are cleartext ABI args (below) so the node can
     // admit and price the offer without decrypting; the ciphertext carries only
@@ -447,16 +452,18 @@ async fn circuit_selector(
     };
     let version = match circuit_version {
         Some(version) => version.to_owned(),
-        None => outbe_zk_canonical::l2_circuits(u64::from(chain_id))
-            .iter()
-            .find(|entry| entry.vk_hash == FullProof::VK_HASH)
-            .map(|entry| entry.version.to_owned())
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "no circuit version enabled for L2 chain {chain_id} matches the canonical \
+        None => {
+            outbe_l2registry::api::l2_circuits(client.eth_chain_id().await?, u64::from(chain_id))
+                .iter()
+                .find(|entry| entry.vk_hash == FullProof::VK_HASH)
+                .map(|entry| entry.version.to_owned())
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "no circuit version enabled for L2 chain {chain_id} matches the canonical \
                  FullProof verification key; pass --circuit-version"
-                )
-            })?,
+                    )
+                })?
+        }
     };
     Ok((chain_id, version))
 }
@@ -637,6 +644,7 @@ mod tests {
             abi_u64(chain_id),
         );
         MockRpc {
+            chain_id: Ok(outbe_primitives::chain::DEVNET_CHAIN_ID),
             eth_call_map: Some(call_map(map)),
             ..Default::default()
         }
@@ -695,7 +703,7 @@ mod tests {
             (0xdead, "1.1.0".to_owned())
         );
         assert_eq!(
-            circuit_selector(&offline, caller, true, Some(0xdead), None)
+            circuit_selector(&registered, caller, true, Some(0xdead), None)
                 .await
                 .unwrap(),
             (0xdead, "1.1.0".to_owned())
@@ -719,9 +727,12 @@ mod tests {
                 .is_err(),
             "a chain id wider than uint32 must not be truncated"
         );
-        let offline = MockRpc::default();
+        let non_development = MockRpc {
+            chain_id: Ok(outbe_primitives::chain::MAINNET_CHAIN_ID),
+            ..Default::default()
+        };
         assert!(
-            circuit_selector(&offline, caller, true, Some(999), None)
+            circuit_selector(&non_development, caller, true, Some(999), None)
                 .await
                 .is_err(),
             "a chain with no canonical FullProof binding has no default version"
@@ -739,26 +750,52 @@ mod tests {
         assert_eq!(offer_hex32(Some(&value), "--su-hash", true).unwrap(), value);
     }
 
+    /// Every required offer flag, in `flag, value` pairs.
+    const REQUIRED_OFFER_FLAGS: [&str; 6] = [
+        "--zk-proof",
+        "0x",
+        "--zk-merkle-root",
+        "0x",
+        "--signature",
+        "0x",
+    ];
+
+    /// `tribute offer 20250115` plus `extra` plus the required ZK flags.
+    fn offer_argv(extra: &[&str]) -> Vec<String> {
+        let mut argv: Vec<String> = Vec::new();
+        argv.extend(["tribute", "offer", "20250115"].map(str::to_owned));
+        argv.extend(extra.iter().map(|value| (*value).to_owned()));
+        argv.extend(REQUIRED_OFFER_FLAGS.iter().map(|value| (*value).to_owned()));
+        argv
+    }
+
+    #[test]
+    fn offer_cli_requires_the_zk_offer_inputs() {
+        for missing in ["--zk-proof", "--zk-merkle-root", "--signature"] {
+            let mut argv = offer_argv(&[]);
+            let index = argv
+                .iter()
+                .position(|arg| arg == missing)
+                .unwrap_or_else(|| panic!("{missing} is not in the offered argv"));
+            argv.drain(index..=index + 1);
+            assert!(
+                TributeHarness::try_parse_from(argv).is_err(),
+                "{missing} must be required"
+            );
+        }
+        assert!(TributeHarness::try_parse_from(offer_argv(&[])).is_ok());
+    }
+
     #[test]
     fn offer_cli_accepts_only_canonical_unsigned_whole_base_amounts() {
         let cases = canonical_base_cases();
         for canonical in cases.accepted_base {
-            assert!(TributeHarness::try_parse_from([
-                "tribute", "offer", "20250115", "--amount", &canonical
-            ])
-            .is_ok());
+            assert!(TributeHarness::try_parse_from(offer_argv(&["--amount", &canonical])).is_ok());
         }
 
         for noncanonical in cases.rejected_base {
             assert!(
-                TributeHarness::try_parse_from([
-                    "tribute",
-                    "offer",
-                    "20250115",
-                    "--amount",
-                    &noncanonical
-                ])
-                .is_err(),
+                TributeHarness::try_parse_from(offer_argv(&["--amount", &noncanonical])).is_err(),
                 "non-canonical amount_base {noncanonical:?} was accepted"
             );
         }
@@ -768,26 +805,15 @@ mod tests {
     fn offer_cli_accepts_only_canonical_six_decimal_micro_remainders() {
         let cases = canonical_base_cases();
         for canonical in cases.accepted_micro {
-            assert!(TributeHarness::try_parse_from([
-                "tribute",
-                "offer",
-                "20250115",
-                "--amount-micro",
-                &canonical
-            ])
-            .is_ok());
+            assert!(
+                TributeHarness::try_parse_from(offer_argv(&["--amount-micro", &canonical])).is_ok()
+            );
         }
 
         for noncanonical in cases.rejected_micro {
             assert!(
-                TributeHarness::try_parse_from([
-                    "tribute",
-                    "offer",
-                    "20250115",
-                    "--amount-micro",
-                    &noncanonical
-                ])
-                .is_err(),
+                TributeHarness::try_parse_from(offer_argv(&["--amount-micro", &noncanonical]))
+                    .is_err(),
                 "non-canonical amount_micro {noncanonical:?} was accepted"
             );
         }
@@ -795,13 +821,6 @@ mod tests {
 
     #[test]
     fn offer_cli_rejects_legacy_amount_atto_flag() {
-        assert!(TributeHarness::try_parse_from([
-            "tribute",
-            "offer",
-            "20250115",
-            "--amount-atto",
-            "0"
-        ])
-        .is_err());
+        assert!(TributeHarness::try_parse_from(offer_argv(&["--amount-atto", "0"])).is_err());
     }
 }

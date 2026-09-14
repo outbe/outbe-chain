@@ -633,7 +633,8 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
 
     // The Tribute factory admits an offer only from an operator L2Registry
     // knows, so the same owners must be registered - with zk verification
-    // disabled - in the genesis the factory will read.
+    // enabled under the deterministic fixture key - in the genesis the factory
+    // will read.
     let registry_address = outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
     let registry_key = find_alloc_address_key(alloc, registry_address)
         .unwrap()
@@ -656,9 +657,10 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
             );
             let record = registry.load_network(chain_id).unwrap();
             assert_eq!(record.l1_address, owner);
-            assert!(
-                !record.zk_enabled,
-                "capacity owners offer through the non-ZK path"
+            assert_eq!(
+                record.public_key_bytes().as_slice(),
+                crate::internal::l2_fixture::root_signing_public_key(chain_id).as_slice(),
+                "capacity owner {owner:#x} must be registered under the fixture key"
             );
         }
     });

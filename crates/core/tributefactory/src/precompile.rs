@@ -18,9 +18,8 @@ sol!(
     "../../../contracts/precompiles/src/ITributeFactory.sol"
 );
 
-/// `offerTribute` may execute the pinned UltraHonk verifier, so its base gas
-/// must bound that work even before storage is available to inspect whether the
-/// caller's L2 registration has ZK enabled.
+/// Every accepted `offerTribute` executes the pinned UltraHonk verifier, so
+/// its base gas must cover verification before any admission checks run.
 pub fn base_gas(input: &[u8]) -> u64 {
     let Some(selector) = input.get(..4) else {
         return PRECOMPILE_BASE_GAS;

@@ -5,12 +5,9 @@
 //!
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
-//! canonical enclave offer processor in-process. The ZK scenario uses a real
-//! generated FullProof, a registered ZK-enabled L2, and a valid
-//! BLS MinSig signature over the proof's Merkle root. The non-ZK scenario
-//! registers the same caller as an L2 whose ZK verification is disabled:
-//! TributeFactory rejects an unregistered caller, so registered-but-Disabled is
-//! the only permitted non-ZK path.
+//! canonical enclave offer processor in-process. Issuance is ZK-only, so the
+//! single scenario uses the frozen FullProof fixture, a registered L2, and a
+//! valid BLS MinSig signature over the proof's Merkle root.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -46,7 +43,6 @@ use outbe_primitives::{
         ORACLE_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
     },
     storage::{
-        gas::PRECOMPILE_BASE_GAS,
         hashmap::{HashMapStorageProvider, StorageTraceKind, StorageTraceOperation},
         StorageHandle,
     },
@@ -89,7 +85,12 @@ use crate::{
 };
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
-const L2_CHAIN_ID: u64 = 0xdead;
+/// L2 chain id the bench registers and selects; it is the ABI `uint32` selector
+/// and the registry key, so a single type keeps both in sync.
+const L2_CHAIN_ID: u32 = 0xdead;
+/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry;
+/// the frozen FullProof fixture verifies under it.
+const L2_CIRCUIT_VERSION: &str = "1.1.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
 const REWARD_UTC_DAY: u32 = 20_260_825;
@@ -180,21 +181,7 @@ struct Fixture {
     proof_generation_ms: f64,
 }
 
-pub struct TributeScenario {
-    zk: bool,
-}
-
-impl TributeScenario {
-    #[must_use]
-    pub const fn non_zk() -> Self {
-        Self { zk: false }
-    }
-
-    #[must_use]
-    pub const fn zk() -> Self {
-        Self { zk: true }
-    }
-}
+pub struct TributeScenario;
 
 pub struct PreparedTribute {
     fixture: Fixture,
@@ -333,7 +320,7 @@ fn build_fixture() -> Fixture {
     }
 }
 
-fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
+fn bench_input(fixture: &Fixture) -> BenchOfferInput {
     BenchOfferInput {
         caller: CALLER,
         cipher_text: fixture.cipher_text.clone(),
@@ -343,31 +330,15 @@ fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        zk_proof: if zk {
-            fixture.proof.clone()
-        } else {
-            Bytes::new()
-        },
-        l2_chain_id: if zk { L2_CHAIN_ID as u32 } else { 0 },
-        circuit_version: if zk {
-            "1.1.0".to_owned()
-        } else {
-            String::new()
-        },
-        zk_merkle_root: if zk {
-            Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
-        } else {
-            Bytes::new()
-        },
-        signature: if zk {
-            fixture.signature.clone()
-        } else {
-            Bytes::new()
-        },
+        zk_proof: fixture.proof.clone(),
+        l2_chain_id: L2_CHAIN_ID,
+        circuit_version: L2_CIRCUIT_VERSION.to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice()),
+        signature: fixture.signature.clone(),
     }
 }
 
-fn calldata(fixture: &Fixture, zk: bool) -> Vec<u8> {
+fn calldata(fixture: &Fixture) -> Vec<u8> {
     abi::offerTributeCall {
         cipherText: fixture.cipher_text.clone(),
         nonce: fixture.nonce.clone(),
@@ -376,28 +347,12 @@ fn calldata(fixture: &Fixture, zk: bool) -> Vec<u8> {
         tributeCurrency: 840,
         referenceCurrency: 840,
         excludeFromIntexIssuance: false,
-        zkProof: if zk {
-            fixture.proof.clone()
-        } else {
-            Bytes::new()
-        },
-        chainId: if zk { L2_CHAIN_ID as u32 } else { 0 },
-        version: if zk {
-            "1.1.0".to_owned()
-        } else {
-            String::new()
-        },
+        zkProof: fixture.proof.clone(),
+        chainId: L2_CHAIN_ID,
+        version: L2_CIRCUIT_VERSION.to_owned(),
         zkPublicKey: Bytes::new(),
-        zkMerkleRoot: if zk {
-            Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
-        } else {
-            Bytes::new()
-        },
-        signature: if zk {
-            fixture.signature.clone()
-        } else {
-            Bytes::new()
-        },
+        zkMerkleRoot: Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice()),
+        signature: fixture.signature.clone(),
     }
     .abi_encode()
 }
@@ -450,26 +405,23 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
         .unwrap();
 }
 
-fn seeded_world(fixture: &Fixture, zk: bool) -> HashMapStorageProvider {
+fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
     ));
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone());
-        // Both scenarios authenticate through a registered L2 operator: ZK
-        // verifies against the registered key, non-ZK is the same registration
-        // with verification disabled. TributeFactory rejects an unregistered
-        // caller outright, so an unseeded registry is not a valid non-ZK case.
+        // Bind the operator's proof root to its registered network key.
         L2RegistryContract::new(storage)
-            .register_network_with_zk(L2_CHAIN_ID, CALLER, &fixture.l2_public_key, zk)
+            .register_network(u64::from(L2_CHAIN_ID), CALLER, &fixture.l2_public_key)
             .unwrap();
     });
     provider
 }
 
-fn prepared_world(fixture: &Fixture, zk: bool) -> (HashMapStorageProvider, ExecutionScope) {
-    let mut provider = seeded_world(fixture, zk);
+fn prepared_world(fixture: &Fixture) -> (HashMapStorageProvider, ExecutionScope) {
+    let mut provider = seeded_world(fixture);
     let scope = StorageHandle::enter(&mut provider, |storage| {
         let scope = ExecutionScope::new();
         begin_block(storage, &scope).unwrap();
@@ -480,14 +432,10 @@ fn prepared_world(fixture: &Fixture, zk: bool) -> (HashMapStorageProvider, Execu
     (provider, scope)
 }
 
-fn measure_gate(fixture: &Fixture, zk: bool) -> GateMeasurement {
-    let (mut provider, _scope) = prepared_world(fixture, zk);
-    let root = if zk {
-        fixture.public_inputs.merkle_root.as_slice()
-    } else {
-        &[]
-    };
-    let signature = if zk { fixture.signature.as_ref() } else { &[] };
+fn measure_gate(fixture: &Fixture) -> GateMeasurement {
+    let (mut provider, _scope) = prepared_world(fixture);
+    let root = fixture.public_inputs.merkle_root.as_slice();
+    let signature = fixture.signature.as_ref();
     let started = Instant::now();
     let gas_used = StorageHandle::enter(&mut provider, |storage| {
         let outcome = outbe_l2registry::api::check_zk_merkle_root_signature(
@@ -497,20 +445,11 @@ fn measure_gate(fixture: &Fixture, zk: bool) -> GateMeasurement {
             signature,
         )
         .expect("L2 gate succeeds");
-        match (zk, outcome) {
-            (
-                true,
-                outbe_l2registry::api::ZkOfferCheck::Verified {
-                    chain_id: L2_CHAIN_ID,
-                },
-            )
-            | (
-                false,
-                outbe_l2registry::api::ZkOfferCheck::Disabled {
-                    chain_id: L2_CHAIN_ID,
-                },
-            ) => {}
-            _ => panic!("unexpected L2 gate result"),
+        if !matches!(
+            outcome,
+            outbe_l2registry::api::ZkOfferCheck::Verified { chain_id } if chain_id == u64::from(L2_CHAIN_ID)
+        ) {
+            panic!("unexpected L2 gate result: {outcome:?}");
         }
         storage.gas_used().unwrap()
     });
@@ -597,11 +536,11 @@ fn measure_enclave_decrypt_ms(fixture: &Fixture) -> f64 {
     started.elapsed().as_secs_f64() * 1_000.0 / f64::from(INNER_ITERATIONS)
 }
 
-fn measure_abi_ms(fixture: &Fixture, zk: bool) -> f64 {
+fn measure_abi_ms(fixture: &Fixture) -> f64 {
     const INNER_ITERATIONS: u32 = 100;
     let started = Instant::now();
     for _ in 0..INNER_ITERATIONS {
-        black_box(calldata(fixture, zk));
+        black_box(calldata(fixture));
     }
     started.elapsed().as_secs_f64() * 1_000.0 / f64::from(INNER_ITERATIONS)
 }
@@ -614,17 +553,9 @@ impl BenchmarkScenario for TributeScenario {
     type Prepared = PreparedTribute;
 
     fn metadata(&self) -> ScenarioMetadata {
-        let (id, display_name) = if self.zk {
-            ("tribute/create/zk/cold", "Tribute creation (ZK, cold)")
-        } else {
-            (
-                "tribute/create/non-zk/cold",
-                "Tribute creation (non-ZK, cold)",
-            )
-        };
         ScenarioMetadata::new(
-            id,
-            display_name,
+            "tribute/create/zk/cold",
+            "Tribute creation (ZK, cold)",
             ExecutionClass::UserTransaction,
             Profile::Single,
         )
@@ -633,16 +564,16 @@ impl BenchmarkScenario for TributeScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         let fixture = build_fixture();
-        let provider = seeded_world(&fixture, self.zk);
+        let provider = seeded_world(&fixture);
         Ok(PreparedTribute { fixture, provider })
     }
 
     fn run_once(&self, prepared: &Self::Prepared) -> Result<Observation, String> {
-        measure_scenario_once(prepared, self.zk)
+        measure_scenario_once(prepared)
     }
 }
 
-fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observation, String> {
+fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, String> {
     let fixture = &prepared.fixture;
     let mut provider = prepared.provider.clone();
     let scope = StorageHandle::enter(&mut provider, |storage| {
@@ -655,7 +586,7 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
     provider.enable_storage_trace();
     let event_offset = provider.get_ordered_events().len();
 
-    let input = bench_input(fixture, zk);
+    let input = bench_input(fixture);
     let key = TributeOfferKeyMaterial {
         tribute_offer_private_key: &OFFER_PRIVATE_KEY,
         salt: &OFFER_HKDF_SALT,
@@ -715,7 +646,7 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
         return Err("created Tribute postcondition has the wrong owner or day".to_owned());
     }
 
-    let calldata = calldata(fixture, zk);
+    let calldata = calldata(fixture);
     let calldata_stats = CalldataStats::ethereum(&calldata);
     let configured_base = outbe_tributefactory::precompile::base_gas(&calldata);
     let storage_gas = reads
@@ -796,7 +727,8 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
         .saturating_add(configured_base)
         .saturating_add(runtime_gas);
 
-    let gate = measure_gate(fixture, zk);
+    let gate = measure_gate(fixture);
+    let pairing = pairing_input();
     let mut observation =
         Observation::new([(GasLedger::UserTransaction, total_gas)], gas_components)
             .with_total_latency(full_path_ns)
@@ -810,7 +742,7 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
                 "client.encrypt_payload",
                 ms_to_ns(measure_encrypt_ms(&fixture.plaintext)),
             )
-            .with_latency("client.abi_encode", ms_to_ns(measure_abi_ms(fixture, zk)))
+            .with_latency("client.abi_encode", ms_to_ns(measure_abi_ms(fixture)))
             .with_latency(
                 "enclave.decrypt_payload",
                 ms_to_ns(measure_enclave_decrypt_ms(fixture)),
@@ -818,6 +750,14 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
             .with_latency("enclave.process_offer", enclave_ns)
             .with_latency("chain.l2_gate", ms_to_ns(gate.wall_ms))
             .with_latency("chain.full_offer", full_path_ns)
+            .with_latency(
+                "chain.bn254_pair_reference",
+                ms_to_ns(measure_pairing_ms(&pairing)),
+            )
+            .with_latency(
+                "chain.ultrahonk_verify",
+                ms_to_ns(measure_verify_ms(&fixture.proof)),
+            )
             .with_postcondition("tribute.created", "true")
             .with_postcondition("tribute.id", tribute_id.to_string())
             .with_artifact(
@@ -827,18 +767,6 @@ fn measure_scenario_once(prepared: &PreparedTribute, zk: bool) -> Result<Observa
                     alloy_primitives::keccak256(&fixture.proof)
                 ),
             );
-    if zk {
-        let pairing = pairing_input();
-        observation = observation
-            .with_latency(
-                "chain.bn254_pair_reference",
-                ms_to_ns(measure_pairing_ms(&pairing)),
-            )
-            .with_latency(
-                "chain.ultrahonk_verify",
-                ms_to_ns(measure_verify_ms(&fixture.proof)),
-            );
-    }
     observation.storage = aggregate_storage_trace(&trace);
     observation.events = aggregate_events(&ordered_events);
     observation.postconditions.insert(
@@ -958,11 +886,14 @@ fn ms_to_ns(milliseconds: f64) -> u64 {
     (milliseconds * 1_000_000.0).round() as u64
 }
 
+/// Summarizes the ZK issuance cost decomposition of the Tribute creation
+/// scenario: the frozen verifier charge actually configured for `offerTribute`
+/// against the benchmark-calibrated alternative, both inside one ZK transaction.
+///
+/// Issuance is ZK-only, so no cross-scenario comparison is possible or wanted;
+/// the calibration only re-prices the verifier charge within the same run.
 #[must_use]
 pub fn render_gas_policy(reports: &[ScenarioReport]) -> Option<String> {
-    let non_zk = reports
-        .iter()
-        .find(|report| report.metadata.id == "tribute/create/non-zk/cold")?;
     let zk = reports
         .iter()
         .find(|report| report.metadata.id == "tribute/create/zk/cold")?;
@@ -983,17 +914,16 @@ pub fn render_gas_policy(reports: &[ScenarioReport]) -> Option<String> {
         (calibrated_verifier_gas as f64 * VERIFIER_SAFETY_MULTIPLIER).ceil() as u64,
         GAS_ROUNDING,
     );
-    let non_zk_total = non_zk.gas_totals[&GasLedger::UserTransaction];
     let zk_total = zk.gas_totals[&GasLedger::UserTransaction];
-    let non_zk_configured = gas_component(non_zk, "precompile.configured_base")?;
-    let zk_configured = gas_component(zk, "precompile.configured_base")?;
-    let conditional_non_zk_total = non_zk_total
-        .saturating_sub(non_zk_configured)
-        .saturating_add(PRECOMPILE_BASE_GAS);
+    let configured_verifier_gas = gas_component(zk, "precompile.configured_base")?;
     let recommended_zk_total = zk_total
-        .saturating_sub(zk_configured)
+        .saturating_sub(configured_verifier_gas)
         .saturating_add(recommended_verifier_gas);
     let recommended_gas_limit = ceil_to(recommended_zk_total.saturating_mul(6) / 5, 100_000);
+    // Signed so a recommendation below the configured charge is not masked as
+    // a zero adjustment.
+    let verifier_gas_adjustment =
+        i128::from(recommended_verifier_gas) - i128::from(configured_verifier_gas);
 
     Some(format!(
         "\nTRIBUTE BENCHMARK-CALIBRATED GAS POLICY\n\
@@ -1001,14 +931,13 @@ pub fn render_gas_policy(reports: &[ScenarioReport]) -> Option<String> {
          UltraHonk verifier:          {:.3} ms median\n\
          Calibrated verifier gas:     {calibrated_verifier_gas}\n\
          Recommended verifier gas:    {recommended_verifier_gas} (1.5x, rounded)\n\
-         Conditional non-ZK total:    {conditional_non_zk_total}\n\
+         Current configured verifier: {configured_verifier_gas}\n\
+         Verifier gas adjustment:     {verifier_gas_adjustment}\n\
+         Current ZK total:            {zk_total}\n\
          Recommended ZK total:        {recommended_zk_total}\n\
-         Recommended tx gasLimit:     {recommended_gas_limit} (20% headroom)\n\
-         Recommended ZK overhead:     {}\n\
-         Current configured ZK total: {zk_total}\n",
+         Recommended tx gasLimit:     {recommended_gas_limit} (20% headroom)\n",
         pairing_ns as f64 / 1_000_000.0,
         verifier_ns as f64 / 1_000_000.0,
-        recommended_zk_total.saturating_sub(conditional_non_zk_total),
     ))
 }
 

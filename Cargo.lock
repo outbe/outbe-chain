@@ -8310,6 +8310,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-consensus",
+ "outbe-l2registry",
  "outbe-operator",
  "outbe-paynote",
  "outbe-primitives",
@@ -8981,6 +8982,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-vote",
+ "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9461,7 +9463,6 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9532,7 +9533,6 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9881,14 +9881,17 @@ dependencies = [
  "outbe-primitives",
  "outbe-protocol",
  "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-zk-backend",
  "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -10021,7 +10024,6 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "acir",
  "acvm",
@@ -10039,7 +10041,6 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

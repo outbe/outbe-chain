@@ -268,7 +268,7 @@ description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
 run = './target/release/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.tribute-offer]
-description = "Create one encrypted Tribute on the running managed localnet"
+description = "Create a ZK Tribute; pass WorldwideDay and CLI proof arguments for the registered operator"
 run = "bash ./scripts/tribute-demo-actions.sh offer"
 
 [tasks.tribute-show-mongo]

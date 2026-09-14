@@ -47,7 +47,8 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
     );
     let private_keys = &private_keys[..count];
     // Every capacity owner offers as its own EOA, so each one needs its own
-    // zk-disabled L2Registry registration before the burst starts.
+    // zk-enabled L2Registry registration, and each offer is proven for that
+    // owner's chain before the burst starts.
     crate::features::l2_registration::ensure_tribute_offer_operators(world, private_keys);
     let worldwide_day = world
         .state

@@ -35,8 +35,9 @@ fn submit_reward_bearing_tribute(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
     let funder = world.validators.get(0);
     let operator_key = funder.evm_key().expect("validator-0 EVM key");
-    // The offer is admitted only from an operator L2Registry knows; register
-    // this one with zk verification disabled before the day is entered.
+    // The offer is admitted only from an operator L2Registry knows with zk
+    // verification enabled; register this one under its fixture key before the
+    // day is entered.
     crate::features::l2_registration::ensure_tribute_offer_operator(world, &operator_key);
     wait_for_offering(world, &wwd);
 

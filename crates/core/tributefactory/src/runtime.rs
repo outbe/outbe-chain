@@ -100,16 +100,16 @@ impl TributeFactoryContract<'_> {
         validate_currency_code(tribute_currency)?;
         validate_currency_code(reference_currency)?;
 
-        // Every offer must come from a registered L2 operator. ZK-enabled
-        // networks additionally require a valid root signature and proof;
-        // registered networks with ZK disabled keep their explicit non-ZK path.
+        // Every offer requires a registered L2 operator, a valid
+        // root signature, and a proof under that L2's selected circuit.
         let zk_check = outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
             &zk_merkle_root,
             &signature,
         )?;
-        let zk_inputs = match zk_check {
+        let host_chain_id = self.storage.chain_id()?;
+        let (public, verification_key) = match zk_check {
             outbe_l2registry::api::ZkOfferCheck::Verified {
                 chain_id: registered_chain_id,
             } => {
@@ -123,7 +123,8 @@ impl TributeFactoryContract<'_> {
                     }
                     .into());
                 }
-                let verification_key = resolve_verification_key(l2_chain_id, &circuit_version)?;
+                let verification_key =
+                    resolve_verification_key(host_chain_id, l2_chain_id, &circuit_version)?;
                 let public = decode_zk_public_inputs(&zk_proof, verification_key)?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
@@ -131,12 +132,11 @@ impl TributeFactoryContract<'_> {
                     }
                     .into());
                 }
-                Some((public, verification_key))
+                (public, verification_key)
             }
             outbe_l2registry::api::ZkOfferCheck::NotRegistered => {
                 return Err(TributeFactoryError::UnregisteredL2Operator { caller }.into());
             }
-            outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
         };
 
         // Everything below is settled from chain state before the enclave is
@@ -176,13 +176,10 @@ impl TributeFactoryContract<'_> {
             return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
 
-        let zk_context = match zk_inputs {
-            Some((public, _)) => Some(TributeZkContext {
-                derived_owner: B256::from(public.derived_owner),
-                chain_id: self.storage.chain_id()?,
-            }),
-            None => None,
-        };
+        let zk_context = Some(TributeZkContext {
+            derived_owner: public.derived_owner,
+            chain_id: host_chain_id,
+        });
 
         // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
         // decrypts, computes economics (U256) + Poseidon token_id, and returns
@@ -213,14 +210,12 @@ impl TributeFactoryContract<'_> {
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
-        if let Some((public, verification_key)) = zk_inputs {
-            validate_zk_result(
-                &zk_proof,
-                verification_key,
-                public,
-                result.zk_expected_hashes.as_ref(),
-            )?;
-        }
+        validate_zk_result(
+            &zk_proof,
+            verification_key,
+            public,
+            result.zk_expected_hashes.as_ref(),
+        )?;
 
         // Recomputed from this call's own inputs, so it checks the enclave's
         // Poseidon rather than the enclave's own consistency with itself.
@@ -296,8 +291,12 @@ impl TributeFactoryContract<'_> {
     }
 }
 
-fn resolve_verification_key(l2_chain_id: u32, version: &str) -> Result<&'static [u8]> {
-    let binding = outbe_zk_canonical::l2_circuits(u64::from(l2_chain_id))
+fn resolve_verification_key(
+    host_chain_id: u64,
+    l2_chain_id: u32,
+    version: &str,
+) -> Result<&'static [u8]> {
+    let binding = outbe_l2registry::api::l2_circuits(host_chain_id, u64::from(l2_chain_id))
         .iter()
         .find(|entry| entry.version == version)
         .ok_or_else(|| TributeFactoryError::UnknownCircuitVersion {
@@ -454,7 +453,7 @@ mod zk_result_tests {
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
     fn verification_key() -> &'static [u8] {
-        resolve_verification_key(0xdead, "1.1.0").unwrap()
+        resolve_verification_key(outbe_primitives::chain::DEVNET_CHAIN_ID, 0xdead, "1.1.0").unwrap()
     }
 
     fn public_inputs() -> FullProofPublicInputs {
@@ -539,15 +538,18 @@ mod zk_result_tests {
     }
 
     #[test]
-    fn circuit_selection_requires_an_exact_registered_chain_and_version() {
-        for (l2_chain_id, version) in [
-            (0, "1.1.0"),
-            (4242, "1.1.0"),
-            (0xdead, ""),
-            (0xdead, "1.2.0"),
+    fn circuit_selection_requires_exact_versions_and_development_host_for_stub() {
+        use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+        for (host_chain_id, l2_chain_id, version) in [
+            (DEVNET_CHAIN_ID, 0, "1.1.0"),
+            (MAINNET_CHAIN_ID, 4242, "1.1.0"),
+            (TESTNET_CHAIN_ID, 0xdead, "1.1.0"),
+            (19_280_501, 0xdead, "1.1.0"),
+            (DEVNET_CHAIN_ID, 0xdead, ""),
+            (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {
             assert!(matches!(
-                resolve_verification_key(l2_chain_id, version),
+                resolve_verification_key(host_chain_id, l2_chain_id, version),
                 Err(PrecompileError::Revert(_))
             ));
         }
@@ -594,5 +596,64 @@ mod zk_result_tests {
         let error =
             validate_zk_result(&tampered, verification_key(), public, Some(&expected)).unwrap_err();
         assert!(matches!(error, PrecompileError::Revert(_)));
+    }
+}
+
+#[cfg(test)]
+mod reward_activity_tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::time::date_key_to_utc_timestamp;
+
+    const WALLET: Address = Address::repeat_byte(0x71);
+    const SRA: Address = Address::repeat_byte(0x72);
+
+    fn record(storage: StorageHandle<'_>) -> Result<()> {
+        TributeFactoryContract::new(storage).record_agent_reward_activity(&[WALLET], &[SRA])
+    }
+
+    #[test]
+    fn reward_updates_accumulate_on_the_execution_day() {
+        let day = 20_260_803;
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day) + 43_200));
+        StorageHandle::enter(&mut provider, |storage| {
+            record(storage.clone()).unwrap();
+            record(storage.clone()).unwrap();
+            let rewards = AgentRewardContract::new(storage);
+            assert_eq!(
+                rewards.get_all_waa_counts(day.into()).unwrap(),
+                vec![(WALLET, 2)]
+            );
+            assert_eq!(
+                rewards.get_all_sra_counts(day.into()).unwrap(),
+                vec![(SRA, 2)]
+            );
+        });
+    }
+
+    #[test]
+    fn reward_updates_follow_utc_midnight() {
+        let old_day = 20_261_231;
+        let new_day = 20_270_101;
+        let midnight = date_key_to_utc_timestamp(new_day);
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(midnight - 1));
+        StorageHandle::enter(&mut provider, |storage| {
+            record(storage.clone()).unwrap();
+            storage.set_block_timestamp(U256::from(midnight)).unwrap();
+            record(storage.clone()).unwrap();
+            let rewards = AgentRewardContract::new(storage);
+            for day in [old_day, new_day] {
+                assert_eq!(
+                    rewards.get_all_waa_counts(day.into()).unwrap(),
+                    vec![(WALLET, 1)]
+                );
+                assert_eq!(
+                    rewards.get_all_sra_counts(day.into()).unwrap(),
+                    vec![(SRA, 1)]
+                );
+            }
+        });
     }
 }

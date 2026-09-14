@@ -26,7 +26,7 @@ pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 /// Caps the per-tx compute budget so 8 x N sybil-funded addresses cannot
 /// exhaust a block on the sponsored path. 500_000 covers ERC-20 transfer
 /// plus a small log, matching the typical onboarding interaction. The
-/// TributeFactory has a separate, narrowly scoped limit because a ZK-enabled
+/// TributeFactory has a separate, narrowly scoped limit because every accepted
 /// `offerTribute` performs an UltraHonk verification.
 pub const FREE_TX_DAILY_GAS_LIMIT: u64 = 500_000;
 

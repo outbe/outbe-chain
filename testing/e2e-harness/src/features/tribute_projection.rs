@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
 use outbe_compressed_entities::{
     decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
@@ -68,10 +68,23 @@ fn submit_one_offer_from_unregistered_operator(world: &mut World) {
     );
     wait_for_offering(world, &wwd);
     // Deliberately no registration: the offer must be rejected by the factory
-    // guard, before the day, pricing or enclave paths are reached.
+    // guard, before the day, pricing or enclave paths are reached. It also
+    // carries no zk material, so the guard - not a proof - is what rejects it.
     let tx_hash = world
         .rpc
-        .tribute_offer(&key, &wwd)
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            crate::world::rpc::TributeZkOffer {
+                tribute_draft_id_hex: &format!("{:#x}", B256::with_last_byte(0x11)),
+                su_hash_hex: &format!("{:#x}", B256::with_last_byte(0x22)),
+                merkle_root_hex: "0x",
+                proof_hex: "0x",
+                l2_chain_id: 0,
+                circuit_version: "",
+                signature_hex: "0x",
+            },
+        )
         .expect("product CLI offerTribute returned a transaction hash");
     world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
 }

@@ -19,7 +19,10 @@ use crate::{
 
 pub(super) enum Rejection {
     Duplicate,
+    /// The caller's network is registered with ZK verification enabled, but the
+    /// offer carries no root signature.
     MissingSignature,
+    /// A well-formed proof whose statement does not match the submitted one.
     InvalidProof,
     /// The caller has no L2Registry entry. The factory guard fails closed here,
     /// before the day, pricing, or enclave paths are reached.
