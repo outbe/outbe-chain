@@ -14,12 +14,12 @@ interface ICca {
         address cca;
         State state;
         uint256 bondedAmount;
-        uint64 unbondUnlockAfter;
+        uint64 unbondUnlocksAfter;
         uint256 rewardAmount;
     }
 
     event Bonded(address indexed cca, uint256 amount, uint256 selfBond, State state);
-    event UnbondRequested(address indexed cca, uint256 amount, uint64 completeTime);
+    event UnbondRequested(address indexed cca, uint256 amount, uint64 unbondUnlocksAfter);
     event UnbondClaimed(address indexed cca, uint256 amount);
     event RewardAccrued(address indexed cca, uint32 indexed worldwideDay, uint256 amount);
     event RewardsClaimed(address indexed cca, uint256 amount);

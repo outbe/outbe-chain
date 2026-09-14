@@ -20,7 +20,7 @@ pub struct CcaRecord {
     pub bonded_amount: U256,
     /// Unix seconds; checked conversion from the execution timestamp.
     #[attribute(order = 2)]
-    pub unbond_unlock_after: u64,
+    pub unbond_unlocks_after: u64,
     /// Native COEN atomic units, independent of the bond.
     #[attribute(order = 3)]
     pub reward_amount: U256,

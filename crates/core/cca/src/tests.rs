@@ -66,7 +66,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert_eq!(record.cca, ALICE);
         assert_eq!(record.state, ICca::State::Deregistering);
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT + U256::from(7));
-        assert_eq!(record.unbondUnlockAfter, NOW + UNBOND_COOLDOWN_SECONDS);
+        assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
         assert!(runtime::unbond(storage.clone(), ALICE).is_err());
         assert!(runtime::bond(storage.clone(), ALICE, U256::ONE).is_err());

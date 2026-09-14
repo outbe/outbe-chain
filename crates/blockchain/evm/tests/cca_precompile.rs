@@ -139,7 +139,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICca::State::Deregistering as u8);
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT);
-        assert_eq!(record.unbondUnlockAfter, NOW + UNBOND_COOLDOWN_SECONDS);
+        assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&s, CCA).unwrap());
         assert!(api::position_opened(&s, CCA, 20231115.into(), U256::ONE).is_err());
     });

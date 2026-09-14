@@ -52,7 +52,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "unbondUnlockAfter",
+            "name": "unbondUnlocksAfter",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -222,7 +222,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "completeTime",
+        "name": "unbondUnlocksAfter",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
