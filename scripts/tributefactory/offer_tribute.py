@@ -79,12 +79,12 @@ def canonical_amount_base(value: str) -> str:
     return value
 
 
-def canonical_amount_atto(value: str) -> str:
+def canonical_amount_micro(value: str) -> str:
     if not value or not value.isascii() or not value.isdigit():
-        raise argparse.ArgumentTypeError("amount_atto must be a canonical unsigned remainder")
+        raise argparse.ArgumentTypeError("amount_micro must be a canonical unsigned remainder")
     parsed = int(value)
     if str(parsed) != value or parsed >= 1_000_000:
-        raise argparse.ArgumentTypeError("amount_atto must be between 0 and 999999")
+        raise argparse.ArgumentTypeError("amount_micro must be between 0 and 999999")
     return value
 
 
@@ -176,9 +176,9 @@ def main() -> None:
         help="Canonical unsigned settlement base amount; defaults to a random integer in [10,500)",
     )
     parser.add_argument(
-        "--amount-atto",
+        "--amount-micro",
         default="0",
-        help="Six-decimal raw remainder in [0,999999] (legacy field name)",
+        help="Micro-unit remainder in [0,999999] (10^6 units per whole unit)",
     )
     parser.add_argument("--currency", default="840", help="ISO currency code")
     parser.add_argument(
@@ -214,7 +214,7 @@ def main() -> None:
     amount_base = (
         canonical_amount_base(args.amount_base) if args.amount_base else random_amount_base()
     )
-    amount_atto = canonical_amount_atto(args.amount_atto)
+    amount_micro = canonical_amount_micro(args.amount_micro)
     sender = sender_from_private_key(args.private_key)
     tee_pubkey, tee_salt = load_tee_config_from_env()
 
@@ -226,7 +226,7 @@ def main() -> None:
         "creator": sender,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
         "amount_base": amount_base,
-        "amount_atto": amount_atto,
+        "amount_micro": amount_micro,
         "su_hashes": [random_hex32(), random_hex32()],
         "wallet_addresses": args.wallet_address,
         "sra_addresses": args.sra_address,

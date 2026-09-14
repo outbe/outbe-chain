@@ -73,7 +73,7 @@ impl Rpc {
         key: &str,
         wwd: &str,
         amount_base: &str,
-        amount_atto: &str,
+        amount_micro: &str,
         currency: u16,
         exclude_from_intex_issuance: bool,
     ) -> Option<String> {
@@ -88,8 +88,8 @@ impl Rpc {
             wwd.to_owned(),
             "--amount".to_owned(),
             amount_base.to_owned(),
-            "--amount-atto".to_owned(),
-            amount_atto.to_owned(),
+            "--amount-micro".to_owned(),
+            amount_micro.to_owned(),
             "--currency".to_owned(),
             currency.to_string(),
         ];
@@ -99,7 +99,7 @@ impl Rpc {
         let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
         let tx_hash = parse::extract_tx_hash(&out)?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_atto={amount_atto} currency={currency} exclude={exclude_from_intex_issuance}",
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_micro={amount_micro} currency={currency} exclude={exclude_from_intex_issuance}",
             unix_time_millis(),
             started.elapsed().as_millis(),
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
@@ -197,7 +197,7 @@ impl Rpc {
         key: &str,
         wwd: &str,
         amount_base: &str,
-        amount_atto: &str,
+        amount_micro: &str,
         tribute_currency: u16,
         reference_currency: u16,
         exclude_from_intex_issuance: bool,
@@ -228,7 +228,7 @@ impl Rpc {
             "creator": format!("{creator:?}"),
             "tribute_draft_id": format!("{tribute_draft_id:#x}"),
             "amount_base": amount_base,
-            "amount_atto": amount_atto,
+            "amount_micro": amount_micro,
             "su_hashes": [format!("{su_hash:#x}")],
             "wallet_addresses": [],
             "sra_addresses": [],
@@ -374,7 +374,7 @@ pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
     creator: Address,
     tribute_draft_id: B256,
     amount_base: &str,
-    amount_atto: &str,
+    amount_micro: &str,
     su_hash: B256,
     wallet_addresses: &[Address],
     sra_addresses: &[Address],
@@ -383,7 +383,7 @@ pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
         "creator": format!("{creator:#x}"),
         "tribute_draft_id": format!("{tribute_draft_id:#x}"),
         "amount_base": amount_base,
-        "amount_atto": amount_atto,
+        "amount_micro": amount_micro,
         "su_hashes": [format!("{su_hash:#x}")],
         "wallet_addresses": wallet_addresses
             .iter()

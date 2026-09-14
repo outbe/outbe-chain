@@ -135,7 +135,7 @@ pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "2";
 
 #[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO: &str = "0";
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO: &str = "0";
 
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn parse_outbe_chain_spec(
@@ -243,7 +243,7 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
             ));
         }
         // Keep this fixture's ordinary mineGratis path independent from the
-        // stablecoin/vault scenarios. Together with the six-atto Tribute
+        // stablecoin/vault scenarios. Together with the Tribute
         // amount, these prices produce non-zero Gratis and zero mining cost.
         let previous_vwap = U256::ONE;
         let current_vwap = U256::from(2);
