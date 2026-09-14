@@ -12,7 +12,7 @@ use crate::internal::l2_fixture::{self, TributeOfferStatement, TributeOfferZk};
 use crate::world::rpc::TributeZkOffer;
 use crate::world::World;
 
-/// The test L2 registered by this scenario; Devnet's binding stub supplies its key.
+/// The existing canonical test-chain binding used by this basic scenario.
 const L2_CHAIN_ID: u64 = 0xdead;
 
 /// The same chain id as the `uint32` circuit selector argument of `offerTribute`.
@@ -107,14 +107,7 @@ fn register_l2_network(world: &mut World) {
     let l1_address = super::l2_registration::operator_address(world, &key);
     let public = l2_fixture::root_signing_public_key(L2_CHAIN_ID);
 
-    let payload = serde_json::json!({
-        "operation": "register",
-        "chainId": L2_CHAIN_ID,
-        "l1Address": format!("{l1_address:#x}"),
-        "publicKey": format!("0x{}", hex::encode(&public)),
-    })
-    .to_string();
-    super::l2_registration::govern_l2_registry_payload(world, &payload);
+    super::l2_registration::ensure_tribute_offer_operator(world, &key);
     assert_eq!(registered_network(world), (l1_address, public));
 }
 
@@ -276,9 +269,9 @@ mod tests {
     use outbe_l2registry::api as l2_api;
 
     #[test]
-    fn scenario_uses_the_development_circuit_binding() {
+    fn scenario_uses_the_preexisting_circuit_binding() {
         assert_eq!(L2_CHAIN_ID_SELECTOR, L2_CHAIN_ID as u32);
-        let bound = l2_api::l2_circuits(outbe_primitives::chain::DEVNET_CHAIN_ID, L2_CHAIN_ID);
+        let bound = outbe_zk_canonical::l2_circuits(L2_CHAIN_ID);
         assert!(
             bound
                 .iter()

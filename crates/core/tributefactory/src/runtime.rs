@@ -540,11 +540,26 @@ mod zk_result_tests {
     #[test]
     fn circuit_selection_requires_exact_versions_and_development_host_for_stub() {
         use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+        for host_chain_id in [
+            DEVNET_CHAIN_ID,
+            TESTNET_CHAIN_ID,
+            MAINNET_CHAIN_ID,
+            19_280_501,
+        ] {
+            assert_eq!(
+                resolve_verification_key(host_chain_id, 57_005, "1.1.0").unwrap(),
+                verification_key(),
+            );
+        }
+        assert_eq!(
+            resolve_verification_key(DEVNET_CHAIN_ID, 0xE2E1_0000, "1.1.0").unwrap(),
+            verification_key(),
+        );
         for (host_chain_id, l2_chain_id, version) in [
             (DEVNET_CHAIN_ID, 0, "1.1.0"),
             (MAINNET_CHAIN_ID, 4242, "1.1.0"),
-            (TESTNET_CHAIN_ID, 0xdead, "1.1.0"),
-            (19_280_501, 0xdead, "1.1.0"),
+            (TESTNET_CHAIN_ID, 0xE2E1_0000, "1.1.0"),
+            (19_280_501, 0xE2E1_0000, "1.1.0"),
             (DEVNET_CHAIN_ID, 0xdead, ""),
             (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {

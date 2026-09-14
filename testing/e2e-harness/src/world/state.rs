@@ -591,8 +591,8 @@ pub struct FixtureState {
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
     /// Hash of an offer expected to be rejected by the zk signature gate.
     pub l2_rejected_offer_tx_hash: Option<String>,
-    /// Next governed fixture L2 id. This namespace is separate from the
-    /// specialized gate scenario and genesis-seeded bulk operators.
+    /// First use the declared L2 57005 binding; allocate additional ids only
+    /// when a scenario registers more operators.
     pub l2_next_governed_chain_id: u64,
 
     // ---- ZeroFee live scenario ----
@@ -812,7 +812,7 @@ impl Default for FixtureState {
             ocomp_full_node_mismatch_job_id: None,
             ocomp_full_node_mismatch_evidence_files: Vec::new(),
             l2_rejected_offer_tx_hash: None,
-            l2_next_governed_chain_id: 0xE2E0_0001,
+            l2_next_governed_chain_id: 57_005,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

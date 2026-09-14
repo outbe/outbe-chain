@@ -40,7 +40,7 @@ use rand::{rngs::StdRng, SeedableRng};
 /// importing the runtime crate.
 pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
-/// Frozen circuit version selected by the chain's development binding stub.
+/// Frozen circuit version declared for the basic test L2 57005.
 pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.1.0";
 
 /// The `uint32` circuit selector argument of `offerTribute`.
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn fixture_root_signing_key_is_deterministic_and_chain_specific() {
-        let chain_id = 0xE2E0_0001;
+        let chain_id = 57_005;
         assert_eq!(
             root_signing_public_key(chain_id),
             root_signing_public_key(chain_id)
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn fixture_root_signature_verifies_under_the_registered_key_only() {
-        let chain_id = 0xE2E1_0000;
+        let chain_id = 57_005;
         let root = [7u8; 32];
         let signature = sign_merkle_root(chain_id, &root);
         assert_eq!(signature.len(), 48);
@@ -369,7 +369,7 @@ mod tests {
         let zk = prove_tribute_offer(TributeOfferStatement {
             host_chain_id: outbe_primitives::chain::DEVNET_CHAIN_ID,
             caller,
-            l2_chain_id: 0xE2E0_0001,
+            l2_chain_id: 57_005,
             worldwide_day: 20_260_729,
             tribute_currency: 840,
             amount_base: "100",
@@ -384,7 +384,7 @@ mod tests {
             .expect("Alloy public inputs");
         assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, zk.merkle_root);
-        assert_eq!(zk.l2_chain_id, circuit_selector(0xE2E0_0001));
+        assert_eq!(zk.l2_chain_id, circuit_selector(57_005));
         assert_eq!(zk.circuit_version, FIXTURE_CIRCUIT_VERSION);
     }
 }

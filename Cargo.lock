@@ -8571,7 +8571,6 @@ dependencies = [
  "radicle",
  "rand 0.10.2",
  "rand 0.8.6",
- "rand_core 0.10.1",
  "rand_core 0.6.4",
  "reth-chainspec",
  "reth-ethereum",
@@ -9463,6 +9462,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9533,6 +9533,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10024,6 +10025,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "acir",
  "acvm",
@@ -10041,6 +10043,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

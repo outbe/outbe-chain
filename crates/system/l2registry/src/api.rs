@@ -1,8 +1,6 @@
 //! Cross-module surface: ZK merkle-root signature verification for
 //! `TributeFactory.offerTribute`.
 
-use std::sync::LazyLock;
-
 use alloy_primitives::Address;
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
@@ -10,7 +8,7 @@ use commonware_cryptography::bls12381::primitives::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zk_canonical::{CircuitStatus, L2CircuitVersion};
+use outbe_zk_canonical::L2CircuitVersion;
 
 use crate::errors::L2RegistryError;
 use crate::runtime::decode_public_key;
@@ -59,32 +57,17 @@ pub fn check_zk_merkle_root_signature(
     Ok(ZkOfferCheck::Verified { chain_id })
 }
 
-/// Exact deployment bindings, with a development-only stub for unbound L2s.
+/// Exact deployment bindings; Devnet's extra fixture L2s reuse chain 57005.
 ///
-/// Only the local Devnet host chain may use the stub. It selects the frozen
-/// FullProof 1.1.0 key; registration, root signatures, and real proof
-/// verification remain mandatory. Explicit deployment bindings take precedence.
+/// Basic fixtures use the declared 57005 binding directly. Additional L2s
+/// retain real signature and proof verification, and never gain bindings on
+/// non-development host chains.
 pub fn l2_circuits(host_chain_id: u64, l2_chain_id: u64) -> &'static [L2CircuitVersion] {
     let declared = outbe_zk_canonical::l2_circuits(l2_chain_id);
-    if !declared.is_empty()
-        || !outbe_primitives::chain::is_devnet(host_chain_id)
-        || l2_chain_id == 0
+    if declared.is_empty() && outbe_primitives::chain::is_devnet(host_chain_id) && l2_chain_id != 0
     {
-        return declared;
+        outbe_zk_canonical::l2_circuits(57_005)
+    } else {
+        declared
     }
-    static DEVELOPMENT: LazyLock<Option<L2CircuitVersion>> = LazyLock::new(|| {
-        outbe_zk_canonical::noir::CIRCUIT_REGISTRY
-            .iter()
-            .find(|entry| {
-                entry.label == "outbe.full_proof"
-                    && entry.version == "1.1.0"
-                    && entry.status != CircuitStatus::Revoked
-            })
-            .map(|entry| L2CircuitVersion {
-                version: entry.version,
-                circuit_hash: entry.circuit_hash,
-                vk_hash: entry.vk_hash,
-            })
-    });
-    DEVELOPMENT.as_slice()
 }
