@@ -1168,6 +1168,14 @@ fn unsettled_series_expired(world: &mut World) {
         .expect("intex venue was deployed on the target chain")
         .target_router;
 
+    // Anvil does not mine while this step only reads. Advance its clock even when
+    // the Called mark was already applied and there is nothing left to retry.
+    let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
+    world
+        .target_chain
+        .sync_clock_to(now)
+        .expect("carry the elapsed call notice to the target chain");
+
     for series in expiring_series(world) {
         // A mark whose calledAt sits ahead of this chain's clock is parked, not
         // applied, and nothing in a localnet plays the operator who retries it.
@@ -1177,11 +1185,6 @@ fn unsettled_series_expired(world: &mut World) {
             &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
         );
         if parked.is_some_and(|mark| mark != 0) {
-            let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
-            world
-                .target_chain
-                .sync_clock_to(now)
-                .expect("carry the committee clock to the target chain");
             eth::send_call(
                 &target_url,
                 target_router,
@@ -1215,6 +1218,24 @@ fn unsettled_series_expired(world: &mut World) {
                 sleep(Duration::from_secs(2));
             }
         }
+        let committee_deadline = venue_probes::series_call_deadline(&url, nft, series)
+            .expect("committee expiry deadline");
+        let target_deadline = venue_probes::series_call_deadline(&target_url, target_nft, series)
+            .expect("target expiry deadline");
+        let target_timestamp =
+            eth::latest_block_timestamp(&target_url).expect("target expiry observation timestamp");
+        assert_eq!(
+            target_deadline, committee_deadline,
+            "series {series} expiry deadline parity"
+        );
+        assert!(
+            target_timestamp > target_deadline,
+            "series {series} target clock did not pass expiry"
+        );
+        eprintln!(
+            "INTEX_EXPIRY_CLOCK series={series} committee_timestamp={now} \
+             target_timestamp={target_timestamp} deadline={target_deadline} pending_mark={parked:?}"
+        );
     }
 }
 

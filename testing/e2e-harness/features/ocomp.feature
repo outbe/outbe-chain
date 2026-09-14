@@ -125,7 +125,7 @@ Feature: Off-chain computation and Metadosis
     When the production OCOMP domains process that finalized JobIntent
     Then validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing
     When validator 3 OCOMP worker restarts after the finalized quorum
-    Then validator 3 safely handles its correct late result without changing the canonical outcome or votes
+    Then validator 3 safely handles its correct late result without changing the canonical outcome or quorum
 
   @ocomp-fullnode-deadline
   Scenario: A FullNode restores its deadline barrier and resumes after an exact late result

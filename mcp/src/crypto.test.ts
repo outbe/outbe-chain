@@ -18,7 +18,8 @@ test("tribute payload emits canonical base with a zero six-decimal remainder", (
   for (const amount of cases.accepted_base) {
     const payload = decodePayload(amount);
     assert.equal(payload.amount_base, amount);
-    assert.equal(payload.amount_atto, "0");
+    assert.equal(payload.amount_micro, "0");
+    assert.equal(Object.hasOwn(payload, "amount_atto"), false);
   }
 });
 

@@ -18,7 +18,8 @@ pub struct TributeInputPayload {
     pub creator: String,
     pub tribute_draft_id: String,
     pub amount_base: String,
-    pub amount_atto: String,
+    /// Fractional remainder in micro-units (0..999999); one whole unit is 10^6.
+    pub amount_micro: String,
     pub su_hashes: Vec<String>,
     #[serde(default)]
     pub wallet_addresses: Vec<String>,

@@ -185,7 +185,7 @@ def main() -> None:
         "creator": creator,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
         "amount_base": amount_base,
-        "amount_atto": "0",
+        "amount_micro": "0",
         "su_hashes": ["0x" + os.urandom(32).hex()],
         "wallet_addresses": [],
         "sra_addresses": [],
