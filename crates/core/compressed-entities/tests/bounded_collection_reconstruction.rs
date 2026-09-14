@@ -115,6 +115,7 @@ fn multipass_reconstruction_reports_progress_without_changing_its_result() {
 }
 
 #[test]
+#[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn boundary_populations_match_the_existing_eager_reconstruction() {
     let day = WorldwideDay::new(20_260_901);
     for count in [0_u64, 1, 15, 16, 17, 255, 256, 257, 4_097] {
