@@ -705,7 +705,7 @@ contract IntexNFT1155Test is Test {
 
         uint256 sTok = nft.settledTokenId(SERIES_ID_1);
         vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.IntexCompleted(SERIES_ID_1, user, 3);
+        emit IIntexNFT1155.IntexMined(SERIES_ID_1, user, 3);
         nft.burnSettled(user, SERIES_ID_1, 3);
 
         assertEq(nft.balanceOf(user, sTok), 2);
@@ -795,7 +795,7 @@ contract IntexNFT1155Test is Test {
         _grantGemRole(address(this));
 
         vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.IntexParked(SERIES_ID_1, user, 4);
+        emit IIntexNFT1155.IntexSentToGemFactory(SERIES_ID_1, user, 4);
         nft.sendToGemFactory(user, SERIES_ID_1, 4);
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
-    /// @notice Park the caller's Intex series `sourceIntexId` (burning `amount`
+    /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `amount`
     ///         units via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
     function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
@@ -24,10 +24,10 @@ interface IGemFactory {
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
-    /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
-    ///         Promis unit ever parked; it is not reduced when a position drains
+    /// @notice Cumulative totals since genesis. `totalIntexSentToGemFactory` counts every
+    ///         Promis unit ever sent there; it is not reduced when a position drains
     ///         or expires.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalIntexParked);
+    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalIntexSentToGemFactory);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the
@@ -51,7 +51,7 @@ interface IGemFactory {
     /// @notice Full terms of the position `positionId`.
     function getPosition(uint256 positionId) external view returns (PositionData memory);
 
-    /// @notice A merchant's parked Intex: the pool Merchant gems are drawn from.
+    /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct PositionData {
         uint256 positionId;
         address merchant;
@@ -61,7 +61,7 @@ interface IGemFactory {
         uint256 sourceFloorPrice;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint64 parkedAt;
+        uint64 sentToGemFactoryAt;
         /// @notice When the position stops issuing and returns its remainder.
         uint64 expiresAt;
     }

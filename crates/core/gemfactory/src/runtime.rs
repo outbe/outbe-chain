@@ -97,7 +97,7 @@ pub fn issue_gem(
     Ok(gem_id)
 }
 
-/// Park a merchant's whole Intex series and issue a GemPosition NFT. Burns the
+/// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
 /// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
 /// and records the position with a snapshot of the source entry/floor and the
 /// resulting Promis capacity. Returns the issued `position_id`.
@@ -121,7 +121,7 @@ pub fn issue_gem_position(
     )?;
 
     // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
-    // burned count (and reverts on a non-parkable state or a zero amount).
+    // burned count (and reverts on a state that may not be sent, or a zero amount).
     let units = burn_intex_into_gem_factory(storage, caller, source_intex_id, amount)?;
     let capacity = series
         .promis_load_minor
@@ -132,7 +132,7 @@ pub fn issue_gem_position(
     let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(storage, source_intex_id, gem_factory_units)?;
 
-    let parked_at = storage.timestamp()?.to::<u64>();
+    let sent_to_gem_factory_at = storage.timestamp()?.to::<u64>();
     let position_id =
         GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
@@ -146,24 +146,25 @@ pub fn issue_gem_position(
         source_floor_price: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
-        parked_at,
-        expires_at: parked_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
+        sent_to_gem_factory_at,
+        expires_at: sent_to_gem_factory_at
+            .saturating_add(outbe_gem::config::read(storage)?.position_validity),
     })?;
 
     factory.push_live_position(position_id)?;
 
-    let prev_parked = factory.total_intex_parked.read()?;
-    let new_parked = prev_parked
+    let prev_sent = factory.total_intex_sent_to_gem_factory.read()?;
+    let new_sent = prev_sent
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
-    factory.total_intex_parked.write(new_parked)?;
+    factory.total_intex_sent_to_gem_factory.write(new_sent)?;
 
     Ok(position_id)
 }
 
 /// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-parkable (non-Issued/Qualified) state or `amount` is zero.
+/// non-sendable (non-Issued/Qualified) state or `amount` is zero.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
@@ -477,7 +478,7 @@ pub fn quote_settlement(
     ))
 }
 
-/// The full terms of a parked position.
+/// The full terms of a Gem Factory position.
 pub fn position_data(
     storage: &StorageHandle<'_>,
     position_id: U256,
@@ -495,7 +496,7 @@ pub fn position_data(
         sourceFloorPrice: record.source_floor_price,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
-        parkedAt: record.parked_at,
+        sentToGemFactoryAt: record.sent_to_gem_factory_at,
         expiresAt: record.expires_at,
     })
 }

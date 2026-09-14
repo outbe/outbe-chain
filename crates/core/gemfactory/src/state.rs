@@ -66,7 +66,7 @@ impl GemFactoryContract<'_> {
             .ok_or(GemFactoryError::PositionNotFound)?;
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_intex_id\",\"value\":{}}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"source_entry_price\",\"value\":\"{}\"}},{{\"trait_type\":\"source_floor_price\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"parked_at\",\"value\":{}}}]}}",
+            "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_intex_id\",\"value\":{}}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"source_entry_price\",\"value\":\"{}\"}},{{\"trait_type\":\"source_floor_price\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"sent_to_gem_factory_at\",\"value\":{}}}]}}",
             position_id,
             pos.merchant,
             pos.source_intex_id,
@@ -75,7 +75,7 @@ impl GemFactoryContract<'_> {
             pos.source_floor_price,
             pos.issuance_currency,
             pos.reference_currency,
-            pos.parked_at,
+            pos.sent_to_gem_factory_at,
         );
         let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
         Ok(format!("data:application/json;base64,{}", encoded))

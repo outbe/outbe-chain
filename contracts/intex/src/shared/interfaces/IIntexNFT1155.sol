@@ -134,13 +134,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Settled tokens were burned.
     /// @param amount Amount of Settled tokens burned.
-    event IntexCompleted(bytes14 indexed seriesId, address indexed owner, uint256 amount);
+    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
-    /// @notice Emitted when Issued Intex are burned on parking in the Gem Factory.
+    /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Issued tokens were burned.
     /// @param amount Amount of Issued tokens burned.
-    event IntexParked(bytes14 indexed seriesId, address indexed owner, uint256 amount);
+    event IntexSentToGemFactory(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
     // --- Errors ---
 
@@ -235,9 +235,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens to burn.
     function burnSettled(address owner, bytes14 seriesId, uint256 amount) external;
 
-    /// @notice Burn `amount` Issued Intex from `owner` when the tokens are parked in the Gem Factory.
+    /// @notice Burn `amount` Issued Intex from `owner` when the tokens are sent to the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued or Qualified - no Call Event yet). The parked capacity record lives in the
+    ///      (Issued or Qualified - no Call Event yet). The capacity record lives in the
     ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.

@@ -27,7 +27,7 @@ pub struct GemParams {
     /// Percentage points over the entry price; see `crate::constants`.
     pub call_rate: u16,
     pub floor_rate: u16,
-    /// How long a parked-Intex position may still issue gems.
+    /// How long a Gem Factory position may still issue gems.
     pub position_validity: u64,
 }
 

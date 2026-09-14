@@ -75,7 +75,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "parkedAt",
+            "name": "sentToGemFactoryAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -100,7 +100,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalIntexParked",
+        "name": "totalIntexSentToGemFactory",
         "type": "uint256",
         "internalType": "uint256"
       }
