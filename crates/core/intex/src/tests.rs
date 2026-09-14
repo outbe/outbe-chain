@@ -1322,3 +1322,26 @@ fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
         assert!(api::expire_series(&s, id).is_err());
     });
 }
+
+/// Burning erases who held the units, so the two per-owner ledgers are written at
+/// the moment of the burn. Nothing reads them on chain yet; a later reader cannot
+/// reconstruct them.
+#[test]
+fn the_per_owner_ledgers_record_who_burned_the_units() {
+    with_registry(|s| {
+        let other = Address::repeat_byte(0xB2);
+        let id = called_series(&s, 56);
+        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        api::record_gem_factory_units(&s, id, other, 5).unwrap();
+
+        assert_eq!(api::owner_exercised_units(&s, id, owner()).unwrap(), 10);
+        assert_eq!(api::owner_gem_factory_units(&s, id, owner()).unwrap(), 0);
+        assert_eq!(api::owner_exercised_units(&s, id, other).unwrap(), 0);
+        assert_eq!(api::owner_gem_factory_units(&s, id, other).unwrap(), 5);
+
+        // Each owner's share adds up to the series totals.
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
+        assert_eq!(api::gem_factory_units(&s, id).unwrap(), 5);
+    });
+}
