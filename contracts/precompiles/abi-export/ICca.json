@@ -2,7 +2,13 @@
   {
     "type": "function",
     "name": "bond",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
     "outputs": [],
     "stateMutability": "payable"
   },
@@ -60,6 +66,11 @@
             "name": "rewardAmount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
           }
         ]
       }

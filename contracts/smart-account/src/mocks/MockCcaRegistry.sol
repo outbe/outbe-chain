@@ -9,8 +9,9 @@ contract MockCcaRegistry {
     mapping(address => ICca.State) private _states;
     mapping(address => uint256) private _bonds;
 
-    function bond() external payable {
+    function bond(string calldata name) external payable {
         require(msg.value > 0, "positive bond required");
+        require(bytes(name).length > 0, "CCA name must be nonempty");
         _bonds[msg.sender] += msg.value;
         _states[msg.sender] = _bonds[msg.sender] >= 1_000_000_000 ether ? ICca.State.Active : ICca.State.Bonding;
     }

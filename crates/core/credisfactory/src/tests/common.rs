@@ -383,7 +383,13 @@ pub fn env() -> HashMapStorageProvider {
                 outbe_cca::runtime::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(handle, cca(), outbe_cca::runtime::BOND_REQUIREMENT).unwrap();
+        outbe_cca::runtime::bond(
+            handle,
+            cca(),
+            outbe_cca::runtime::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
     });
     storage
 }

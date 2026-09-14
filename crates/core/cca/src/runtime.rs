@@ -23,7 +23,7 @@ fn now(storage: &StorageHandle<'_>) -> Result<u64> {
 }
 
 /// The payable EVM boundary has already credited `amount` to CCA_ADDRESS.
-pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result<()> {
+pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: String) -> Result<()> {
     storage.with_checkpoint(|| {
         if caller.is_zero() {
             return Err(CcaError::ZeroAddress.into());
@@ -31,19 +31,23 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result
         if amount.is_zero() {
             return Err(CcaError::InvalidAmount.into());
         }
+        if name.is_empty() {
+            return Err(CcaError::InvalidName.into());
+        }
         let mut contract = CcaContract::new(storage.clone());
         let mut record = contract.records.get(caller)?.unwrap_or(CcaRecord {
-            id: caller,
             cca: caller,
             state: ICca::State::Bonding,
             bonded_amount: U256::ZERO,
             unbond_unlocks_after: 0,
             reward_amount: U256::ZERO,
+            name: String::new(),
         });
         validate_state(record.state)?;
         if record.state == ICca::State::Deregistering {
             return Err(CcaError::UnbondPending.into());
         }
+        record.name = name;
         record.bonded_amount = record
             .bonded_amount
             .checked_add(amount)

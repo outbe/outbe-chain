@@ -395,7 +395,7 @@ contract CCAFlow is BaseAATest {
         (address attackerAddr,) = makeAddrAndKey("attacker2");
         vm.deal(attackerAddr, 1_000_000_000 ether);
         vm.prank(attackerAddr);
-        ccaRegistry.bond{value: 1_000_000_000 ether}();
+        ccaRegistry.bond{value: 1_000_000_000 ether}("Test CCA");
         address attackerSA = factory.createAccount(attackerAddr, attackerAddr, bundleTokens, bundleSenders, 99);
 
         bytes32 execMode = _execMode();
@@ -473,7 +473,7 @@ contract CCAFlow is BaseAATest {
         address bondingCca = makeAddr("bonding-cca");
         vm.deal(bondingCca, 1);
         vm.prank(bondingCca);
-        ccaRegistry.bond{value: 1}();
+        ccaRegistry.bond{value: 1}("Test CCA");
         vm.expectRevert(
             abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, bondingCca, ICca.State.Bonding)
         );

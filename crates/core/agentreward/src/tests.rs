@@ -788,7 +788,7 @@ mod distribute_daily_tests {
             ctx.storage
                 .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, bond)
                 .unwrap();
-            outbe_cca::runtime::bond(ctx.storage.clone(), cca, bond).unwrap();
+            outbe_cca::runtime::bond(ctx.storage.clone(), cca, bond, "Test CCA".into()).unwrap();
             outbe_cca::api::position_opened(&ctx.storage, cca, DAY, U256::ONE).unwrap();
             distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
             outbe_cca::api::position_opened(&ctx.storage, cca, 20240102.into(), U256::ONE).unwrap();

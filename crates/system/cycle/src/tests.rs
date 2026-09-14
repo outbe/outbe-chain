@@ -1831,6 +1831,12 @@ fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
             outbe_cca::runtime::BOND_REQUIREMENT,
         )
         .unwrap();
-    outbe_cca::runtime::bond(storage.clone(), cca, outbe_cca::runtime::BOND_REQUIREMENT).unwrap();
+    outbe_cca::runtime::bond(
+        storage.clone(),
+        cca,
+        outbe_cca::runtime::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .unwrap();
     outbe_cca::api::position_opened(storage, cca, 20240101.into(), U256::ONE).unwrap();
 }

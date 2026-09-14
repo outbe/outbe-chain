@@ -73,8 +73,13 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
                 outbe_cca::runtime::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(storage.clone(), cca(), outbe_cca::runtime::BOND_REQUIREMENT)
-            .unwrap();
+        outbe_cca::runtime::bond(
+            storage.clone(),
+            cca(),
+            outbe_cca::runtime::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
         f(storage)
     })
 }
@@ -1191,8 +1196,13 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
                 outbe_cca::runtime::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(handle.clone(), cca(), outbe_cca::runtime::BOND_REQUIREMENT)
-            .unwrap();
+        outbe_cca::runtime::bond(
+            handle.clone(),
+            cca(),
+            outbe_cca::runtime::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
         let mut credis = CredisContract::new(handle);
         open_pos(&mut credis, 1)
     });

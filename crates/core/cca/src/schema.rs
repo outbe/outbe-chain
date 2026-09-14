@@ -9,10 +9,10 @@ use outbe_primitives::{
 };
 
 #[derive(Debug, Clone)]
-#[storage_record(exists_field = cca)]
+#[storage_record(exists_field = name)]
 pub struct CcaRecord {
     #[key]
-    pub id: Address,
+    pub cca: Address,
     #[attribute(order = 0, default = ICca::State::Bonding)]
     pub state: ICca::State,
     /// Native COEN atomic units, retained during deregistration until claimed.
@@ -25,7 +25,7 @@ pub struct CcaRecord {
     #[attribute(order = 3)]
     pub reward_amount: U256,
     #[attribute(order = 4)]
-    pub cca: Address,
+    pub name: String,
 }
 
 #[storage_schema]

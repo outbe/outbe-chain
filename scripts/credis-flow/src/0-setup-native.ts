@@ -86,7 +86,7 @@ async function main() {
   }
 
   if (remainingBond > 0n) {
-    const tx = await registry.bond({ value: remainingBond });
+    const tx = await registry.bond("Credis Flow CCA", { value: remainingBond });
     await tx.wait();
     console.log(`    Bonded ${formatCoen(remainingBond)} COEN (tx: ${tx.hash})`);
   }

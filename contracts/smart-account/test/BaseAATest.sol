@@ -99,7 +99,7 @@ abstract contract BaseAATest is Test {
         ccaRegistry = MockCcaRegistry(factory.CCA_REGISTRY());
         vm.deal(cca.addr, 1_000_000_000 ether);
         vm.prank(cca.addr);
-        ccaRegistry.bond{value: 1_000_000_000 ether}();
+        ccaRegistry.bond{value: 1_000_000_000 ether}("Test CCA");
     }
 
     // -------------------------------------------------------------------------

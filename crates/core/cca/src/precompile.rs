@@ -24,8 +24,8 @@ pub fn dispatch(
         use ICca::ICcaCalls::*;
         match call {
             bond(c) => {
-                mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, _, amount| {
-                    runtime::bond(storage.clone(), sender, amount)
+                mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, amount| {
+                    runtime::bond(storage.clone(), sender, amount, c.name)
                 })
             }
             unbond(c) => mutate_void(c, caller, |sender, _| {

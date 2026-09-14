@@ -2142,5 +2142,5 @@ fn bond_cca(storage: &StorageHandle<'_>) {
     storage
         .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, amount)
         .unwrap();
-    outbe_cca::runtime::bond(storage.clone(), cca(), amount).unwrap();
+    outbe_cca::runtime::bond(storage.clone(), cca(), amount, "Test CCA".into()).unwrap();
 }

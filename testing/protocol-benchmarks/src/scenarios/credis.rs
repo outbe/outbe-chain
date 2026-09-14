@@ -93,8 +93,13 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
             outbe_cca::runtime::BOND_REQUIREMENT,
         )
         .map_err(|error| error.to_string())?;
-    outbe_cca::runtime::bond(storage.clone(), CCA, outbe_cca::runtime::BOND_REQUIREMENT)
-        .map_err(|error| error.to_string())?;
+    outbe_cca::runtime::bond(
+        storage.clone(),
+        CCA,
+        outbe_cca::runtime::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .map_err(|error| error.to_string())?;
     outbe_gratis::api::mint(
         storage.clone(),
         ALICE,

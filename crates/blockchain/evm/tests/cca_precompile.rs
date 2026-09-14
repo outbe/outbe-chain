@@ -93,10 +93,24 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW
     )
     .is_success());
+    assert!(!tx(
+        &mut db,
+        U256::ONE,
+        ICca::bondCall {
+            name: String::new()
+        }
+        .abi_encode(),
+        NOW
+    )
+    .is_success());
+    assert_eq!(db.cache.accounts[&CCA].info.balance, initial);
     assert!(tx(
         &mut db,
         BOND_REQUIREMENT - U256::ONE,
-        ICca::bondCall {}.abi_encode(),
+        ICca::bondCall {
+            name: "Test CCA".into()
+        }
+        .abi_encode(),
         NOW
     )
     .is_success());
@@ -104,9 +118,19 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert!(!api::is_active(&s, CCA).unwrap());
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state, ICca::State::Bonding);
+        assert_eq!(record.name, "Test CCA");
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT - U256::ONE);
     });
-    assert!(tx(&mut db, U256::ONE, ICca::bondCall {}.abi_encode(), NOW).is_success());
+    assert!(tx(
+        &mut db,
+        U256::ONE,
+        ICca::bondCall {
+            name: "Test CCA".into()
+        }
+        .abi_encode(),
+        NOW
+    )
+    .is_success());
     assert_eq!(
         db.cache.accounts[&CCA].info.balance,
         initial - BOND_REQUIREMENT
@@ -134,7 +158,16 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     });
     let reward = checked_protocol_to_native(U256::from(23)).unwrap();
     assert!(tx(&mut db, U256::ZERO, ICca::unbondCall {}.abi_encode(), NOW).is_success());
-    assert!(!tx(&mut db, U256::ONE, ICca::bondCall {}.abi_encode(), NOW).is_success());
+    assert!(!tx(
+        &mut db,
+        U256::ONE,
+        ICca::bondCall {
+            name: "Test CCA".into()
+        }
+        .abi_encode(),
+        NOW
+    )
+    .is_success());
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICca::State::Deregistering as u8);
@@ -174,6 +207,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICca::State::Deregistered as u8);
         assert_eq!(record.bondedAmount, U256::ZERO);
+        assert_eq!(record.name, "Test CCA");
         assert_eq!(
             api::reward_weight(&s, CCA, 20231115.into()).unwrap(),
             U256::from(100)

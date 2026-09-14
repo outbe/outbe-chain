@@ -28,7 +28,10 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     storage.increase_balance(CCA_ADDRESS, amount).unwrap();
     dispatch(
         storage.clone(),
-        &ICca::bondCall {}.abi_encode(),
+        &ICca::bondCall {
+            name: "Test CCA".into(),
+        }
+        .abi_encode(),
         who,
         amount,
     )
@@ -40,6 +43,54 @@ fn reward(storage: &StorageHandle<'_>, amount: U256) -> U256 {
 }
 fn native(amount: u64) -> U256 {
     checked_protocol_to_native(U256::from(amount)).unwrap()
+}
+
+#[test]
+fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration() {
+    run(|storage| {
+        let empty_name = ICca::bondCall {
+            name: String::new(),
+        }
+        .abi_encode();
+        assert!(dispatch(storage.clone(), &empty_name, ALICE, U256::ONE).is_err());
+        assert!(api::get_cca(&storage, ALICE).is_err());
+
+        for (index, name) in [
+            "A".to_owned(),
+            "a".repeat(31),
+            "b".repeat(32),
+            "名".repeat(22),
+            "B".to_owned(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            storage.increase_balance(CCA_ADDRESS, U256::ONE).unwrap();
+            let call = ICca::bondCall { name: name.clone() }.abi_encode();
+            dispatch(storage.clone(), &call, ALICE, U256::ONE).unwrap();
+            let query = ICca::getCcaCall { cca: ALICE }.abi_encode();
+            let output = dispatch(storage.clone(), &query, BOB, U256::ZERO).unwrap();
+            let record = ICca::getCcaCall::abi_decode_returns(&output).unwrap();
+            assert_eq!(record.cca, ALICE);
+            assert_eq!(record.name, name);
+            assert_eq!(record.state, ICca::State::Bonding);
+            assert_eq!(record.bondedAmount, U256::from(index + 1));
+
+            assert!(dispatch(storage.clone(), &empty_name, ALICE, U256::ONE).is_err());
+            assert_eq!(api::get_cca(&storage, ALICE).unwrap(), record);
+        }
+
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+        runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
+        let record = api::get_cca(&storage, ALICE).unwrap();
+        assert_eq!(record.name, "B");
+        assert_eq!(record.state, ICca::State::Deregistered);
+        assert_eq!(record.bondedAmount, U256::ZERO);
+        assert_eq!(record.rewardAmount, U256::ZERO);
+    });
 }
 
 #[test]
@@ -69,7 +120,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
         assert!(runtime::unbond(storage.clone(), ALICE).is_err());
-        assert!(runtime::bond(storage.clone(), ALICE, U256::ONE).is_err());
+        assert!(runtime::bond(storage.clone(), ALICE, U256::ONE, "Test CCA".into()).is_err());
         storage
             .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS - 1))
             .unwrap();
@@ -113,8 +164,10 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
 #[test]
 fn partial_registration_can_exit_and_rejected_calls_do_not_mutate() {
     run(|storage| {
-        assert!(runtime::bond(storage.clone(), ALICE, U256::ZERO).is_err());
-        assert!(runtime::bond(storage.clone(), Address::ZERO, U256::ONE).is_err());
+        assert!(runtime::bond(storage.clone(), ALICE, U256::ZERO, "Test CCA".into()).is_err());
+        assert!(
+            runtime::bond(storage.clone(), Address::ZERO, U256::ONE, "Test CCA".into()).is_err()
+        );
         assert!(runtime::unbond(storage.clone(), ALICE).is_err());
         bond(&storage, ALICE, U256::ONE);
         runtime::unbond(storage.clone(), ALICE).unwrap();
@@ -293,7 +346,10 @@ fn static_registration_is_rejected_without_state_or_events() {
     StorageHandle::enter(&mut provider, |storage| {
         assert!(dispatch(
             storage.clone(),
-            &ICca::bondCall {}.abi_encode(),
+            &ICca::bondCall {
+                name: "Test CCA".into()
+            }
+            .abi_encode(),
             ALICE,
             U256::ONE
         )
@@ -487,7 +543,7 @@ fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
             storage.sstore(CCA_ADDRESS, slot.slot(), word).unwrap();
             assert!(contract.load(ALICE).is_err());
             assert!(api::get_cca(&storage, ALICE).is_err());
-            assert!(runtime::bond(storage.clone(), ALICE, U256::ONE).is_err());
+            assert!(runtime::bond(storage.clone(), ALICE, U256::ONE, "Test CCA".into()).is_err());
             assert_eq!(storage.sload(CCA_ADDRESS, slot.slot()).unwrap(), word);
         }
     });

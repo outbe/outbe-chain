@@ -110,8 +110,13 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
                 outbe_cca::runtime::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(storage.clone(), CCA, outbe_cca::runtime::BOND_REQUIREMENT)
-            .unwrap();
+        outbe_cca::runtime::bond(
+            storage.clone(),
+            CCA,
+            outbe_cca::runtime::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
         let router = VaultRouterContract::new(storage.clone());
         if register_from {
             router.asset_vault_set(ASSET).insert(VAULT_FROM).unwrap();

@@ -16,6 +16,7 @@ interface ICca {
         uint256 bondedAmount;
         uint64 unbondUnlocksAfter;
         uint256 rewardAmount;
+        string name;
     }
 
     event Bonded(address indexed cca, uint256 amount, uint256 selfBond, State state);
@@ -24,7 +25,8 @@ interface ICca {
     event RewardAccrued(address indexed cca, uint32 indexed worldwideDay, uint256 amount);
     event RewardsClaimed(address indexed cca, uint256 amount);
 
-    function bond() external payable;
+    /// @notice Bond COEN and set a nonempty CCA name.
+    function bond(string calldata name) external payable;
     function unbond() external;
     function claimUnbonded() external;
     function claimRewards() external;

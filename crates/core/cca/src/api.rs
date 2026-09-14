@@ -31,5 +31,6 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {
         bondedAmount: record.bonded_amount,
         unbondUnlocksAfter: record.unbond_unlocks_after,
         rewardAmount: record.reward_amount,
+        name: record.name,
     })
 }

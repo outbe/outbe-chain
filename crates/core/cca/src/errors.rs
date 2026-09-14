@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum CcaError {
     #[error("CCA amount must be positive")]
     InvalidAmount,
+    #[error("CCA name must be nonempty")]
+    InvalidName,
     #[error("CCA is not registered")]
     NotRegistered,
     #[error("CCA is not active")]
