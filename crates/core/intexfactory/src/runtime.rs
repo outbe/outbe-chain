@@ -562,7 +562,6 @@ fn burn_late_proceeds(storage: &StorageHandle<'_>, worldwide_day: u32, amount: U
     )
 }
 
-/// Progress of one day's payout round; all-zero when no round is open.
 /// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
 pub(crate) fn series_unit_counts(
     storage: &StorageHandle<'_>,
@@ -579,6 +578,35 @@ pub(crate) fn series_unit_counts(
     })
 }
 
+/// One owner's share of the series classes, plus what they can still use.
+pub(crate) fn owner_unit_counts(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<crate::precompile::IIntexFactory::OwnerUnitCounts> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    // The two live classes are token balances; only history is kept in the ledgers.
+    let issued = u32::try_from(nft_balance_of(
+        storage,
+        owner,
+        U256::from_be_slice(series_id.as_bytes()),
+    )?)
+    .map_err(|_| PrecompileError::Revert("issued balance exceeds a uint32".into()))?;
+    let settled = u32::try_from(nft_balance_of(storage, owner, settled_token_id(series_id))?)
+        .map_err(|_| PrecompileError::Revert("settled balance exceeds a uint32".into()))?;
+    let expired = series.lifecycle_state()? == IntexState::Expired;
+    Ok(crate::precompile::IIntexFactory::OwnerUnitCounts {
+        issuedUnits: issued,
+        activeUnits: if expired { 0 } else { issued },
+        settledUnits: settled,
+        exercisedUnits: outbe_intex::api::owner_exercised_units(storage, series_id, owner)?,
+        gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
+        forfeitedUnits: if expired { issued } else { 0 },
+        ownerUnits: issued.saturating_add(settled),
+    })
+}
+
+/// Progress of one day's payout round; all-zero when no round is open.
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,
@@ -1015,7 +1043,7 @@ pub fn mine_promis(
 
     let exercised = u32::try_from(amount)
         .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
-    outbe_intex::api::record_exercised_units(storage, series_id, exercised)?;
+    outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
 
     // Promis is confidential: the mint runs inside the enclave, authorized by the
     // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).

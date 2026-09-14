@@ -493,6 +493,34 @@ fn units_moved_to_settled(world: &mut World) {
             Some((0, u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS))),
             "series {series} left issued units at home after settling"
         );
+        // Paying moves units between the owner's two live classes and adds no history.
+        let counts = eth::read_call(
+            &url,
+            test_issuance::INTEX_FACTORY,
+            &IIntexFactoryCounts::ownerUnitCountsCall {
+                seriesId: (*series).into(),
+                owner,
+            },
+        )
+        .expect("owner unit counts");
+        assert_eq!(
+            counts.issuedUnits, 0,
+            "series {series} left the owner issued units"
+        );
+        assert_eq!(
+            counts.settledUnits,
+            COMMITTEE_UNITS + TRADABLE_HOP_UNITS,
+            "series {series} did not book the settled units to the owner"
+        );
+        assert_eq!(
+            counts.exercisedUnits, 0,
+            "series {series} counted an exercise too early"
+        );
+        assert_eq!(
+            counts.ownerUnits,
+            COMMITTEE_UNITS + TRADABLE_HOP_UNITS,
+            "series {series} miscounted what the owner can still use"
+        );
     }
 }
 
@@ -728,7 +756,19 @@ sol! {
             uint32 forfeitedUnits;
         }
 
+        struct OwnerUnitCounts {
+            uint32 issuedUnits;
+            uint32 activeUnits;
+            uint32 settledUnits;
+            uint32 exercisedUnits;
+            uint32 gemFactoryUnits;
+            uint32 forfeitedUnits;
+            uint32 ownerUnits;
+        }
+
         function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
+
+        function ownerUnitCounts(bytes14 seriesId, address owner) external view returns (OwnerUnitCounts memory);
     }
 }
 

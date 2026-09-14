@@ -352,6 +352,7 @@ mod call_sweep {
     use crate::called;
     use crate::constants::{MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK};
     use crate::schema::IntexFactoryContract;
+    use crate::tests::owner;
 
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
@@ -612,7 +613,7 @@ mod call_sweep {
             let series_id =
                 SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
             outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
-            outbe_intex::api::record_gem_factory_units(&s, series_id, 25).unwrap();
+            outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
             sweep_at(&s, due(deadline));

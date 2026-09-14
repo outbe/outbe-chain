@@ -380,8 +380,8 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
-        outbe_intex::api::record_gem_factory_units(&s, sid(7), 10).unwrap();
-        outbe_intex::api::record_exercised_units(&s, sid(7), 15).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
+        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
 
         // Through dispatch, so the selector and the struct encoding are covered too.
         let out = precompile::dispatch(
@@ -401,5 +401,39 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         assert_eq!(counts.exercisedUnits, 15);
         assert_eq!(counts.gemFactoryUnits, 10);
         assert_eq!(counts.forfeitedUnits, 0);
+    });
+}
+
+/// The owner view reads the two live classes off the token and the two history
+/// ledgers off storage. The stub answers one balance for both token ids, so the
+/// assertion is about where each number comes from, not about their spread.
+#[test]
+fn the_owner_view_separates_current_balances_from_history() {
+    use crate::sol_ext::IERC1155;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(6),
+    );
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), 4).unwrap();
+        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 2).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 3).unwrap();
+
+        let counts = runtime::owner_unit_counts(&s, sid(7), owner()).unwrap();
+        assert_eq!(counts.issuedUnits, 6);
+        assert_eq!(counts.activeUnits, 6);
+        assert_eq!(counts.settledUnits, 6);
+        assert_eq!(counts.exercisedUnits, 2);
+        assert_eq!(counts.gemFactoryUnits, 3);
+        assert_eq!(counts.forfeitedUnits, 0);
+        // What the owner can still use is both live classes, never the history.
+        assert_eq!(counts.ownerUnits, 12);
     });
 }

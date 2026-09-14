@@ -155,13 +155,15 @@ pub fn record_settled_units(
     add_realized_units(storage, series_id, units, RealizedKind::Settled)
 }
 
-/// Record `units` sent to the Gem Factory: their load moved into the position.
+/// Record `units` sent to the Gem Factory by `owner`: their load moved into the position.
 pub fn record_gem_factory_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
+    owner: Address,
     units: u32,
 ) -> Result<()> {
-    add_realized_units(storage, series_id, units, RealizedKind::GemFactory)
+    add_realized_units(storage, series_id, units, RealizedKind::GemFactory)?;
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::GemFactory)
 }
 
 /// Units of `series_id` paid for and not yet exercised.
@@ -190,6 +192,7 @@ pub fn exercised_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Resu
 pub fn record_exercised_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
+    owner: Address,
     units: u32,
 ) -> Result<()> {
     let registry = IntexContract::new(storage.clone());
@@ -205,7 +208,51 @@ pub fn record_exercised_units(
         .checked_add(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     registry.settled_units.write(&series_id, settled)?;
-    registry.exercised_units.write(&series_id, exercised)
+    registry.exercised_units.write(&series_id, exercised)?;
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::Exercised)
+}
+
+/// Adds to one owner's history ledger for the series.
+fn add_owner_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+    units: u32,
+    ledger: OwnerLedger,
+) -> Result<()> {
+    let registry = IntexContract::new(storage.clone());
+    let key = IntexContract::owner_units_key(series_id, owner);
+    let ledger = match ledger {
+        OwnerLedger::Exercised => &registry.owner_exercised_units,
+        OwnerLedger::GemFactory => &registry.owner_gem_factory_units,
+    };
+    let total = ledger
+        .read(&key)?
+        .checked_add(units)
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+    ledger.write(&key, total)
+}
+
+/// Units of `series_id` this owner exercised.
+pub fn owner_exercised_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .owner_exercised_units
+        .read(&IntexContract::owner_units_key(series_id, owner))
+}
+
+/// Units of `series_id` this owner sent to the Gem Factory.
+pub fn owner_gem_factory_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .owner_gem_factory_units
+        .read(&IntexContract::owner_units_key(series_id, owner))
 }
 
 /// The disjoint classes an issued unit can be in. They sum to `issued`.
@@ -247,6 +294,12 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
 
 enum RealizedKind {
     Settled,
+    GemFactory,
+}
+
+/// Which per-owner history ledger a record touches.
+enum OwnerLedger {
+    Exercised,
     GemFactory,
 }
 

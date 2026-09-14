@@ -112,6 +112,22 @@ interface IIntexFactory {
     /// @notice Read the disjoint unit counts of `seriesId`.
     function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
+    /// @notice One owner's share of the same classes. `issuedUnits` here is that
+    ///         owner's current Issued-class balance, not the series total, and
+    ///         `ownerUnits` is what they can still use: Issued plus Settled.
+    struct OwnerUnitCounts {
+        uint32 issuedUnits;
+        uint32 activeUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 forfeitedUnits;
+        uint32 ownerUnits;
+    }
+
+    /// @notice Read `owner`'s unit counts in `seriesId`.
+    function ownerUnitCounts(bytes14 seriesId, address owner) external view returns (OwnerUnitCounts memory);
+
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPrice);
 

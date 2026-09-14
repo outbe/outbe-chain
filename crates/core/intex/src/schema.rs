@@ -477,11 +477,29 @@ pub struct IntexContract {
     /// series_id -> settled units burned into Promis so far.
     #[attribute(order = 29)]
     pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    // Per-owner history. The two current classes are the owner's Issued- and
+    // Settled-class token balances, so only what the token no longer holds is kept.
+    /// `owner_units_key` -> units this owner exercised in the series.
+    #[attribute(order = 30)]
+    pub owner_exercised_units: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// `owner_units_key` -> units this owner sent to the Gem Factory.
+    #[attribute(order = 31)]
+    pub owner_gem_factory_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {
     /// Composite key for per-day contributor index lists:
     /// `keccak256(worldwide_day_be32 ++ index_be32)`.
+    /// Composite key for the per-owner ledgers: `keccak256(series_id ++ owner)`.
+    pub fn owner_units_key(series_id: SeriesId, owner: Address) -> B256 {
+        let mut buf = [0u8; SERIES_ID_LEN + 20];
+        buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
+        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
+        keccak256(buf)
+    }
+
     pub fn contributor_index_key(worldwide_day: WorldwideDay, index: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());

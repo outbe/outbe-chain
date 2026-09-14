@@ -115,6 +115,11 @@ fn certified_contributor_installation_has_no_public_write_selector() {
     assert!(provider.get_ordered_events().is_empty());
 }
 
+/// The owner the unit ledgers are booked against in these tests.
+fn owner() -> Address {
+    Address::repeat_byte(0xA1)
+}
+
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
@@ -1110,7 +1115,7 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 41);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_gem_factory_units(&s, id, 25).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
         assert_eq!(api::gem_factory_units(&s, id).unwrap(), 25);
@@ -1123,7 +1128,7 @@ fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
         api::record_settled_units(&s, id, 60).unwrap();
-        api::record_gem_factory_units(&s, id, 40).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
 
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
         assert_eq!(
@@ -1138,7 +1143,7 @@ fn the_view_carries_what_is_still_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 46);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_gem_factory_units(&s, id, 25).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
         let data = dispatch_series_data(&s, id);
         assert_eq!(data.settledUnits, 30);
@@ -1196,7 +1201,7 @@ fn realized_units_can_never_exceed_the_issued_count() {
         api::record_settled_units(&s, id, 100).unwrap();
         // One unit past the cap means the two ledgers disagree; the forfeit
         // arithmetic would underflow later, so it is refused here instead.
-        assert!(api::record_gem_factory_units(&s, id, 1).is_err());
+        assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
     });
 }
@@ -1206,8 +1211,8 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 50);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_gem_factory_units(&s, id, 25).unwrap();
-        api::record_exercised_units(&s, id, 15).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_exercised_units(&s, id, owner(), 15).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.issued, 100);
@@ -1232,8 +1237,8 @@ fn expiry_moves_the_active_units_into_forfeited() {
     with_registry(|s| {
         let id = called_series(&s, 51);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_gem_factory_units(&s, id, 25).unwrap();
-        api::record_exercised_units(&s, id, 30).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_exercised_units(&s, id, owner(), 30).unwrap();
         api::expire_series(&s, id).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
@@ -1271,9 +1276,9 @@ fn exercising_more_than_was_settled_is_refused() {
         let id = called_series(&s, 53);
         api::record_settled_units(&s, id, 10).unwrap();
 
-        assert!(api::record_exercised_units(&s, id, 11).is_err());
-        api::record_exercised_units(&s, id, 10).unwrap();
-        assert!(api::record_exercised_units(&s, id, 1).is_err());
+        assert!(api::record_exercised_units(&s, id, owner(), 11).is_err());
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        assert!(api::record_exercised_units(&s, id, owner(), 1).is_err());
         assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
     });
 }
@@ -1283,7 +1288,7 @@ fn exercising_moves_units_out_of_the_settled_ledger() {
     with_registry(|s| {
         let id = called_series(&s, 54);
         api::record_settled_units(&s, id, 40).unwrap();
-        api::record_exercised_units(&s, id, 15).unwrap();
+        api::record_exercised_units(&s, id, owner(), 15).unwrap();
 
         // The ledger holds what is still settled, not what was ever paid.
         assert_eq!(api::settled_units(&s, id).unwrap(), 25);
@@ -1298,8 +1303,8 @@ fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
     with_registry(|s| {
         let id = called_series(&s, 55);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_exercised_units(&s, id, 10).unwrap();
-        api::record_gem_factory_units(&s, id, 15).unwrap();
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 15).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.settled, 20);

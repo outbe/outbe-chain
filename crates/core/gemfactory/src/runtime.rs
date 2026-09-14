@@ -130,7 +130,12 @@ pub fn issue_gem_position(
 
     // Their load moved into the position, so the source series cannot forfeit them.
     let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
-    outbe_intex::api::record_gem_factory_units(storage, source_intex_id, gem_factory_units)?;
+    outbe_intex::api::record_gem_factory_units(
+        storage,
+        source_intex_id,
+        caller,
+        gem_factory_units,
+    )?;
 
     let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =
