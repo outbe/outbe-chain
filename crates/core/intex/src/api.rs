@@ -127,11 +127,13 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     }
 
     let settled = registry.settled_units.read(&series_id)?;
+    let exercised = registry.exercised_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
         .issued_units
         .checked_sub(settled)
+        .and_then(|left| left.checked_sub(exercised))
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
 
@@ -162,7 +164,7 @@ pub fn record_gem_factory_units(
     add_realized_units(storage, series_id, units, RealizedKind::GemFactory)
 }
 
-/// Units settled so far against `series_id`.
+/// Units of `series_id` paid for and not yet exercised.
 pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
     IntexContract::new(storage.clone())
         .settled_units
@@ -183,22 +185,26 @@ pub fn exercised_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Resu
         .read(&series_id)
 }
 
-/// Record `units` exercised: their Settled balance was burned into Promis.
+/// Record `units` exercised: they leave `settled_units` and join `exercised_units`,
+/// because exercising burns the Settled balance it counts.
 pub fn record_exercised_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     units: u32,
 ) -> Result<()> {
     let registry = IntexContract::new(storage.clone());
+    // Exercising more than is settled means the ledger and the token disagree.
+    let settled = registry
+        .settled_units
+        .read(&series_id)?
+        .checked_sub(units)
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
     let exercised = registry
         .exercised_units
         .read(&series_id)?
         .checked_add(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
-    // Exercising burns Settled, so passing the settled ledger means the two disagree.
-    if exercised > registry.settled_units.read(&series_id)? {
-        return Err(IntexError::RealizedUnitsOverflow.into());
-    }
+    registry.settled_units.write(&series_id, settled)?;
     registry.exercised_units.write(&series_id, exercised)
 }
 
@@ -212,23 +218,21 @@ pub struct UnitCounts {
     pub forfeited: u32,
 }
 
-/// Derive the disjoint counts from the cumulative ledgers: `settled_units` counts
-/// every unit ever paid, including the ones later burned into Promis, and the unpaid
-/// remainder is active until expiry decides it is forfeited.
+/// Read the disjoint counts: the ledgers hold `settled_units`, `exercised_units` and
+/// `gem_factory_units` directly, and the unpaid remainder is active until expiry
+/// decides it is forfeited.
 pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<UnitCounts> {
     let registry = IntexContract::new(storage.clone());
     let record = registry.load_series(series_id)?;
-    let paid = registry.settled_units.read(&series_id)?;
+    let settled = registry.settled_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
     let exercised = registry.exercised_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not an empty class.
     let unpaid = record
         .issued_units
-        .checked_sub(paid)
+        .checked_sub(settled)
+        .and_then(|left| left.checked_sub(exercised))
         .and_then(|left| left.checked_sub(gem_factory))
-        .ok_or(IntexError::RealizedUnitsOverflow)?;
-    let settled = paid
-        .checked_sub(exercised)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     let expired = record.lifecycle_state()? == IntexState::Expired;
     Ok(UnitCounts {
@@ -259,6 +263,7 @@ fn add_realized_units(
     // One slot, not the whole record: this runs on every settle.
     let issued = registry.series.entry(series_id).issued_units().read()?;
     let settled = registry.settled_units.read(&series_id)?;
+    let exercised = registry.exercised_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
 
     let (settled, gem_factory) = match kind {
@@ -275,9 +280,10 @@ fn add_realized_units(
                 .ok_or(IntexError::RealizedUnitsOverflow)?,
         ),
     };
-    // Crossing the issued count means the two ledgers disagree.
+    // Crossing the issued count means the ledgers disagree.
     if settled
-        .checked_add(gem_factory)
+        .checked_add(exercised)
+        .and_then(|left| left.checked_add(gem_factory))
         .is_none_or(|realized| realized > issued)
     {
         return Err(IntexError::RealizedUnitsOverflow.into());

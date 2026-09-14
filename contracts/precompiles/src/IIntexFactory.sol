@@ -98,8 +98,8 @@ interface IIntexFactory {
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
     ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
-    ///         `settledUnits` here is what is paid and not yet mined, unlike the
-    ///         cumulative `settledUnits` of `IIntex.seriesData`.
+    ///         `settledUnits` is what is paid and not yet exercised, the same
+    ///         measure `IIntex.seriesData` reports.
     struct UnitCounts {
         uint32 issuedUnits;
         uint32 activeUnits;

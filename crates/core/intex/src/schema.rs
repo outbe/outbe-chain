@@ -463,9 +463,10 @@ pub struct IntexContract {
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Cumulative: a series forfeits `issued_units - settled - gem_factory` at its
-    // deadline. Not on `SeriesRecord` because a record write rewrites every field.
-    /// series_id -> units settled so far.
+    // Disjoint classes: a series forfeits `issued_units - settled - exercised -
+    // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
+    // rewrites every field.
+    /// series_id -> units paid for and not yet exercised.
     #[attribute(order = 27)]
     pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 

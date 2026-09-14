@@ -1277,3 +1277,38 @@ fn exercising_more_than_was_settled_is_refused() {
         assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
     });
 }
+
+#[test]
+fn exercising_moves_units_out_of_the_settled_ledger() {
+    with_registry(|s| {
+        let id = called_series(&s, 54);
+        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_exercised_units(&s, id, 15).unwrap();
+
+        // The ledger holds what is still settled, not what was ever paid.
+        assert_eq!(api::settled_units(&s, id).unwrap(), 25);
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 15);
+    });
+}
+
+/// The worked example of the spec: 100 issued, 20 settled, 10 exercised and 15 sent
+/// to the Gem Factory leave 55 unpaid units to forfeit.
+#[test]
+fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
+    with_registry(|s| {
+        let id = called_series(&s, 55);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_exercised_units(&s, id, 10).unwrap();
+        api::record_gem_factory_units(&s, id, 15).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.settled, 20);
+        assert_eq!(counts.exercised, 10);
+        assert_eq!(counts.gem_factory, 15);
+        assert_eq!(counts.active, 55);
+
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 55);
+        // Expired is terminal, so a repeated sweep can credit nothing more.
+        assert!(api::expire_series(&s, id).is_err());
+    });
+}
