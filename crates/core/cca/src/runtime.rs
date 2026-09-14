@@ -33,6 +33,7 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result
         }
         let mut contract = CcaContract::new(storage.clone());
         let mut record = contract.records.get(caller)?.unwrap_or(CcaRecord {
+            id: caller,
             cca: caller,
             state: ICca::State::Bonding,
             bonded_amount: U256::ZERO,
