@@ -1139,20 +1139,25 @@ fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
 }
 
 #[test]
-fn the_view_carries_what_is_still_unrealized() {
+fn the_view_carries_the_whole_split() {
     with_registry(|s| {
         let id = called_series(&s, 46);
         api::record_settled_units(&s, id, 30).unwrap();
+        api::record_exercised_units(&s, id, owner(), 5).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
+        // Every class the series record can answer for, without a second call.
         let data = dispatch_series_data(&s, id);
-        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.issuedUnits, 100);
+        assert_eq!(data.settledUnits, 25);
+        assert_eq!(data.exercisedUnits, 5);
         assert_eq!(data.gemFactoryUnits, 25);
 
         // The counters survive expiry, so the split stays readable afterwards.
         api::expire_series(&s, id).unwrap();
         let data = dispatch_series_data(&s, id);
-        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.settledUnits, 25);
+        assert_eq!(data.exercisedUnits, 5);
         assert_eq!(data.gemFactoryUnits, 25);
     });
 }

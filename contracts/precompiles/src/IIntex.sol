@@ -39,6 +39,8 @@ interface IIntex {
         uint32 worldwideDay;
         /// @notice Units paid for and not yet exercised; their load belongs to the settler.
         uint32 settledUnits;
+        /// @notice Units already burned into Promis; they leave `settledUnits` for good.
+        uint32 exercisedUnits;
         /// @notice Units sent to the Gem Factory; their load moved with them.
         uint32 gemFactoryUnits;
     }

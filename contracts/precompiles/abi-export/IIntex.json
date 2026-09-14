@@ -156,6 +156,11 @@
             "internalType": "uint32"
           },
           {
+            "name": "exercisedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
             "name": "gemFactoryUnits",
             "type": "uint32",
             "internalType": "uint32"
