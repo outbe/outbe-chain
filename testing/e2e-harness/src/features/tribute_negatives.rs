@@ -161,7 +161,8 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             assert!(
                 call.zkMerkleRoot.is_empty()
                     && call.zkProof.is_empty()
-                    && call.zkVerificationKey.is_empty()
+                    && call.chainId == 0
+                    && call.version.is_empty()
                     && call.signature.is_empty(),
                 "the registration guard must not depend on zk material"
             );

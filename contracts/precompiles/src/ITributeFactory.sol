@@ -2,9 +2,9 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
-    // Every caller must be a registered L2 operator. `zkVerificationKey` holds
-    // raw key bytes whose keccak256 must match a vk_hash explicitly enabled
-    // in L2_CIRCUITS_REGISTRY for that operator's L2.
+    // Every caller must be a registered L2 operator. `chainId` must match that
+    // operator's L2, and `version` selects an exact L2_CIRCUITS_REGISTRY entry.
+    // The chain loads the corresponding canonical verification key.
     // `zkProof` uses bb-keccak-v1 with four public inputs in order:
     // derived_owner, nft_hash, binding_hash, merkle_root. The hashes must retain
     // the TributeDraft and caller/L1-chain binding semantics checked by the enclave.
@@ -23,7 +23,8 @@ interface ITributeFactory {
         uint16 referenceCurrency,
         bool excludeFromIntexIssuance,
         bytes calldata zkProof,
-        bytes calldata zkVerificationKey,
+        uint32 chainId,
+        string calldata version,
         bytes calldata zkPublicKey,
         bytes calldata zkMerkleRoot,
         bytes calldata signature

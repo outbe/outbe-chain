@@ -88,7 +88,8 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"uint16","name":"referenceCurrency"},
          {"type":"bool","name":"excludeFromIntexIssuance"},
          {"type":"bytes","name":"zkProof"},
-         {"type":"bytes","name":"zkVerificationKey"},
+         {"type":"uint32","name":"chainId"},
+         {"type":"string","name":"version"},
          {"type":"bytes","name":"zkPublicKey"},
          {"type":"bytes","name":"zkMerkleRoot"},
          {"type":"bytes","name":"signature"}
@@ -205,7 +206,7 @@ def main() -> None:
         int(args.currency),
         int(args.currency),
         args.exclude_from_intex_issuance,
-        b"", b"", b"", b"", b"",
+        b"", 0, "", b"", b"", b"",
     ).build_transaction(
         {
             "from": creator,

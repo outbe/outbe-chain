@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_compressed_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
@@ -28,7 +28,8 @@ pub(crate) struct OfferTributeInput {
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
-    pub zk_verification_key: Bytes,
+    pub l2_chain_id: u32,
+    pub circuit_version: String,
     pub zk_merkle_root: Bytes,
     pub signature: Bytes,
 }
@@ -90,7 +91,8 @@ impl TributeFactoryContract<'_> {
             reference_currency,
             exclude_from_intex_issuance,
             zk_proof,
-            zk_verification_key,
+            l2_chain_id,
+            circuit_version,
             zk_merkle_root,
             signature,
         } = input;
@@ -107,20 +109,29 @@ impl TributeFactoryContract<'_> {
             &zk_merkle_root,
             &signature,
         )?;
-        let zk_public_inputs = match zk_check {
-            outbe_l2registry::api::ZkOfferCheck::Verified { chain_id } => {
+        let zk_inputs = match zk_check {
+            outbe_l2registry::api::ZkOfferCheck::Verified {
+                chain_id: registered_chain_id,
+            } => {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
                 }
-                require_zk_verification_key(chain_id, &zk_verification_key)?;
-                let public = decode_zk_public_inputs(&zk_proof, &zk_verification_key)?;
+                if u64::from(l2_chain_id) != registered_chain_id {
+                    return Err(TributeFactoryError::CircuitChainMismatch {
+                        provided: l2_chain_id,
+                        registered: registered_chain_id,
+                    }
+                    .into());
+                }
+                let verification_key = resolve_verification_key(l2_chain_id, &circuit_version)?;
+                let public = decode_zk_public_inputs(&zk_proof, verification_key)?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
                         field: "merkle_root",
                     }
                     .into());
                 }
-                Some(public)
+                Some((public, verification_key))
             }
             outbe_l2registry::api::ZkOfferCheck::NotRegistered => {
                 return Err(TributeFactoryError::UnregisteredL2Operator { caller }.into());
@@ -165,8 +176,8 @@ impl TributeFactoryContract<'_> {
             return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
 
-        let zk_context = match zk_public_inputs {
-            Some(public) => Some(TributeZkContext {
+        let zk_context = match zk_inputs {
+            Some((public, _)) => Some(TributeZkContext {
                 derived_owner: B256::from(public.derived_owner),
                 chain_id: self.storage.chain_id()?,
             }),
@@ -202,10 +213,10 @@ impl TributeFactoryContract<'_> {
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
-        if let Some(public) = zk_public_inputs {
+        if let Some((public, verification_key)) = zk_inputs {
             validate_zk_result(
                 &zk_proof,
-                &zk_verification_key,
+                verification_key,
                 public,
                 result.zk_expected_hashes.as_ref(),
             )?;
@@ -285,26 +296,35 @@ impl TributeFactoryContract<'_> {
     }
 }
 
-fn require_zk_verification_key(l2_chain_id: u64, verification_key: &[u8]) -> Result<()> {
-    let vk_hash = keccak256(verification_key);
-    if !outbe_zk_canonical::l2_circuits(l2_chain_id)
+fn resolve_verification_key(l2_chain_id: u32, version: &str) -> Result<&'static [u8]> {
+    let binding = outbe_zk_canonical::l2_circuits(u64::from(l2_chain_id))
         .iter()
-        .any(|entry| entry.vk_hash == vk_hash.0)
-    {
-        return Err(TributeFactoryError::ZkVerificationKeyNotEnabled {
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| TributeFactoryError::UnknownCircuitVersion {
             chain_id: l2_chain_id,
-            vk_hash,
-        }
-        .into());
+            version: version.to_owned(),
+        })?;
+    let circuit = outbe_zk_canonical::noir::CIRCUIT_REGISTRY
+        .iter()
+        .find(|entry| {
+            entry.circuit_hash == binding.circuit_hash && entry.version == binding.version
+        })
+        .ok_or_else(|| {
+            PrecompileError::Fatal(
+                "L2 circuit binding has no canonical verification metadata".into(),
+            )
+        })?;
+    if circuit.proof_system != "bb-keccak-v1" {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
     }
-    Ok(())
+    Ok(circuit.vk_bytes)
 }
 
 fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<FullProofPublicInputs> {
     // bb-keccak-v1 VK: log circuit size, public count (including eight
     // pairing-accumulator words), offset, then 28 two-word commitments.
-    // The whitelist authenticates these bytes. Canonical key generation pins
-    // bb-keccak-v1; retain its layout checks before calling the backend.
+    // The key comes from the exact registered L2 circuit version. Retain
+    // bb-keccak-v1 layout checks before calling the backend.
     if verification_key.len() != 59 * 32 {
         return Err(TributeFactoryError::UnsupportedZkCircuit.into());
     }
@@ -432,11 +452,9 @@ mod zk_result_tests {
     use super::*;
     use outbe_tee::protocol::TributeZkExpectedHashes;
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
-    use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
 
     fn verification_key() -> &'static [u8] {
-        require_zk_verification_key(0xdead, FullProof::VK_BYTES).unwrap();
-        FullProof::VK_BYTES
+        resolve_verification_key(0xdead, "1.1.0").unwrap()
     }
 
     fn public_inputs() -> FullProofPublicInputs {
@@ -521,10 +539,15 @@ mod zk_result_tests {
     }
 
     #[test]
-    fn verification_keys_must_belong_to_the_authenticated_l2() {
-        for l2_chain_id in [0, 4242] {
+    fn circuit_selection_requires_an_exact_registered_chain_and_version() {
+        for (l2_chain_id, version) in [
+            (0, "1.1.0"),
+            (4242, "1.1.0"),
+            (0xdead, ""),
+            (0xdead, "1.2.0"),
+        ] {
             assert!(matches!(
-                require_zk_verification_key(l2_chain_id, FullProof::VK_BYTES),
+                resolve_verification_key(l2_chain_id, version),
                 Err(PrecompileError::Revert(_))
             ));
         }

@@ -262,7 +262,7 @@ def main() -> None:
     result = run_cast(
         "send",
         FACTORY,
-        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,bytes,bytes,bytes,bytes)(bytes)",
+        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,uint32,string,bytes,bytes,bytes)(bytes)",
         cipher_text,
         nonce,
         ephemeral_pubkey,
@@ -271,7 +271,8 @@ def main() -> None:
         str(args.currency),
         str(args.exclude_from_intex_issuance).lower(),
         "0x",
-        "0x",
+        "0",
+        "",
         "0x",
         "0x",
         "0x",

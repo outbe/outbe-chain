@@ -57,7 +57,6 @@ mod l2_zk_gate {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
-    use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
 
     use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
@@ -84,7 +83,8 @@ mod l2_zk_gate {
             reference_currency: 840,
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
-            zk_verification_key: Bytes::copy_from_slice(FullProof::VK_BYTES),
+            l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+            circuit_version: "1.1.0".to_owned(),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
@@ -149,21 +149,19 @@ mod l2_zk_gate {
             )
             .encode()
             .to_vec();
-            // A signed root does not authorize an arbitrary verification key,
-            // even when the proof itself has the expected public-input shape.
-            for key in [
-                &[][..],
-                &FullProof::VK_HASH[..],
-                outbe_zk_canonical::noir::emit_mint::EmitMint::VK_BYTES,
-            ] {
-                let mut wrong_key = offer(&root, &good_sig);
-                wrong_key.zk_proof = dummy_full_proof(root);
-                wrong_key.zk_verification_key = Bytes::copy_from_slice(key);
+            // A signed root does not authorize an unknown circuit version.
+            for version in ["", "1.2.0"] {
+                let mut wrong_version = offer(&root, &good_sig);
+                wrong_version.zk_proof = dummy_full_proof(root);
+                wrong_version.circuit_version = version.to_owned();
                 let error = factory
-                    .offer_tribute(&scope, &NoParentBodies, wrong_key)
+                    .offer_tribute(&scope, &NoParentBodies, wrong_version)
                     .unwrap_err();
-                assert!(revert_message(error)
-                    .contains(&format!("not enabled for L2 chain {L2_CHAIN_ID}")));
+                let expected = crate::errors::TributeFactoryError::UnknownCircuitVersion {
+                    chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+                    version: version.to_owned(),
+                };
+                assert_eq!(revert_message(error), expected.to_string());
             }
             let mut valid_gate = offer(&root, &good_sig);
             valid_gate.zk_proof = dummy_full_proof(root);
@@ -172,6 +170,22 @@ mod l2_zk_gate {
                 .offer_tribute(&scope, &NoParentBodies, valid_gate)
                 .unwrap_err();
             assert!(revert_message(err).contains("is not in OFFERING status"));
+
+            // A caller cannot borrow a circuit selector from another L2.
+            registry.remove_network(caller(), L2_CHAIN_ID).unwrap();
+            registry
+                .register_network_with_zk(4242, caller(), &public, true)
+                .unwrap();
+            let mut wrong_chain = offer(&root, &good_sig);
+            wrong_chain.zk_proof = dummy_full_proof(root);
+            let error = factory
+                .offer_tribute(&scope, &NoParentBodies, wrong_chain)
+                .unwrap_err();
+            let expected = crate::errors::TributeFactoryError::CircuitChainMismatch {
+                provided: u32::try_from(L2_CHAIN_ID).unwrap(),
+                registered: 4242,
+            };
+            assert_eq!(revert_message(error), expected.to_string());
         });
     }
 
@@ -431,7 +445,8 @@ fn offer_input(caller: Address, worldwide_day: WorldwideDay) -> OfferTributeInpu
         reference_currency: 840,
         exclude_from_intex_issuance: false,
         zk_proof: Bytes::new(),
-        zk_verification_key: Bytes::new(),
+        l2_chain_id: 0,
+        circuit_version: String::new(),
         zk_merkle_root: Bytes::new(),
         signature: Bytes::new(),
     }

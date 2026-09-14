@@ -15885,15 +15885,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 996,
-        "zero_bytes": 602,
-        "nonzero_bytes": 394,
+        "bytes": 1028,
+        "zero_bytes": 633,
+        "nonzero_bytes": 395,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 2408,
-        "nonzero_byte_gas": 6304
+        "zero_byte_gas": 2532,
+        "nonzero_byte_gas": 6320
       },
       "gas_totals": {
-        "user_transaction": 604912
+        "user_transaction": 605052
       },
       "gas_components": [
         {
@@ -15905,14 +15905,14 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 2408,
-          "operations": 602
+          "gas": 2532,
+          "operations": 633
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 6304,
-          "operations": 394
+          "gas": 6320,
+          "operations": 395
         },
         {
           "ledger": "user_transaction",
@@ -16689,15 +16689,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 11908,
-        "zero_bytes": 1134,
-        "nonzero_bytes": 10774,
+        "bytes": 10084,
+        "zero_bytes": 1030,
+        "nonzero_bytes": 9054,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 4536,
-        "nonzero_byte_gas": 172384
+        "zero_byte_gas": 4120,
+        "nonzero_byte_gas": 144864
       },
       "gas_totals": {
-        "user_transaction": 773120
+        "user_transaction": 745184
       },
       "gas_components": [
         {
@@ -16709,14 +16709,14 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 4536,
-          "operations": 1134
+          "gas": 4120,
+          "operations": 1030
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 172384,
-          "operations": 10774
+          "gas": 144864,
+          "operations": 9054
         },
         {
           "ledger": "user_transaction",

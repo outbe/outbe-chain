@@ -29,7 +29,7 @@ use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
 use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::{CircuitId, INCLUSION_DEPTH};
+use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::world::rpc::TributeZkOffer;
@@ -77,12 +77,6 @@ fn field_bytes(field: &Fr) -> [u8; 32] {
     OutbeV1::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
-}
-
-/// Verification key the operator's client submits with a proof; the node
-/// resolves the whitelisted circuit from `keccak256` of exactly these bytes.
-fn full_proof_vk_hex() -> String {
-    format!("0x{}", hex::encode(FullProof::VK_BYTES))
 }
 
 fn generate_zk_offer_fixture(
@@ -244,7 +238,6 @@ fn offer_without_signature(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     super::tribute_projection::wait_for_offering(world, &wwd);
     let key = operator_key(world);
-    let verification_key_hex = full_proof_vk_hex();
     let tx_hash = world
         .rpc
         .tribute_offer_with_zk(
@@ -255,7 +248,8 @@ fn offer_without_signature(world: &mut World) {
                 su_hash_hex: &format!("{:#x}", low_b256(0x22)),
                 merkle_root_hex: &format!("{:#x}", low_b256(0x33)),
                 proof_hex: "0x",
-                verification_key_hex: &verification_key_hex,
+                l2_chain_id: L2_CHAIN_ID as u32,
+                circuit_version: "1.1.0",
                 signature_hex: "0x",
             },
         )
@@ -310,7 +304,6 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     )
     .expect("positive control: signature verifies against the registered key");
     let signature = signature.encode().to_vec();
-    let verification_key_hex = full_proof_vk_hex();
 
     super::tribute_projection::wait_for_offering(world, &wwd);
     let rejected = world
@@ -323,7 +316,8 @@ fn offer_with_valid_zk_proof(world: &mut World) {
                 su_hash_hex: &fixture.su_hash_hex,
                 merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
                 proof_hex: &tampered,
-                verification_key_hex: &verification_key_hex,
+                l2_chain_id: L2_CHAIN_ID as u32,
+                circuit_version: "1.1.0",
                 signature_hex: &format!("0x{}", hex::encode(&signature)),
             },
         )
@@ -347,7 +341,8 @@ fn offer_with_valid_zk_proof(world: &mut World) {
                 su_hash_hex: &fixture.su_hash_hex,
                 merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
                 proof_hex: &fixture.proof_hex,
-                verification_key_hex: &verification_key_hex,
+                l2_chain_id: L2_CHAIN_ID as u32,
+                circuit_version: "1.1.0",
                 signature_hex: &format!("0x{}", hex::encode(signature)),
             },
         )

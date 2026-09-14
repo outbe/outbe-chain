@@ -115,7 +115,8 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         cur, // referenceCurrency - a separate axis, same value here
         excludeFromIntex,
         "0x" as Hex,
-        "0x" as Hex,
+        0, // chainId (unused on the non-ZK path)
+        "", // version
         "0x" as Hex,
         "0x" as Hex,
         "0x" as Hex,

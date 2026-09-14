@@ -27,11 +27,11 @@ pub enum TributeFactoryError {
     #[error("zkProof is required when ZK verification is enabled")]
     ZkProofRequired,
 
-    #[error("ZK verification key {vk_hash} is not enabled for L2 chain {chain_id}")]
-    ZkVerificationKeyNotEnabled {
-        chain_id: u64,
-        vk_hash: alloy_primitives::B256,
-    },
+    #[error("circuit chain {provided} does not match registered L2 chain {registered}")]
+    CircuitChainMismatch { provided: u32, registered: u64 },
+
+    #[error("unknown circuit version {version:?} for L2 chain {chain_id}")]
+    UnknownCircuitVersion { chain_id: u32, version: String },
 
     #[error("ZK circuit does not support the Tribute proof interface")]
     UnsupportedZkCircuit,

@@ -73,7 +73,7 @@ use outbe_zk_canonical::full_proof::{
     COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
 };
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::{CircuitId, INCLUSION_DEPTH};
+use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -121,7 +121,8 @@ mod abi {
             uint16 referenceCurrency,
             bool excludeFromIntexIssuance,
             bytes zkProof,
-            bytes zkVerificationKey,
+            uint32 chainId,
+            string version,
             bytes zkPublicKey,
             bytes zkMerkleRoot,
             bytes signature
@@ -332,18 +333,6 @@ fn build_fixture() -> Fixture {
     }
 }
 
-/// The raw verification key both the runtime lookup and the ABI call carry.
-///
-/// Kept in one place so the bench cannot measure a runtime key that differs
-/// from the one it encodes into calldata.
-fn verification_key(zk: bool) -> Bytes {
-    if zk {
-        Bytes::from_static(FullProof::VK_BYTES)
-    } else {
-        Bytes::new()
-    }
-}
-
 fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
     BenchOfferInput {
         caller: CALLER,
@@ -359,7 +348,12 @@ fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
         } else {
             Bytes::new()
         },
-        zk_verification_key: verification_key(zk),
+        l2_chain_id: if zk { L2_CHAIN_ID as u32 } else { 0 },
+        circuit_version: if zk {
+            "1.1.0".to_owned()
+        } else {
+            String::new()
+        },
         zk_merkle_root: if zk {
             Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
         } else {
@@ -387,7 +381,12 @@ fn calldata(fixture: &Fixture, zk: bool) -> Vec<u8> {
         } else {
             Bytes::new()
         },
-        zkVerificationKey: verification_key(zk),
+        chainId: if zk { L2_CHAIN_ID as u32 } else { 0 },
+        version: if zk {
+            "1.1.0".to_owned()
+        } else {
+            String::new()
+        },
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: if zk {
             Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
