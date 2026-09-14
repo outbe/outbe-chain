@@ -82,7 +82,7 @@ contract MockTheCompact {
 
     // ============ Forced withdrawal (bypasses allocator and operator checks) ============
 
-    /// @dev ponytail: no reset-period timer; arms immediately. The property under test is that
+    /// @dev NB: no reset-period timer; arms immediately. The property under test is that
     ///      forced withdrawal can only touch the caller's own free balance, not escrow-held collateral.
     function enableForcedWithdrawal(uint256 id) external returns (uint256 withdrawableAt) {
         withdrawableAt = block.timestamp;

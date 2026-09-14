@@ -14,8 +14,7 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
             return Ok(U256::ZERO);
         }
         let mut contract = CcaContract::new(ctx.storage.clone());
-        // ponytail: O(active CCAs) per daily settlement; batch with a frozen snapshot
-        // before active-agent growth exceeds the Cycle gas budget.
+        // TODO: O(active CCAs) per daily settlement; fine because of a few active CCAs.
         let mut weights = Vec::new();
         let mut total = U256::ZERO;
         for cca in contract.active.read_all()? {

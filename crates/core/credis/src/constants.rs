@@ -1,14 +1,5 @@
 //! Module-local protocol constants for credis positions.
-//!
-//! Values trace to the Credis product paper section 10. Those still marked TBD there
-//! carry a placeholder here plus a `ponytail:` note naming what has to be
-//! decided before launch.
 
-/// The four call terms below are snapshotted onto a position when it opens, and
-/// every later check reads the position's copy. Retuning one of them re-terms
-/// positions opened afterwards, and leaves every already-open position on the
-/// terms it was opened with - the same guarantee gem and intex give.
-///
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 
@@ -51,7 +42,7 @@ pub const DAYS_PER_YEAR: u64 = 365;
 
 /// Basis-point multiplier applied to the currency's official policy rate when
 /// pinning a position's `policy_rate` at opening. 10_000 bp = x1.
-// ponytail: section 10 lists the policy-rate factor as TBD and proposes a default of 1.
+// TODO: confirm the policy-rate factor before launch; section 10 lists it as TBD and proposes 1.
 // A governance-settable parameter is the upgrade path if it needs retuning
 // without a redeploy.
 pub const POLICY_RATE_FACTOR_BP: u32 = 10_000;
