@@ -22,7 +22,7 @@ interface ICca {
     event Bonded(address indexed cca, uint256 amount, uint256 selfBond, State state);
     event UnbondRequested(address indexed cca, uint256 amount, uint64 unbondUnlocksAfter);
     event UnbondClaimed(address indexed cca, uint256 amount);
-    event RewardAccrued(address indexed cca, uint32 indexed worldwideDay, uint256 amount);
+    event RewardAccrued(address indexed cca, uint32 indexed utcDay, uint256 amount);
     event RewardsClaimed(address indexed cca, uint256 amount);
 
     /// @notice Bond COEN and set a nonempty CCA name.

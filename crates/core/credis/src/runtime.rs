@@ -7,10 +7,9 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_primitives::cycle::Cycle;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::{
@@ -20,11 +19,12 @@ use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
 
-/// Use the bucket owned by Cycle, including while its day transition is pending.
-fn reward_day(storage: &StorageHandle<'_>) -> Result<WorldwideDay> {
-    let active_day = Cycle::new(storage.clone()).active_utc_day.read()?;
-    let day = WorldwideDay::new(active_day);
-    Ok(day)
+/// Current execution timestamp's UTC reward day key (YYYYMMDD).
+fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
+    // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
+    let timestamp =
+        u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow)?;
+    Ok(timestamp_to_date_key(timestamp))
 }
 
 /// Terms captured when a position opens. Grouped rather than passed positionally

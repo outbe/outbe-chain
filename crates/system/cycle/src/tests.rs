@@ -1838,5 +1838,5 @@ fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
         "Test CCA".into(),
     )
     .unwrap();
-    outbe_cca::api::position_opened(storage, cca, 20240101.into(), U256::ONE).unwrap();
+    outbe_cca::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
 }

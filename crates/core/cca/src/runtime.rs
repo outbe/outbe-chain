@@ -7,9 +7,7 @@ use crate::{
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{
-    addresses::CCA_ADDRESS, error::Result, storage::StorageHandle, time::WorldwideDay,
-};
+use outbe_primitives::{addresses::CCA_ADDRESS, error::Result, storage::StorageHandle};
 
 fn now(storage: &StorageHandle<'_>) -> Result<u64> {
     // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
@@ -133,11 +131,11 @@ pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> 
     })
 }
 
-/// Trusted Rust entrypoint; called once by Credis with Cycle’s active settlement day.
+/// Trusted Rust entrypoint; called once by Credis with the current UTC reward day key (YYYYMMDD).
 pub fn position_opened(
     storage: &StorageHandle<'_>,
     cca: Address,
-    day: WorldwideDay,
+    day: u32,
     gratis: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
@@ -146,16 +144,18 @@ pub fn position_opened(
             return Err(CcaError::NotActive.into());
         }
         let key = CcaContract::reward_weight_key(cca, day);
-        let deficit = contract.gratis_deficits_per_wwd.read(&key)?;
+        let deficit = contract.gratis_deficits_per_utc_day.read(&key)?;
         let offset = gratis.min(deficit);
         let weight = contract
-            .gratis_sum_per_wwd
+            .gratis_sum_per_utc_day
             .read(&key)?
             .checked_add(gratis - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis and deficit, so both subtractions are exact.
-        contract.gratis_deficits_per_wwd.write(&key, deficit - offset)?;
-        contract.gratis_sum_per_wwd.write(&key, weight)
+        contract
+            .gratis_deficits_per_utc_day
+            .write(&key, deficit - offset)?;
+        contract.gratis_sum_per_utc_day.write(&key, weight)
     })
 }
 
@@ -164,23 +164,23 @@ pub fn position_opened(
 pub fn position_voided(
     storage: &StorageHandle<'_>,
     cca: Address,
-    day: WorldwideDay,
+    day: u32,
     gratis_burned: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
         let contract = CcaContract::new(storage.clone());
         contract.load(cca)?;
         let key = CcaContract::reward_weight_key(cca, day);
-        let weight = contract.gratis_sum_per_wwd.read(&key)?;
+        let weight = contract.gratis_sum_per_utc_day.read(&key)?;
         let offset = gratis_burned.min(weight);
         let deficit = contract
-            .gratis_deficits_per_wwd
+            .gratis_deficits_per_utc_day
             .read(&key)?
             .checked_add(gratis_burned - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis_burned and weight; retain any excess as a deficit.
         let weight = weight - offset;
-        contract.gratis_deficits_per_wwd.write(&key, deficit)?;
-        contract.gratis_sum_per_wwd.write(&key, weight)
+        contract.gratis_deficits_per_utc_day.write(&key, deficit)?;
+        contract.gratis_sum_per_utc_day.write(&key, weight)
     })
 }

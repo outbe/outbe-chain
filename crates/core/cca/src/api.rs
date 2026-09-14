@@ -3,7 +3,7 @@ pub use crate::precompile::ICca;
 pub use crate::runtime::{position_opened, position_voided};
 use crate::{schema::CcaContract, state::validate_state};
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{error::Result, storage::StorageHandle, time::WorldwideDay};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::State> {
     Ok(CcaContract::new(storage.clone()).load(cca)?.state)
@@ -16,10 +16,10 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
     }
 }
 
-/// Raw GRATIS in one activity-day bucket; normalized only during distribution.
-pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: WorldwideDay) -> Result<U256> {
+/// Raw GRATIS in one UTC day bucket (YYYYMMDD); normalized only during distribution.
+pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     CcaContract::new(storage.clone())
-        .gratis_sum_per_wwd
+        .gratis_sum_per_utc_day
         .read(&CcaContract::reward_weight_key(cca, day))
 }
 

@@ -1,10 +1,11 @@
 use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::cycle::Cycle;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, timestamp_to_date_key, worldwide_day_from_timestamp,
+};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::errors::CredisError;
@@ -69,10 +70,6 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        Cycle::new(storage.clone())
-            .active_utc_day
-            .write(timestamp_to_date_key(ORIGINATED_AT))
-            .unwrap();
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
@@ -1196,10 +1193,6 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut storage, |handle| {
-        Cycle::new(handle.clone())
-            .active_utc_day
-            .write(timestamp_to_date_key(ORIGINATED_AT))
-            .unwrap();
         handle
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
@@ -1265,7 +1258,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         let mut credis = CredisContract::new(storage.clone());
         let id = open_pos(&mut credis, 1);
         let initial = collateral();
-        let day = WorldwideDay::new(timestamp_to_date_key(ORIGINATED_AT));
+        let day = timestamp_to_date_key(ORIGINATED_AT);
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
@@ -1281,11 +1274,8 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         );
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        let void_day = WorldwideDay::new(timestamp_to_date_key(deadline));
-        Cycle::new(storage.clone())
-            .active_utc_day
-            .write(void_day.value())
-            .unwrap();
+        let void_day = timestamp_to_date_key(deadline);
+        storage.set_block_timestamp(U256::from(deadline)).unwrap();
         let mut next = params(handle(2), alice());
         next.originated_at = deadline;
         credis.open_position(next).unwrap();
@@ -1309,12 +1299,11 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
 }
 
 #[test]
-fn cca_buckets_follow_cycle_day_even_across_utc_and_worldwide_boundaries() {
+fn cca_buckets_follow_current_utc_day_without_cycle_state() {
     with_credis(|storage| {
-        let day = WorldwideDay::new(timestamp_to_date_key(ORIGINATED_AT));
+        let day = timestamp_to_date_key(ORIGINATED_AT);
         // UTC+14 is already on the next date at this timestamp.
-        assert_ne!(day, WorldwideDay::from_timestamp(ORIGINATED_AT));
-        let cycle = Cycle::new(storage.clone());
+        assert_ne!(day, worldwide_day_from_timestamp(ORIGINATED_AT));
         let mut credis = CredisContract::new(storage.clone());
         let id = open_pos(&mut credis, 1);
         assert_eq!(
@@ -1325,44 +1314,41 @@ fn cca_buckets_follow_cycle_day_even_across_utc_and_worldwide_boundaries() {
             outbe_cca::api::reward_weight(
                 &storage,
                 cca(),
-                WorldwideDay::from_timestamp(ORIGINATED_AT)
+                worldwide_day_from_timestamp(ORIGINATED_AT)
             )
             .unwrap(),
             U256::ZERO
         );
 
-        // Midnight passed, but Cycle is still waiting for settlement. Both
-        // the execution timestamp and sealed origination date differ from its bucket.
-        let next_day = WorldwideDay::new(20231115);
-        let midnight = next_day.to_timestamp_utc();
+        // Crossing UTC midnight selects a new bucket without any Cycle state.
+        let next_day = 20231115;
+        let midnight = date_key_to_utc_timestamp(next_day);
         storage.set_block_timestamp(U256::from(midnight)).unwrap();
         let mut pending = params(handle(2), alice());
         pending.originated_at = midnight;
         credis.open_position(pending).unwrap();
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
-            collateral() * U256::from(2)
+            collateral()
         );
-        assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
-            U256::ZERO
-        );
-
-        cycle.active_utc_day.write(next_day.value()).unwrap();
-        // An older origination timestamp must not select an older reward bucket.
-        open_pos(&mut credis, 3);
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral()
         );
 
+        // An older origination timestamp must not select an older reward bucket.
+        open_pos(&mut credis, 3);
+        assert_eq!(
+            outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
+            collateral() * U256::from(2)
+        );
+
         credis.mark_called(id, midnight).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
         storage.set_block_timestamp(U256::from(deadline)).unwrap();
-        let void_day = WorldwideDay::new(timestamp_to_date_key(deadline));
-        cycle.active_utc_day.write(void_day.value()).unwrap();
+        let void_day = timestamp_to_date_key(deadline);
         credis.void_position(id, deadline).unwrap();
-        // The burn offsets a later opening only in Cycle's current day.
+        // The burn offsets a later opening only in the current UTC day.
         open_pos(&mut credis, 4);
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), void_day).unwrap(),
@@ -1370,26 +1356,25 @@ fn cca_buckets_follow_cycle_day_even_across_utc_and_worldwide_boundaries() {
         );
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
-            collateral() * U256::from(2)
+            collateral()
         );
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
-            collateral()
+            collateral() * U256::from(2)
         );
     });
 }
 
 #[test]
-fn invalid_cycle_day_rolls_back_opening_and_voiding() {
+fn oversized_timestamp_rolls_back_opening_and_voiding() {
     with_credis(|storage| {
-        let cycle = Cycle::new(storage.clone());
         let mut credis = CredisContract::new(storage.clone());
         let id = open_pos(&mut credis, 1);
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let before = credis.get_position(id).unwrap();
         let deadline = settlement_deadline(&before);
-        for day in [0, 20230230] {
-            cycle.active_utc_day.write(day).unwrap();
+        for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+            storage.set_block_timestamp(timestamp).unwrap();
             let invalid = params(handle(2), alice());
             let new_id = CredisContract::position_id(invalid.handle_id, invalid.smart_account);
             assert!(credis.open_position(invalid).is_err());
@@ -1397,7 +1382,7 @@ fn invalid_cycle_day_rolls_back_opening_and_voiding() {
             assert!(credis.void_position(id, deadline).is_err());
             assert_eq!(credis.get_position(id).unwrap(), before);
         }
-        let day = WorldwideDay::new(timestamp_to_date_key(ORIGINATED_AT));
+        let day = timestamp_to_date_key(ORIGINATED_AT);
         assert_eq!(
             outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()

@@ -5,7 +5,6 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::{
     addresses::CCA_ADDRESS,
     storage::types::{Storable, StorableType},
-    time::WorldwideDay,
 };
 
 #[derive(Debug, Clone)]
@@ -32,23 +31,23 @@ pub struct CcaContract {
     pub records: outbe_primitives::storage::dsl::Map<Address, CcaRecord>,
     #[attribute(order = 1)]
     pub active: outbe_primitives::storage::dsl::Set<Address>,
-    /// Six-decimal net GRATIS per WWD. At most one of weight/deficit is nonzero.
+    /// Six-decimal net GRATIS per UTC day. At most one of weight/deficit is nonzero.
     #[attribute(order = 2)]
-    pub gratis_sum_per_wwd: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Excess burns offset later openings for the same CCA and WWD only.
+    pub gratis_sum_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Excess burns offset later openings for the same CCA and UTC day only.
     #[attribute(order = 3)]
-    pub gratis_deficits_per_wwd: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub gratis_deficits_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Claimable native COEN atomic units, independent of the bond.
     #[attribute(order = 4)]
     pub reward_amounts: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl CcaContract<'_> {
-    /// keccak256(cca's 20 bytes || worldwide day's big-endian u32).
-    pub fn reward_weight_key(cca: Address, day: WorldwideDay) -> B256 {
+    /// keccak256(cca's 20 bytes || UTC day's big-endian u32).
+    pub fn reward_weight_key(cca: Address, day: u32) -> B256 {
         let mut bytes = [0u8; 24];
         bytes[..20].copy_from_slice(cca.as_slice());
-        bytes[20..].copy_from_slice(&day.value().to_be_bytes());
+        bytes[20..].copy_from_slice(&day.to_be_bytes());
         keccak256(bytes)
     }
 }

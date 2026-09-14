@@ -377,10 +377,6 @@ pub fn env() -> HashMapStorageProvider {
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     StorageHandle::enter(&mut storage, |handle| {
-        outbe_primitives::cycle::Cycle::new(handle.clone())
-            .active_utc_day
-            .write(outbe_primitives::time::timestamp_to_date_key(CREATED_AT))
-            .unwrap();
         handle
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,

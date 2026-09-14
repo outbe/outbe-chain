@@ -892,9 +892,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             outbe_cca::api::reward_weight(
                 &storage,
                 cca(),
-                outbe_primitives::time::WorldwideDay::new(
-                    outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
-                )
+                outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
             )
             .unwrap(),
             U256::ZERO
@@ -914,9 +912,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             outbe_cca::api::reward_weight(
                 &storage,
                 cca(),
-                outbe_primitives::time::WorldwideDay::new(
-                    outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
-                )
+                outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
             )
             .unwrap(),
             pledge_cost()

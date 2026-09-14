@@ -2,17 +2,13 @@
 use crate::{errors::CcaError, precompile::ICca, schema::CcaContract};
 use alloy_primitives::{U256, U512};
 use outbe_primitives::{
-    addresses::CCA_ADDRESS, block::BlockRuntimeContext, error::Result, time::WorldwideDay,
+    addresses::CCA_ADDRESS, block::BlockRuntimeContext, error::Result,
     units::checked_protocol_to_native,
 };
 
 /// Returns undistributed six-decimal emission units for terminal Metadosis.
 /// Cycle owns the exactly-once day guard and its enclosing transaction.
-pub fn distribute_daily(
-    ctx: &BlockRuntimeContext,
-    day: WorldwideDay,
-    amount: U256,
-) -> Result<U256> {
+pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Result<U256> {
     ctx.storage.with_checkpoint(|| {
         if amount.is_zero() {
             return Ok(U256::ZERO);
@@ -24,7 +20,7 @@ pub fn distribute_daily(
         let mut total = U256::ZERO;
         for cca in contract.active.read_all()? {
             let weight = contract
-                .gratis_sum_per_wwd
+                .gratis_sum_per_utc_day
                 .read(&CcaContract::reward_weight_key(cca, day))?;
             total = total.checked_add(weight).ok_or(CcaError::Arithmetic)?;
             weights.push((cca, weight));
@@ -54,7 +50,7 @@ pub fn distribute_daily(
             ctx.storage.increase_balance(CCA_ADDRESS, native)?;
             contract.emit(ICca::RewardAccrued {
                 cca,
-                worldwideDay: day.value(),
+                utcDay: day,
                 amount: native,
             })?;
             distributed = distributed.checked_add(share).ok_or(CcaError::Arithmetic)?;

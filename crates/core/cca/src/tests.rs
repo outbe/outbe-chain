@@ -12,14 +12,13 @@ use outbe_primitives::{
     addresses::CCA_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::WorldwideDay,
     units::checked_protocol_to_native,
 };
 
 const ALICE: Address = address!("00000000000000000000000000000000000000a1");
 const BOB: Address = address!("00000000000000000000000000000000000000b1");
 const NOW: u64 = 1_700_000_000;
-const DAY: WorldwideDay = WorldwideDay::new(20231115);
+const DAY: u32 = 20231115;
 fn run(f: impl FnOnce(StorageHandle<'_>)) {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(NOW));
@@ -248,7 +247,7 @@ fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
         let before = storage.balance(CCA_ADDRESS).unwrap();
-        assert!(emission_sink::distribute_daily(&ctx, 20231115.into(), U256::MAX).is_err());
+        assert!(emission_sink::distribute_daily(&ctx, 20231115, U256::MAX).is_err());
         assert_eq!(storage.balance(CCA_ADDRESS).unwrap(), before);
         assert_eq!(
             api::get_cca(&storage, ALICE).unwrap().rewardAmount,
@@ -408,14 +407,16 @@ fn daily_distribution_fits_a_representative_active_population() {
 #[test]
 fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
     run(|storage| {
-        let next = WorldwideDay::new(20231116);
+        let next = 20231116;
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
         runtime::position_opened(&storage, ALICE, DAY, U256::from(60)).unwrap();
         runtime::position_opened(&storage, ALICE, DAY, U256::from(40)).unwrap();
         runtime::position_opened(&storage, BOB, DAY, U256::from(100)).unwrap();
         storage
-            .set_block_timestamp(U256::from(next.start_timestamp()))
+            .set_block_timestamp(U256::from(
+                outbe_primitives::time::date_key_to_utc_timestamp(next),
+            ))
             .unwrap();
         runtime::position_opened(&storage, ALICE, next, U256::from(100)).unwrap();
         runtime::position_opened(&storage, BOB, next, U256::from(150)).unwrap();
@@ -455,7 +456,7 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
         );
         // Historical GRATIS does not carry into an empty day.
         assert_eq!(
-            emission_sink::distribute_daily(&ctx, 20231117.into(), U256::from(120)).unwrap(),
+            emission_sink::distribute_daily(&ctx, 20231117, U256::from(120)).unwrap(),
             U256::from(120)
         );
         // A later void cannot claw back already accrued rewards.
@@ -470,7 +471,7 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
 #[test]
 fn deficits_offset_later_openings_only_in_the_same_cca_day() {
     run(|storage| {
-        let next = WorldwideDay::new(20231116);
+        let next = 20231116;
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
         runtime::position_opened(&storage, ALICE, DAY, U256::from(20)).unwrap();
@@ -528,13 +529,19 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         assert!(runtime::position_voided(&storage, ALICE, DAY, U256::ONE).is_err());
         let contract = CcaContract::new(storage.clone());
         let key = CcaContract::reward_weight_key(ALICE, DAY);
-        assert_eq!(contract.gratis_deficits_per_wwd.read(&key).unwrap(), U256::MAX);
+        assert_eq!(
+            contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
+            U256::MAX
+        );
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
         runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
-        assert_eq!(contract.gratis_deficits_per_wwd.read(&key).unwrap(), U256::ZERO);
+        assert_eq!(
+            contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
