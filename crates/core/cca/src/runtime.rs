@@ -1,18 +1,15 @@
 //! Bond custody, transitions, claims, and trusted Credis accounting.
 use crate::{
+    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     errors::CcaError,
     precompile::ICca,
     schema::{CcaContract, CcaRecord},
     state::validate_state,
 };
-use alloy_primitives::{uint, Address, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::{
     addresses::CCA_ADDRESS, error::Result, storage::StorageHandle, time::WorldwideDay,
 };
-
-/// One billion whole COEN, in 18-decimal native atomic units.
-pub const BOND_REQUIREMENT: U256 = uint!(1_000_000_000_000_000_000_000_000_000_U256);
-pub const UNBOND_COOLDOWN_SECONDS: u64 = 128 * 86_400;
 
 fn now(storage: &StorageHandle<'_>) -> Result<u64> {
     // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
@@ -40,7 +37,6 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
             state: ICca::State::Bonding,
             bonded_amount: U256::ZERO,
             unbond_unlocks_after: 0,
-            reward_amount: U256::ZERO,
             name: String::new(),
         });
         validate_state(record.state)?;
@@ -123,13 +119,12 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
 pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     storage.with_checkpoint(|| {
         let mut contract = CcaContract::new(storage.clone());
-        let mut record = contract.load(caller)?;
-        let amount = record.reward_amount;
+        contract.load(caller)?;
+        let amount = contract.reward_amounts.read(&caller)?;
         if amount.is_zero() {
             return Err(CcaError::NoRewards.into());
         }
-        record.reward_amount = U256::ZERO;
-        contract.save(&record)?;
+        contract.reward_amounts.write(&caller, U256::ZERO)?;
         storage.transfer_balance(CCA_ADDRESS, caller, amount)?;
         contract.emit(ICca::RewardsClaimed {
             cca: caller,

@@ -1,7 +1,9 @@
 use crate::{
-    api, emission_sink,
+    api,
+    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
+    emission_sink,
     precompile::{dispatch, ICca},
-    runtime::{self, BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
+    runtime,
     schema::{CcaContract, CcaRecordEntryExt},
 };
 use alloy_primitives::{address, Address, U256};
@@ -254,6 +256,32 @@ fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
         );
         assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
         assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::MAX);
+    });
+}
+
+#[test]
+fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
+    run(|storage| {
+        for cca in [ALICE, BOB] {
+            bond(&storage, cca, BOND_REQUIREMENT);
+            runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
+        }
+        let contract = CcaContract::new(storage.clone());
+        let active = contract.active.read_all().unwrap();
+        // Fail on the second recipient, after the first credit and mint.
+        contract
+            .reward_amounts
+            .write(&active[1], U256::MAX)
+            .unwrap();
+        let balance = storage.balance(CCA_ADDRESS).unwrap();
+        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
+        assert!(emission_sink::distribute_daily(&ctx, DAY, U256::from(2)).is_err());
+        assert_eq!(
+            contract.reward_amounts.read(&active[0]).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(contract.reward_amounts.read(&active[1]).unwrap(), U256::MAX);
+        assert_eq!(storage.balance(CCA_ADDRESS).unwrap(), balance);
     });
 }
 

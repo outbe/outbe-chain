@@ -380,13 +380,13 @@ pub fn env() -> HashMapStorageProvider {
         handle
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::runtime::BOND_REQUIREMENT,
+                outbe_cca::constants::BOND_REQUIREMENT,
             )
             .unwrap();
         outbe_cca::runtime::bond(
             handle,
             cca(),
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();

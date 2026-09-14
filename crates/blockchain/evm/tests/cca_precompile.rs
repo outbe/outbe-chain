@@ -4,8 +4,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_cca::{
     api,
+    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     precompile::ICca,
-    runtime::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
 };
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{

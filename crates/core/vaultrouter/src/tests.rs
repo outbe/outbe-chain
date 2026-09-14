@@ -2138,7 +2138,7 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
 }
 
 fn bond_cca(storage: &StorageHandle<'_>) {
-    let amount = outbe_cca::runtime::BOND_REQUIREMENT;
+    let amount = outbe_cca::constants::BOND_REQUIREMENT;
     storage
         .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, amount)
         .unwrap();

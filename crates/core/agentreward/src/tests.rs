@@ -784,7 +784,7 @@ mod distribute_daily_tests {
     fn cca_accrues_claimable_rewards_across_days() {
         run(|ctx| {
             let cca = address!("00000000000000000000000000000000000000a1");
-            let bond = outbe_cca::runtime::BOND_REQUIREMENT;
+            let bond = outbe_cca::constants::BOND_REQUIREMENT;
             ctx.storage
                 .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, bond)
                 .unwrap();

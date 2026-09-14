@@ -90,13 +90,13 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_ADDRESS,
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
         )
         .map_err(|error| error.to_string())?;
     outbe_cca::runtime::bond(
         storage.clone(),
         CCA,
-        outbe_cca::runtime::BOND_REQUIREMENT,
+        outbe_cca::constants::BOND_REQUIREMENT,
         "Test CCA".into(),
     )
     .map_err(|error| error.to_string())?;

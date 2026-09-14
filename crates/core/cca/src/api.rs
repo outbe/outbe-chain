@@ -24,13 +24,14 @@ pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: WorldwideDa
 }
 
 pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {
-    let record = CcaContract::new(storage.clone()).load(cca)?;
+    let contract = CcaContract::new(storage.clone());
+    let record = contract.load(cca)?;
     Ok(ICca::Cca {
         cca: record.cca,
         state: record.state,
         bondedAmount: record.bonded_amount,
         unbondUnlocksAfter: record.unbond_unlocks_after,
-        rewardAmount: record.reward_amount,
+        rewardAmount: contract.reward_amounts.read(&cca)?,
         name: record.name,
     })
 }

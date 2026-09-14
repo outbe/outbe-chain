@@ -1124,7 +1124,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             fire.storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)
                 .unwrap(),
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
@@ -1191,7 +1191,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)
                 .unwrap(),
-            outbe_cca::runtime::BOND_REQUIREMENT
+            outbe_cca::constants::BOND_REQUIREMENT
                 + outbe_primitives::units::checked_protocol_to_native(amount_for(
                     outbe_emissionlimit::allocation::EmissionSinkId::Cca,
                 ))
@@ -1350,7 +1350,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
         assert!(
-            cca_after_first > outbe_cca::runtime::BOND_REQUIREMENT,
+            cca_after_first > outbe_cca::constants::BOND_REQUIREMENT,
             "first fire credited CCA"
         );
 
@@ -1828,13 +1828,13 @@ fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_ADDRESS,
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
         )
         .unwrap();
     outbe_cca::runtime::bond(
         storage.clone(),
         cca,
-        outbe_cca::runtime::BOND_REQUIREMENT,
+        outbe_cca::constants::BOND_REQUIREMENT,
         "Test CCA".into(),
     )
     .unwrap();

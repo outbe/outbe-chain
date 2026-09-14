@@ -13,19 +13,16 @@ use outbe_primitives::{
 pub struct CcaRecord {
     #[key]
     pub cca: Address,
-    #[attribute(order = 0, default = ICca::State::Bonding)]
+    #[attribute(order = 0)]
+    pub name: String,
+    #[attribute(order = 1, default = ICca::State::Bonding)]
     pub state: ICca::State,
     /// Native COEN atomic units, retained during deregistration until claimed.
-    #[attribute(order = 1)]
+    #[attribute(order = 2)]
     pub bonded_amount: U256,
     /// Unix seconds; checked conversion from the execution timestamp.
-    #[attribute(order = 2)]
-    pub unbond_unlocks_after: u64,
-    /// Native COEN atomic units, independent of the bond.
     #[attribute(order = 3)]
-    pub reward_amount: U256,
-    #[attribute(order = 4)]
-    pub name: String,
+    pub unbond_unlocks_after: u64,
 }
 
 #[storage_schema]
@@ -41,6 +38,9 @@ pub struct CcaContract {
     /// Excess burns offset later openings for the same CCA and WWD only.
     #[attribute(order = 3)]
     pub reward_deficits: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Claimable native COEN atomic units, independent of the bond.
+    #[attribute(order = 4)]
+    pub reward_amounts: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl CcaContract<'_> {

@@ -70,13 +70,13 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::runtime::BOND_REQUIREMENT,
+                outbe_cca::constants::BOND_REQUIREMENT,
             )
             .unwrap();
         outbe_cca::runtime::bond(
             storage.clone(),
             cca(),
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();
@@ -1193,13 +1193,13 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
         handle
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::runtime::BOND_REQUIREMENT,
+                outbe_cca::constants::BOND_REQUIREMENT,
             )
             .unwrap();
         outbe_cca::runtime::bond(
             handle.clone(),
             cca(),
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();

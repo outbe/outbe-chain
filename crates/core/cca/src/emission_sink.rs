@@ -20,28 +20,20 @@ pub fn distribute_daily(
         let mut contract = CcaContract::new(ctx.storage.clone());
         // ponytail: O(active CCAs) per daily settlement; batch with a frozen snapshot
         // before active-agent growth exceeds the Cycle gas budget.
-        let records = contract
-            .active
-            .read_all()?
-            .into_iter()
-            .map(|cca| {
-                let weight = contract
-                    .reward_weights
-                    .read(&CcaContract::reward_weight_key(cca, day))?;
-                Ok((contract.load(cca)?, weight))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let total = records.iter().try_fold(U256::ZERO, |total, (_, weight)| {
-            total.checked_add(*weight).ok_or(CcaError::Arithmetic)
-        })?;
+        let mut weights = Vec::new();
+        let mut total = U256::ZERO;
+        for cca in contract.active.read_all()? {
+            let weight = contract
+                .reward_weights
+                .read(&CcaContract::reward_weight_key(cca, day))?;
+            total = total.checked_add(weight).ok_or(CcaError::Arithmetic)?;
+            weights.push((cca, weight));
+        }
         if total.is_zero() {
             return Ok(amount);
         }
         let mut distributed = U256::ZERO;
-        for (mut record, weight) in records {
-            if record.state != ICca::State::Active {
-                return Err(CcaError::NotActive.into());
-            }
+        for (cca, weight) in weights {
             // The product of two U256 values fits U512. Since weight <= total,
             // the quotient is <= amount and fits U256; still check the conversion.
             let wide_share = U512::from(amount) * U512::from(weight) / U512::from(total);
@@ -53,14 +45,15 @@ pub fn distribute_daily(
                 continue;
             }
             let native = checked_protocol_to_native(share).ok_or(CcaError::Arithmetic)?;
-            record.reward_amount = record
-                .reward_amount
+            let reward = contract
+                .reward_amounts
+                .read(&cca)?
                 .checked_add(native)
                 .ok_or(CcaError::Arithmetic)?;
-            contract.records.update(&record)?;
+            contract.reward_amounts.write(&cca, reward)?;
             ctx.storage.increase_balance(CCA_ADDRESS, native)?;
             contract.emit(ICca::RewardAccrued {
-                cca: record.cca,
+                cca,
                 worldwideDay: day.value(),
                 amount: native,
             })?;

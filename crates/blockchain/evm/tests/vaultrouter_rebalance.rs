@@ -107,13 +107,13 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::runtime::BOND_REQUIREMENT,
+                outbe_cca::constants::BOND_REQUIREMENT,
             )
             .unwrap();
         outbe_cca::runtime::bond(
             storage.clone(),
             CCA,
-            outbe_cca::runtime::BOND_REQUIREMENT,
+            outbe_cca::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();

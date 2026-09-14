@@ -1,5 +1,6 @@
 //! Bonded Checkout Credis Agent registry and origination rewards.
 pub mod api;
+pub mod constants;
 pub mod emission_sink;
 pub mod errors;
 pub mod precompile;
