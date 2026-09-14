@@ -351,11 +351,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        issuedIntexCount: Number(d.issuedIntexCount),
+        issuedUnits: Number(d.issuedUnits),
         settledUnits: Number(d.settledUnits),
         gemFactoryUnits: Number(d.gemFactoryUnits),
         // Unrealized units lose their load to the pool when the call window closes.
-        unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.gemFactoryUnits),
+        unrealizedUnits: Number(d.issuedUnits) - Number(d.settledUnits) - Number(d.gemFactoryUnits),
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
@@ -556,7 +556,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           }[];
           commitBondMinor: bigint;
         };
-        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedIntexCount: number; issuedIntexLoadedPromis: bigint };
+        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedUnits: number; issuedIntexLoadedPromis: bigint };
       };
       return ok({
         network: n.name,
@@ -598,7 +598,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           note: "populated only after clearing",
           auctionClearingRate: { raw: d.result.auctionClearingRate.toString(), value: formatUnits(d.result.auctionClearingRate, 6) },
           wonBidsCount: Number(d.result.wonBidsCount),
-          issuedIntexCount: Number(d.result.issuedIntexCount),
+          issuedUnits: Number(d.result.issuedUnits),
           issuedIntexLoadedPromis: d.result.issuedIntexLoadedPromis.toString(),
         },
       });

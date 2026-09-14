@@ -67,7 +67,7 @@ contract IntexNFT1155Test is Test {
     /// @dev Sized well above every per-mint quantity in this suite so existing tests
     ///      exercise lifecycle and bridge behavior independently of the supply cap.
     ///      Dedicated cap coverage lives in `IntexNFT1155.supply.t.sol`.
-    uint32 constant ISSUED_INTEX_COUNT = 10_000;
+    uint32 constant ISSUED_UNITS = 10_000;
 
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
@@ -76,7 +76,7 @@ contract IntexNFT1155Test is Test {
     /// @dev Create a series with the standard parameters and a given call period.
     function _createSeries(uint32 worldwideDay, uint32 callPeriod) internal {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(worldwideDay, ISSUED_INTEX_COUNT, callPeriod));
+        nft.createSeries(CreateSeriesLib.params(worldwideDay, ISSUED_UNITS, callPeriod));
     }
 
     function test_InitialState() public view {
@@ -87,7 +87,7 @@ contract IntexNFT1155Test is Test {
     function test_CreateSeries() public {
         uint32 callPeriod = uint32(30 days);
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_INTEX_COUNT, callPeriod));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, callPeriod));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -95,7 +95,7 @@ contract IntexNFT1155Test is Test {
         assertEq(data.issuedAt, block.timestamp);
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
-        assertEq(data.issuedIntexCount, ISSUED_INTEX_COUNT);
+        assertEq(data.issuedUnits, ISSUED_UNITS);
         // callPeriod is stored verbatim; defaulting/bounding is the caller's (intexfactory) responsibility.
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
@@ -103,7 +103,7 @@ contract IntexNFT1155Test is Test {
     function test_OnlyBridgeCanCreateSeries() public {
         vm.prank(user);
         vm.expectRevert();
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_INTEX_COUNT, 0));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
     }
 
     function test_CreateSeriesDuplicate() public {
@@ -111,7 +111,7 @@ contract IntexNFT1155Test is Test {
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TokenAlreadyExists.selector, TOKEN_ID_1));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_INTEX_COUNT, 0));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
     }
 
     function test_CreateSeries_RecordsWorldwideDay() public {
@@ -130,7 +130,7 @@ contract IntexNFT1155Test is Test {
     function test_CreateSeries_StoresRealDay_DistinctFromSeriesId() public {
         bytes14 seriesId = "20250505-TRY-U";
         uint32 worldwideDay = 20260101;
-        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(worldwideDay, ISSUED_INTEX_COUNT, 0);
+        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(worldwideDay, ISSUED_UNITS, 0);
         p.seriesId = seriesId; // the id's own day differs from the provenance day
         vm.prank(bridger);
         nft.createSeries(p);
@@ -327,7 +327,7 @@ contract IntexNFT1155Test is Test {
 
     function test_ReadData() public {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_INTEX_COUNT, 0));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
@@ -391,7 +391,7 @@ contract IntexNFT1155Test is Test {
         vm.startPrank(bridger);
         vm.expectEmit();
         emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_INTEX_COUNT, customCallPeriod));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, customCallPeriod));
 
         vm.expectEmit(true, true, true, true);
         emit IIntexNFT1155.IntexIssued(bridger, TOKEN_ID_1, user, quantity);

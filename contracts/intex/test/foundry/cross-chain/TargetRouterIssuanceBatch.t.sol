@@ -36,7 +36,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.worldwideDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedIntexCount = 1_000;
+        payload.issuedUnits = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.floorPriceMinor = 40e6;

@@ -116,7 +116,7 @@ contract IntexAuctionFuzzTest is Test {
             vm.prank(bridger);
             auction.executeAuctionClearing(worldwideDay, issued, clearingRate, wonBidsCount);
             IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
-            assertEq(a.result.issuedIntexCount, issued, "issuedIntexCount");
+            assertEq(a.result.issuedUnits, issued, "issuedUnits");
             assertEq(a.result.auctionClearingRate, clearingRate, "clearingRate");
             assertEq(a.result.wonBidsCount, wonBidsCount, "wonBidsCount");
         }
@@ -130,7 +130,7 @@ contract IntexAuctionFuzzTest is Test {
         auction.executeAuctionClearing(worldwideDay, type(uint32).max, MIN_RATE, revealed);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
-        assertEq(a.result.issuedIntexCount, type(uint32).max, "issuedIntexCount accepted unbounded");
+        assertEq(a.result.issuedUnits, type(uint32).max, "issuedUnits accepted unbounded");
     }
 
     // --- Helpers ---

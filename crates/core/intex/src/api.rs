@@ -57,7 +57,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         promis_load_minor: U256::from(params.promis_load_minor),
         entry_price_minor: params.entry_price_minor,
         floor_price_minor: params.floor_price_minor,
-        issued_intex_count: params.issued_intex_count,
+        issued_units: params.issued_units,
         call_window_seconds: params.call_trigger.call_window_seconds,
         call_threshold_seconds: params.call_trigger.call_threshold_seconds,
         call_price_minor: params.call_price_minor,
@@ -130,7 +130,7 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
-        .issued_intex_count
+        .issued_units
         .checked_sub(settled)
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
@@ -223,7 +223,7 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
     let exercised = registry.exercised_units.read(&series_id)?;
     // Checked: an underflow is corrupt state, not an empty class.
     let unpaid = record
-        .issued_intex_count
+        .issued_units
         .checked_sub(paid)
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
@@ -232,7 +232,7 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     let expired = record.lifecycle_state()? == IntexState::Expired;
     Ok(UnitCounts {
-        issued: record.issued_intex_count,
+        issued: record.issued_units,
         active: if expired { 0 } else { unpaid },
         settled,
         exercised,
@@ -257,11 +257,7 @@ fn add_realized_units(
     }
     let registry = IntexContract::new(storage.clone());
     // One slot, not the whole record: this runs on every settle.
-    let issued = registry
-        .series
-        .entry(series_id)
-        .issued_intex_count()
-        .read()?;
+    let issued = registry.series.entry(series_id).issued_units().read()?;
     let settled = registry.settled_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
 

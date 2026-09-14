@@ -602,7 +602,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "issuedIntexCount",
+        "name": "issuedUnits",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"

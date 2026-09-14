@@ -288,7 +288,7 @@ fn try_call_excludes_pre_issuance_days() {
             outbe_intex::CreateSeriesParams {
                 series_id: sid(8),
                 worldwide_day: 8.into(),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
@@ -436,7 +436,7 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
@@ -641,7 +641,7 @@ mod call_sweep {
                 let params = outbe_intex::CreateSeriesParams {
                     series_id,
                     worldwide_day: day,
-                    issued_intex_count: count,
+                    issued_units: count,
                     promis_load_minor: 1_000_000_000_000_000_000,
                     entry_price_minor: trigger,
                     floor_price_minor: trigger,
@@ -927,7 +927,7 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
@@ -1112,7 +1112,7 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
@@ -1323,7 +1323,7 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
@@ -1587,7 +1587,7 @@ mod called_pstar {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(LAST_DAY),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,

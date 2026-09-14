@@ -952,7 +952,7 @@ fn clear_inner(
     // Persist clearing outcome and transition.
     contract.write_stage(worldwide_day, AuctionStage::Cleared)?;
     contract.write_last_cleared_worldwide_day(worldwide_day)?;
-    contract.write_last_clearing_issued_count(result.issued_intex_count)?;
+    contract.write_last_clearing_issued_count(result.issued_units)?;
 
     // Clear the bid working-set, pending inputs and the gate (CEI: state writes before external calls).
     let supply_promis = contract.pending_supply_promis.read(&worldwide_day)?;
@@ -975,7 +975,7 @@ fn clear_inner(
         })?;
     }
 
-    if result.issued_intex_count == 0 {
+    if result.issued_units == 0 {
         contract.emit(IDesis::AuctionClearedEmpty {
             worldwideDay: worldwide_day.into(),
             totalDemand: total_demand,
@@ -983,7 +983,7 @@ fn clear_inner(
     } else {
         contract.emit(IDesis::AuctionCleared {
             worldwideDay: worldwide_day.into(),
-            issuedIntexCount: result.issued_intex_count,
+            issuedUnits: result.issued_units,
             clearingRate: result.clearing_rate,
             totalDemand: total_demand,
         })?;
@@ -991,7 +991,7 @@ fn clear_inner(
 
     // Return the unsold Promis (unsold whole units + conversion dust) to PromisLimit.
     let issued_promis =
-        U256::from(result.issued_intex_count as u128) * U256::from(config.promis_load_minor);
+        U256::from(result.issued_units as u128) * U256::from(config.promis_load_minor);
     let unused_promis = supply_promis.saturating_sub(issued_promis);
     if !unused_promis.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
@@ -1001,7 +1001,7 @@ fn clear_inner(
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
     }
 
-    if result.issued_intex_count == 0 {
+    if result.issued_units == 0 {
         // No series anywhere, so the day's recorded contributor map can never distribute.
         outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
     } else {
@@ -1027,7 +1027,7 @@ fn clear_inner(
             IOriginRouter::sendAuctionResultCall {
                 dstChainId: chain_id,
                 worldwideDay: worldwide_day.into(),
-                issuedIntexCount: result.issued_intex_count,
+                issuedUnits: result.issued_units,
                 auctionClearingRate: u64::from(result.clearing_rate),
                 wonBidsCount: won_bids_count,
             }
@@ -1175,7 +1175,7 @@ fn calculate_clearing(
     }
 
     ClearingResult {
-        issued_intex_count: total_allocated,
+        issued_units: total_allocated,
         clearing_rate,
         winners,
         winner_quantities,
@@ -1231,7 +1231,7 @@ fn issuance_groups(
                         reference_currency,
                     )?,
                     worldwide_day,
-                    issued_intex_count: 0,
+                    issued_units: 0,
                     promis_load_minor: config.promis_load_minor,
                     entry_price_minor,
                     issuance_currency,
@@ -1247,7 +1247,7 @@ fn issuance_groups(
 
         let quantity = result.winner_quantities[i];
         let group = &mut groups[at];
-        group.issued_intex_count += quantity.saturating_to::<u32>();
+        group.issued_units += quantity.saturating_to::<u32>();
         group.recipients.push(result.winners[i]);
         group.quantities.push(quantity);
         group.recipient_chains.push(result.winner_chains[i]);

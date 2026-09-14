@@ -65,7 +65,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Series-level data, stored per token id (one entry for the Issued token id
     ///         and one for the Settled token id; `status` distinguishes them).
-    /// @dev `issuedIntexCount` is meaningful only on the Issued entry; it caps the current
+    /// @dev `issuedUnits` is meaningful only on the Issued entry; it caps the current
     ///      `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
@@ -74,7 +74,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 referenceCurrency;
         /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
         ///         never mutated; `mint` rejects pushing `totalSupply` past it.
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Per-unit entry price in ISO stable-units (1e6).
@@ -153,7 +153,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
     /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
-    error ZeroIssuedIntexCount();
+    error ZeroIssuedUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint32 issuedAt);
     /// @notice A settlement or burn amount was zero.
@@ -178,7 +178,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice `markCalled` was given a call time of zero or one the destination clock has not reached.
     error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
-    /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
+    /// @notice A mint or batch sum would push `totalSupply` past `issuedUnits`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
 
     // --- Writes ---
@@ -193,7 +193,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 issuedAt;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;

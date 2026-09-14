@@ -338,7 +338,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
         outbe_intex::CreateSeriesParams {
             series_id: sid(id),
             worldwide_day: id.into(),
-            issued_intex_count: 100,
+            issued_units: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
             floor_price_minor: U256::from(EXPECTED_FLOOR),
@@ -714,7 +714,7 @@ fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
         outbe_intex::schema::CreateSeriesParams {
             series_id,
             worldwide_day: WorldwideDay::new(worldwide_day),
-            issued_intex_count: 1,
+            issued_units: 1,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
             floor_price_minor: U256::from(ENTRY_PRICE),

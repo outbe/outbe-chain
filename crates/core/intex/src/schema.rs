@@ -185,7 +185,7 @@ impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     /// PROMIS-units per Intex unit (1e6); bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
@@ -217,7 +217,7 @@ pub struct SeriesRecord {
     pub reference_currency: u16,
 
     #[attribute(order = 2)]
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
 
     #[attribute(order = 3)]
     pub promis_load_minor: U256,
@@ -463,7 +463,7 @@ pub struct IntexContract {
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Cumulative: a series forfeits `issued_intex_count - settled - gem_factory` at its
+    // Cumulative: a series forfeits `issued_units - settled - gem_factory` at its
     // deadline. Not on `SeriesRecord` because a record write rewrites every field.
     /// series_id -> units settled so far.
     #[attribute(order = 27)]

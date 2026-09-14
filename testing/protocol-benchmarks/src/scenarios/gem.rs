@@ -114,7 +114,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
         outbe_intex::CreateSeriesParams {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
-            issued_intex_count: PARK_UNITS as u32,
+            issued_units: PARK_UNITS as u32,
             promis_load_minor: SIX_DECIMAL_UNIT as u128,
             entry_price_minor: six_decimal_unit(),
             floor_price_minor: six_decimal_unit(),

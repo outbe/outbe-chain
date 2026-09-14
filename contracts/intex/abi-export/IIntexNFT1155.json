@@ -120,7 +120,7 @@
               "internalType": "uint16"
             },
             {
-              "name": "issuedIntexCount",
+              "name": "issuedUnits",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -425,7 +425,7 @@
               "internalType": "uint16"
             },
             {
-              "name": "issuedIntexCount",
+              "name": "issuedUnits",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -1308,7 +1308,7 @@
     },
     {
       "type": "error",
-      "name": "ZeroIssuedIntexCount",
+      "name": "ZeroIssuedUnits",
       "inputs": []
     }
   ]

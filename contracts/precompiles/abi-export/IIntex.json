@@ -96,7 +96,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "issuedIntexCount",
+            "name": "issuedUnits",
             "type": "uint32",
             "internalType": "uint32"
           },

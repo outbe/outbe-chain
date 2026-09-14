@@ -69,7 +69,7 @@ interface IDesis {
     /// auction start message can carry.
     event ReferenceCurrencyOverCap(uint32 indexed worldwideDay, uint16 indexed isoCode, uint8 cap);
     event AuctionOverdue(uint32 indexed worldwideDay);
-    event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
+    event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
     /// @notice The day dropped a reference currency because `takenBy` already claimed

@@ -45,7 +45,7 @@ sol! {
             ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
-            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
         }
         function auctions(uint32 worldwideDay)
             external view
@@ -552,7 +552,7 @@ sol! {
     struct SeriesData {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -715,7 +715,7 @@ pub(crate) fn series_issued_count(
     series: alloy_primitives::FixedBytes<14>,
 ) -> Option<u32> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
-        .map(|data| data.issuedIntexCount)
+        .map(|data| data.issuedUnits)
 }
 
 /// When the series was Called, as both chains recorded it.

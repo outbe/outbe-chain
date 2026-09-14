@@ -124,7 +124,7 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: sid(worldwide_day),
         worldwide_day: WorldwideDay::new(worldwide_day),
-        issued_intex_count: 100,
+        issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
         floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
@@ -157,7 +157,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(r.floor_price_minor, U256::from(FLOOR_PRICE_MINOR));
-        assert_eq!(r.issued_intex_count, 100);
+        assert_eq!(r.issued_units, 100);
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
@@ -348,7 +348,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(data.floorPriceMinor, U256::from(FLOOR_PRICE_MINOR));
-        assert_eq!(data.issuedIntexCount, 100);
+        assert_eq!(data.issuedUnits, 100);
         assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
         assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));

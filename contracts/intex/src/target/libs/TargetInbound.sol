@@ -118,18 +118,18 @@ library TargetInbound {
     ///      result that fails the auction's permanent sanity bounds are acknowledged without effect. A day whose
     ///      reveal stage has not closed yet (clock skew) propagates so the bridge redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
+        (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(message);
 
-        try $.auction.executeAuctionClearing(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount) {
-            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
+        try $.auction.executeAuctionClearing(worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount) {
+            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedUnits, auctionClearingRate);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
                 IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
                 if (current == IIntexAuction.AuctionStage.Completed) {
-                    why = _sameResult($, worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount)
+                    why = _sameResult($, worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount)
                         ? InboundReason.DUPLICATE
                         : InboundReason.CONFLICT;
                 } else if (current == IIntexAuction.AuctionStage.Cancelled) {
@@ -172,13 +172,14 @@ library TargetInbound {
     function _sameResult(
         TargetRouterStorage storage $,
         uint32 worldwideDay,
-        uint32 issuedIntexCount,
+        uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) private view returns (bool) {
         IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(worldwideDay).result;
-        return r.issuedIntexCount == issuedIntexCount && r.auctionClearingRate == auctionClearingRate
-            && r.wonBidsCount == wonBidsCount;
+        return
+            r.issuedUnits == issuedUnits && r.auctionClearingRate == auctionClearingRate
+                && r.wonBidsCount == wonBidsCount;
     }
 
     /// @dev `currentStage` argument of a `StageRequired(requiredStage, currentStage)` revert payload.
@@ -232,7 +233,7 @@ library TargetInbound {
         // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
-            if (series[s].issuedIntexCount == 0) {
+            if (series[s].issuedUnits == 0) {
                 _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.INVALID);
                 return;
             }
@@ -277,7 +278,7 @@ library TargetInbound {
                         issuedAt: payload.issuedAt,
                         issuanceCurrency: payload.issuanceCurrency,
                         referenceCurrency: payload.referenceCurrency,
-                        issuedIntexCount: payload.issuedIntexCount,
+                        issuedUnits: payload.issuedUnits,
                         promisLoadMinor: payload.promisLoadMinor,
                         entryPriceMinor: payload.entryPriceMinor,
                         floorPriceMinor: payload.floorPriceMinor,
@@ -339,7 +340,7 @@ library TargetInbound {
         BridgeMsgCodec.IssuanceInstructionsPayload memory b
     ) private pure returns (bool) {
         return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
-            && a.referenceCurrency == b.referenceCurrency && a.issuedIntexCount == b.issuedIntexCount
+            && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
             && a.floorPriceMinor == b.floorPriceMinor && a.callPriceMinor == b.callPriceMinor
             && a.callWindow == b.callWindow && a.callThreshold == b.callThreshold
@@ -354,7 +355,7 @@ library TargetInbound {
     {
         IIntexNFT1155.SeriesData memory d = $.intex.readData(payload.seriesId);
         return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
-            && d.referenceCurrency == payload.referenceCurrency && d.issuedIntexCount == payload.issuedIntexCount
+            && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
             && d.floorPriceMinor == payload.floorPriceMinor && d.callPriceMinor == payload.callPriceMinor
             && d.callTrigger.callWindow == payload.callWindow && d.callTrigger.callThreshold == payload.callThreshold

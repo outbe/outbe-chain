@@ -16,7 +16,7 @@ library CreateSeriesLib {
         return bytes14(out);
     }
 
-    function params(uint32 worldwideDay, uint32 issuedIntexCount, uint32 callNoticePeriod)
+    function params(uint32 worldwideDay, uint32 issuedUnits, uint32 callNoticePeriod)
         internal
         view
         returns (IIntexNFT1155.CreateSeriesParams memory)
@@ -27,7 +27,7 @@ library CreateSeriesLib {
             issuedAt: uint32(block.timestamp),
             issuanceCurrency: 840,
             referenceCurrency: 840,
-            issuedIntexCount: issuedIntexCount,
+            issuedUnits: issuedUnits,
             promisLoadMinor: 100_000 * 1e6,
             entryPriceMinor: 1e6,
             floorPriceMinor: 100,

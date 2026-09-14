@@ -42,7 +42,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_CreateSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
-        vm.expectRevert(IIntexNFT1155.ZeroIssuedIntexCount.selector);
+        vm.expectRevert(IIntexNFT1155.ZeroIssuedUnits.selector);
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
@@ -80,7 +80,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issue(ownerA, cap, SERIES_ID);
 
         assertEq(nft.totalSupply(TOKEN_ID), cap);
-        assertEq(nft.readData(SERIES_ID).issuedIntexCount, cap);
+        assertEq(nft.readData(SERIES_ID).issuedUnits, cap);
         assertEq(nft.balanceOf(ownerA, TOKEN_ID), cap);
     }
 
@@ -180,7 +180,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.burnSettled(ownerA, SERIES_ID, 0);
     }
 
-    // --- Live-supply cap (a burn frees cap room; cap is `totalSupply <= issuedIntexCount`) ---
+    // --- Live-supply cap (a burn frees cap room; cap is `totalSupply <= issuedUnits`) ---
 
     function test_Cap_Issue_AfterSettle_FreesCapRoom() public {
         // Mint to cap, settle (burns 4 Issued -> totalSupply 6): the freed room is reusable, so a
@@ -265,7 +265,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_Cap_Issue_OverCap_SurfacesTypedRevertNotPanic() public {
         // The cap-check intermediate is widened to uint256 so `totalSupply + qty` cannot wrap
-        // uint32 - even at `issuedIntexCount == type(uint32).max`. We can't drive `totalSupply`
+        // uint32 - even at `issuedUnits == type(uint32).max`. We can't drive `totalSupply`
         // all the way to 2^32 in a test (per-mint capped at uint16.max would need 65k+ calls),
         // but the widening is proved by inspection AND by this small-cap test that verifies
         // the typed SupplyCapExceeded surfaces cleanly on the overshoot. Pre-widening, an

@@ -37,7 +37,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// broadcast (including a loopback leg on the origin), so there is no in-process
 /// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
-    if params.issued_intex_count == 0 {
+    if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
         // must not touch the state its siblings armed.
         return Ok(Vec::new());
@@ -60,7 +60,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         worldwide_day: params.worldwide_day,
-        issued_intex_count: params.issued_intex_count,
+        issued_units: params.issued_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
         floor_price_minor,
@@ -91,7 +91,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
                 issuedAt: issued_at,
-                issuedIntexCount: params.issued_intex_count,
+                issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
                 floorPriceMinor: floor_price_minor_u64,
@@ -131,7 +131,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         storage,
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id.into(),
-            issuedIntexCount: params.issued_intex_count,
+            issuedUnits: params.issued_units,
             entryPrice: params.entry_price_minor,
         },
     )?;

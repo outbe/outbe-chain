@@ -47,7 +47,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.worldwideDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedIntexCount = 100;
+        payload.issuedUnits = 100;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.floorPriceMinor = 40e6;
@@ -173,7 +173,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_ASeriesWithNoSupplyIsInvalidNotALoop() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, alice, 7);
-        p.issuedIntexCount = 0;
+        p.issuedUnits = 0;
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, bytes32(uint256(DAY) << 16), InboundReason.INVALID

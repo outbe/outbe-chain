@@ -26,7 +26,7 @@ interface IIntex {
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
         uint256 floorPriceMinor;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;

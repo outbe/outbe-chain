@@ -12,7 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 pub struct IssuanceParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
     pub entry_price_minor: U256,

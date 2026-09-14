@@ -12,7 +12,7 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
-        assert_eq!(r.issued_intex_count, 100);
+        assert_eq!(r.issued_units, 100);
         assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
@@ -54,7 +54,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
         )
         .unwrap();
         let mut p = sample(7);
-        p.issued_intex_count = 0;
+        p.issued_units = 0;
         runtime::issue(&s, p).unwrap();
 
         // No series is created, and the day's map is left for its caller to
@@ -139,7 +139,7 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         seriesId: sid(series).into(),
         worldwideDay: series,
         issuedAt: ISSUED_AT,
-        issuedIntexCount: 1,
+        issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,
         floorPriceMinor: 0,

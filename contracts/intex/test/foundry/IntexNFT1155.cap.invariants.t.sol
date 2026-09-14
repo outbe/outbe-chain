@@ -71,13 +71,13 @@ contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @dev Cap is on LIVE supply: `totalSupply <= issuedIntexCount` at every step, and a burn frees
+    /// @dev Cap is on LIVE supply: `totalSupply <= issuedUnits` at every step, and a burn frees
     ///      room rather than permanently consuming the cap. Parity (sum balanceOf == totalSupply) holds.
     function invariant_supplyCapAndParity() public view {
         uint256 iTok = intex.issuedTokenId(SERIES_ID);
         IIntexNFT1155.SeriesData memory d = intex.readData(SERIES_ID);
-        assertLe(d.totalSupply, d.issuedIntexCount, "totalSupply exceeds cap");
-        assertEq(d.issuedIntexCount, CAP, "cap is immutable");
+        assertLe(d.totalSupply, d.issuedUnits, "totalSupply exceeds cap");
+        assertEq(d.issuedUnits, CAP, "cap is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
             sum += intex.balanceOf(bidders[i], iTok);

@@ -52,7 +52,7 @@ sol! {
             uint16[] issuanceCurrencies,
             uint32 worldwideDay,
             uint32 issuedAt,
-            uint32 issuedIntexCount,
+            uint32 issuedUnits,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
@@ -156,7 +156,7 @@ pub fn dispatch(
                 crate::schema::IssuanceParams {
                     series_id: SeriesId::from(series_id),
                     worldwide_day: call.worldwideDay.into(),
-                    issued_intex_count: call.issuedIntexCount,
+                    issued_units: call.issuedUnits,
                     promis_load_minor: call.promisLoadMinor,
                     entry_price_minor: call.entryPriceMinor,
                     issuance_currency,

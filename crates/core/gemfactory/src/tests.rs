@@ -732,7 +732,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
             outbe_intex::CreateSeriesParams {
                 series_id: source_intex_id(),
                 worldwide_day: WorldwideDay::new(0),
-                issued_intex_count: SENT_UNITS as u32,
+                issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
                 entry_price_minor: six_decimal_unit(),
                 floor_price_minor: six_decimal_unit(),
@@ -1058,7 +1058,7 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         outbe_intex::CreateSeriesParams {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
-            issued_intex_count: SENT_UNITS as u32,
+            issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,
             floor_price_minor: floor,

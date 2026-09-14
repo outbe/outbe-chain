@@ -11,7 +11,7 @@ import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
 ///   - SI-08: `sum totalSupply(issuedId)` across chains is never larger than the on-chain
-///     `issuedIntexCount` cap of the underlying series. Mint+bridge+round-trip moves balances
+///     `issuedUnits` cap of the underlying series. Mint+bridge+round-trip moves balances
 ///     between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
 ///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].amount`
@@ -24,7 +24,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
     uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
-    uint32 private constant ISSUED_INTEX_COUNT = 10_000;
+    uint32 private constant ISSUED_UNITS = 10_000;
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
@@ -50,8 +50,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterA.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
         adapterB.setRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);
@@ -71,7 +71,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // SI-08: the global pool stays within the issuance cap and equals the original mint.
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
-        assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
+        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     function test_RoundTripAToBToA_TotalSupplyPreserved() public {
@@ -88,7 +88,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved end-to-end");
-        assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
+        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
@@ -98,7 +98,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
-        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
@@ -122,7 +122,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
         tokenB.markQualified(parkSeries);
         adapterB.retryCrosschainMint(receiveId, 0);
 
@@ -139,7 +139,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
-        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
@@ -170,7 +170,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     }
 
     function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 issuedSeed, uint256 bridgedSeed) public {
-        uint256 minted = bound(issuedSeed, 1, ISSUED_INTEX_COUNT);
+        uint256 minted = bound(issuedSeed, 1, ISSUED_UNITS);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
         tokenA.issue(user, minted, SERIES_ID);
@@ -180,7 +180,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
-        assertLe(totalAcrossChains, ISSUED_INTEX_COUNT, "SI-08: sum <= issuedIntexCount");
+        assertLe(totalAcrossChains, ISSUED_UNITS, "SI-08: sum <= issuedUnits");
     }
 
     /// @dev Bridge a single tokenId to `recipient` on the destination and deliver the packet.

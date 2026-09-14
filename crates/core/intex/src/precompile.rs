@@ -85,7 +85,7 @@ fn to_abi_data(r: &SeriesRecord, settled: u32, gem_factory: u32) -> Result<IInte
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,
         floorPriceMinor: r.floor_price_minor,
-        issuedIntexCount: r.issued_intex_count,
+        issuedUnits: r.issued_units,
         callWindow: r.call_window_seconds,
         callThreshold: r.call_threshold_seconds,
         callPriceMinor: r.call_price_minor,
