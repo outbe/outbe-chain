@@ -98,7 +98,7 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, address holder, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
             returns (uint256 promisAmount);
     }
@@ -156,7 +156,7 @@ fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes
 /// Issue every spec into the same worldwide day and reference currency, so the
 /// sweeps see one group rather than a group per series.
 ///
-/// `units_per_chain` is parallel to `chains`: the holder ends up with that many
+/// `units_per_chain` is parallel to `chains`: the owner ends up with that many
 /// units of every series on each chain named there.
 #[allow(clippy::too_many_arguments)]
 pub fn issue_series(
@@ -168,7 +168,7 @@ pub fn issue_series(
     reference_byte: u8,
     entry_price_minor: U256,
     promis_load_minor: u128,
-    holder: Address,
+    owner: Address,
     units_per_chain: &[u32],
     chains: &[u32],
     specs: &[SeriesSpec],
@@ -194,9 +194,9 @@ pub fn issue_series(
             promisLoadMinor: promis_load_minor,
             entryPriceMinor: entry_price_minor,
             referenceCurrency: reference_currency,
-            // One recipient leg per chain: the holder ends up with units on each,
+            // One recipient leg per chain: the owner ends up with units on each,
             // which is what makes bringing them home a real step later.
-            recipients: vec![holder; chains.len()],
+            recipients: vec![owner; chains.len()],
             quantities: units_per_chain.iter().copied().map(U256::from).collect(),
             recipientChains: chains.to_vec(),
             snapshotChains: chains.to_vec(),
@@ -206,23 +206,23 @@ pub fn issue_series(
     Ok(ids)
 }
 
-/// Give `holder` enough of `asset` to settle with, and let the engine pull it.
-pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -> Result<()> {
-    let signer: alloy_signer_local::PrivateKeySigner = holder_key
+/// Give `owner` enough of `asset` to settle with, and let the engine pull it.
+pub fn fund_settler(url: &str, asset: Address, owner_key: &str, amount: U256) -> Result<()> {
+    let signer: alloy_signer_local::PrivateKeySigner = owner_key
         .parse()
-        .map_err(|error| eyre!("invalid holder key: {error}"))?;
-    let holder = alloy_signer::Signer::address(&signer);
+        .map_err(|error| eyre!("invalid owner key: {error}"))?;
+    let owner = alloy_signer::Signer::address(&signer);
     send_checked(
         url,
         asset,
-        holder_key,
-        &ITestToken::mintCall { to: holder, amount },
+        owner_key,
+        &ITestToken::mintCall { to: owner, amount },
         "mint the settlement asset",
     )?;
     send_checked(
         url,
         asset,
-        holder_key,
+        owner_key,
         &ITestToken::approveCall {
             spender: crate::internal::addresses::PAYNOTE_ADDR,
             amount,
@@ -279,10 +279,10 @@ pub fn settle(
     Ok(())
 }
 
-/// The SHA-256 preimage `validate_pow` rebuilds: the hex spelling of holder, amount,
+/// The SHA-256 preimage `validate_pow` rebuilds: the hex spelling of owner, amount,
 /// series and sequence, then the nonce's own eight bytes.
 fn pow_hash(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series: FixedBytes<14>,
     seq: u32,
@@ -290,9 +290,9 @@ fn pow_hash(
 ) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     // The engine hashes the raw bytes, so anything else mines a nonce it will
-    // reject: SHA256(holder ++ amount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8).
+    // reject: SHA256(owner ++ amount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8).
     let mut data = Vec::with_capacity(20 + 32 + 14 + 4 + 8);
-    data.extend_from_slice(holder.as_slice());
+    data.extend_from_slice(owner.as_slice());
     data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
     data.extend_from_slice(series.as_slice());
     data.extend_from_slice(&seq.to_be_bytes());
@@ -302,12 +302,12 @@ fn pow_hash(
 
 /// A nonce whose hash carries the one leading zero byte the engine demands.
 pub fn mine_nonce(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series: FixedBytes<14>,
     seq: u32,
 ) -> Option<u64> {
-    (0_u64..1_000_000).find(|nonce| pow_hash(holder, promis_amount, series, seq, *nonce)[0] == 0)
+    (0_u64..1_000_000).find(|nonce| pow_hash(owner, promis_amount, series, seq, *nonce)[0] == 0)
 }
 
 /// Burn settled units into Promis. `mac` authorizes the confidential mint, and the
@@ -315,24 +315,24 @@ pub fn mine_nonce(
 #[allow(clippy::too_many_arguments)]
 pub fn mine_promis(
     url: &str,
-    holder_key: &str,
+    owner_key: &str,
     series: FixedBytes<14>,
     amount: u32,
     nonce: u64,
     mac: [u8; 32],
     op_nonce: u64,
 ) -> Result<()> {
-    let signer: alloy_signer_local::PrivateKeySigner = holder_key
+    let signer: alloy_signer_local::PrivateKeySigner = owner_key
         .parse()
-        .map_err(|error| eyre!("invalid holder key: {error}"))?;
-    let holder = alloy_signer::Signer::address(&signer);
+        .map_err(|error| eyre!("invalid owner key: {error}"))?;
+    let owner = alloy_signer::Signer::address(&signer);
     send_checked(
         url,
         INTEX_FACTORY,
-        holder_key,
+        owner_key,
         &IPromisMining::minePromisCall {
             seriesId: series,
-            holder,
+            owner,
             amount: U256::from(amount),
             nonce,
             mac: mac.into(),
@@ -438,19 +438,19 @@ pub fn close_call_notice(
 /// Bring `amount` units of `series` home from the chain `bridge` lives on.
 ///
 /// While a series is tradable the hop may change hands; once it is Called only a
-/// move to the holder's own address is allowed, so `to` is always the holder here.
+/// move to the owner's own address is allowed, so `to` is always the owner here.
 pub fn bridge_home(
     url: &str,
-    holder_key: &str,
+    owner_key: &str,
     bridge: Address,
     home_chain_id: u32,
     token_id: U256,
-    holder: Address,
+    owner: Address,
     amount: u32,
 ) -> Result<()> {
     let params = SendParam {
         dstChainId: home_chain_id,
-        to: FixedBytes::<32>::left_padding_from(holder.as_slice()),
+        to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenId: token_id,
         amount: U256::from(amount),
     };
@@ -466,7 +466,7 @@ pub fn bridge_home(
     let tx = eth::send_call(
         url,
         bridge,
-        holder_key,
+        owner_key,
         &IIntexNFT1155Bridge::sendCall { sendParam: params },
         Some(fee),
     )
@@ -512,19 +512,19 @@ pub fn set_remote_messenger(
     )
 }
 
-/// Bring several series home in one message, the way a holder with more than one
+/// Bring several series home in one message, the way a owner with more than one
 /// would: a single burn set on this side and a single mint set at home.
 pub fn batch_bridge_home(
     url: &str,
-    holder_key: &str,
+    owner_key: &str,
     bridge: Address,
     home_chain_id: u32,
-    holder: Address,
+    owner: Address,
     tokens: &[(U256, u32)],
 ) -> Result<()> {
     let params = BatchSendParam {
         dstChainId: home_chain_id,
-        to: FixedBytes::<32>::left_padding_from(holder.as_slice()),
+        to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
         tokenIds: tokens.iter().map(|(id, _)| *id).collect(),
         amounts: tokens
             .iter()
@@ -543,7 +543,7 @@ pub fn batch_bridge_home(
     eth::send_call(
         url,
         bridge,
-        holder_key,
+        owner_key,
         &IIntexNFT1155Bridge::batchSendCall { sendParam: params },
         Some(fee),
     )
