@@ -3,7 +3,7 @@ use crate::precompile::ICca;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::{
-    addresses::CCA_ADDRESS,
+    addresses::CCA_REGISTRY_ADDRESS,
     storage::types::{Storable, StorableType},
 };
 
@@ -25,7 +25,7 @@ pub struct CcaRecord {
 }
 
 #[storage_schema]
-#[contract(addr = CCA_ADDRESS)]
+#[contract(addr = CCA_REGISTRY_ADDRESS)]
 pub struct CcaContract {
     #[attribute(order = 0)]
     pub records: outbe_primitives::storage::dsl::Map<Address, CcaRecord>,

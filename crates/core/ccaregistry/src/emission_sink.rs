@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::{U256, U512};
 use outbe_primitives::{
-    addresses::CCA_ADDRESS, block::BlockRuntimeContext, error::Result,
+    addresses::CCA_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
     units::checked_protocol_to_native,
 };
 
@@ -50,7 +50,7 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
                 .checked_add(native)
                 .ok_or(CcaError::Arithmetic)?;
             contract.reward_amounts.write(&cca, reward)?;
-            ctx.storage.increase_balance(CCA_ADDRESS, native)?;
+            ctx.storage.increase_balance(CCA_REGISTRY_ADDRESS, native)?;
             contract.emit(ICca::RewardAccrued {
                 cca,
                 utcDay: day,

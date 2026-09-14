@@ -505,7 +505,7 @@ fn reward_balances_at(
             waa: claimable(waa),
             sra: claimable(sra),
             escrow: native(addresses::AGENT_REWARD_ADDR),
-            cca: native(outbe_primitives::addresses::CCA_ADDRESS),
+            cca: native(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS),
         };
         assert_eq!(
             world

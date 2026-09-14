@@ -854,7 +854,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         // No eligible CCA: its full allocation goes to terminal Metadosis.
         let cca = ctx_fire
             .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
             .unwrap();
         assert_eq!(
             cca,
@@ -1122,9 +1122,9 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         }
         assert_eq!(
             fire.storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_cca::constants::BOND_REQUIREMENT,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
@@ -1189,9 +1189,9 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         assert_eq!(
             retry
                 .storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_cca::constants::BOND_REQUIREMENT
+            outbe_ccaregistry::constants::BOND_REQUIREMENT
                 + outbe_primitives::units::checked_protocol_to_native(amount_for(
                     outbe_emissionlimit::allocation::EmissionSinkId::Cca,
                 ))
@@ -1343,14 +1343,14 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         let cca_after_first = ctx
             .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
             .unwrap();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
         assert!(
-            cca_after_first > outbe_cca::constants::BOND_REQUIREMENT,
+            cca_after_first > outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "first fire credited CCA"
         );
 
@@ -1359,7 +1359,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
             cca_after_first,
             "CCA pool must not be minted twice for the same prev_day"
@@ -1827,16 +1827,16 @@ fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
     let cca = Address::repeat_byte(0xc1);
     storage
         .increase_balance(
-            outbe_primitives::addresses::CCA_ADDRESS,
-            outbe_cca::constants::BOND_REQUIREMENT,
+            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
         )
         .unwrap();
-    outbe_cca::runtime::bond(
+    outbe_ccaregistry::runtime::bond(
         storage.clone(),
         cca,
-        outbe_cca::constants::BOND_REQUIREMENT,
+        outbe_ccaregistry::constants::BOND_REQUIREMENT,
         "Test CCA".into(),
     )
     .unwrap();
-    outbe_cca::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
+    outbe_ccaregistry::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
 }

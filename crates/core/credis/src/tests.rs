@@ -72,14 +72,14 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |storage| {
         storage
             .increase_balance(
-                outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::constants::BOND_REQUIREMENT,
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(
+        outbe_ccaregistry::runtime::bond(
             storage.clone(),
             cca(),
-            outbe_cca::constants::BOND_REQUIREMENT,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();
@@ -1195,14 +1195,14 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
     let id = StorageHandle::enter(&mut storage, |handle| {
         handle
             .increase_balance(
-                outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::constants::BOND_REQUIREMENT,
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(
+        outbe_ccaregistry::runtime::bond(
             handle.clone(),
             cca(),
-            outbe_cca::constants::BOND_REQUIREMENT,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();
@@ -1260,7 +1260,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         let initial = collateral();
         let day = timestamp_to_date_key(ORIGINATED_AT);
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
         // A duplicate opening must not accrue twice.
@@ -1269,7 +1269,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
             .settle(id, U256::from(PRINCIPAL / 2), ORIGINATED_AT)
             .unwrap();
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
         credis.mark_called(id, ORIGINATED_AT).unwrap();
@@ -1279,20 +1279,20 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         let mut next = params(handle(2), alice());
         next.originated_at = deadline;
         credis.open_position(next).unwrap();
-        outbe_cca::runtime::unbond(storage.clone(), cca()).unwrap();
+        outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
         assert!(credis.open_position(params(handle(3), alice())).is_err());
         let void = credis.void_position(id, deadline).unwrap();
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), void_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
         );
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
         assert!(credis.void_position(id, deadline).is_err());
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), void_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
         );
     });
@@ -1307,11 +1307,11 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         let mut credis = CredisContract::new(storage.clone());
         let id = open_pos(&mut credis, 1);
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
         );
         assert_eq!(
-            outbe_cca::api::reward_weight(
+            outbe_ccaregistry::api::reward_weight(
                 &storage,
                 cca(),
                 worldwide_day_from_timestamp(ORIGINATED_AT)
@@ -1328,18 +1328,18 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         pending.originated_at = midnight;
         credis.open_position(pending).unwrap();
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
         );
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral()
         );
 
         // An older origination timestamp must not select an older reward bucket.
         open_pos(&mut credis, 3);
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral() * U256::from(2)
         );
 
@@ -1351,15 +1351,15 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         // The burn offsets a later opening only in the current UTC day.
         open_pos(&mut credis, 4);
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), void_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
         );
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), next_day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral() * U256::from(2)
         );
     });
@@ -1384,7 +1384,7 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
         }
         let day = timestamp_to_date_key(ORIGINATED_AT);
         assert_eq!(
-            outbe_cca::api::reward_weight(&storage, cca(), day).unwrap(),
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
         );
     });

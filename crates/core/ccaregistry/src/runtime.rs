@@ -7,7 +7,7 @@ use crate::{
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{addresses::CCA_ADDRESS, error::Result, storage::StorageHandle};
+use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
 
 fn now(storage: &StorageHandle<'_>) -> Result<u64> {
     // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
@@ -17,7 +17,7 @@ fn now(storage: &StorageHandle<'_>) -> Result<u64> {
         .map_err(|_| CcaError::Arithmetic.into())
 }
 
-/// The payable EVM boundary has already credited `amount` to CCA_ADDRESS.
+/// The payable EVM boundary has already credited `amount` to CCA_REGISTRY_ADDRESS.
 pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: String) -> Result<()> {
     storage.with_checkpoint(|| {
         if caller.is_zero() {
@@ -105,7 +105,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         record.unbond_unlocks_after = 0;
         record.state = ICca::State::Deregistered;
         contract.save(&record)?;
-        storage.transfer_balance(CCA_ADDRESS, caller, amount)?;
+        storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
         contract.emit(ICca::UnbondClaimed {
             cca: caller,
             amount,
@@ -122,7 +122,7 @@ pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> 
             return Err(CcaError::NoRewards.into());
         }
         contract.reward_amounts.write(&caller, U256::ZERO)?;
-        storage.transfer_balance(CCA_ADDRESS, caller, amount)?;
+        storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
         contract.emit(ICca::RewardsClaimed {
             cca: caller,
             amount,

@@ -767,7 +767,7 @@ mod distribute_daily_tests {
             assert_eq!(excess, U256::from(400));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );
@@ -784,23 +784,26 @@ mod distribute_daily_tests {
     fn cca_accrues_claimable_rewards_across_days() {
         run(|ctx| {
             let cca = address!("00000000000000000000000000000000000000a1");
-            let bond = outbe_cca::constants::BOND_REQUIREMENT;
+            let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
             ctx.storage
-                .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, bond)
+                .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
                 .unwrap();
-            outbe_cca::runtime::bond(ctx.storage.clone(), cca, bond, "Test CCA".into()).unwrap();
-            outbe_cca::api::position_opened(&ctx.storage, cca, DAY.value(), U256::ONE).unwrap();
+            outbe_ccaregistry::runtime::bond(ctx.storage.clone(), cca, bond, "Test CCA".into())
+                .unwrap();
+            outbe_ccaregistry::api::position_opened(&ctx.storage, cca, DAY.value(), U256::ONE)
+                .unwrap();
             distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
-            outbe_cca::api::position_opened(&ctx.storage, cca, 20240102, U256::ONE).unwrap();
+            outbe_ccaregistry::api::position_opened(&ctx.storage, cca, 20240102, U256::ONE)
+                .unwrap();
             distribute_daily(ctx, 20240102.into(), &[(PoolKind::Cca, U256::from(50u64))]).unwrap();
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 bond + native(150)
             );
             assert_eq!(
-                outbe_cca::api::get_cca(&ctx.storage, cca)
+                outbe_ccaregistry::api::get_cca(&ctx.storage, cca)
                     .unwrap()
                     .rewardAmount,
                 native(150)
@@ -832,7 +835,7 @@ mod distribute_daily_tests {
             assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
             assert_eq!(
                 ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                    .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
                 U256::ZERO
             );

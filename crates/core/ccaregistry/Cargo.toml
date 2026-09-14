@@ -1,5 +1,5 @@
 [package]
-name = "outbe-cca"
+name = "outbe-ccaregistry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

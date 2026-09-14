@@ -9,7 +9,7 @@ use crate::{
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
-    addresses::CCA_ADDRESS,
+    addresses::CCA_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     units::checked_protocol_to_native,
@@ -26,7 +26,9 @@ fn run(f: impl FnOnce(StorageHandle<'_>)) {
 }
 fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     // Simulate the real payable boundary's already-credited value.
-    storage.increase_balance(CCA_ADDRESS, amount).unwrap();
+    storage
+        .increase_balance(CCA_REGISTRY_ADDRESS, amount)
+        .unwrap();
     dispatch(
         storage.clone(),
         &ICca::bondCall {
@@ -66,7 +68,9 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
         .into_iter()
         .enumerate()
         {
-            storage.increase_balance(CCA_ADDRESS, U256::ONE).unwrap();
+            storage
+                .increase_balance(CCA_REGISTRY_ADDRESS, U256::ONE)
+                .unwrap();
             let call = ICca::bondCall { name: name.clone() }.abi_encode();
             dispatch(storage.clone(), &call, ALICE, U256::ONE).unwrap();
             let query = ICca::getCcaCall { cca: ALICE }.abi_encode();
@@ -144,7 +148,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
             U256::ZERO
         );
         runtime::claim_rewards(storage.clone(), ALICE).unwrap();
-        assert_eq!(storage.balance(CCA_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(
             storage.balance(ALICE).unwrap(),
             BOND_REQUIREMENT + U256::from(7) + native(20)
@@ -208,7 +212,7 @@ fn proportional_rewards_exclude_inactive_weights_and_recycle_dust() {
         runtime::claim_rewards(storage.clone(), BOB).unwrap();
         assert_eq!(storage.balance(BOB).unwrap(), native(8));
         assert_eq!(
-            storage.balance(CCA_ADDRESS).unwrap(),
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
             BOND_REQUIREMENT * U256::from(2) + native(13)
         );
     });
@@ -246,9 +250,9 @@ fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
         runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        let before = storage.balance(CCA_ADDRESS).unwrap();
+        let before = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
         assert!(emission_sink::distribute_daily(&ctx, 20231115, U256::MAX).is_err());
-        assert_eq!(storage.balance(CCA_ADDRESS).unwrap(), before);
+        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), before);
         assert_eq!(
             api::get_cca(&storage, ALICE).unwrap().rewardAmount,
             native(100)
@@ -272,7 +276,7 @@ fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
             .reward_amounts
             .write(&active[1], U256::MAX)
             .unwrap();
-        let balance = storage.balance(CCA_ADDRESS).unwrap();
+        let balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
         assert!(emission_sink::distribute_daily(&ctx, DAY, U256::from(2)).is_err());
         assert_eq!(
@@ -280,7 +284,7 @@ fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
             U256::ZERO
         );
         assert_eq!(contract.reward_amounts.read(&active[1]).unwrap(), U256::MAX);
-        assert_eq!(storage.balance(CCA_ADDRESS).unwrap(), balance);
+        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), balance);
     });
 }
 
@@ -290,8 +294,10 @@ fn failed_claim_preserves_record_and_balance() {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
         reward(&storage, U256::from(9));
-        let balance = storage.balance(CCA_ADDRESS).unwrap();
-        storage.decrease_balance(CCA_ADDRESS, balance).unwrap();
+        let balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
+        storage
+            .decrease_balance(CCA_REGISTRY_ADDRESS, balance)
+            .unwrap();
         assert!(runtime::claim_rewards(storage.clone(), ALICE).is_err());
         assert_eq!(
             api::get_cca(&storage, ALICE).unwrap().rewardAmount,
@@ -564,22 +570,27 @@ fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
             (3, ICca::State::Deregistered),
         ] {
             storage
-                .sstore(CCA_ADDRESS, slot.slot(), U256::from(word))
+                .sstore(CCA_REGISTRY_ADDRESS, slot.slot(), U256::from(word))
                 .unwrap();
             assert_eq!(contract.load(ALICE).unwrap().state, state);
             assert_eq!(api::cca_state(&storage, ALICE).unwrap(), state);
             slot.write(state).unwrap();
             assert_eq!(
-                storage.sload(CCA_ADDRESS, slot.slot()).unwrap(),
+                storage.sload(CCA_REGISTRY_ADDRESS, slot.slot()).unwrap(),
                 U256::from(word)
             );
         }
         for word in [U256::from(4), U256::from(255), U256::from(256), U256::MAX] {
-            storage.sstore(CCA_ADDRESS, slot.slot(), word).unwrap();
+            storage
+                .sstore(CCA_REGISTRY_ADDRESS, slot.slot(), word)
+                .unwrap();
             assert!(contract.load(ALICE).is_err());
             assert!(api::get_cca(&storage, ALICE).is_err());
             assert!(runtime::bond(storage.clone(), ALICE, U256::ONE, "Test CCA".into()).is_err());
-            assert_eq!(storage.sload(CCA_ADDRESS, slot.slot()).unwrap(), word);
+            assert_eq!(
+                storage.sload(CCA_REGISTRY_ADDRESS, slot.slot()).unwrap(),
+                word
+            );
         }
     });
 }

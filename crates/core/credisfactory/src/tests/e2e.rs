@@ -891,7 +891,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             .is_err());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
-            outbe_cca::api::reward_weight(
+            outbe_ccaregistry::api::reward_weight(
                 &storage,
                 cca(),
                 outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
@@ -911,7 +911,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
         )
         .unwrap();
         assert_eq!(
-            outbe_cca::api::reward_weight(
+            outbe_ccaregistry::api::reward_weight(
                 &storage,
                 cca(),
                 outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
@@ -919,7 +919,7 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             .unwrap(),
             pledge_cost()
         );
-        outbe_cca::runtime::unbond(storage.clone(), cca()).unwrap();
+        outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
         assert!(runtime::request_credis(
             storage.clone(),
             cca(),

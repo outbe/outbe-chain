@@ -58,7 +58,7 @@ pub fn request_credis(
     }
 
     // Origination requires an active, fully bonded CCA.
-    if !outbe_cca::api::is_active(&storage, caller)? {
+    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(CredisFactoryError::CcaNotActive.into());
     }
 

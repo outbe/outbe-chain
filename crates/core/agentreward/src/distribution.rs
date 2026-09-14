@@ -204,7 +204,7 @@ pub fn distribute_daily(
             PoolKind::Waa => distribute_capped(ctx, prev_day, PoolKind::Waa, *amount)?,
             PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
             PoolKind::Cca => {
-                outbe_cca::emission_sink::distribute_daily(ctx, prev_day.value(), *amount)?
+                outbe_ccaregistry::emission_sink::distribute_daily(ctx, prev_day.value(), *amount)?
             }
         };
         total_excess = total_excess.checked_add(excess).ok_or_else(|| {

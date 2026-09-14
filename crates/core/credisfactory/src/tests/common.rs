@@ -379,14 +379,14 @@ pub fn env() -> HashMapStorageProvider {
     StorageHandle::enter(&mut storage, |handle| {
         handle
             .increase_balance(
-                outbe_primitives::addresses::CCA_ADDRESS,
-                outbe_cca::constants::BOND_REQUIREMENT,
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
             )
             .unwrap();
-        outbe_cca::runtime::bond(
+        outbe_ccaregistry::runtime::bond(
             handle,
             cca(),
-            outbe_cca::constants::BOND_REQUIREMENT,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "Test CCA".into(),
         )
         .unwrap();

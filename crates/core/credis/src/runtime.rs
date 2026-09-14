@@ -182,7 +182,7 @@ impl CredisContract<'_> {
                 call_window: CALL_WINDOW,
                 call_threshold: CALL_THRESHOLD,
             };
-            outbe_cca::api::position_opened(
+            outbe_ccaregistry::api::position_opened(
                 &self.storage,
                 params.cca,
                 reward_day(&self.storage)?,
@@ -359,7 +359,7 @@ impl CredisContract<'_> {
                 .ok_or(CredisError::ArithmeticOverflow)?
                 / position.principal;
 
-            outbe_cca::api::position_voided(
+            outbe_ccaregistry::api::position_voided(
                 &self.storage,
                 position.cca,
                 reward_day(&self.storage)?,

@@ -2,14 +2,14 @@
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_cca::{
+use outbe_ccaregistry::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     precompile::ICca,
 };
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{
-    addresses::CCA_ADDRESS,
+    addresses::CCA_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
     units::checked_protocol_to_native,
@@ -44,7 +44,7 @@ fn tx(db: &mut CacheDB<EmptyDB>, value: U256, data: Vec<u8>, now: u64) -> Execut
             TxEnv::builder()
                 .caller(CCA)
                 .nonce(nonce)
-                .kind(TxKind::Call(CCA_ADDRESS))
+                .kind(TxKind::Call(CCA_REGISTRY_ADDRESS))
                 .value(value)
                 .data(Bytes::from(data))
                 .gas_limit(3_000_000)
@@ -78,7 +78,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     // Same marker as fresh genesis and the block executor, preserving empty-balance state.
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     db.insert_account_info(
-        CCA_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -133,7 +133,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(bonded.is_success());
     assert_eq!(bonded.logs().len(), 1);
     let log = &bonded.logs()[0];
-    assert_eq!(log.address, CCA_ADDRESS);
+    assert_eq!(log.address, CCA_REGISTRY_ADDRESS);
     let event = ICca::Bonded::decode_log(log).unwrap().data;
     assert_eq!(event.cca, CCA);
     assert_eq!(event.amount, U256::ONE);
@@ -143,14 +143,14 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         initial - BOND_REQUIREMENT
     );
     assert_eq!(
-        db.cache.accounts[&CCA_ADDRESS].info.balance,
+        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT
     );
     // Malformed and nonpayable funded calls refund value and preserve registration.
     for data in [vec![], vec![0, 1, 2, 3], ICca::unbondCall {}.abi_encode()] {
         assert!(!tx(&mut db, U256::ONE, data, NOW).is_success());
         assert_eq!(
-            db.cache.accounts[&CCA_ADDRESS].info.balance,
+            db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
             BOND_REQUIREMENT
         );
     }
@@ -158,7 +158,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         api::position_opened(&s, CCA, 20231115, U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
         assert_eq!(
-            outbe_cca::emission_sink::distribute_daily(&ctx, 20231115, U256::from(23)).unwrap(),
+            outbe_ccaregistry::emission_sink::distribute_daily(&ctx, 20231115, U256::from(23))
+                .unwrap(),
             U256::ZERO
         );
     });
@@ -190,7 +191,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     )
     .is_success());
     assert_eq!(
-        db.cache.accounts[&CCA_ADDRESS].info.balance,
+        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT
     );
     assert!(!tx(
@@ -207,7 +208,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW + UNBOND_COOLDOWN_SECONDS
     )
     .is_success());
-    assert_eq!(db.cache.accounts[&CCA_ADDRESS].info.balance, U256::ZERO);
+    assert_eq!(
+        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
+        U256::ZERO
+    );
     assert_eq!(db.cache.accounts[&CCA].info.balance, initial + reward);
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
