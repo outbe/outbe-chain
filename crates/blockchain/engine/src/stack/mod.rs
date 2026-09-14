@@ -110,7 +110,7 @@ use outbe_primitives::{
     system_tx::OcompLifecycleActivation,
     OutbeHeader, OutbePayloadTypes,
 };
-use reth_ethereum::storage::{BlockIdReader, BlockNumReader, BlockReader, TransactionVariant};
+use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
 
 mod dkg;
 mod epoch;

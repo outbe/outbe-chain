@@ -359,7 +359,8 @@ where
         .provider
         .last_block_number()
         .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
-    let initial_reth_forkchoice = read_reth_recovery_forkchoice(&node)?;
+    let initial_reth_forkchoice =
+        read_reth_recovery_forkchoice(&node.provider.canonical_in_memory_state())?;
 
     // -- 1. Committee chain anchored on the trusted identity --------------
     // The marshal verifies finalization certs against THIS chain's per-epoch
@@ -676,7 +677,9 @@ where
         ctx.child("recovered_forkchoice"),
         recovery_anchor.checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_anchor.checkpoint),
-        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+        move || {
+            read_reth_recovery_forkchoice(&fcu_provider_node.provider.canonical_in_memory_state())
+        },
     )
     .await
     .wrap_err("failed to confirm recovered Reth forkchoice before follower startup")?;

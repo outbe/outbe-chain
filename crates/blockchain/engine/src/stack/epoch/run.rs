@@ -1368,7 +1368,9 @@ where
         ctx.child("recovered_forkchoice"),
         recovery_checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
-        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+        move || {
+            read_reth_recovery_forkchoice(&fcu_provider_node.provider.canonical_in_memory_state())
+        },
     )
     .await
     .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;

@@ -135,42 +135,22 @@ where
 }
 
 pub(in crate::stack) fn read_reth_recovery_forkchoice(
-    node: &OutbeFullNode,
+    state: &reth_chain_state::CanonicalInMemoryState<outbe_primitives::OutbePrimitives>,
 ) -> Result<RecoveredRethForkchoice> {
-    let head_number = node
-        .provider
-        .last_block_number()
-        .map_err(|error| eyre::eyre!("failed to read Reth canonical head number: {error}"))?;
-    let head_hash = node
-        .provider
-        .block_hash(head_number)
-        .map_err(|error| {
-            eyre::eyre!("failed to read Reth canonical head hash at {head_number}: {error}")
-        })?
-        .ok_or_else(|| eyre::eyre!("Reth canonical head {head_number} has no block hash"))?;
-    let safe = node
-        .provider
-        .safe_block_num_hash()
-        .map_err(|error| eyre::eyre!("failed to read Reth safe identity: {error}"))?
-        .map(|checkpoint| ProjectionCheckpoint {
-            block_number: checkpoint.number,
-            block_hash: checkpoint.hash,
-        });
-    let finalized = node
-        .provider
-        .finalized_block_num_hash()
-        .map_err(|error| eyre::eyre!("failed to read Reth finalized identity: {error}"))?
-        .map(|checkpoint| ProjectionCheckpoint {
-            block_number: checkpoint.number,
-            block_hash: checkpoint.hash,
-        });
+    // Persisted execution progress may remain ahead after a canonical rollback.
+    let head = state.get_canonical_head();
+    ensure!(
+        head.hash() != B256::ZERO,
+        "Reth returned a zero canonical head"
+    );
+    let checkpoint = |checkpoint: alloy_eips::BlockNumHash| ProjectionCheckpoint {
+        block_number: checkpoint.number,
+        block_hash: checkpoint.hash,
+    };
     Ok(RecoveredRethForkchoice {
-        head: ProjectionCheckpoint {
-            block_number: head_number,
-            block_hash: head_hash,
-        },
-        safe,
-        finalized,
+        head: checkpoint(head.num_hash()),
+        safe: state.get_safe_num_hash().map(checkpoint),
+        finalized: state.get_finalized_num_hash().map(checkpoint),
     })
 }
 
