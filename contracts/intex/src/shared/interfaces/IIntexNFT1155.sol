@@ -130,11 +130,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when Settled Intex are consumed to mine Promis.
+    /// @notice Emitted when a settled Intex right is exercised: its units burn to mine Promis.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Settled tokens were burned.
     /// @param amount Amount of Settled tokens burned.
-    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 amount);
+    event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
     /// @param seriesId Series identifier.

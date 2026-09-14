@@ -406,7 +406,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         $.settledSupply[sTok] -= uint32(amount);
         _burn(owner, sTok, amount);
 
-        emit IntexMined(seriesId, owner, amount);
+        emit IntexExercised(seriesId, owner, amount);
     }
 
     /// @inheritdoc IIntexNFT1155
