@@ -69,6 +69,7 @@ libc.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-chain-constants.workspace = true
 outbe-evm.workspace = true
+outbe-l2registry.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true

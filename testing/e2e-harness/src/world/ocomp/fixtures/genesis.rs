@@ -585,6 +585,131 @@ pub(in crate::world::ocomp) fn capacity_tribute_private_keys(count: usize) -> Re
     Ok(private_keys)
 }
 
+/// Seed pre-launch L2Registry registrations for the bulk Tribute owner fixtures.
+///
+/// `TributeFactory` admits an offer only from an operator L2Registry knows, and
+/// registration is governance-only. A fixture that offers from tens or hundreds
+/// of distinct owners cannot express that precondition through governance
+/// inside its genesis-bound OFFERING window, so the registrations for exactly
+/// those owners are seeded into the not-yet-started genesis through the
+/// production contract API - the same idiom the Oracle, Metadosis and Radicle
+/// fixtures use. Nothing else is registered, so an operator a fixture intends
+/// to leave unregistered stays unregistered.
+///
+/// Returns whether genesis changed.
+#[cfg(feature = "ocomp-integration")]
+pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
+    genesis: &mut serde_json::Value,
+    chain_id: u64,
+    private_keys: &[String],
+) -> Result<bool> {
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
+
+    if private_keys.is_empty() {
+        return Ok(false);
+    }
+
+    let mut registrations = Vec::with_capacity(private_keys.len());
+    for (index, private_key) in private_keys.iter().enumerate() {
+        let l1_address = crate::internal::eth::address_of(private_key)
+            .ok_or_else(|| eyre::eyre!("cannot derive bulk Tribute owner"))?;
+        let operator_chain_id = CAPACITY_OPERATOR_L2_CHAIN_ID_BASE
+            .checked_add(u64::try_from(index)?)
+            .ok_or_else(|| eyre::eyre!("bulk L2 chain id overflow"))?;
+        // The stored key must be a valid MinSig G2 group key. The non-ZK path
+        // never verifies a signature against it, but the registry admits only
+        // group-valid keys, so each registration carries a real one.
+        registrations.push((
+            operator_chain_id,
+            l1_address,
+            capacity_operator_bls_public_key(index)?,
+        ));
+    }
+
+    let mut provider = HashMapStorageProvider::new(chain_id);
+    let existing = {
+        let alloc = genesis
+            .get("alloc")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+        find_alloc_address_key(alloc, L2_REGISTRY_ADDRESS)?
+            .and_then(|key| alloc.get(&key))
+            .and_then(|account| account.get("storage"))
+            .cloned()
+    };
+    if let Some(storage) = existing.as_ref().and_then(serde_json::Value::as_object) {
+        for (slot, value) in storage {
+            provider.storage.insert(
+                (L2_REGISTRY_ADDRESS, parse_hex_word(slot)?),
+                parse_storage_word(value)?,
+            );
+        }
+    }
+
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = L2RegistryContract::new(storage);
+        for (operator_chain_id, l1_address, public_key) in &registrations {
+            registry.register_network(*operator_chain_id, *l1_address, public_key)?;
+        }
+        Ok(())
+    })?;
+
+    let alloc = genesis
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+    let account_key = match find_alloc_address_key(alloc, L2_REGISTRY_ADDRESS)? {
+        Some(key) => key,
+        None => {
+            let key = format!("{L2_REGISTRY_ADDRESS:x}");
+            alloc.insert(key.clone(), serde_json::json!({ "storage": {} }));
+            key
+        }
+    };
+    let words = alloc
+        .get_mut(&account_key)
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("L2Registry genesis account is not an object"))?
+        .entry("storage".to_owned())
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| eyre::eyre!("L2Registry genesis account storage is not an object"))?;
+    for ((address, slot), value) in &provider.storage {
+        if *address != L2_REGISTRY_ADDRESS || value.is_zero() {
+            continue;
+        }
+        words.insert(
+            format!("0x{slot:064x}"),
+            serde_json::Value::String(format!("0x{value:064x}")),
+        );
+    }
+    Ok(true)
+}
+
+/// Chain ids reserved for the genesis-seeded bulk owner registrations. The base
+/// sits above the ids the governance path allocates, so a later governed
+/// registration can never collide with a seeded one.
+#[cfg(feature = "ocomp-integration")]
+const CAPACITY_OPERATOR_L2_CHAIN_ID_BASE: u64 = 0xE2E1_0000;
+
+/// Deterministic MinSig G2 public key for bulk owner `index`.
+///
+/// Distinct per owner and reproducible across runs, so the seeded genesis stays
+/// a stable artifact for a given owner population.
+#[cfg(feature = "ocomp-integration")]
+fn capacity_operator_bls_public_key(index: usize) -> Result<Vec<u8>> {
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
+
+    let mut seed = [0x5a_u8; 32];
+    seed[..8].copy_from_slice(&u64::try_from(index)?.to_be_bytes());
+    let mut rng = <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed(seed);
+    let (_, public) = ops::keypair::<_, MinSig>(&mut rng);
+    Ok(public.encode().to_vec())
+}
+
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn fund_capacity_tribute_accounts(
     genesis: &mut serde_json::Value,

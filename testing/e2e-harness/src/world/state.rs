@@ -595,6 +595,13 @@ pub struct FixtureState {
     pub l2_chain_id: Option<u64>,
     /// Hash of an offer expected to be rejected by the zk signature gate.
     pub l2_rejected_offer_tx_hash: Option<String>,
+    /// Chain ids the harness registered for Tribute offer operators with
+    /// `zk_enabled = false`, keyed by operator EOA. Registration is idempotent:
+    /// a recorded operator is never proposed again in the same scenario.
+    pub l2_disabled_operator_chains: std::collections::BTreeMap<alloy_primitives::Address, u64>,
+    /// Next chain id handed to an offer operator the harness registers. Starts
+    /// above the `0xdead` network the zk-gate scenario registers by design.
+    pub l2_next_disabled_chain_id: u64,
 
     // ---- ZeroFee live scenario ----
     pub zerofee_key: Option<String>,
@@ -815,6 +822,8 @@ impl Default for FixtureState {
             l2_bls_private_hex: None,
             l2_chain_id: None,
             l2_rejected_offer_tx_hash: None,
+            l2_disabled_operator_chains: std::collections::BTreeMap::new(),
+            l2_next_disabled_chain_id: 0xE2E0_0001,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

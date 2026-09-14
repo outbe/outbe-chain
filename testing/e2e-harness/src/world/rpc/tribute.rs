@@ -5,6 +5,7 @@ pub struct TributeZkOffer<'a> {
     pub su_hash_hex: &'a str,
     pub merkle_root_hex: &'a str,
     pub proof_hex: &'a str,
+    pub verification_key_hex: &'a str,
     pub signature_hex: &'a str,
 }
 
@@ -306,6 +307,8 @@ impl Rpc {
             zk.merkle_root_hex.to_owned(),
             "--zk-proof".to_owned(),
             zk.proof_hex.to_owned(),
+            "--zk-verification-key".to_owned(),
+            zk.verification_key_hex.to_owned(),
             "--signature".to_owned(),
             zk.signature_hex.to_owned(),
         ];

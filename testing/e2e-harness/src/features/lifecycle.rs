@@ -837,6 +837,12 @@ fn submit_offer(world: &mut World, name: String) {
             world.state.lifecycle_incarnations.is_empty(),
             "lifecycle already initialized"
         );
+        // The offer is admitted only from an operator L2Registry knows. This is
+        // an offer precondition, so it is established before the scenario's
+        // before-offer observation rather than between that observation and the
+        // offer, which would shift every later height by the governance window.
+        let key = world.validators.by_name(&name)?.evm_key()?;
+        crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
         for index in 0..4 {
             let (node_pid, enclave_pid) = world.localnet.live_validator_and_enclave_pids(index)?;
             let dir = world
@@ -861,7 +867,6 @@ fn submit_offer(world: &mut World, name: String) {
         exact_members(&state.consensus, &members(world, 4)?)?;
         ensure!(state.supply.is_zero(), "initial Tribute supply is not zero");
         world.state.lifecycle_before = Some(before);
-        let key = world.validators.by_name(&name)?.evm_key()?;
         world.state.tribute_tx_hash = world.rpc.offer_until_supply_hash(
             &key,
             world
@@ -1112,6 +1117,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
         let key = world.validators.get(1).evm_key()?;
+        crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
         world.state.tribute_tx_hash = world.rpc.offer_until_supply_hash(
             &key,
             world
@@ -1304,6 +1310,7 @@ fn exits_and_demotes(world: &mut World) {
             }),
         );
         let key = world.validators.get(2).evm_key()?;
+        crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
         world.state.tribute_tx_hash = world.rpc.offer_until_supply_hash(
             &key,
             world

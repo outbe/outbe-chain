@@ -3,7 +3,8 @@
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
 //! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real FullProof under the pinned circuit whose root is signed with the registered key
+//! a real FullProof under the circuit whitelisted for the registered L2 chain,
+//! whose root is signed with the registered key,
 //! must pass the full gate and issue the canonical Tribute through the normal
 //! enclave path.
 
@@ -28,12 +29,9 @@ use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
 use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk_canonical::{CircuitId, INCLUSION_DEPTH};
 use rand::{rngs::StdRng, SeedableRng};
-use std::thread::sleep;
-use std::time::Duration;
 
-use crate::internal::addresses::L2_REGISTRY_ADDR;
 use crate::world::rpc::TributeZkOffer;
 use crate::world::World;
 
@@ -42,7 +40,7 @@ use crate::world::World;
 /// rather than importing the runtime crate.
 const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
-const L2_CHAIN_ID: u64 = 4242;
+const L2_CHAIN_ID: u64 = 0xdead;
 
 #[derive(Entity)]
 struct TributeDraftFixture {
@@ -79,6 +77,12 @@ fn field_bytes(field: &Fr) -> [u8; 32] {
     OutbeV1::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
+}
+
+/// Verification key the operator's client submits with a proof; the node
+/// resolves the whitelisted circuit from `keccak256` of exactly these bytes.
+fn full_proof_vk_hex() -> String {
+    format!("0x{}", hex::encode(FullProof::VK_BYTES))
 }
 
 fn generate_zk_offer_fixture(
@@ -188,95 +192,10 @@ fn operator_key(world: &World) -> String {
         .expect("validator-0 key")
 }
 
-fn operator_address(world: &World, key: &str) -> Address {
-    world
-        .rpc
-        .address_of(key)
-        .expect("operator address")
-        .parse()
-        .expect("operator address hex")
-}
-
-fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: String) {
-    let operator = world
-        .validators
-        .operator("validator-0")
-        .expect("validator-0 operator");
-    let tx = world
-        .rpc
-        .send_propose(&operator, &format!("{L2_REGISTRY_ADDR:#x}"), &payload)
-        .expect("submit L2 registry proposal");
-    assert!(world.rpc.wait_tx(&tx, 40), "proposal tx not mined: {tx}");
-
-    let mut proposal = world
-        .rpc
-        .vote_status(proposal_id)
-        .expect("observe L2 registry proposal");
-    for _ in 0..10 {
-        if proposal.visible {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-        proposal = world
-            .rpc
-            .vote_status(proposal_id)
-            .expect("observe L2 registry proposal");
-    }
-    assert!(proposal.visible, "proposal #{proposal_id} is not visible");
-    assert_eq!(proposal.status, "pending");
-    assert!(
-        proposal
-            .target
-            .eq_ignore_ascii_case(&format!("{L2_REGISTRY_ADDR:#x}")),
-        "proposal target {} is not L2Registry",
-        proposal.target
-    );
-
-    for name in ["validator-0", "validator-1", "validator-2"] {
-        let validator = world.validators.by_name(name).expect("validator");
-        world
-            .rpc
-            .cast_vote(&validator, proposal_id, true)
-            .expect("cast L2 registry vote");
-    }
-    let mut proposal = world
-        .rpc
-        .vote_status(proposal_id)
-        .expect("observe L2 registry proposal votes");
-    for _ in 0..10 {
-        if proposal.yes == 3 {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-        proposal = world
-            .rpc
-            .vote_status(proposal_id)
-            .expect("observe L2 registry proposal votes");
-    }
-    assert_eq!(proposal.status, "pending");
-    assert_eq!(proposal.yes, 3);
-    let deadline = proposal.deadline.expect("proposal deadline");
-    let height = world
-        .rpc
-        .wait_block_gt(world.validators.primary_port(), deadline, 80)
-        .expect("chain progress past L2 registry proposal deadline");
-    assert!(
-        height > deadline,
-        "did not pass proposal deadline {deadline}"
-    );
-    assert!(
-        world
-            .rpc
-            .wait_vote_status(proposal_id, "approved", 60)
-            .expect("observe L2 registry proposal approval"),
-        "L2 registry proposal #{proposal_id} was not approved"
-    );
-}
-
 #[when("an L2 network is registered for the operator with zk enabled")]
 fn register_l2_network_with_zk(world: &mut World) {
     let key = operator_key(world);
-    let l1_address = operator_address(world, &key);
+    let l1_address = super::l2_registration::operator_address(world, &key);
 
     let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
         rand_commonware::rngs::SysRng,
@@ -293,7 +212,7 @@ fn register_l2_network_with_zk(world: &mut World) {
         "zkEnabled": true,
     })
     .to_string();
-    approve_l2_registry_proposal(world, 1, payload);
+    super::l2_registration::govern_l2_registry_payload(world, &payload);
 
     let registered = world.rpc.l2_network(L2_CHAIN_ID).expect("registered L2");
     assert_eq!(registered, (l1_address, public, true));
@@ -308,7 +227,7 @@ fn disable_l2_zk(world: &mut World) {
         "enabled": false,
     })
     .to_string();
-    approve_l2_registry_proposal(world, 2, payload);
+    super::l2_registration::govern_l2_registry_payload(world, &payload);
     let (_, _, enabled) = world.rpc.l2_network(chain_id).expect("registered L2");
     assert!(!enabled, "governed L2 ZK disable did not apply");
 }
@@ -325,6 +244,7 @@ fn offer_without_signature(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     super::tribute_projection::wait_for_offering(world, &wwd);
     let key = operator_key(world);
+    let verification_key_hex = full_proof_vk_hex();
     let tx_hash = world
         .rpc
         .tribute_offer_with_zk(
@@ -335,6 +255,7 @@ fn offer_without_signature(world: &mut World) {
                 su_hash_hex: &format!("{:#x}", low_b256(0x22)),
                 merkle_root_hex: &format!("{:#x}", low_b256(0x33)),
                 proof_hex: "0x",
+                verification_key_hex: &verification_key_hex,
                 signature_hex: "0x",
             },
         )
@@ -346,7 +267,7 @@ fn offer_without_signature(world: &mut World) {
 fn offer_with_valid_zk_proof(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let key = operator_key(world);
-    let l1_owner = operator_address(world, &key);
+    let l1_owner = super::l2_registration::operator_address(world, &key);
     let chain_id = world
         .rpc
         .chain_id(world.validators.primary_port())
@@ -389,6 +310,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     )
     .expect("positive control: signature verifies against the registered key");
     let signature = signature.encode().to_vec();
+    let verification_key_hex = full_proof_vk_hex();
 
     super::tribute_projection::wait_for_offering(world, &wwd);
     let rejected = world
@@ -401,6 +323,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
                 su_hash_hex: &fixture.su_hash_hex,
                 merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
                 proof_hex: &tampered,
+                verification_key_hex: &verification_key_hex,
                 signature_hex: &format!("0x{}", hex::encode(&signature)),
             },
         )
@@ -424,6 +347,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
                 su_hash_hex: &fixture.su_hash_hex,
                 merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
                 proof_hex: &fixture.proof_hex,
+                verification_key_hex: &verification_key_hex,
                 signature_hex: &format!("0x{}", hex::encode(signature)),
             },
         )
