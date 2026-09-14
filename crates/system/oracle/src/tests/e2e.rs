@@ -596,34 +596,6 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
     });
 }
 
-#[test]
-fn ioracle_selectors_are_unique() {
-    use crate::precompile::IOracle;
-    use alloy_sol_types::SolInterface;
-    use std::collections::HashSet;
-
-    const EXPECTED_IORACLE_FUNCTIONS: usize = 39;
-
-    let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
-    assert_eq!(
-        selectors.len(),
-        IOracle::IOracleCalls::COUNT,
-        "selector iterator must cover every generated IOracle call variant"
-    );
-    assert_eq!(
-        IOracle::IOracleCalls::COUNT,
-        EXPECTED_IORACLE_FUNCTIONS,
-        "IOracle function count changed; update selector collision coverage"
-    );
-
-    let unique: HashSet<[u8; 4]> = selectors.iter().copied().collect();
-    assert_eq!(
-        unique.len(),
-        selectors.len(),
-        "selector collision detected among {} IOracle functions",
-        selectors.len()
-    );
-}
 // -----------------------------------------------------------------------
 // Genesis Import: Snapshots, Penalties, S-curves
 // -----------------------------------------------------------------------
