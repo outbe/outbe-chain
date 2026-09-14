@@ -37,10 +37,10 @@ impl IntexState {
 /// Forced-call trigger parameters for a series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
-    pub call_window: u32,
-    pub call_threshold: u32,
+    pub call_window_seconds: u32,
+    pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
@@ -234,13 +234,13 @@ pub struct SeriesRecord {
     // call_trigger group - stored flat (the storage DSL has no nested-struct codec),
     // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
-    pub call_window: u32,
+    pub call_window_seconds: u32,
 
     #[attribute(order = 8)]
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
 
     #[attribute(order = 9)]
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 
     #[attribute(order = 10)]
     pub issued_at: u32,
@@ -264,9 +264,9 @@ impl SeriesRecord {
 
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
-            call_window: self.call_window,
-            call_threshold: self.call_threshold,
-            call_notice_period: self.call_notice_period,
+            call_window_seconds: self.call_window_seconds,
+            call_threshold_seconds: self.call_threshold_seconds,
+            call_notice_period_seconds: self.call_notice_period_seconds,
         }
     }
 }

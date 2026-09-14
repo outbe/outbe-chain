@@ -130,9 +130,9 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
         floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
         call_price_minor: U256::from(CALL_PRICE_MINOR),
         call_trigger: IntexCallTrigger {
-            call_window: 30 * 24 * 60 * 60,
-            call_threshold: 5 * 24 * 60 * 60,
-            call_notice_period: CALL_NOTICE_PERIOD,
+            call_window_seconds: 30 * 24 * 60 * 60,
+            call_threshold_seconds: 5 * 24 * 60 * 60,
+            call_notice_period_seconds: CALL_NOTICE_PERIOD,
         },
         issued_at: ISSUED_AT,
         issuance_currency: 840,
@@ -161,9 +161,9 @@ fn create_then_read_round_trip() {
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
-                call_window: 30 * 24 * 60 * 60,
-                call_threshold: 5 * 24 * 60 * 60,
-                call_notice_period: CALL_NOTICE_PERIOD,
+                call_window_seconds: 30 * 24 * 60 * 60,
+                call_threshold_seconds: 5 * 24 * 60 * 60,
+                call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
@@ -172,7 +172,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.worldwide_day, 20260101.into());
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
-        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
+        assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         assert_eq!(r.issuance_currency, 840);
         assert_eq!(r.reference_currency, 840);
     });

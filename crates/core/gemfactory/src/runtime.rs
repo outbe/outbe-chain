@@ -290,7 +290,7 @@ pub fn settle_gem(
         s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline = item.called_at + u64::from(item.call_notice_period);
+            let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
             if now > deadline {
                 return Err(GemFactoryError::DeadlineExpired.into());
             }

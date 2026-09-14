@@ -154,7 +154,7 @@ pub struct IntexFactoryContract {
     // Widest terms ever issued in a currency; both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 35)]
     pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
 

@@ -75,7 +75,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(r.call_notice_period, dev.call_notice_period);
+        assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
             r.floor_price_minor,
             U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
@@ -87,9 +87,9 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: dev.call_window,
-                call_threshold: dev.call_threshold,
-                call_notice_period: dev.call_notice_period,
+                call_window_seconds: dev.call_window_seconds,
+                call_threshold_seconds: dev.call_threshold_seconds,
+                call_notice_period_seconds: dev.call_notice_period_seconds,
             }
         );
 

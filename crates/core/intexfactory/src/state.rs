@@ -121,22 +121,22 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn widen_call_terms(
         &mut self,
         reference_currency: u16,
-        call_window: u32,
-        call_threshold: u32,
+        call_window_seconds: u32,
+        call_threshold_seconds: u32,
     ) -> Result<()> {
         let secs_per_day = SECONDS_PER_DAY as u32;
-        if call_window > self.max_call_window.read(&reference_currency)? {
-            self.max_call_window
-                .write(&reference_currency, call_window)?;
+        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
+            self.max_call_window_seconds
+                .write(&reference_currency, call_window_seconds)?;
         }
         // A threshold under a day can never be met, and would latch the range shut.
-        if call_threshold < secs_per_day {
+        if call_threshold_seconds < secs_per_day {
             return Ok(());
         }
         let min = self.min_call_threshold.read(&reference_currency)?;
-        if min == 0 || call_threshold < min {
+        if min == 0 || call_threshold_seconds < min {
             self.min_call_threshold
-                .write(&reference_currency, call_threshold)?;
+                .write(&reference_currency, call_threshold_seconds)?;
         }
         Ok(())
     }
@@ -150,7 +150,7 @@ impl IntexFactoryContract<'_> {
         live_threshold: u32,
     ) -> Result<(u32, u32)> {
         let secs_per_day = SECONDS_PER_DAY as u32;
-        let stored_window = self.max_call_window.read(&reference_currency)?;
+        let stored_window = self.max_call_window_seconds.read(&reference_currency)?;
         let days = stored_window.max(live_window) / secs_per_day;
 
         let stored_threshold = self.min_call_threshold.read(&reference_currency)?;

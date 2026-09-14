@@ -289,9 +289,9 @@ fn fold_profile(
     let iparams = outbe_intexfactory::read_params(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
-        call_window: iparams.call_window,
-        call_threshold: iparams.call_threshold,
-        call_notice_period: iparams.call_notice_period,
+        call_window: iparams.call_window_seconds,
+        call_threshold: iparams.call_threshold_seconds,
+        call_notice_period: iparams.call_notice_period_seconds,
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
     Ok(iparams)
@@ -328,9 +328,9 @@ fn send_stage_start(
         promisLoadMinor: config.promis_load_minor,
         minIntexBidRate: config.min_intex_bid_rate,
         prices,
-        callNoticePeriod: iparams.call_notice_period,
-        callWindow: iparams.call_window,
-        callThreshold: iparams.call_threshold,
+        callNoticePeriod: iparams.call_notice_period_seconds,
+        callWindow: iparams.call_window_seconds,
+        callThreshold: iparams.call_threshold_seconds,
         minIntexBidQuantity: config.min_intex_bid_quantity,
         commitBondMinor: config.commit_bond_minor,
         dayState: day_state,

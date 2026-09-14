@@ -13,15 +13,15 @@ fn issue_creates_series_in_registry() {
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
         assert_eq!(r.issued_intex_count, 100);
-        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
+        assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: 28 * DAY as u32,
-                call_threshold: 21 * DAY as u32,
-                call_notice_period: CALL_NOTICE_PERIOD,
+                call_window_seconds: 28 * DAY as u32,
+                call_threshold_seconds: 21 * DAY as u32,
+                call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
