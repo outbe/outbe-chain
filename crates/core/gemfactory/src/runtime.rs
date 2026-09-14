@@ -42,7 +42,7 @@ pub fn issue_gem(
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
 
-    // The holder's own label: only its range is checked, as the auction checks a bid's.
+    // The owner's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
