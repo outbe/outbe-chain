@@ -390,6 +390,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Series must exist; we look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
 
+        // Stored state on purpose, not `_effectiveState`: settled units stay exercisable
+        // after the series expires, so routing this gate through the derived state would
+        // close mining at the deadline.
         // Mirror `settleIntex`'s precondition: Settled balances only exist after a settle, which
         // is only permitted from Qualified or Called. Making the gate explicit (instead of
         // relying on `_burn`'s zero-balance revert) keeps a future change that pre-mints
