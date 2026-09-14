@@ -674,9 +674,7 @@ fn settled_burned_into_promis(world: &mut World) {
         let counts = eth::read_call(
             &url,
             test_issuance::INTEX_FACTORY,
-            &IIntexFactoryCounts::seriesUnitCountsCall {
-                seriesId: (*series).into(),
-            },
+            &IIntexFactoryCounts::seriesUnitCountsCall { seriesId: *series },
         )
         .expect("series unit counts");
         assert_eq!(
