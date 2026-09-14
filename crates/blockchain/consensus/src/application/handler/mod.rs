@@ -47,7 +47,6 @@ use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::state::FinalizationViewHandle;
 use crate::hybrid::election::HybridElectorConfigProvider;
 use crate::hybrid::HybridSchemeProvider;
-use crate::ocomp_retention::OcompRetentionHook;
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
@@ -174,10 +173,6 @@ pub(crate) struct ApplicationShared {
     /// effort, process-local - the resulting artifact is re-verified by every
     /// validator, so it never affects determinism.
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
-
-    /// Node-local durable OCOMP candidate retention. It may forfeit this
-    /// validator's proposal/vote but never changes block validity.
-    ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 /// Named dependencies for [`ApplicationHandler::new`].
@@ -213,7 +208,6 @@ pub struct ApplicationDeps {
     pub proposer_evm_address: Option<Address>,
     pub trust_el_head: bool,
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
-    pub ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 impl ApplicationHandler {
@@ -254,7 +248,6 @@ impl ApplicationHandler {
             proposer_evm_address,
             trust_el_head,
             late_sig_store,
-            ocomp_retention,
         } = deps;
         Self {
             rx,
@@ -287,7 +280,6 @@ impl ApplicationHandler {
                 finalization_selector,
                 trust_el_head,
                 late_sig_store,
-                ocomp_retention,
             },
         }
     }
@@ -401,9 +393,9 @@ impl ApplicationHandler {
                                         "proposal task completed without response: exact parent is not projected"
                                     );
                                 }
-                                Ok(ProposeOutcome::RetentionUnavailable) => {
+                                Ok(ProposeOutcome::ExecutionUnavailable) => {
                                     debug!(
-                                        "proposal task completed without response: OCOMP tentative pin is not durable"
+                                        "proposal task completed without response: candidate execution is not valid"
                                     );
                                 }
                                 Err(error) => {

@@ -1483,6 +1483,16 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 .expect("begin-zone transaction must execute");
         }
         let receipts = executor.receipts().to_vec();
+        assert!(
+            receipts
+                .iter()
+                .any(|receipt| receipt.logs.iter().any(|log| {
+                    log.address == NOD_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                })),
+            "fixture must mutate a Nod bucket before testing CE cleanup"
+        );
         let cleanup_hook_observation = Arc::new(Mutex::new(None));
         let cleanup_hook_capture = cleanup_hook_observation.clone();
         executor.evm_mut().db_mut().set_state_hook(Some(Box::new(

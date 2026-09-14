@@ -753,7 +753,11 @@ fn surviving_validators_fail_closed(world: &mut World) {
 #[then("the old committee keeps finalizing through the stalled reshare")]
 fn old_committee_keeps_finalizing(world: &mut World) {
     let kill_h = world.state.marker_height.expect("kill height");
-    let deadline = Instant::now() + Duration::from_secs(300);
+    // The fault precedes the prepare window. Include reaching that window with
+    // one founder offline, then the real 120-second failed-ceremony timeout.
+    // In SGX, missed proposer rounds left the survivors at height 54 after five
+    // minutes, before the configured freeze at 80 (epoch 180, prepare 100).
+    let deadline = Instant::now() + Duration::from_secs(1200);
     let ports = dkg_ports(world, &[0, 1, 2]).expect("three owned DKG survivors");
     let target = world
         .rpc
@@ -786,7 +790,9 @@ fn old_committee_keeps_finalizing(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "stalled target did not retry with fresh survivor finality"
+            "stalled target did not retry with fresh survivor finality: \
+             finalized={}, required_progress={target}, fault_height={kill_h}",
+            point.height
         );
     }
 }
@@ -799,7 +805,10 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
     // This step belongs to the explicitly configured off-grid FullNode scenario.
     // Do not probe availability to decide whether its follower is required.
     capture_dkg_owner(world, FOLLOWER_SLOT).expect("required off-grid FullNode owner");
-    let deadline = Instant::now() + Duration::from_secs(270);
+    // This includes reaching the freeze height with one founder offline. Missed
+    // proposer views produced 17-32 second block intervals in the SGX run, so
+    // 270 seconds expired at planned + 1 despite continuing finality.
+    let deadline = Instant::now() + Duration::from_secs(600);
     let ports = dkg_ports(world, &[0, 1, 2]).expect("three survivors and the FullNode");
     let fresh = world
         .rpc
@@ -812,18 +821,19 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
             .wait_finalized_checkpoint(&ports, 0, 1)
             .expect("off-grid common checkpoint");
         let earliest = dkg_ready_height(world).expect("readiness receipt height");
+        let mut required_height = None;
         if let Some(target) =
             frozen_target(&dkg_log(world, 0).expect("current freeze log"), earliest)
                 .expect("decode freeze")
         {
-            if point.height
-                >= fresh.max(
-                    target
-                        .planned
-                        .checked_add(2)
-                        .expect("planned progress height"),
-                )
-            {
+            let required = fresh.max(
+                target
+                    .planned
+                    .checked_add(2)
+                    .expect("planned progress height"),
+            );
+            required_height = Some(required);
+            if point.height >= required {
                 finalize_dkg_receipts(world, &ports).expect("off-grid admission receipts");
                 let target = retain_frozen_target(world, &ports).expect("frozen target agreement");
                 let members = dkg_addresses(world, 5).expect("expected DKG addresses");
@@ -836,7 +846,9 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "old committee did not finalize beyond the planned activation"
+            "old committee did not finalize beyond the planned activation: \
+             finalized={}, required={required_height:?}, fresh={fresh}",
+            point.height
         );
         sleep(Duration::from_secs(5));
     }

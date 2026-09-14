@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::os::unix::process::ExitStatusExt;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -289,10 +289,20 @@ fn observe_idempotence(world: &mut World) -> Result<()> {
         .checked_add(36)
         .ok_or_else(|| eyre!("idempotence height overflow"))?;
     // The previous HEAD > (marker + 35) condition means at least 36 new blocks.
-    for _ in 0..40 {
+    // With a proposer offline, the SGX run advanced only 16 blocks during the
+    // old 40 x 3-second wait. Bound elapsed time without shortening that window.
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let mut last_height = penalty.height;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "continued downtime observation exceeded 600 seconds: \
+             finalized={last_height}, required={target}"
+        );
         check_owned_processes(world, &state, true)?;
         let checkpoint = world.rpc.wait_finalized_checkpoint(&ports, 0, 1)?;
         let observed = observe_at(world, state.victim, &ports, checkpoint)?;
+        last_height = observed.height;
         retain(
             world,
             "downtime_idempotence_poll",
@@ -311,6 +321,10 @@ fn observe_idempotence(world: &mut World) -> Result<()> {
                 "felony event changed or repeated"
             );
             check_owned_processes(world, &state, true)?;
+            ensure!(
+                Instant::now() < deadline,
+                "continued downtime proof completed after its 600-second deadline"
+            );
             retain(
                 world,
                 "downtime_idempotence_verified",
@@ -320,11 +334,8 @@ fn observe_idempotence(world: &mut World) -> Result<()> {
             );
             return Ok(());
         }
-        sleep(Duration::from_secs(3));
+        sleep(Duration::from_secs(3).min(deadline.saturating_duration_since(Instant::now())));
     }
-    Err(eyre!(
-        "survivors did not finalize 36 further blocks within 40 attempts"
-    ))
 }
 
 fn expected_ports(state: &DowntimeState, faulted: bool) -> Vec<u16> {

@@ -44,7 +44,7 @@ const REFERENCE_BYTE: u8 = b'U';
 /// sweep sees the period closed rather than exactly met.
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The sweep runs in begin-block; a handful of blocks is plenty.
+/// The daily trigger comes round every minute in e2e, then the mark waits on a drain.
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
 const QUALIFIED: u8 = 1;
@@ -329,9 +329,17 @@ fn rate_above_floor(world: &mut World) {
         .first()
         .expect("a series was issued");
 
-    // Both series share an entry price, so one floor decides the group.
+    // Both series share an entry price, so one floor decides the group. Qualification
+    // reads the closed day's VWAP, so that day is seeded like the call window's.
     let (_, floor, _) = venue_probes::series_prices(&url, nft, series).expect("series prices");
-    crate::features::price_oracle::publish_controlled_quote(world, U256::from(floor * 2));
+    test_issuance::seed_day_vwaps(
+        &url,
+        DEPLOYER_KEY,
+        settlement_currency::USD_ISO,
+        1,
+        U256::from(floor * 2),
+    )
+    .expect("seed the closed day's VWAP");
 }
 
 #[then("every series qualifies in one group decision")]
@@ -1128,6 +1136,14 @@ fn unsettled_series_expired(world: &mut World) {
         .expect("intex venue was deployed on the target chain")
         .target_router;
 
+    // Anvil does not mine while this step only reads. Advance its clock even when
+    // the Called mark was already applied and there is nothing left to retry.
+    let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
+    world
+        .target_chain
+        .sync_clock_to(now)
+        .expect("carry the elapsed call notice to the target chain");
+
     for series in expiring_series(world) {
         // A mark whose calledAt sits ahead of this chain's clock is parked, not
         // applied, and nothing in a localnet plays the operator who retries it.
@@ -1137,11 +1153,6 @@ fn unsettled_series_expired(world: &mut World) {
             &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
         );
         if parked.is_some_and(|mark| mark != 0) {
-            let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
-            world
-                .target_chain
-                .sync_clock_to(now)
-                .expect("carry the committee clock to the target chain");
             eth::send_call(
                 &target_url,
                 target_router,
@@ -1175,6 +1186,24 @@ fn unsettled_series_expired(world: &mut World) {
                 sleep(Duration::from_secs(2));
             }
         }
+        let committee_deadline = venue_probes::series_call_deadline(&url, nft, series)
+            .expect("committee expiry deadline");
+        let target_deadline = venue_probes::series_call_deadline(&target_url, target_nft, series)
+            .expect("target expiry deadline");
+        let target_timestamp =
+            eth::latest_block_timestamp(&target_url).expect("target expiry observation timestamp");
+        assert_eq!(
+            target_deadline, committee_deadline,
+            "series {series} expiry deadline parity"
+        );
+        assert!(
+            target_timestamp > target_deadline,
+            "series {series} target clock did not pass expiry"
+        );
+        eprintln!(
+            "INTEX_EXPIRY_CLOCK series={series} committee_timestamp={now} \
+             target_timestamp={target_timestamp} deadline={target_deadline} pending_mark={parked:?}"
+        );
     }
 }
 

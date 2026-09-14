@@ -33,7 +33,7 @@ const MAX_POSEIDON_INPUTS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalAmount {
     pub(crate) base: u64,
-    pub(crate) atto: u64,
+    pub(crate) micro: u64,
     pub(crate) amount_minor: U256,
 }
 
@@ -154,25 +154,25 @@ fn parse_canonical_u64(value: &str, field: &'static str) -> Result<u64, String> 
     Ok(parsed)
 }
 
-/// Parse the existing `amount_base`/`amount_atto` wire fields into the canonical
+/// Parse the `amount_base`/`amount_micro` wire fields into the canonical
 /// six-decimal Tribute amount. `amount_base` is a whole unsigned `u64` and the
-/// legacy-named `amount_atto` field is the raw remainder `0..999_999`.
+/// `amount_micro` field is the raw remainder `0..999_999`.
 pub(crate) fn parse_canonical_amount(
     base_amount: &str,
-    atto_amount: &str,
+    micro_amount: &str,
 ) -> Result<CanonicalAmount, String> {
     let base = parse_canonical_u64(base_amount, "amount_base")?;
-    let atto = parse_canonical_u64(atto_amount, "amount_atto")?;
-    if U256::from(atto) >= SCALE_1E6_U256 {
-        return Err("amount_atto must be less than 1000000".to_string());
+    let micro = parse_canonical_u64(micro_amount, "amount_micro")?;
+    if U256::from(micro) >= SCALE_1E6_U256 {
+        return Err("amount_micro must be less than 1000000".to_string());
     }
     let amount_minor = U256::from(base)
         .checked_mul(SCALE_1E6_U256)
-        .and_then(|value| value.checked_add(U256::from(atto)))
+        .and_then(|value| value.checked_add(U256::from(micro)))
         .ok_or_else(|| "amount overflow".to_string())?;
     Ok(CanonicalAmount {
         base,
-        atto,
+        micro,
         amount_minor,
     })
 }
@@ -186,8 +186,8 @@ mod tests {
     struct CanonicalAmountCases {
         accepted_base: Vec<String>,
         rejected_base: Vec<String>,
-        accepted_atto: Vec<String>,
-        rejected_atto: Vec<String>,
+        accepted_micro: Vec<String>,
+        rejected_micro: Vec<String>,
     }
 
     fn canonical_amount_cases() -> CanonicalAmountCases {
@@ -198,12 +198,12 @@ mod tests {
         .unwrap()
     }
 
-    fn parse_amount_minor(base: &str, atto: &str) -> Result<U256, String> {
-        Ok(parse_canonical_amount(base, atto)?.amount_minor)
+    fn parse_amount_minor(base: &str, micro: &str) -> Result<U256, String> {
+        Ok(parse_canonical_amount(base, micro)?.amount_minor)
     }
 
     #[test]
-    fn normalize_canonical_base_and_atto_to_six_decimal_units() {
+    fn normalize_canonical_base_and_micro_to_six_decimal_units() {
         let cases = canonical_amount_cases();
         for base in cases.accepted_base {
             assert!(
@@ -211,10 +211,10 @@ mod tests {
                 "rejected canonical base {base:?}"
             );
         }
-        for atto in cases.accepted_atto {
+        for micro in cases.accepted_micro {
             assert!(
-                parse_amount_minor("1", &atto).is_ok(),
-                "rejected canonical atto {atto:?}"
+                parse_amount_minor("1", &micro).is_ok(),
+                "rejected canonical micro {micro:?}"
             );
         }
         assert_eq!(
@@ -240,10 +240,10 @@ mod tests {
                 "non-canonical amount_base {base:?} was accepted"
             );
         }
-        for atto in cases.rejected_atto {
+        for micro in cases.rejected_micro {
             assert!(
-                parse_amount_minor("1", &atto).is_err(),
-                "non-canonical amount_atto {atto:?} was accepted"
+                parse_amount_minor("1", &micro).is_err(),
+                "non-canonical amount_micro {micro:?} was accepted"
             );
         }
     }

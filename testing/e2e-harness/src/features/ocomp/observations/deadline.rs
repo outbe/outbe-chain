@@ -634,9 +634,8 @@ pub(in crate::features::ocomp) fn wait_for_released_retention(
                 Ok(snapshot) => {
                     let matching = snapshot.records.iter().find_map(|(_, record)| {
                         let PinStateV1::Released {
-                            job_id: Some(observed_job_id),
+                            job_id: observed_job_id,
                             source_generation,
-                            reason,
                             observed_height,
                             export,
                             ..
@@ -646,19 +645,13 @@ pub(in crate::features::ocomp) fn wait_for_released_retention(
                         };
                         (observed_job_id == job_id).then_some((
                             source_generation,
-                            reason,
                             observed_height,
                             export,
                         ))
                     });
-                    if let Some((source_generation, reason, observed_height, export)) = matching {
-                        assert_eq!(
-                            reason,
-                            PinReleaseReason::RetentionSatisfied,
-                            "validator-{validator_index} released {fault_label} job for the wrong reason"
-                        );
+                    if let Some((source_generation, observed_height, export)) = matching {
                         assert!(
-                            source_generation.is_some(),
+                            source_generation > 0,
                             "validator-{validator_index} lost the released source generation"
                         );
                         assert_eq!(
@@ -673,7 +666,7 @@ pub(in crate::features::ocomp) fn wait_for_released_retention(
                                 .find(|item| item.validator_index as usize == validator_index)
                                 .expect("saved exact export for each faulted validator");
                             assert_eq!(saved.job_id, job_id);
-                            assert_eq!(source_generation, Some(saved.source_generation));
+                            assert_eq!(source_generation, saved.source_generation);
                             assert_eq!(
                                 export,
                                 Some(outbe_node::ocomp::retention::ExportAuthorityV1 {
@@ -703,7 +696,7 @@ pub(in crate::features::ocomp) fn wait_for_released_retention(
                             );
                         }
                         *observation = format!(
-                            "Released(reason={reason:?}, observed_height={observed_height}, export={})",
+                            "Released(observed_height={observed_height}, export={})",
                             export.is_some()
                         );
                         released += 1;

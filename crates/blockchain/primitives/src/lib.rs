@@ -10,6 +10,7 @@ pub mod consensus;
 pub mod consensus_metadata;
 pub mod consensus_p2p;
 pub mod crypto;
+pub mod daily_sweep;
 pub mod dispatch;
 pub mod erc;
 pub mod error;

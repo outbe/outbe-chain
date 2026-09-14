@@ -94,7 +94,7 @@ fn selectors_and_gas_are_pinned() {
         proof: Bytes::new(),
     }
     .abi_encode();
-    assert_eq!(base_gas(&mint_calldata), 3_517_500);
+    assert_eq!(base_gas(&mint_calldata), 817_500);
     assert_eq!(
         base_gas(&IEmit::currentRootCall {}.abi_encode()),
         EMIT_VIEW_BASE_GAS

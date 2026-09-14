@@ -1,6 +1,6 @@
 use crate::ocomp::retention::*;
 
-/// Exact source identity retained before a local positive vote.
+/// Authenticated request identity from a finalized block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CandidatePinV1 {
     pub block_number: u64,
@@ -36,22 +36,6 @@ pub struct FinalizedJobPinV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-// Both variants are protocol-bounded and this value crosses the finality seam
-// by value. Retaining `Copy` avoids introducing fallible heap allocation into
-// candidate classification.
-#[allow(clippy::large_enum_variant)]
-pub enum CandidateFinalityV1 {
-    Finalized(FinalizedJobPinV1),
-    Orphaned,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PinReleaseReason {
-    Orphaned,
-    RetentionSatisfied,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExportAuthorityV1 {
     pub source_generation: u64,
     pub lease_generation: u64,
@@ -68,7 +52,7 @@ pub struct ReleasedJobAuthorityV1 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PinStateV1 {
-    Tentative {
+    AwaitingJobFinalization {
         candidate: CandidatePinV1,
     },
     Finalized {
@@ -108,15 +92,10 @@ pub enum PinStateV1 {
         terminal_height: u64,
         release_height: u64,
     },
-    OrphanGcPending {
-        candidate: CandidatePinV1,
-        observed_height: u64,
-    },
     Released {
         candidate: CandidatePinV1,
-        job_id: Option<B256>,
-        source_generation: Option<u64>,
-        reason: PinReleaseReason,
+        job_id: B256,
+        source_generation: u64,
         observed_height: u64,
         export: Option<ExportAuthorityV1>,
     },
@@ -190,10 +169,8 @@ pub enum RetentionError {
     GenerationOverflow,
     #[error("OCOMP journal record count exceeds its u16 wire format")]
     RegistryCapacity,
-    #[error("conflicting tentative candidate cannot replace the active pin")]
+    #[error("conflicting finalized request cannot replace the retained identity")]
     ConflictingCandidate,
-    #[error("fork-orphaned candidate cannot be pinned again")]
-    OrphanedCandidate,
     #[error("stale pin generation: expected {expected}, actual {actual}")]
     StaleGeneration { expected: u64, actual: u64 },
     #[error("pin transition is invalid: {0}")]

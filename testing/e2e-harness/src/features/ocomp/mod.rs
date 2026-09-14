@@ -16,7 +16,7 @@ use alloy_sol_types::SolEvent;
 use cucumber::{given, then, when};
 use eyre::{ensure, eyre};
 use outbe_chain_constants::GenesisProtocolParametersV1;
-use outbe_node::ocomp::retention::{inspect_retention_journal, PinReleaseReason, PinStateV1};
+use outbe_node::ocomp::retention::{inspect_retention_journal, PinStateV1};
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     result::{ActiveNodSetV1, LysisResultV1, NodActionV1, NodMembershipProofV1, ResultChunkV1},
@@ -37,7 +37,7 @@ use crate::world::ocomp::{
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
     OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS,
-    OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+    OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
     OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{

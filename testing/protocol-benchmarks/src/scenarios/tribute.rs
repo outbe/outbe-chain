@@ -213,7 +213,7 @@ fn build_payload() -> Vec<u8> {
         "creator": format!("{CALLER:?}"),
         "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
         "amount_base": "100",
-        "amount_atto": "0",
+        "amount_micro": "0",
         "su_hashes": [format!("{SU_HASH:#x}")],
         "wallet_addresses": [],
         "sra_addresses": [],

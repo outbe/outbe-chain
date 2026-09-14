@@ -47,7 +47,6 @@ use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::extract_header_artifact_from_block;
 
 use crate::hybrid::HybridSchemeProvider;
-use crate::ocomp_retention::after_durable_candidate;
 
 use alloy_primitives::Address;
 
@@ -654,24 +653,7 @@ impl ApplicationShared {
             );
             return Ok(());
         }
-        let positive_vote = match after_durable_candidate(
-            self.ocomp_retention.as_ref(),
-            &block,
-            || response.send(true),
-        ) {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(
-                    %round,
-                    digest = %payload_digest.0,
-                    block_number = block.number(),
-                    %error,
-                    "withholding local positive vote because the OCOMP tentative pin is not durable"
-                );
-                return Ok(());
-            }
-        };
-        if positive_vote.is_err() {
+        if response.send(true).is_err() {
             debug!(
                 digest = %payload_digest.0,
                 "verify response receiver dropped before execution-valid side effects"

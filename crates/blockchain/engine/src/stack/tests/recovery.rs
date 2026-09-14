@@ -423,18 +423,21 @@ fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
 fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
         let anchor = ProjectionCheckpoint {
-            block_number: 358,
-            block_hash: B256::repeat_byte(0x58),
+            block_number: 24,
+            block_hash: B256::repeat_byte(0x24),
         };
         let speculative_head = ProjectionCheckpoint {
-            block_number: 359,
-            block_hash: B256::repeat_byte(0x59),
+            block_number: 25,
+            block_hash: B256::repeat_byte(0x25),
         };
-        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
-            recovered_reth_readback(speculative_head, Some(anchor), Some(anchor)),
-            exact_recovered_reth_readback(anchor),
-        ])));
-        let scripted_observations = Arc::clone(&observations);
+        let anchor_header = reth_recovery_header(anchor);
+        let state = reth_chain_state::CanonicalInMemoryState::with_head(
+            reth_recovery_header(speculative_head),
+            Some(anchor_header.clone()),
+            Some(anchor_header.clone()),
+        );
+        state.set_persisted(reth_recovery_header(speculative_head).num_hash());
+        let updated_state = state.clone();
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
 
@@ -443,16 +446,63 @@ fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
             anchor,
             move || {
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                updated_state.set_canonical_head(anchor_header.clone());
                 async { RecoveredForkchoiceAttempt::Valid }
             },
-            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+            || read_reth_recovery_forkchoice(&state),
         )
         .await
         .unwrap();
 
         assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(observations.lock().unwrap().is_empty());
+        assert_eq!(state.get_persisted_num_hash().unwrap().number, 25);
+        assert_eq!(state.hash_by_number(25), None);
+        assert_eq!(
+            read_reth_recovery_forkchoice(&state).unwrap(),
+            exact_recovered_reth_readback(anchor)
+        );
     });
+}
+
+fn reth_recovery_header(checkpoint: ProjectionCheckpoint) -> SealedHeader<OutbeHeader> {
+    SealedHeader::new(
+        OutbeHeader::new(Header {
+            number: checkpoint.block_number,
+            ..Default::default()
+        }),
+        checkpoint.block_hash,
+    )
+}
+
+#[test]
+fn recovery_reader_preserves_unset_safe_and_finalized_markers() {
+    let genesis = ProjectionCheckpoint {
+        block_number: 0,
+        block_hash: B256::repeat_byte(0x10),
+    };
+    let state = reth_chain_state::CanonicalInMemoryState::with_head(
+        reth_recovery_header(genesis),
+        None,
+        None,
+    );
+    assert_eq!(
+        read_reth_recovery_forkchoice(&state).unwrap(),
+        recovered_reth_readback(genesis, None, None)
+    );
+}
+
+#[test]
+fn recovery_reader_rejects_zero_canonical_head() {
+    let state = reth_chain_state::CanonicalInMemoryState::with_head(
+        reth_recovery_header(ProjectionCheckpoint {
+            block_number: 24,
+            block_hash: B256::ZERO,
+        }),
+        None,
+        None,
+    );
+    let error = read_reth_recovery_forkchoice(&state).unwrap_err();
+    assert!(error.to_string().contains("zero canonical head"), "{error}");
 }
 
 #[test]

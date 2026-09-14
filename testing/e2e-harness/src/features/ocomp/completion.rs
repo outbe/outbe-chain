@@ -227,7 +227,7 @@ pub(in crate::features::ocomp) fn case_one_compute_started_line(
     let expected = format!("embedded OCOMP computation started job_id={job_id:#x}");
     text.lines().find(|line| {
         line.split_once(" INFO ")
-            .and_then(|(_, message)| message.split_once("outbe_chain::ocomp_exex: "))
+            .and_then(|(_, message)| message.split_once("outbe_chain::ocomp_exex::compute: "))
             .is_some_and(|(_, message)| message.trim_end() == expected)
     })
 }

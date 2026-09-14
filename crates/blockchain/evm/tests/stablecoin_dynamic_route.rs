@@ -313,3 +313,67 @@ fn unregistered_class_member_reverts_without_executing_installed_bytecode() {
 
     assert!(matches!(result.result, ExecutionResult::Revert { .. }));
 }
+
+#[test]
+fn immediate_delegation_to_native_class_executes_empty_code_regardless_of_issuance() {
+    let recipient = Address::new([0xaa; 20]);
+    for registered in [false, true] {
+        for inspect in [false, true] {
+            let (mut db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
+            let target = if registered {
+                tokens[0]
+            } else {
+                class_address(0x99)
+            };
+            if !registered {
+                let marker = Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE));
+                db.insert_account_info(
+                    target,
+                    AccountInfo {
+                        code_hash: marker.hash_slow(),
+                        code: Some(marker),
+                        ..Default::default()
+                    },
+                );
+            }
+            let delegation = Bytecode::new_eip7702(target);
+            db.insert_account_info(
+                recipient,
+                AccountInfo {
+                    nonce: 2,
+                    balance: U256::from(1),
+                    code_hash: delegation.hash_slow(),
+                    code: Some(delegation.clone()),
+                    ..Default::default()
+                },
+            );
+            let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+            evm.set_inspector_enabled(inspect);
+            let outcome = evm
+                .transact_raw(
+                    TxEnv::builder()
+                        .caller(CALLER)
+                        .kind(TxKind::Call(recipient))
+                        .data(symbol_calldata())
+                        .value(U256::from(10))
+                        .gas_limit(GAS_LIMIT)
+                        .build()
+                        .unwrap(),
+                )
+                .unwrap();
+            assert!(
+                matches!(&outcome.result, ExecutionResult::Success {output:Output::Call(data), ..} if data.is_empty()),
+                "native delegate must not execute marker or symbol ABI: {:?}",
+                outcome.result
+            );
+            assert_eq!(outcome.state[&recipient].info.balance, U256::from(11));
+            assert_eq!(outcome.state[&recipient].info.nonce, 2);
+            assert_eq!(
+                outcome.state[&recipient].info.code_hash,
+                delegation.hash_slow()
+            );
+            assert_eq!(outcome.state[&target].info.balance, U256::ZERO);
+            assert!(!outcome.state[&target].is_touched());
+        }
+    }
+}
