@@ -479,17 +479,4 @@ mod tests {
         let err = "20240230".parse::<WorldwideDay>().unwrap_err();
         assert!(err.contains("valid YYYYMMDD"));
     }
-
-    pub fn now() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
-    }
-
-    #[test]
-    fn now_prints_value() {
-        let now = WorldwideDay::from_timestamp(now());
-        println!("WorldwideDay::now(): {now}");
-    }
 }
