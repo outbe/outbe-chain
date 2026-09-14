@@ -65,7 +65,7 @@ pub fn dispatch(
                 let factory = GemFactoryContract::new(storage.clone());
                 Ok(IGemFactory::getStatisticsReturn {
                     totalGemsIssued: factory.total_gems_issued.read()?,
-                    totalIntexSentToGemFactory: factory.total_intex_sent_to_gem_factory.read()?,
+                    totalGemFactoryUnits: factory.total_gem_factory_units.read()?,
                 })
             }),
 

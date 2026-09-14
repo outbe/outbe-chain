@@ -35,7 +35,7 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
 /// GemPosition validity period: an Intex in the Gem Factory expires this long after
-/// `sent_to_gem_factory_at`; no new gems may be issued afterward. 1 year.
+/// `issued_at`; no new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 
 /// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.

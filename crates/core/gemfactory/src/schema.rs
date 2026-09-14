@@ -49,8 +49,9 @@ pub struct GemPosition {
     #[attribute(order = 6)]
     pub reference_currency: u16,
 
+    /// When the position was issued.
     #[attribute(order = 7)]
-    pub sent_to_gem_factory_at: u64,
+    pub issued_at: u64,
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue.
@@ -65,7 +66,7 @@ pub struct GemFactoryContract {
     pub total_gems_issued: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 1)]
-    pub total_intex_sent_to_gem_factory: outbe_primitives::storage::dsl::Value<U256>,
+    pub total_gem_factory_units: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,

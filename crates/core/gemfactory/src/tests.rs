@@ -810,7 +810,7 @@ fn a_position_reports_its_full_terms() {
         assert_eq!(data.sourceFloorPrice, six_decimal_unit());
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
-        assert_eq!(data.sentToGemFactoryAt, T_NOW);
+        assert_eq!(data.issuedAt, T_NOW);
         assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
         assert_eq!(data.remainingCapacity, sent_capacity(six_decimal_u128()));
     });
@@ -1090,10 +1090,7 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         assert_eq!(rec.source_intex_id, source_intex_id());
         assert_eq!(rec.remaining_capacity, capacity);
         assert_eq!(rec.source_entry_price, six_decimal_unit());
-        assert_eq!(
-            factory.total_intex_sent_to_gem_factory.read().unwrap(),
-            capacity
-        );
+        assert_eq!(factory.total_gem_factory_units.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
@@ -1282,7 +1279,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
 fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        // Craft a position whose sent_to_gem_factory_at is already past the validity window.
+        // Craft a position whose issued_at is already past the validity window.
         let position_id = U256::from(1u64);
         let mut factory = GemFactoryContract::new(storage.clone());
         factory
@@ -1295,7 +1292,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 source_floor_price: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
-                sent_to_gem_factory_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
+                issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
                 expires_at: T_NOW - 1,
             })
             .unwrap();

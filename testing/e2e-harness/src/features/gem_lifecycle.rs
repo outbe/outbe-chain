@@ -189,7 +189,7 @@ fn position_holds_capacity(world: &mut World) {
         "the position was issued to somebody other than the merchant who parked"
     );
     assert!(
-        position.expiresAt > position.sentToGemFactoryAt,
+        position.expiresAt > position.issuedAt,
         "the position was parked without a deadline to expire at"
     );
     assert_eq!(

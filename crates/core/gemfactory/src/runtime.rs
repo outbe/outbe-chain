@@ -15,7 +15,7 @@ use outbe_common::settlement::floor_to_asset_units;
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
+use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
@@ -132,7 +132,7 @@ pub fn issue_gem_position(
     let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(storage, source_intex_id, gem_factory_units)?;
 
-    let sent_to_gem_factory_at = storage.timestamp()?.to::<u64>();
+    let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =
         GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
@@ -146,18 +146,17 @@ pub fn issue_gem_position(
         source_floor_price: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
-        sent_to_gem_factory_at,
-        expires_at: sent_to_gem_factory_at
-            .saturating_add(outbe_gem::config::read(storage)?.position_validity),
+        issued_at,
+        expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
     })?;
 
     factory.push_live_position(position_id)?;
 
-    let prev_sent = factory.total_intex_sent_to_gem_factory.read()?;
+    let prev_sent = factory.total_gem_factory_units.read()?;
     let new_sent = prev_sent
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
-    factory.total_intex_sent_to_gem_factory.write(new_sent)?;
+    factory.total_gem_factory_units.write(new_sent)?;
 
     Ok(position_id)
 }
@@ -496,7 +495,7 @@ pub fn position_data(
         sourceFloorPrice: record.source_floor_price,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
-        sentToGemFactoryAt: record.sent_to_gem_factory_at,
+        issuedAt: record.issued_at,
         expiresAt: record.expires_at,
     })
 }
@@ -524,7 +523,7 @@ pub fn mine_promis(
 
     emit_event(
         storage,
-        GemMined {
+        GemExercised {
             gemId: gem_id,
             owner: item.owner,
             promisLoad: item.promis_load_minor,

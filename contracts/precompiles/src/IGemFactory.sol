@@ -24,10 +24,10 @@ interface IGemFactory {
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
-    /// @notice Cumulative totals since genesis. `totalIntexSentToGemFactory` counts every
+    /// @notice Cumulative totals since genesis. `totalGemFactoryUnits` counts every
     ///         Promis unit ever sent there; it is not reduced when a position drains
     ///         or expires.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalIntexSentToGemFactory);
+    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalGemFactoryUnits);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the
@@ -61,7 +61,8 @@ interface IGemFactory {
         uint256 sourceFloorPrice;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint64 sentToGemFactoryAt;
+        /// @notice When the position was issued.
+        uint64 issuedAt;
         /// @notice When the position stops issuing and returns its remainder.
         uint64 expiresAt;
     }
@@ -81,8 +82,8 @@ interface IGemFactory {
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
-    /// @notice A settled gem was burned to mine confidential Promis.
-    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoad);
+    /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
+    event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoad);
     /// @notice A position ended its validity with capacity it never issued.
     event GemPositionExpired(
         uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
