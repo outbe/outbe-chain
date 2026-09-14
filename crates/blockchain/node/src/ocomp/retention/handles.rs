@@ -63,7 +63,7 @@ impl SharedOcompRetentionSelector {
             .discovery_job_records(job_id)
     }
 
-    /// Binds a tentative request pin to the exact finalized job stored in
+    /// Binds a finalized request pin to the exact finalized job stored in
     /// canonical Metadosis state. No finality or response-window height is
     /// inferred locally.
     pub fn bind_canonical_finalized_job(
@@ -164,29 +164,6 @@ impl SharedOcompRetentionSelector {
     }
 }
 
-/// Consensus-facing handle. Candidate preparation is intentionally synchronous
-/// because a positive vote depends on its durable ack; finality notification is
-/// a constant-time local enqueue.
-#[derive(Clone)]
-pub struct OcompRetentionHandle {
-    pub(in crate::ocomp::retention) coordinator: Arc<OcompRetentionCoordinator>,
-    #[cfg(test)]
-    pub(in crate::ocomp::retention) finalized_tx: Option<tokio::sync::mpsc::Sender<ConsensusBlock>>,
-}
-
-impl OcompRetentionHandle {
-    /// Candidate-only consensus hook used with the unified finalized reader.
-    /// Finalized reconciliation is owned exclusively by that reader.
-    #[must_use]
-    pub fn for_unified_finalized_reader(coordinator: Arc<OcompRetentionCoordinator>) -> Self {
-        Self {
-            coordinator,
-            #[cfg(test)]
-            finalized_tx: None,
-        }
-    }
-}
-
 impl TributeRetentionSelector for OcompRetentionCoordinator {
     fn active_pin_for(
         &self,
@@ -207,7 +184,9 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
             .flat_map(|registry| registry.records.values())
         {
             match record.state {
-                PinStateV1::Tentative { candidate } if candidate.wwd == worldwide_day.value() => {
+                PinStateV1::AwaitingJobFinalization { candidate }
+                    if candidate.wwd == worldwide_day.value() =>
+                {
                     selected.insert(candidate.input_lease_id);
                 }
                 PinStateV1::Finalized { candidate, .. }
@@ -242,36 +221,4 @@ impl TributeRetentionSelector for SharedOcompRetentionSelector {
             .ok_or_else(|| RetentionError::RetentionCoordinatorNotInstalled.to_string())?
             .active_pin_for(worldwide_day)
     }
-}
-
-impl OcompRetentionHook for OcompRetentionHandle {
-    fn prepare_candidate(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
-        self.coordinator.prepare_candidate(block)
-    }
-
-    fn reconcile_finalized(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
-        #[cfg(not(test))]
-        let _ = block;
-        #[cfg(test)]
-        {
-            let Some(finalized_tx) = &self.finalized_tx else {
-                return Ok(());
-            };
-            finalized_tx
-                .try_send(block.clone())
-                .map_err(|error| match error {
-                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                        OcompRetentionHookError::new("OCOMP retention finality queue is full")
-                    }
-                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                        OcompRetentionHookError::new("OCOMP retention worker is unavailable")
-                    }
-                })?;
-        }
-        Ok(())
-    }
-}
-
-pub(in crate::ocomp::retention) fn hook_error(error: RetentionError) -> OcompRetentionHookError {
-    OcompRetentionHookError::new(error.to_string())
 }

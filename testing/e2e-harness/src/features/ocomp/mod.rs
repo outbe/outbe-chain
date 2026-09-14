@@ -16,7 +16,7 @@ use alloy_sol_types::SolEvent;
 use cucumber::{given, then, when};
 use eyre::{ensure, eyre};
 use outbe_chain_constants::GenesisProtocolParametersV1;
-use outbe_node::ocomp::retention::{inspect_retention_journal, PinReleaseReason, PinStateV1};
+use outbe_node::ocomp::retention::{inspect_retention_journal, PinStateV1};
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     result::{ActiveNodSetV1, LysisResultV1, NodActionV1, NodMembershipProofV1, ResultChunkV1},

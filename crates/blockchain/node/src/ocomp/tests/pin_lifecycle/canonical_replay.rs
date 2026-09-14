@@ -1,19 +1,13 @@
 use super::*;
 
 #[test]
-fn unified_finalized_frame_supplies_retention_receipts_without_a_second_read() {
+fn unified_finalized_frame_authenticates_request_against_typed_state() {
     let ProductionCandidateFixture {
         request,
         candidate,
         source,
-        pending_receipts,
+        receipts,
     } = production_candidate_source();
-    let receipts = pending_receipts
-        .lock()
-        .expect("pending receipt fixture")
-        .take()
-        .expect("fixture receipts")
-        .1;
     let frame = FinalizedFrame::for_test(
         BlockNumHash::new(request.number(), request.block_hash()),
         request.header().inner.parent_hash,
@@ -31,13 +25,6 @@ fn unified_finalized_frame_supplies_retention_receipts_without_a_second_read() {
             .expect("frame candidate"),
         candidate
     );
-    assert!(
-        pending_receipts
-            .lock()
-            .expect("pending receipt fixture")
-            .is_none(),
-        "the finalized path must not call the pending/canonical receipt reader"
-    );
 }
 
 #[test]
@@ -46,9 +33,8 @@ fn finalized_request_replay_preserves_every_durable_lifecycle_state_after_restar
         request,
         candidate,
         source,
-        pending_receipts,
+        receipts,
     } = production_candidate_source();
-    let receipts = pending_receipts.lock().unwrap().take().unwrap().1;
     let frame = FinalizedFrame::for_test(
         BlockNumHash::new(request.number(), request.block_hash()),
         request.header().inner.parent_hash,
@@ -73,7 +59,7 @@ fn finalized_request_replay_preserves_every_durable_lifecycle_state_after_restar
         manifest_hash: B256::repeat_byte(0x59),
     };
     let states = [
-        PinStateV1::Tentative { candidate },
+        PinStateV1::AwaitingJobFinalization { candidate },
         PinStateV1::Finalized {
             candidate,
             job_id,
@@ -113,17 +99,17 @@ fn finalized_request_replay_preserves_every_durable_lifecycle_state_after_restar
         },
         PinStateV1::Released {
             candidate,
-            job_id: Some(job_id),
-            source_generation: Some(2),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id,
+            source_generation: 2,
+
             observed_height: deadline_height + 64,
             export: None,
         },
         PinStateV1::Released {
             candidate,
-            job_id: Some(job_id),
-            source_generation: Some(2),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id,
+            source_generation: 2,
+
             observed_height: deadline_height + 64,
             export: Some(export),
         },
@@ -154,40 +140,26 @@ fn finalized_request_replay_preserves_every_durable_lifecycle_state_after_restar
 }
 
 #[test]
-fn finalized_request_replay_rejects_conflicts_and_orphaned_authority_without_mutation() {
+fn finalized_request_replay_rejects_conflicting_identity_without_mutation() {
     let ProductionCandidateFixture {
         request,
         candidate,
         source,
-        pending_receipts,
+        receipts,
     } = production_candidate_source();
     let frame = FinalizedFrame::for_test(
         BlockNumHash::new(request.number(), request.block_hash()),
         request.header().inner.parent_hash,
         request.header().inner.state_root,
         Block::default(),
-        pending_receipts.lock().unwrap().take().unwrap().1,
+        receipts,
     );
     let observation = observe_finalized_request(&frame).unwrap().unwrap();
     let mut conflicting = candidate;
     conflicting.state_root = B256::repeat_byte(0x91);
-    let states = [
-        PinStateV1::Tentative {
-            candidate: conflicting,
-        },
-        PinStateV1::OrphanGcPending {
-            candidate,
-            observed_height: request.number() + 1,
-        },
-        PinStateV1::Released {
-            candidate,
-            job_id: None,
-            source_generation: None,
-            reason: PinReleaseReason::Orphaned,
-            observed_height: request.number() + 1,
-            export: None,
-        },
-    ];
+    let states = [PinStateV1::AwaitingJobFinalization {
+        candidate: conflicting,
+    }];
     for state in states {
         let root = tempfile::tempdir().unwrap();
         seed_retention_journal_for_test(
@@ -208,10 +180,7 @@ fn finalized_request_replay_rejects_conflicts_and_orphaned_authority_without_mut
         let error = coordinator
             .reconcile_finalized_frame(&frame, Some(observation))
             .unwrap_err();
-        assert!(matches!(
-            error,
-            RetentionError::ConflictingCandidate | RetentionError::OrphanedCandidate
-        ));
+        assert!(matches!(error, RetentionError::ConflictingCandidate));
         assert_eq!(fs::read(root.path().join("pin.v1")).unwrap(), before);
     }
 }
@@ -222,14 +191,8 @@ fn unified_retention_waits_for_and_copies_canonical_finalized_job() {
         request,
         candidate,
         source,
-        pending_receipts,
+        receipts,
     } = production_candidate_source();
-    let receipts = pending_receipts
-        .lock()
-        .expect("pending receipt fixture")
-        .take()
-        .expect("fixture receipts")
-        .1;
     let frame = FinalizedFrame::for_test(
         BlockNumHash::new(request.number(), request.block_hash()),
         request.header().inner.parent_hash,
@@ -250,7 +213,7 @@ fn unified_retention_waits_for_and_copies_canonical_finalized_job() {
         ready_record(&coordinator),
         PinRecordV1 {
             generation: 1,
-            state: PinStateV1::Tentative { candidate: actual },
+            state: PinStateV1::AwaitingJobFinalization { candidate: actual },
         } if actual == candidate
     ));
 
@@ -302,7 +265,7 @@ fn canonical_terminal_binding_closes_without_waiting_for_another_finalized_block
     let root = tempfile::tempdir().unwrap();
     let canonical = canonical_terminal_fixture(fixture.candidate, OcompJobStatus::Expired);
     let coordinator = OcompRetentionCoordinator::open(root.path(), fixture.source.clone());
-    coordinator.record_tentative(fixture.candidate).unwrap();
+    fixture.admit(&coordinator);
     coordinator
         .bind_canonical_finalized_job(fixture.candidate.block_hash, &canonical)
         .unwrap();
@@ -373,9 +336,9 @@ fn late_canonical_ack_recovers_metadata_without_reactivating_terminal_gc_or_rele
                 },
                 _ => PinStateV1::Released {
                     candidate: fixture.candidate,
-                    job_id: Some(finalized.job_id),
-                    source_generation: Some(2),
-                    reason: PinReleaseReason::RetentionSatisfied,
+                    job_id: finalized.job_id,
+                    source_generation: 2,
+
                     observed_height: finalized.deadline_height + 64,
                     export: None,
                 },
@@ -451,19 +414,13 @@ fn late_canonical_ack_recovers_metadata_without_reactivating_terminal_gc_or_rele
 }
 
 #[test]
-fn canonical_finalized_job_mismatch_cannot_mutate_tentative_retention() {
+fn canonical_finalized_job_mismatch_cannot_mutate_awaiting_job_retention() {
     let ProductionCandidateFixture {
         request,
         candidate,
         source,
-        pending_receipts,
+        receipts,
     } = production_candidate_source();
-    let receipts = pending_receipts
-        .lock()
-        .expect("pending receipt fixture")
-        .take()
-        .expect("fixture receipts")
-        .1;
     let frame = FinalizedFrame::for_test(
         BlockNumHash::new(request.number(), request.block_hash()),
         request.header().inner.parent_hash,
@@ -511,7 +468,7 @@ fn canonical_finalized_job_mismatch_cannot_mutate_tentative_retention() {
         ready_record(&coordinator),
         PinRecordV1 {
             generation: 1,
-            state: PinStateV1::Tentative { candidate: actual },
+            state: PinStateV1::AwaitingJobFinalization { candidate: actual },
         } if actual == candidate
     ));
 }

@@ -1434,24 +1434,10 @@ where
         .as_ref()
         .expect("storage_dir was required above");
     let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
-    let ocomp_result_deadline_blocks = ocomp_fork_install
-        .request_profile
-        .capacity_profile
-        .result_deadline_blocks;
-    let pending_receipts_provider = node.provider.clone();
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
             node.provider.clone(),
             finalized_parent_cert_store.clone(),
-            move || {
-                pending_receipts_provider
-                    .pending_block_and_receipts()
-                    .map(|pending| {
-                        pending.map(|(block, receipts)| (B256::new(*block.hash()), receipts))
-                    })
-                    .map_err(|error| error.to_string())
-            },
-            ocomp_result_deadline_blocks,
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
@@ -1465,12 +1451,6 @@ where
     retention_selector
         .install(Arc::clone(&ocomp_retention_coordinator))
         .wrap_err("failed to install validator OCOMP retention selector")?;
-    let ocomp_retention_handle =
-        outbe_node::ocomp::retention::OcompRetentionHandle::for_unified_finalized_reader(
-            ocomp_retention_coordinator,
-        );
-    let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
-
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;
@@ -1519,7 +1499,6 @@ where
         proposer_evm_address,
         trust_el_head: args.trust_el_head,
         late_sig_store: late_sig_store.clone(),
-        ocomp_retention: ocomp_retention.clone(),
     });
 
     info!(
@@ -1559,7 +1538,6 @@ where
             parent_cert_store: finalized_parent_cert_store.clone(),
             certificate_scheme_provider: certificate_scheme_provider.clone(),
             late_sig_store: late_sig_store.clone(),
-            ocomp_retention,
         });
     let mut finalization_handle = ctx
         .child("finalization")

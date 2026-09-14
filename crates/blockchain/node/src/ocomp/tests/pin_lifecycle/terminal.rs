@@ -6,23 +6,18 @@ struct ResponseWindowCompletedSource {
 }
 
 impl FinalizedInputProofSource for ResponseWindowCompletedSource {
-    fn candidate_for_block(
+    fn candidate_for_finalized_observation(
         &self,
-        block: &ConsensusBlock,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        self.inner.candidate_for_block(block)
+        frame: &FinalizedFrame,
+        observation: FinalizedRequestObservationV1,
+    ) -> Result<CandidatePinV1, RetentionError> {
+        self.inner
+            .candidate_for_finalized_observation(frame, observation)
     }
 
-    fn resolve_finality(
+    fn terminal_height_at_finalized_frame(
         &self,
-        candidate: CandidatePinV1,
-    ) -> Result<CandidateFinalityV1, RetentionError> {
-        self.inner.resolve_finality(candidate)
-    }
-
-    fn terminal_height_at(
-        &self,
-        block: &ConsensusBlock,
+        frame: &FinalizedFrame,
         candidate: CandidatePinV1,
         job_id: B256,
     ) -> Result<Option<u64>, RetentionError> {
@@ -36,15 +31,11 @@ impl FinalizedInputProofSource for ResponseWindowCompletedSource {
         else {
             return Ok(None);
         };
-        let CandidateFinalityV1::Finalized(finalized) = self.inner.resolve_finality(candidate)?
-        else {
-            return Err(RetentionError::Source(
-                "completed response-window fixture became orphaned".to_owned(),
-            ));
-        };
+        let canonical = self.inner.canonical_job(candidate);
+        let finalized = canonical.finalized.as_ref().unwrap();
         retention_terminal_height_for_status(
             OcompJobStatus::Completed,
-            block.number(),
+            frame.identity().number,
             finalized.deadline_height,
             quorum_height,
         )
@@ -54,26 +45,22 @@ impl FinalizedInputProofSource for ResponseWindowCompletedSource {
 #[test]
 fn ocm_pin_001_finalized_state_drives_terminal_retention_after_export_ack() {
     let request = block(151, B256::repeat_byte(0x35), 5);
-    let candidate = candidate(&request, B256::repeat_byte(0x45));
-    let job_id = B256::repeat_byte(0x55);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("terminal observation journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     coordinator
         .record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x46))
         .expect("export ACK is durable before terminal retention");
     source.observe_terminal(job_id, 160);
     let terminal_block = block(160, B256::repeat_byte(0x36), 6);
-    source.observe_finalized(&terminal_block);
     coordinator
-        .reconcile_finalized(&terminal_block)
+        .reconcile_finalized_frame(&frame_for_block(&terminal_block, vec![]), None)
         .expect("finalized terminal state is node-local authority");
 
     assert!(matches!(
@@ -90,21 +77,21 @@ fn ocm_pin_001_finalized_state_drives_terminal_retention_after_export_ack() {
 #[test]
 fn ocm_pin_001_terminal_state_retires_unexported_input_after_evidence_window() {
     let request = block(151, B256::repeat_byte(0x37), 7);
-    let candidate = candidate(&request, B256::repeat_byte(0x47));
-    let job_id = B256::repeat_byte(0x57);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("unexported terminal journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     source.observe_terminal(job_id, 160);
     coordinator
-        .reconcile_finalized(&block(160, B256::repeat_byte(0x38), 8))
+        .reconcile_finalized_frame(
+            &frame_for_block(&block(160, B256::repeat_byte(0x38), 8), vec![]),
+            None,
+        )
         .expect("terminal observation closes retention while exporter is unavailable");
 
     assert!(matches!(
@@ -149,8 +136,8 @@ fn ocm_pin_001_terminal_state_retires_unexported_input_after_evidence_window() {
     assert!(matches!(
         ready_record(&coordinator).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id: current,
+
             export: None,
             ..
         } if current == job_id
@@ -160,24 +147,24 @@ fn ocm_pin_001_terminal_state_retires_unexported_input_after_evidence_window() {
 #[test]
 fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() {
     let request = block(151, B256::repeat_byte(0x6A), 0x6B);
-    let candidate = candidate(&request, B256::repeat_byte(0x6C));
-    let job_id = B256::repeat_byte(0x6D);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("production-open journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     coordinator
         .record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x6F))
         .expect("export ACK is durable before terminal retention");
     source.observe_terminal(job_id, 160);
     coordinator
-        .reconcile_finalized(&block(160, B256::repeat_byte(0x6E), 0x6F))
+        .reconcile_finalized_frame(
+            &frame_for_block(&block(160, B256::repeat_byte(0x6E), 0x6F), vec![]),
+            None,
+        )
         .expect("canonical terminal state is observed");
     assert!(matches!(
         ready_record(&coordinator).state,
@@ -190,7 +177,10 @@ fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() 
     ));
 
     coordinator
-        .reconcile_finalized(&block(224, B256::repeat_byte(0x70), 0x71))
+        .reconcile_finalized_frame(
+            &frame_for_block(&block(224, B256::repeat_byte(0x70), 0x71), vec![]),
+            None,
+        )
         .expect("finalized reconciliation does not execute retained-input GC");
     assert!(matches!(
         ready_record(&coordinator).state,
@@ -206,8 +196,8 @@ fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() 
     assert!(matches!(
         ready_record(&coordinator).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id: current,
+
             observed_height: 224,
             ..
         } if current == job_id
@@ -218,8 +208,8 @@ fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() 
     assert!(matches!(
         ready_record(&restarted).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id: current,
+
             observed_height: 224,
             ..
         } if current == job_id
@@ -246,8 +236,8 @@ fn ocm_pin_001_completed_status_is_not_retention_terminal_before_response_deadli
 #[test]
 fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
     let request = block(100, B256::repeat_byte(0x37), 7);
-    let candidate = candidate(&request, B256::repeat_byte(0x47));
-    let job_id = B256::repeat_byte(0x57);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
     let source = Arc::new(ResponseWindowCompletedSource {
         inner: inner.clone(),
@@ -256,22 +246,22 @@ fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
 
     {
         let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
-        assert_eq!(
-            DeterministicConsensusDriver::vote(&coordinator, &request),
-            VoteOutcome::Positive
-        );
-        DeterministicConsensusDriver::finalize(&inner, &coordinator, &request);
+        assert!(FinalizedFrameDriver::admit(&inner, &coordinator, &request).is_ok());
+        FinalizedFrameDriver::bind(&inner, &coordinator, &request);
         let (generation, finalized) = coordinator
             .finalized_job_record(job_id)
             .expect("job reaches finalized state");
-        assert_eq!(finalized.deadline_height, 114);
+        assert_eq!(finalized.deadline_height, 115);
         coordinator
             .record_exported(job_id, generation, 9, B256::repeat_byte(0x67))
             .expect("job reaches exported state");
 
         inner.observe_terminal(job_id, 110);
         coordinator
-            .reconcile_finalized(&block(110, B256::repeat_byte(0x38), 8))
+            .reconcile_finalized_frame(
+                &frame_for_block(&block(110, B256::repeat_byte(0x38), 8), vec![]),
+                None,
+            )
             .expect("quorum block reconciles without terminalizing retention");
         assert_eq!(coordinator.finalized_live_jobs().unwrap().len(), 1);
         coordinator
@@ -281,7 +271,10 @@ fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
 
     let restarted = OcompRetentionCoordinator::open(root.path(), source);
     restarted
-        .reconcile_finalized(&block(113, B256::repeat_byte(0x39), 9))
+        .reconcile_finalized_frame(
+            &frame_for_block(&block(113, B256::repeat_byte(0x39), 9), vec![]),
+            None,
+        )
         .expect("restart before deadline restores the live export");
     assert_eq!(restarted.finalized_live_jobs().unwrap().len(), 1);
     restarted
@@ -289,14 +282,17 @@ fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
         .expect("restarted node can still serve the pinned job");
 
     restarted
-        .reconcile_finalized(&block(114, B256::repeat_byte(0x3A), 10))
+        .reconcile_finalized_frame(
+            &frame_for_block(&block(115, B256::repeat_byte(0x3A), 10), vec![]),
+            None,
+        )
         .expect("deadline closure terminalizes retention");
     assert!(restarted.finalized_live_jobs().unwrap().is_empty());
     assert!(matches!(
         ready_record(&restarted).state,
         PinStateV1::Terminal {
             job_id: current,
-            terminal_height: 114,
+            terminal_height: 115,
             ..
         } if current == job_id
     ));

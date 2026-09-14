@@ -16,8 +16,6 @@
 //! the exact-parent certificate needed for the successor block's Phase 1 system
 //! transaction.
 
-use std::sync::Arc;
-
 use crate::finalization::committee_prelude::build_committee_prelude;
 use commonware_runtime::{Clock, Spawner};
 use futures::{channel::mpsc, StreamExt};
@@ -49,7 +47,6 @@ use commonware_consensus::marshal::core::DigestFallback;
 /// recovery data cannot grow unbounded across restarts or missed slots.
 pub const PARENT_CERT_KEEP_DEPTH: u64 = 256;
 use crate::marshal_types::MarshalMailbox;
-use crate::ocomp_retention::OcompRetentionHook;
 use crate::vrf_safety::VrfSafetyGate;
 
 use crate::finalization::block_cache::BlockCache;
@@ -88,10 +85,6 @@ pub struct FinalizationActorDeps {
     /// reporter records into it; the application handler reads it to pack the
     /// proposer artifact. Best-effort, process-local - never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
-    /// Non-blocking node-local OCOMP finality notification. The production
-    /// handle only enqueues the block; proof and journal work run in
-    /// the node-owned retention worker.
-    pub ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 /// FinalizationActor itself. Owns the receiver end of an unbounded
@@ -461,15 +454,6 @@ impl FinalizationActor {
         self.publish_consensus_status(&finalized, &consensus_data, block_number);
         self.note_finalized_dkg_artifact(&block, digest, block_number);
         self.evict_finalized_block_cache();
-        if let Err(error) = self.deps.ocomp_retention.reconcile_finalized(&block) {
-            warn!(
-                target: "outbe::finalization",
-                block_number,
-                block_hash = %digest.0,
-                %error,
-                "OCOMP finality notification failed locally; consensus finalization continues"
-            );
-        }
 
         Ok(())
     }
@@ -679,7 +663,6 @@ impl FinalizationActor {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use crate::block::ConsensusBlock;
     use crate::digest::Digest;
@@ -778,7 +761,6 @@ mod tests {
             parent_cert_store: FinalizedParentCertStore::new(),
             certificate_scheme_provider: HybridSchemeProvider::default(),
             late_sig_store: store.clone(),
-            ocomp_retention: Arc::new(crate::ocomp_retention::NoopOcompRetentionHook),
         };
         let (actor, _mailbox) = FinalizationActor::new(deps);
 

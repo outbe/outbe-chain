@@ -88,7 +88,6 @@ use outbe_consensus::{
         election::{HybridElectorConfigProvider, HybridRandom},
         HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
     },
-    ocomp_retention::OcompRetentionHook,
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };

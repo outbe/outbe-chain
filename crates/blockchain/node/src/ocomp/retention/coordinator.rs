@@ -293,10 +293,9 @@ impl OcompRetentionCoordinator {
                     open_height,
                     deadline_height,
                 }),
-                PinStateV1::Tentative { .. }
+                PinStateV1::AwaitingJobFinalization { .. }
                 | PinStateV1::Terminal { .. }
                 | PinStateV1::GcPending { .. }
-                | PinStateV1::OrphanGcPending { .. }
                 | PinStateV1::Released { .. } => {}
             }
         }
@@ -409,9 +408,7 @@ impl OcompRetentionCoordinator {
                 },
                 [Some(source_generation), None],
             ),
-            PinStateV1::Tentative { .. }
-            | PinStateV1::OrphanGcPending { .. }
-            | PinStateV1::Released { .. } => {
+            PinStateV1::AwaitingJobFinalization { .. } | PinStateV1::Released { .. } => {
                 return Err(RetentionError::InvalidTransition(
                     "discovery requires a live or terminal finalized job",
                 ));
@@ -436,17 +433,15 @@ impl OcompRetentionCoordinator {
         let (_, record) = record_for_job(&inner, job_id)?;
         Ok(match record.state {
             PinStateV1::Released {
-                job_id: Some(existing),
-                reason: PinReleaseReason::RetentionSatisfied,
+                job_id: existing,
                 export,
                 ..
             } if existing == job_id => export,
-            PinStateV1::Tentative { .. }
+            PinStateV1::AwaitingJobFinalization { .. }
             | PinStateV1::Finalized { .. }
             | PinStateV1::Exported { .. }
             | PinStateV1::Terminal { .. }
             | PinStateV1::GcPending { .. }
-            | PinStateV1::OrphanGcPending { .. }
             | PinStateV1::Released { .. } => None,
         })
     }
@@ -460,9 +455,8 @@ impl OcompRetentionCoordinator {
         Ok(match record.state {
             PinStateV1::Released {
                 candidate,
-                job_id: Some(existing),
-                source_generation: Some(source_generation),
-                reason: PinReleaseReason::RetentionSatisfied,
+                job_id: existing,
+                source_generation,
                 export,
                 ..
             } if existing == job_id => Some(ReleasedJobAuthorityV1 {
@@ -475,91 +469,8 @@ impl OcompRetentionCoordinator {
         })
     }
 
-    pub fn prepare_candidate(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
-        let candidate = self.source.candidate_for_block(block).map_err(hook_error)?;
-        if let Some(candidate) = candidate {
-            self.record_tentative(candidate).map_err(hook_error)?;
-        }
-        Ok(())
-    }
-
-    pub fn reconcile_finalized(
-        &self,
-        block: &ConsensusBlock,
-    ) -> Result<(), OcompRetentionHookError> {
-        if let Some(error) = retention_status_error(&self.status()) {
-            return Err(hook_error(error));
-        }
-        if let Some(candidate) = self.source.candidate_for_block(block).map_err(hook_error)? {
-            self.record_tentative(candidate).map_err(hook_error)?;
-        }
-        let candidates = {
-            let inner = self.lock().map_err(hook_error)?;
-            inner
-                .registry
-                .as_ref()
-                .into_iter()
-                .flat_map(|registry| registry.records.values())
-                .filter_map(|record| match record.state {
-                    PinStateV1::Tentative { candidate }
-                        if candidate.block_number <= block.number() =>
-                    {
-                        Some(candidate)
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        for candidate in candidates {
-            match self
-                .source
-                .resolve_finality(candidate)
-                .map_err(hook_error)?
-            {
-                CandidateFinalityV1::Finalized(finalized) => {
-                    self.finalize_exact(finalized).map_err(hook_error)?;
-                }
-                CandidateFinalityV1::Orphaned => {
-                    self.release_orphan(candidate, block.number())
-                        .map_err(hook_error)?;
-                }
-            }
-        }
-        let live = {
-            let inner = self.lock().map_err(hook_error)?;
-            inner
-                .registry
-                .as_ref()
-                .into_iter()
-                .flat_map(|registry| registry.records.values())
-                .filter_map(|record| match record.state {
-                    PinStateV1::Finalized {
-                        candidate, job_id, ..
-                    }
-                    | PinStateV1::Exported {
-                        candidate, job_id, ..
-                    } => Some((record.generation, candidate, job_id)),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        for (generation, candidate, job_id) in live {
-            if let Some(terminal_height) = self
-                .source
-                .terminal_height_at(block, candidate, job_id)
-                .map_err(hook_error)?
-            {
-                let terminal_finality_height = terminal_height.max(block.number());
-                self.observe_terminal(job_id, generation, terminal_finality_height)
-                    .map_err(hook_error)?;
-            }
-        }
-        Ok(())
-    }
-
     /// Reconcile retention from the exact block and receipts owned by the
-    /// unified finalized reader. This is the production finalized path; unlike
-    /// [`Self::reconcile_finalized`], it performs no receipt-provider query.
+    /// unified finalized reader, without a separate receipt-provider query.
     pub fn reconcile_finalized_frame(
         &self,
         frame: &FinalizedFrame,
@@ -610,7 +521,6 @@ impl OcompRetentionCoordinator {
     }
 
     /// Reobserving finalized history must preserve an already advanced lease.
-    /// This does not relax speculative candidate admission or orphan handling.
     fn record_finalized_observation(
         &self,
         candidate: CandidatePinV1,
@@ -628,46 +538,20 @@ impl OcompRetentionCoordinator {
             if record_candidate(record) != candidate {
                 return Err(RetentionError::ConflictingCandidate);
             }
-            return match record.state {
-                PinStateV1::OrphanGcPending { .. }
-                | PinStateV1::Released {
-                    reason: PinReleaseReason::Orphaned,
-                    ..
-                } => Err(RetentionError::OrphanedCandidate),
-                _ => Ok(ack_for(record)),
-            };
+            return Ok(ack_for(record));
         }
-        self.record_new_candidate_locked(&mut inner, candidate)
-    }
-
-    pub fn record_tentative(
-        &self,
-        candidate: CandidatePinV1,
-    ) -> Result<DurablePinAck, RetentionError> {
-        let mut inner = self.lock()?;
-        if let Some(error) = retention_status_error(&inner.status) {
-            return Err(error);
-        }
-        let key = candidate.block_hash;
-        if let Some(record) = inner
-            .registry
-            .as_ref()
-            .and_then(|registry| registry.records.get(&key))
-            .copied()
-        {
-            return match record.state {
-                PinStateV1::Tentative {
-                    candidate: existing,
-                } if existing == candidate => Ok(ack_for(record)),
-                PinStateV1::Released {
-                    candidate: existing,
-                    reason: PinReleaseReason::Orphaned,
-                    ..
-                } if existing == candidate => Err(RetentionError::OrphanedCandidate),
-                _ => Err(RetentionError::ConflictingCandidate),
-            };
-        }
-        self.record_new_candidate_locked(&mut inner, candidate)
+        let ack = self.record_new_candidate_locked(&mut inner, candidate)?;
+        tracing::info!(
+            target: "outbe::ocomp::retention",
+            block_number = candidate.block_number,
+            block_hash = %candidate.block_hash,
+            intent_id = %candidate.intent_id,
+            wwd = candidate.wwd,
+            input_lease_id = %candidate.input_lease_id,
+            generation = ack.generation,
+            "registered OCOMP request from finalized block"
+        );
+        Ok(ack)
     }
 
     fn record_new_candidate_locked(
@@ -677,10 +561,8 @@ impl OcompRetentionCoordinator {
     ) -> Result<DurablePinAck, RetentionError> {
         if inner.registry.as_ref().is_some_and(|registry| {
             registry.records.values().any(|record| {
-                matches!(
-                    record.state,
-                    PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. }
-                ) && record_candidate(*record).input_lease_id == candidate.input_lease_id
+                matches!(record.state, PinStateV1::GcPending { .. })
+                    && record_candidate(*record).input_lease_id == candidate.input_lease_id
             })
         }) {
             return Err(RetentionError::InvalidTransition(
@@ -703,7 +585,7 @@ impl OcompRetentionCoordinator {
             candidate.block_hash,
             PinRecordV1 {
                 generation,
-                state: PinStateV1::Tentative { candidate },
+                state: PinStateV1::AwaitingJobFinalization { candidate },
             },
         )
     }
@@ -776,7 +658,7 @@ impl OcompRetentionCoordinator {
 
     /// A crash may persist the spool ACK before retaining its export authority.
     /// Completing that metadata write never reactivates a retired lease. Expired
-    /// jobs cannot adopt a late ACK, and speculative ACK admission stays strict.
+    /// jobs cannot adopt a late ACK; every ACK requires canonical job authority.
     pub fn confirm_canonical_export_ack(
         &self,
         canonical: &OcompJobRecordV1,
@@ -835,8 +717,7 @@ impl OcompRetentionCoordinator {
                 ..
             } if *source_generation == export.source_generation => slot,
             PinStateV1::Released {
-                source_generation: Some(source_generation),
-                reason: PinReleaseReason::RetentionSatisfied,
+                source_generation,
                 export: slot,
                 ..
             } if *source_generation == export.source_generation => slot,
@@ -950,8 +831,7 @@ impl OcompRetentionCoordinator {
                 ..
             } if existing == job_id => export,
             PinStateV1::Released {
-                job_id: Some(existing),
-                reason: PinReleaseReason::RetentionSatisfied,
+                job_id: existing,
                 export,
                 ..
             } if existing == job_id => export,
@@ -1182,12 +1062,10 @@ impl OcompRetentionCoordinator {
                         generation: record.generation,
                     })
                 }
-                PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. } => {
-                    Some(RetainedGcWorkId {
-                        key: *key,
-                        generation: record.generation,
-                    })
-                }
+                PinStateV1::GcPending { .. } => Some(RetainedGcWorkId {
+                    key: *key,
+                    generation: record.generation,
+                }),
                 _ => None,
             })
             .collect())
@@ -1246,9 +1124,8 @@ impl OcompRetentionCoordinator {
                             record,
                             PinStateV1::Released {
                                 candidate,
-                                job_id: Some(job_id),
-                                source_generation: Some(source_generation),
-                                reason: PinReleaseReason::RetentionSatisfied,
+                                job_id,
+                                source_generation,
                                 observed_height: finalized_height,
                                 export,
                             },
@@ -1285,7 +1162,7 @@ impl OcompRetentionCoordinator {
                     ))
                     .map_err(RetainedGcAttemptFailure::global)?
             }
-            PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. } => record,
+            PinStateV1::GcPending { .. } => record,
             _ => return Ok(RetainedGcAttemptOutcome::NoLongerPending),
         };
         drop(inner);
@@ -1302,25 +1179,10 @@ impl OcompRetentionCoordinator {
                 candidate,
                 PinStateV1::Released {
                     candidate,
-                    job_id: Some(job_id),
-                    source_generation: Some(source_generation),
-                    reason: PinReleaseReason::RetentionSatisfied,
+                    job_id,
+                    source_generation,
                     observed_height: finalized_height,
                     export,
-                },
-            ),
-            PinStateV1::OrphanGcPending {
-                candidate,
-                observed_height,
-            } => (
-                candidate,
-                PinStateV1::Released {
-                    candidate,
-                    job_id: None,
-                    source_generation: None,
-                    reason: PinReleaseReason::Orphaned,
-                    observed_height,
-                    export: None,
                 },
             ),
             _ => unreachable!("retained GC work is durably claimed before MongoDB I/O"),
@@ -1419,8 +1281,10 @@ impl OcompRetentionCoordinator {
         let key = finalized.candidate.block_hash;
         let record = record_for_candidate(&inner, finalized.candidate)?;
         match record.state {
-            PinStateV1::Tentative { candidate } if candidate == finalized.candidate => self
-                .persist_next(
+            PinStateV1::AwaitingJobFinalization { candidate }
+                if candidate == finalized.candidate =>
+            {
+                self.persist_next(
                     &mut inner,
                     key,
                     record,
@@ -1431,7 +1295,8 @@ impl OcompRetentionCoordinator {
                         open_height: finalized.open_height,
                         deadline_height: finalized.deadline_height,
                     },
-                ),
+                )
+            }
             PinStateV1::Finalized {
                 candidate,
                 job_id,
@@ -1446,73 +1311,10 @@ impl OcompRetentionCoordinator {
             {
                 Ok(ack_for(record))
             }
-            PinStateV1::Released { candidate, .. } if candidate == finalized.candidate => {
-                Err(RetentionError::OrphanedCandidate)
-            }
             _ => Err(RetentionError::InvalidTransition(
-                "finality does not match the tentative candidate",
+                "canonical job does not match its finalized request",
             )),
         }
-    }
-
-    fn release_orphan(
-        &self,
-        candidate: CandidatePinV1,
-        observed_height: u64,
-    ) -> Result<DurablePinAck, RetentionError> {
-        let projection_fence = self.projection_fence.clone();
-        let _projection_guard = projection_fence
-            .as_ref()
-            .map(|fence| {
-                fence
-                    .gc_claim_guard()
-                    .map_err(RetentionError::InvalidTransition)
-            })
-            .transpose()?;
-        let mut inner = self.lock()?;
-        let key = candidate.block_hash;
-        let record = record_for_candidate(&inner, candidate)?;
-        match record.state {
-            PinStateV1::Tentative { candidate: current } if current == candidate => {
-                self.release_orphan_locked(&mut inner, key, record, candidate, observed_height)
-            }
-            PinStateV1::Released {
-                candidate: current,
-                reason: PinReleaseReason::Orphaned,
-                ..
-            } if current == candidate => Ok(ack_for(record)),
-            _ => Err(RetentionError::InvalidTransition(
-                "orphan release does not match the tentative candidate",
-            )),
-        }
-    }
-
-    fn release_orphan_locked(
-        &self,
-        inner: &mut CoordinatorInner,
-        key: B256,
-        record: PinRecordV1,
-        candidate: CandidatePinV1,
-        observed_height: u64,
-    ) -> Result<DurablePinAck, RetentionError> {
-        let state = if lease_has_other_references(inner, key, candidate.input_lease_id)
-            || self.retained_tributes.is_none()
-        {
-            PinStateV1::Released {
-                candidate,
-                job_id: None,
-                source_generation: None,
-                reason: PinReleaseReason::Orphaned,
-                observed_height,
-                export: None,
-            }
-        } else {
-            PinStateV1::OrphanGcPending {
-                candidate,
-                observed_height,
-            }
-        };
-        self.persist_next(inner, key, record, state)
     }
 
     fn persist_next(
@@ -1639,7 +1441,7 @@ pub(in crate::ocomp::retention) fn record_for_job(
                 } | PinStateV1::GcPending {
                     job_id: current, ..
                 } | PinStateV1::Released {
-                    job_id: Some(current),
+                    job_id: current,
                     ..
                 } if current == job_id
             )
@@ -1666,12 +1468,11 @@ fn lease_has_other_references(
 
 pub(in crate::ocomp::retention) const fn record_candidate(record: PinRecordV1) -> CandidatePinV1 {
     match record.state {
-        PinStateV1::Tentative { candidate }
+        PinStateV1::AwaitingJobFinalization { candidate }
         | PinStateV1::Finalized { candidate, .. }
         | PinStateV1::Exported { candidate, .. }
         | PinStateV1::Terminal { candidate, .. }
         | PinStateV1::GcPending { candidate, .. }
-        | PinStateV1::OrphanGcPending { candidate, .. }
         | PinStateV1::Released { candidate, .. } => candidate,
     }
 }
@@ -1723,5 +1524,5 @@ pub(in crate::ocomp::retention) fn candidate_job_id(
         candidate.block_hash,
         candidate.state_root,
     )
-    .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))
+    .map_err(|error| RetentionError::Source(format!("derive finalized request JobId: {error}")))
 }

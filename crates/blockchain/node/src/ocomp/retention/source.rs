@@ -1,21 +1,10 @@
 use crate::ocomp::retention::*;
 
-type PendingCandidateReceipts = Option<(B256, Vec<OutbeReceipt>)>;
-
-type PendingCandidateReceiptReader =
-    dyn Fn() -> Result<PendingCandidateReceipts, String> + Send + Sync;
-
 /// Typed exact-block source used by the retention coordinator.
 ///
-/// OCM-10 extends this seam with bounded raw proof/opening construction. OCM-09
-/// uses only the two operations necessary to authenticate one tentative record
-/// and derive its finalized JobId.
+/// Authenticates finalized request observations and constructs bounded proofs
+/// and openings for canonically bound jobs.
 pub trait FinalizedInputProofSource: Send + Sync {
-    fn candidate_for_block(
-        &self,
-        block: &ConsensusBlock,
-    ) -> Result<Option<CandidatePinV1>, RetentionError>;
-
     /// Authenticate the one request observation decoded by the unified
     /// finalized-frame reader. Production finalized reconciliation must use
     /// this seam and must not traverse receipts again.
@@ -27,26 +16,6 @@ pub trait FinalizedInputProofSource: Send + Sync {
         Err(RetentionError::Source(
             "finalized-frame candidate authentication is unavailable".to_owned(),
         ))
-    }
-
-    /// Resolve a tentative candidate only from persisted consensus finality.
-    ///
-    /// An unavailable or ambiguous proof is an error and leaves the candidate
-    /// tentative/non-signable. `Orphaned` requires an exact competing
-    /// finalization at the candidate height; live canonical state is never
-    /// enough.
-    fn resolve_finality(
-        &self,
-        candidate: CandidatePinV1,
-    ) -> Result<CandidateFinalityV1, RetentionError>;
-
-    fn terminal_height_at(
-        &self,
-        _block: &ConsensusBlock,
-        _candidate: CandidatePinV1,
-        _job_id: B256,
-    ) -> Result<Option<u64>, RetentionError> {
-        Ok(None)
     }
 
     fn terminal_height_at_finalized_frame(
@@ -83,33 +52,19 @@ pub trait FinalizedInputProofSource: Send + Sync {
 /// Reth-backed typed state source. Request events are locators, never authority.
 pub struct RethFinalizedInputProofSource<P> {
     pub(in crate::ocomp) provider: P,
-    parent_proofs: FinalizedParentCertStore,
     pub(in crate::ocomp) proof_builder: RethFinalizedIntentProofBuilder<P>,
-    pending_receipts: Arc<PendingCandidateReceiptReader>,
-    result_deadline_blocks: u64,
     pub(in crate::ocomp) limits: SchemaLimits,
 }
 
 impl<P: Clone> RethFinalizedInputProofSource<P> {
-    pub fn new(
-        provider: P,
-        parent_proofs: FinalizedParentCertStore,
-        pending_receipts: impl Fn() -> Result<Option<(B256, Vec<OutbeReceipt>)>, String>
-            + Send
-            + Sync
-            + 'static,
-        result_deadline_blocks: u64,
-    ) -> Self {
+    pub fn new(provider: P, parent_proofs: FinalizedParentCertStore) -> Self {
         Self {
             provider: provider.clone(),
-            parent_proofs: parent_proofs.clone(),
             proof_builder: RethFinalizedIntentProofBuilder::new(
                 provider,
                 parent_proofs,
                 poc_schema_limits(),
             ),
-            pending_receipts: Arc::new(pending_receipts),
-            result_deadline_blocks,
             limits: poc_schema_limits(),
         }
     }
@@ -117,16 +72,8 @@ impl<P: Clone> RethFinalizedInputProofSource<P> {
 
 impl<P> RethFinalizedInputProofSource<P>
 where
-    P: ReceiptProvider + StateProviderFactory + Send + Sync,
+    P: StateProviderFactory + Send + Sync,
 {
-    fn record_at(
-        &self,
-        block: &ConsensusBlock,
-        intent_id: B256,
-    ) -> Result<OcompJobRecordV1, RetentionError> {
-        self.record_at_hash(block.block_hash(), intent_id)
-    }
-
     fn record_at_hash(
         &self,
         block_hash: B256,
@@ -364,46 +311,8 @@ impl StorageReader for OcompSnapshotStateReader<'_> {
 
 impl<P> FinalizedInputProofSource for RethFinalizedInputProofSource<P>
 where
-    P: ReceiptProvider<Receipt = OutbeReceipt>
-        + StateProviderFactory
-        + HeaderProvider<Header = OutbeHeader>
-        + Send
-        + Sync,
+    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync,
 {
-    fn candidate_for_block(
-        &self,
-        block: &ConsensusBlock,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        let pending = (self.pending_receipts)().map_err(|error| {
-            RetentionError::Source(format!("load pending candidate receipts: {error}"))
-        })?;
-        let receipts = match pending {
-            Some((pending_hash, receipts)) if pending_hash == block.block_hash() => receipts,
-            _ => self
-                .provider
-                .receipts_by_block(block.block_hash().into())
-                .map_err(|error| {
-                    RetentionError::Source(format!("load canonical candidate receipts: {error}"))
-                })?
-                .ok_or_else(|| {
-                    RetentionError::Source(
-                        "candidate receipts are unavailable from pending and canonical execution"
-                            .to_owned(),
-                    )
-                })?,
-        };
-        let Some(observation) = observe_request_in_receipts(&receipts)? else {
-            return Ok(None);
-        };
-        self.candidate_from_observation(
-            block.number(),
-            block.block_hash(),
-            block.header().state_root(),
-            observation,
-        )
-        .map(Some)
-    }
-
     fn candidate_for_finalized_observation(
         &self,
         frame: &FinalizedFrame,
@@ -416,123 +325,6 @@ where
             frame.state_root(),
             observation,
         )
-    }
-
-    fn resolve_finality(
-        &self,
-        candidate: CandidatePinV1,
-    ) -> Result<CandidateFinalityV1, RetentionError> {
-        let records = self
-            .parent_proofs
-            .finalizations_at_height(candidate.block_number);
-        if records.is_empty() {
-            return Err(RetentionError::Source(
-                "candidate-height finalization proof is unavailable".to_owned(),
-            ));
-        }
-        let hashes = records
-            .iter()
-            .map(|record| record.finalized_block_hash)
-            .collect::<BTreeSet<_>>();
-        if hashes.len() != 1 {
-            return Err(RetentionError::Source(
-                "candidate-height finalization proofs disagree".to_owned(),
-            ));
-        }
-        let finalized_hash = *hashes
-            .first()
-            .expect("non-empty finalization set has one hash");
-        if finalized_hash != candidate.block_hash {
-            return Ok(CandidateFinalityV1::Orphaned);
-        }
-        if records.len() != 1 {
-            return Err(RetentionError::Source(
-                "candidate has ambiguous finalization proof records".to_owned(),
-            ));
-        }
-        let header = self
-            .provider
-            .sealed_header_by_hash(candidate.block_hash)
-            .map_err(|error| {
-                RetentionError::Source(format!("load finalized candidate header: {error}"))
-            })?
-            .ok_or_else(|| {
-                RetentionError::Source("finalized candidate header is unavailable".to_owned())
-            })?;
-        if header.number() != candidate.block_number
-            || header.hash() != candidate.block_hash
-            || header.state_root() != candidate.state_root
-        {
-            return Err(RetentionError::Source(
-                "finalized header does not match tentative source identity".to_owned(),
-            ));
-        }
-        let (_, verified) = self
-            .proof_builder
-            .build_and_verify_header(header.header(), header.hash(), candidate.intent_id)
-            .map_err(|error| {
-                RetentionError::Source(format!(
-                    "build and verify exact finalized intent proof: {error}"
-                ))
-            })?;
-        if verified.request.block_number != candidate.block_number
-            || verified.request.block_hash != candidate.block_hash
-            || verified.request.state_root != candidate.state_root
-            || verified.intent_id != candidate.intent_id
-        {
-            return Err(RetentionError::Source(
-                "verified finalized intent differs from tentative source identity".to_owned(),
-            ));
-        }
-        if verified.intent.wwd != candidate.wwd
-            || verified.intent.ce_sealed_root != candidate.ce_sealed_root
-            || verified.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
-            || verified
-                .intent
-                .input_lease_id()
-                .map_err(|error| RetentionError::Source(error.to_string()))?
-                != candidate.input_lease_id
-            || job_id_from_intent_id(
-                candidate.intent_id,
-                candidate.block_hash,
-                candidate.state_root,
-            )
-            .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))?
-                != verified.job_id
-        {
-            return Err(RetentionError::Source(
-                "finalized intent differs from tentative pin".to_owned(),
-            ));
-        }
-        let finality_recorded_height = records[0].stored_at_height;
-        let open_height = finality_recorded_height
-            .checked_add(outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH)
-            .ok_or_else(|| RetentionError::Source("voting-open height overflow".to_owned()))?;
-        let deadline_height = open_height
-            .checked_add(self.result_deadline_blocks)
-            .ok_or_else(|| RetentionError::Source("result deadline height overflow".to_owned()))?;
-        if self.result_deadline_blocks == 0 {
-            return Err(RetentionError::Source(
-                "result deadline window is zero".to_owned(),
-            ));
-        }
-        Ok(CandidateFinalityV1::Finalized(FinalizedJobPinV1 {
-            candidate,
-            job_id: verified.job_id,
-            finality_recorded_height,
-            open_height,
-            deadline_height,
-        }))
-    }
-
-    fn terminal_height_at(
-        &self,
-        block: &ConsensusBlock,
-        candidate: CandidatePinV1,
-        job_id: B256,
-    ) -> Result<Option<u64>, RetentionError> {
-        let record = self.record_at(block, candidate.intent_id)?;
-        terminal_height_from_record(&record, block.number(), candidate, job_id)
     }
 
     fn terminal_height_at_finalized_frame(
