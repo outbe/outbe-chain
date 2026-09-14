@@ -1,9 +1,7 @@
 use super::*;
 
 mod proof_sources;
-pub(super) use proof_sources::{
-    DeterministicConsensusDriver, DeterministicProofSource, VoteOutcome,
-};
+pub(super) use proof_sources::{DeterministicProofSource, FinalizedFrameDriver};
 
 mod durability;
 pub(super) use durability::{FailOnceDurability, FailSync};
@@ -26,28 +24,66 @@ pub(super) fn block_extending(
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block.map_header(OutbeHeader::new)))
 }
 
-pub(super) fn candidate(block: &ConsensusBlock, intent_id: B256) -> CandidatePinV1 {
+pub(super) fn candidate(block: &ConsensusBlock) -> CandidatePinV1 {
+    candidate_for_intent(block, &production_intent(block.number()))
+}
+
+pub(super) fn candidate_for_intent(block: &ConsensusBlock, intent: &JobIntentV1) -> CandidatePinV1 {
     CandidatePinV1 {
         block_number: block.number(),
         block_hash: block.block_hash(),
         state_root: block.header().inner.state_root,
-        intent_id,
-        wwd: 7,
-        ce_sealed_root: B256::repeat_byte(4),
-        protocol_bundle_hash: B256::repeat_byte(3),
-        input_lease_id: B256::repeat_byte(0x71),
+        intent_id: intent.intent_id(&poc_schema_limits()).unwrap(),
+        wwd: intent.wwd,
+        ce_sealed_root: intent.ce_sealed_root,
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+        input_lease_id: intent.input_lease_id().unwrap(),
     }
 }
 
-pub(super) type CandidateProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
+pub(super) fn fixture_job_id(candidate: CandidatePinV1) -> B256 {
+    job_id_from_intent_id(
+        candidate.intent_id,
+        candidate.block_hash,
+        candidate.state_root,
+    )
+    .unwrap()
+}
 
-type PendingReceiptFixture = Arc<Mutex<Option<(B256, Vec<Receipt>)>>>;
+pub(super) fn intent_for_candidate(candidate: CandidatePinV1) -> JobIntentV1 {
+    let mut intent = production_intent(candidate.block_number);
+    intent.wwd = candidate.wwd;
+    intent.activation_preconditions.tribute.wwd = candidate.wwd;
+    intent.activation_preconditions.nod.wwd = candidate.wwd;
+    intent.activation_preconditions.contributors.worldwide_day = candidate.wwd;
+    intent.activation_preconditions.metadosis.wwd = candidate.wwd;
+    intent.ce_sealed_root = candidate.ce_sealed_root;
+    intent.protocol_bundle_hash = candidate.protocol_bundle_hash;
+    assert_eq!(
+        intent.intent_id(&poc_schema_limits()).unwrap(),
+        candidate.intent_id
+    );
+    assert_eq!(intent.input_lease_id().unwrap(), candidate.input_lease_id);
+    intent
+}
+
+pub(super) fn frame_for_block(block: &ConsensusBlock, receipts: Vec<Receipt>) -> FinalizedFrame {
+    FinalizedFrame::for_test(
+        BlockNumHash::new(block.number(), block.block_hash()),
+        block.parent_hash(),
+        block.header().inner.state_root,
+        Block::default(),
+        receipts,
+    )
+}
+
+pub(super) type CandidateProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
 
 pub(super) struct ProductionCandidateFixture {
     pub(super) request: ConsensusBlock,
     pub(super) candidate: CandidatePinV1,
     pub(super) source: Arc<RethFinalizedInputProofSource<CandidateProvider>>,
-    pub(super) pending_receipts: PendingReceiptFixture,
+    pub(super) receipts: Vec<Receipt>,
 }
 
 pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
@@ -190,18 +226,15 @@ pub(super) fn production_candidate_source() -> ProductionCandidateFixture {
         attempt: intent.attempt,
         activationPreconditionsHash: activation_preconditions_hash,
     };
-    let pending_receipts = Arc::new(Mutex::new(Some((
-        request.block_hash(),
-        vec![Receipt {
-            tx_type: TxType::Legacy,
-            success: true,
-            cumulative_gas_used: 1,
-            logs: vec![Log {
-                address: METADOSIS_ADDRESS,
-                data: event.encode_log_data(),
-            }],
+    let receipts = vec![Receipt {
+        tx_type: TxType::Legacy,
+        success: true,
+        cumulative_gas_used: 1,
+        logs: vec![Log {
+            address: METADOSIS_ADDRESS,
+            data: event.encode_log_data(),
         }],
-    ))));
+    }];
     let expected = CandidatePinV1 {
         block_number: request.number(),
         block_hash: request.block_hash(),
@@ -212,23 +245,15 @@ pub(super) fn production_candidate_source() -> ProductionCandidateFixture {
         protocol_bundle_hash: intent.protocol_bundle_hash,
         input_lease_id: intent.input_lease_id().expect("input lease id"),
     };
-    let receipt_reader = pending_receipts.clone();
     let source = Arc::new(RethFinalizedInputProofSource::new(
         provider,
         FinalizedParentCertStore::new(),
-        move || {
-            receipt_reader
-                .lock()
-                .map(|pending| pending.clone())
-                .map_err(|_| "pending receipt fixture lock is poisoned".to_owned())
-        },
-        10,
     ));
     ProductionCandidateFixture {
         request,
         candidate: expected,
         source,
-        pending_receipts,
+        receipts,
     }
 }
 
@@ -347,5 +372,24 @@ pub(super) fn ready_record(coordinator: &OcompRetentionCoordinator) -> PinRecord
     match coordinator.status() {
         RetentionStatus::Ready(record) => record,
         other => panic!("expected ready pin record, got {other:?}"),
+    }
+}
+
+impl ProductionCandidateFixture {
+    pub(super) fn frame(&self) -> FinalizedFrame {
+        FinalizedFrame::for_test(
+            BlockNumHash::new(self.request.number(), self.request.block_hash()),
+            self.request.parent_hash(),
+            self.request.header().inner.state_root,
+            Block::default(),
+            self.receipts.clone(),
+        )
+    }
+
+    pub(super) fn admit(&self, coordinator: &OcompRetentionCoordinator) {
+        let frame = self.frame();
+        coordinator
+            .reconcile_finalized_frame(&frame, observe_finalized_request(&frame).unwrap())
+            .unwrap();
     }
 }

@@ -359,7 +359,8 @@ where
         .provider
         .last_block_number()
         .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
-    let initial_reth_forkchoice = read_reth_recovery_forkchoice(&node)?;
+    let initial_reth_forkchoice =
+        read_reth_recovery_forkchoice(&node.provider.canonical_in_memory_state())?;
 
     // -- 1. Committee chain anchored on the trusted identity --------------
     // The marshal verifies finalization certs against THIS chain's per-epoch
@@ -676,7 +677,9 @@ where
         ctx.child("recovered_forkchoice"),
         recovery_anchor.checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_anchor.checkpoint),
-        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+        move || {
+            read_reth_recovery_forkchoice(&fcu_provider_node.provider.canonical_in_memory_state())
+        },
     )
     .await
     .wrap_err("failed to confirm recovered Reth forkchoice before follower startup")?;
@@ -685,9 +688,7 @@ where
         .recover_before_participation(recovery_anchor.checkpoint.block_number)
         .wrap_err("compressed-tree startup recovery failed before follower participation")?;
 
-    let ocomp_fork_install =
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
-    let install = ocomp_fork_install.as_ref();
+    outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
     let parent_cert_dir = ocomp_storage_root.join("finalized_parent_certs");
     let finalized_parent_cert_store =
         outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
@@ -702,23 +703,10 @@ where
     finalized_parent_cert_store
         .prune_above_height(recovery_anchor.checkpoint.block_number)
         .wrap_err("failed to prune follower parent certificates above recovery anchor")?;
-    let pending_receipts_provider = node.provider.clone();
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
             node.provider.clone(),
             finalized_parent_cert_store.clone(),
-            move || {
-                pending_receipts_provider
-                    .pending_block_and_receipts()
-                    .map(|pending| {
-                        pending.map(|(block, receipts)| (B256::new(*block.hash()), receipts))
-                    })
-                    .map_err(|error| error.to_string())
-            },
-            install
-                .request_profile
-                .capacity_profile
-                .result_deadline_blocks,
         ),
     );
     let ocomp_retention_coordinator = Arc::new(

@@ -20,8 +20,6 @@ use crate::finalization::parent_cert_store::CertifiedParentProofKey;
 
 use crate::finalization::state::FinalizationViewAccess;
 
-use crate::ocomp_retention::OcompRetentionHook;
-
 use alloy_primitives::Bytes;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
@@ -56,7 +54,7 @@ pub(super) enum ProposeOutcome {
     EpochStale,
     BoundaryUnavailable,
     ProjectionUnavailable,
-    RetentionUnavailable,
+    ExecutionUnavailable,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -90,15 +88,11 @@ pub(super) enum BuildBlockOutcome {
 pub(super) enum BuiltCandidatePreparationError {
     #[error("locally built payload was not accepted by execution: {0}")]
     Execution(String),
-    #[error("node-local OCOMP retention is unavailable: {0}")]
-    Retention(#[from] crate::ocomp_retention::OcompRetentionHookError),
 }
 
-/// Import a locally built candidate into Reth before its retention source reads
-/// receipts and exact post-state by block hash.
+/// Import and validate a locally built candidate before advertising it.
 pub(super) async fn prepare_built_candidate(
     engine: &EngineHandle,
-    retention: &dyn OcompRetentionHook,
     block: &ConsensusBlock,
     execution_read_budget: ExecutionReadBudget,
 ) -> Result<(), BuiltCandidatePreparationError> {
@@ -113,7 +107,6 @@ pub(super) async fn prepare_built_candidate(
             "{status:?}"
         )));
     }
-    retention.prepare_candidate(block)?;
     Ok(())
 }
 
@@ -315,9 +308,9 @@ impl ApplicationShared {
                         %round,
                         digest = %digest.0,
                         %error,
-                        "withholding proposal because its execution-valid OCOMP source is not durable"
+                        "withholding proposal because candidate execution is not valid"
                     );
-                    return Ok(ProposeOutcome::RetentionUnavailable);
+                    return Ok(ProposeOutcome::ExecutionUnavailable);
                 }
                 // Persist before returning the proposal. The new `proposed` API also
                 // broadcasts; `verified` retains our separate durable-cache and
@@ -356,13 +349,7 @@ impl ApplicationShared {
         block: &ConsensusBlock,
         execution_read_budget: ExecutionReadBudget,
     ) -> Result<(), BuiltCandidatePreparationError> {
-        prepare_built_candidate(
-            &self.engine,
-            self.ocomp_retention.as_ref(),
-            block,
-            execution_read_budget,
-        )
-        .await
+        prepare_built_candidate(&self.engine, block, execution_read_budget).await
     }
 
     /// Uses an FCU-based flow: sends fork_choice_updated with payload

@@ -1,7 +1,7 @@
 //! Crash-conservative wire-bounded multi-job OCOMP retention journal.
 //!
 //! Candidate discovery uses an event only as a bounded locator. The production
-//! source re-opens the exact execution-valid block state and authenticates the
+//! source re-opens the exact finalized block state and authenticates the
 //! typed Metadosis record before this coordinator persists anything.
 
 use std::{
@@ -16,14 +16,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader as _, TxReceipt as _};
+use alloy_consensus::TxReceipt as _;
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolEvent as _;
-use outbe_consensus::{
-    block::ConsensusBlock,
-    finalization::parent_cert_store::FinalizedParentCertStore,
-    ocomp_retention::{OcompRetentionHook, OcompRetentionHookError},
-};
+use outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore;
 use outbe_metadosis::{
     config::poc_schema_limits, precompile::IMetadosis, proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT,
 };
@@ -48,7 +44,7 @@ use outbe_primitives::{
 };
 pub use outbe_tribute::RetainedTributeWriter;
 use outbe_tribute::{RetainedTributePin, TributeRepositoryError};
-use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
+use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
 
 use super::finality::RethFinalizedIntentProofBuilder;
@@ -68,7 +64,7 @@ mod types;
 
 pub use coordinator::OcompRetentionCoordinator;
 
-pub use handles::{OcompRetentionHandle, SharedOcompRetentionSelector};
+pub use handles::SharedOcompRetentionSelector;
 
 pub use inspection::inspect_retention_journal;
 
@@ -78,14 +74,9 @@ pub use source::{
 };
 
 pub use types::{
-    CandidateFinalityV1, CandidatePinV1, DurablePinAck, ExportAuthorityV1, FinalizedJobPinV1,
-    FinalizedRequestObservationV1, PinRecordV1, PinReleaseReason, PinStateV1,
-    ReleasedJobAuthorityV1, RetentionError, RetentionJournalSnapshotV1, RetentionStatus,
-};
-
-#[cfg(test)]
-pub use test_support::{
-    FinalizedSnapshotArmer, OcompRetentionExecutionHandle, OcompRetentionService,
+    CandidatePinV1, DurablePinAck, ExportAuthorityV1, FinalizedJobPinV1,
+    FinalizedRequestObservationV1, PinRecordV1, PinStateV1, ReleasedJobAuthorityV1, RetentionError,
+    RetentionJournalSnapshotV1, RetentionStatus,
 };
 
 pub(crate) use gc::retained_gc_next_wake_delay;
@@ -113,8 +104,6 @@ use gc::retry::{
     RetainedGcCycleFailure, RetainedGcCycleReport, RetainedGcFailureClass,
     RetainedGcScheduledCycle, RETAINED_GC_RETRY_BACKOFF,
 };
-
-use handles::hook_error;
 
 use journal::{journal_successor_is_exact, JournalStore, OsJournalDurability, JOURNAL_FILENAME};
 

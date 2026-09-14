@@ -256,8 +256,8 @@ fn ocm_pin_001_retained_gc_wake_delay_prefers_100ms_progress_and_earlier_retries
 #[test]
 fn ocm_pin_001_terminal_to_gc_pending_fsync_failure_recovers_exact_transition() {
     let request = block(100, B256::repeat_byte(0xa1), 6);
-    let candidate = candidate(&request, B256::repeat_byte(0xa2));
-    let job_id = B256::repeat_byte(0xa3);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("Terminal to GcPending recovery root");
     let storage = Arc::new(MemoryStorage::default());
@@ -270,11 +270,8 @@ fn ocm_pin_001_terminal_to_gc_pending_fsync_failure_recovers_exact_transition() 
         durability.clone(),
     );
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     coordinator
         .observe_terminal(job_id, finalized.generation, 120)
@@ -324,8 +321,8 @@ fn ocm_pin_001_terminal_to_gc_pending_fsync_failure_recovers_exact_transition() 
     assert!(matches!(
         ready_record(&restarted).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            source_generation: Some(source_generation),
+            job_id: current,
+            source_generation,
             export: None,
             ..
         } if current == job_id && source_generation == finalized.generation
@@ -340,8 +337,8 @@ fn ocm_pin_001_terminal_to_gc_pending_fsync_failure_recovers_exact_transition() 
 #[test]
 fn ocm_pin_001_gc_pending_to_released_fsync_failure_recovers_exact_transition() {
     let request = block(100, B256::repeat_byte(0xb1), 6);
-    let candidate = candidate(&request, B256::repeat_byte(0xb2));
-    let job_id = B256::repeat_byte(0xb3);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("GcPending to Released recovery root");
     let storage = Arc::new(MemoryStorage::default());
@@ -354,11 +351,8 @@ fn ocm_pin_001_gc_pending_to_released_fsync_failure_recovers_exact_transition() 
         durability.clone(),
     );
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     coordinator
         .observe_terminal(job_id, finalized.generation, 120)
@@ -394,10 +388,10 @@ fn ocm_pin_001_gc_pending_to_released_fsync_failure_recovers_exact_transition() 
     assert!(matches!(
         ready_record(&restarted).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            source_generation: Some(source_generation),
+            job_id: current,
+            source_generation,
             export: None,
-            reason: PinReleaseReason::RetentionSatisfied,
+
             ..
         } if current == job_id && source_generation == finalized.generation
     ));
@@ -415,8 +409,8 @@ fn ocm_pin_001_gc_pending_to_released_fsync_failure_recovers_exact_transition() 
 #[test]
 fn ocm_pin_001_gc_pending_survives_mongo_failure_and_releases_without_export_ack() {
     let request = block(100, B256::repeat_byte(0x76), 6);
-    let candidate = candidate(&request, B256::repeat_byte(0x77));
-    let job_id = B256::repeat_byte(0x78);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("GC recovery journal root");
     let storage = Arc::new(MemoryStorage::default());
@@ -457,11 +451,8 @@ fn ocm_pin_001_gc_pending_survives_mongo_failure_and_releases_without_export_ack
         Arc::new(RetainedTributeWriter::new(storage.clone(), failing_writer)),
     );
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     let finalized = ready_record(&coordinator);
     coordinator
         .observe_terminal(job_id, finalized.generation, 120)
@@ -522,8 +513,8 @@ fn ocm_pin_001_gc_pending_survives_mongo_failure_and_releases_without_export_ack
 #[test]
 fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
     let request = block(100, B256::repeat_byte(0x7B), 6);
-    let candidate = candidate(&request, B256::repeat_byte(0x7C));
-    let job_id = B256::repeat_byte(0x7D);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("background GC journal root");
     let storage = Arc::new(MemoryStorage::default());
@@ -532,11 +523,8 @@ fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
         source.clone(),
         Arc::new(RetainedTributeWriter::new(storage.clone(), storage)),
     ));
-    assert_eq!(
-        DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), coordinator.as_ref(), &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), coordinator.as_ref(), &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), coordinator.as_ref(), &request);
     let finalized = ready_record(coordinator.as_ref());
     coordinator
         .observe_terminal(job_id, finalized.generation, 120)
@@ -552,8 +540,8 @@ fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
         if matches!(
             ready_record(coordinator.as_ref()).state,
             PinStateV1::Released {
-                job_id: Some(current),
-                source_generation: Some(source_generation),
+                job_id: current,
+                source_generation,
                 export: None,
                 ..
             } if current == job_id && source_generation == finalized.generation
@@ -572,12 +560,14 @@ fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
 fn ocm_pin_001_global_storage_failure_aborts_the_cycle_before_other_gc_work() {
     let first_request = block(100, B256::repeat_byte(0x81), 6);
     let second_request = block(101, B256::repeat_byte(0x82), 7);
-    let mut first_candidate = candidate(&first_request, B256::repeat_byte(0x83));
-    let mut second_candidate = candidate(&second_request, B256::repeat_byte(0x84));
-    first_candidate.input_lease_id = B256::repeat_byte(0x91);
-    second_candidate.input_lease_id = B256::repeat_byte(0x92);
-    let first_job = B256::repeat_byte(0x85);
-    let second_job = B256::repeat_byte(0x86);
+    let mut first_intent = production_intent(first_request.number());
+    first_intent.ce_sealed_root = first_request.header().inner.state_root;
+    let first_candidate = candidate_for_intent(&first_request, &first_intent);
+    let mut second_intent = production_intent(second_request.number());
+    second_intent.ce_sealed_root = second_request.header().inner.state_root;
+    let second_candidate = candidate_for_intent(&second_request, &second_intent);
+    let first_job = fixture_job_id(first_candidate);
+    let second_job = fixture_job_id(second_candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (first_candidate, first_job),
         (second_candidate, second_job),
@@ -598,11 +588,8 @@ fn ocm_pin_001_global_storage_failure_aborts_the_cycle_before_other_gc_work() {
         (&first_request, first_job, 120),
         (&second_request, second_job, 121),
     ] {
-        assert_eq!(
-            DeterministicConsensusDriver::vote(&coordinator, request),
-            VoteOutcome::Positive
-        );
-        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, request).is_ok());
+        FinalizedFrameDriver::bind(source.as_ref(), &coordinator, request);
         let finalized = ready_record(&coordinator);
         coordinator
             .observe_terminal(job, finalized.generation, terminal_height)
@@ -671,12 +658,14 @@ fn ocm_pin_001_global_storage_failure_aborts_the_cycle_before_other_gc_work() {
 fn ocm_pin_001_poisoned_gc_work_observes_its_own_backoff_while_healthy_work_progresses() {
     let poisoned_request = block(100, B256::repeat_byte(0xc1), 6);
     let healthy_request = block(101, B256::repeat_byte(0xc2), 7);
-    let mut poisoned_candidate = candidate(&poisoned_request, B256::repeat_byte(0xc3));
-    let mut healthy_candidate = candidate(&healthy_request, B256::repeat_byte(0xc4));
-    poisoned_candidate.input_lease_id = B256::repeat_byte(0xd1);
-    healthy_candidate.input_lease_id = B256::repeat_byte(0xd2);
-    let poisoned_job = B256::repeat_byte(0xc5);
-    let healthy_job = B256::repeat_byte(0xc6);
+    let mut poisoned_intent = production_intent(poisoned_request.number());
+    poisoned_intent.ce_sealed_root = poisoned_request.header().inner.state_root;
+    let poisoned_candidate = candidate_for_intent(&poisoned_request, &poisoned_intent);
+    let mut healthy_intent = production_intent(healthy_request.number());
+    healthy_intent.ce_sealed_root = healthy_request.header().inner.state_root;
+    let healthy_candidate = candidate_for_intent(&healthy_request, &healthy_intent);
+    let poisoned_job = fixture_job_id(poisoned_candidate);
+    let healthy_job = fixture_job_id(healthy_candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (poisoned_candidate, poisoned_job),
         (healthy_candidate, healthy_job),
@@ -705,11 +694,8 @@ fn ocm_pin_001_poisoned_gc_work_observes_its_own_backoff_while_healthy_work_prog
         (&poisoned_request, poisoned_job, 120),
         (&healthy_request, healthy_job, 121),
     ] {
-        assert_eq!(
-            DeterministicConsensusDriver::vote(&coordinator, request),
-            VoteOutcome::Positive
-        );
-        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, request).is_ok());
+        FinalizedFrameDriver::bind(source.as_ref(), &coordinator, request);
         let finalized = ready_record(&coordinator);
         coordinator
             .observe_terminal(job, finalized.generation, terminal_height)
@@ -782,10 +768,10 @@ fn ocm_pin_001_poisoned_gc_work_observes_its_own_backoff_while_healthy_work_prog
 fn ocm_pin_001_retained_predecessor_does_not_block_a_later_independent_job() {
     let first_request = block(151, B256::repeat_byte(0x31), 1);
     let later_request = block(221, B256::repeat_byte(0x32), 2);
-    let first_candidate = candidate(&first_request, B256::repeat_byte(0x41));
-    let later_candidate = candidate(&later_request, B256::repeat_byte(0x42));
-    let first_job_id = B256::repeat_byte(0x51);
-    let later_job_id = B256::repeat_byte(0x52);
+    let first_candidate = candidate(&first_request);
+    let later_candidate = candidate(&later_request);
+    let first_job_id = fixture_job_id(first_candidate);
+    let later_job_id = fixture_job_id(later_candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (first_candidate, first_job_id),
         (later_candidate, later_job_id),
@@ -793,11 +779,8 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_later_independent_job() {
     let root = tempfile::tempdir().expect("multi-job journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &first_request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &first_request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &first_request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &first_request);
     let first_finalized = ready_record(&coordinator);
     let first_exported = coordinator
         .record_exported(
@@ -812,12 +795,11 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_later_independent_job() {
         .expect("first job reaches terminal retention");
     assert_eq!(first_terminal.generation, 4);
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &later_request),
-        VoteOutcome::Positive,
+    assert!(
+        FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &later_request).is_ok(),
         "a retained predecessor must not be a global OCOMP lock"
     );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &later_request);
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &later_request);
     assert!(coordinator.is_exportable(later_job_id));
     assert_eq!(
         coordinator
@@ -841,17 +823,18 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_later_independent_job() {
 fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
     let first_request = block(151, B256::repeat_byte(0x33), 3);
     let later_request = block(221, B256::repeat_byte(0x34), 4);
-    let first_candidate = candidate(&first_request, B256::repeat_byte(0x43));
-    let later_candidate = candidate(&later_request, B256::repeat_byte(0x44));
+    let first_candidate = candidate(&first_request);
+    let shared_intent = production_intent(first_request.number());
+    let later_candidate = candidate_for_intent(&later_request, &shared_intent);
     assert_eq!(
         first_candidate.input_lease_id, later_candidate.input_lease_id,
         "fixture models independent journal records sharing one retained input lease"
     );
-    let first_job_id = B256::repeat_byte(0x53);
-    let later_job_id = B256::repeat_byte(0x54);
-    let source = Arc::new(DeterministicProofSource::with_jobs([
-        (first_candidate, first_job_id),
-        (later_candidate, later_job_id),
+    let first_job_id = fixture_job_id(first_candidate);
+    let later_job_id = fixture_job_id(later_candidate);
+    let source = Arc::new(DeterministicProofSource::with_intents([
+        (first_candidate, shared_intent.clone()),
+        (later_candidate, shared_intent),
     ]));
     let root = tempfile::tempdir().expect("shared-lease journal root");
     let storage = Arc::new(MemoryStorage::default());
@@ -890,11 +873,8 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
         Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
     );
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &first_request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &first_request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &first_request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &first_request);
     let first_finalized = ready_record(&coordinator);
     let first_exported = coordinator
         .record_exported(
@@ -907,11 +887,8 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
     coordinator
         .observe_terminal(first_job_id, first_exported.generation, 219)
         .expect("first terminal");
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &later_request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &later_request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &later_request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &later_request);
     let later_finalized = ready_record(&coordinator);
     let later_exported = coordinator
         .record_exported(
