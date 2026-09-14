@@ -30,8 +30,8 @@ pub mod dkg;
 pub mod downtime;
 pub mod follower;
 mod follower_handoff;
-pub mod l2_zk_gate;
 mod l2_registration;
+pub mod l2_zk_gate;
 pub mod lifecycle;
 mod negative_assertions;
 #[cfg(feature = "ocomp-integration")]

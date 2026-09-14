@@ -365,11 +365,7 @@ fn register_disabled_operators(storage: StorageHandle<'_>, callers: &[Address]) 
     }
 }
 
-fn seed_offer_world(
-    storage: StorageHandle<'_>,
-    target_days: &[WorldwideDay],
-    callers: &[Address],
-) {
+fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay], callers: &[Address]) {
     register_disabled_operators(storage.clone(), callers);
     storage
         .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
@@ -507,13 +503,7 @@ fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_ut
             } else {
                 TARGET_WWD_B
             };
-            execute_successful_offer(
-                storage.clone(),
-                &scope,
-                caller,
-                target,
-            )
-            .unwrap();
+            execute_successful_offer(storage.clone(), &scope, caller, target).unwrap();
         }
 
         let rewards = AgentRewardContract::new(storage);
@@ -590,7 +580,11 @@ fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
     let mutation_count = {
         let mut probe = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut probe, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A], &[Address::repeat_byte(0x41)]);
+            seed_offer_world(
+                storage.clone(),
+                &[TARGET_WWD_A],
+                &[Address::repeat_byte(0x41)],
+            );
             storage
                 .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
                 .unwrap();
@@ -617,7 +611,11 @@ fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut provider, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A], &[Address::repeat_byte(0x41)]);
+            seed_offer_world(
+                storage.clone(),
+                &[TARGET_WWD_A],
+                &[Address::repeat_byte(0x41)],
+            );
             storage
                 .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
                 .unwrap();

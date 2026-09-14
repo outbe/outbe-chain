@@ -248,9 +248,8 @@ impl OcompTopology {
         let chain_id = genesis_chain_id(&genesis)?;
         let capacity_accounts_changed =
             fund_capacity_tribute_accounts(&mut genesis, capacity_tribute_private_keys)?;
-        // The same owners must be admissible offer senders in the not-yet-started
-        // genesis; registering them through governance would outlast the
-        // fixture's genesis-bound OFFERING window.
+        // Register bulk offer owners before launch rather than spending the
+        // fixture's OFFERING window on governance setup.
         let capacity_registrations_changed = seed_capacity_operator_l2_registrations(
             &mut genesis,
             chain_id,

@@ -29,7 +29,9 @@ pub(super) enum Rejection {
 impl Rejection {
     fn reason(&self, caller: Address) -> String {
         match self {
-            Self::Duplicate => "tribute already exists for this combination of parameters".to_owned(),
+            Self::Duplicate => {
+                "tribute already exists for this combination of parameters".to_owned()
+            }
             Self::MissingSignature => "invalid BLS signature over zkMerkleRoot".to_owned(),
             Self::InvalidProof => "ZK proof verification failed".to_owned(),
             Self::UnregisteredOperator => {

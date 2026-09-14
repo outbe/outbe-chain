@@ -1,27 +1,9 @@
-//! L2 registry registration of the operators that submit Tribute offers.
+//! Explicit L2 registration prerequisites for Tribute offer fixtures.
 //!
-//! `TributeFactory` only admits a caller L2Registry knows about: a registered
-//! network with `zk_enabled == false` passes the non-ZK path, a registered
-//! network with `zk_enabled == true` must carry a signed, whitelisted proof,
-//! and an unregistered caller reverts. Every fixture that expects a Tribute
-//! receipt therefore has to establish the registration precondition before it
-//! offers: either through real validator governance (small fixtures and the
-//! governance-focused zk-gate scenarios), or - where a fixture offers from tens
-//! or hundreds of distinct owners and cannot pay a governance window per owner
-//! inside its genesis-bound OFFERING window - seeded into the not-yet-started
-//! genesis by the fixture itself.
-//!
-//! This module owns that precondition. It registers an operator exactly once
-//! per scenario, accepts an operator whose registration the scenario already
-//! established (the bulk-owner fixtures seed theirs into genesis; the zk-gate
-//! scenarios register chain `0xdead` with `zk_enabled = true`), and proves the
-//! canonical mapping the offer guard will read instead of assuming it.
-//!
-//! Two vote-module rules shape the orchestration: a validator owns at most one
-//! pending proposal at a time, and a proposal is only tallied once its voting
-//! deadline has passed - so the L2Registry mutation is unobservable until then.
+//! Small fixtures use validator governance; bulk owner sets are seeded in
+//! genesis. Neither path changes production clients or bypasses admission.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -54,59 +36,29 @@ pub(super) fn ensure_tribute_offer_operators(world: &mut World, keys: &[String])
 
 /// Register the single operator key that is about to submit a Tribute offer.
 pub(super) fn ensure_tribute_offer_operator(world: &mut World, key: &str) {
-    ensure_tribute_offer_operators(world, &[key.to_owned()]);
+    let address = operator_address(world, key);
+    ensure_zk_disabled_operators(world, &[address]);
 }
 
 /// Register every `l1_address` that has no L2Registry entry yet as a network
 /// with zk verification disabled, then prove the registration is canonical.
 ///
-/// An address that is already registered - by an earlier call in this
-/// scenario, or by a governed zk-enabled registration - keeps its record and
-/// its policy, so this is safe to call from any offer fixture.
+/// Existing registrations must already have ZK disabled. This helper never
+/// changes an existing network's verification policy.
 fn ensure_zk_disabled_operators(world: &mut World, l1_addresses: &[Address]) {
-    let unique: BTreeSet<Address> = l1_addresses.iter().copied().collect();
-    let mut pending: BTreeMap<Address, u64> = BTreeMap::new();
-    for l1_address in unique {
-        if world
-            .state
-            .l2_disabled_operator_chains
-            .contains_key(&l1_address)
-        {
-            continue;
-        }
-        // An operator that is already registered keeps its record and its
-        // policy: the bulk-owner fixtures seed their registrations into genesis,
-        // and the zk-gate scenarios register chain 0xdead with zk enabled.
-        let registered = world
+    for l1_address in l1_addresses.iter().copied().collect::<BTreeSet<_>>() {
+        let mut chain_id = world
             .rpc
             .l2_chain_by_l1_address(l1_address)
             .expect("read the L2Registry mapping for the offer operator");
-        if registered != 0 {
-            assert_registered_zk_disabled(world, l1_address, registered);
-            world
-                .state
-                .l2_disabled_operator_chains
-                .insert(l1_address, registered);
-            continue;
+        if chain_id == 0 {
+            chain_id = world.state.l2_next_disabled_chain_id;
+            world.state.l2_next_disabled_chain_id =
+                chain_id.checked_add(1).expect("harness L2 chain id space");
+            let payload = zk_disabled_registration_payload(l1_address, chain_id);
+            govern_l2_registry_payload(world, &payload);
         }
-        let chain_id = world.state.l2_next_disabled_chain_id;
-        world.state.l2_next_disabled_chain_id = chain_id
-            .checked_add(1)
-            .expect("harness L2 chain id space");
-        pending.insert(l1_address, chain_id);
-    }
-    if pending.is_empty() {
-        return;
-    }
-
-    for (l1_address, chain_id) in pending {
-        let payload = zk_disabled_registration_payload(l1_address, chain_id);
-        govern_l2_registry_payload(world, &payload);
         assert_registered_zk_disabled(world, l1_address, chain_id);
-        world
-            .state
-            .l2_disabled_operator_chains
-            .insert(l1_address, chain_id);
     }
 }
 
@@ -185,7 +137,7 @@ fn active_validators(world: &World) -> Vec<Validator> {
                 .evm_key()
                 .ok()
                 .and_then(|key| world.rpc.address_of(&key))
-                .and_then(|hex| hex.parse().ok())
+                .and_then(|hex| hex.parse::<Address>().ok())
                 .is_some_and(|address| active.contains(&address))
         })
         .collect();
@@ -273,11 +225,7 @@ fn cast_l2_approvals(world: &World, voters: &[Validator], proposal_id: u64) -> u
     voters.len() as u64
 }
 
-/// Wait until proposal `proposal_id` has observed every ballot cast for it.
-///
-/// The expected count comes from the ACTIVE set, not a fixed quorum constant:
-/// a proposal that carries the whole live set cannot be short of 2/3 whatever
-/// the set size is.
+/// Wait for all cast approvals, or a proposal already approved at its deadline.
 fn await_l2_approval_tally(world: &World, proposal_id: u64, approvals: u64) {
     for _ in 0..10 {
         let proposal = world
@@ -289,13 +237,13 @@ fn await_l2_approval_tally(world: &World, proposal_id: u64, approvals: u64) {
             format!("{L2_REGISTRY_ADDR:#x}"),
             "proposal #{proposal_id} does not target L2Registry"
         );
-        assert_eq!(
-            proposal.status, "pending",
-            "proposal #{proposal_id} left pending before its votes were tallied"
-        );
-        if proposal.yes == approvals {
+        if proposal.yes == approvals || proposal.status == "approved" {
             return;
         }
+        assert_eq!(
+            proposal.status, "pending",
+            "L2 registry proposal #{proposal_id} failed before approval"
+        );
         sleep(Duration::from_secs(2));
     }
     let proposal = world

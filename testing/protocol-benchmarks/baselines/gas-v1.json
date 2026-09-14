@@ -15893,7 +15893,7 @@
         "nonzero_byte_gas": 6304
       },
       "gas_totals": {
-        "user_transaction": 604312
+        "user_transaction": 604912
       },
       "gas_components": [
         {
@@ -15937,8 +15937,8 @@
         {
           "ledger": "user_transaction",
           "key": "storage.l2_registry.read",
-          "gas": 100,
-          "operations": 1,
+          "gas": 700,
+          "operations": 7,
           "module": "l2_registry"
         },
         {
@@ -16308,6 +16308,46 @@
           "operation": "write",
           "count": 1,
           "gas": 5000
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x262bb27bbdd95c1cdc8e16957e36e38579ea44f7f6413dd7a9c75939def06b2c",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x42c63635470f1fb1d6d4b6441c413cb435b1ebb6fedd1896dd5e25d1399147dd",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x44ad89ba62b98ff34f51403ac22759b55759460c0bb5521eb4b6ee3cff49cf83",
+          "operation": "read",
+          "count": 2,
+          "gas": 200
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x6a9609baa168169acaea398c4407efea4be641bb08e21e88806d9836fd9333cc",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0xb34209a263f6c38fe55f099e9e70f9d67e93982480ff3234a5e0108028ad164d",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
         },
         {
           "module": "l2_registry",

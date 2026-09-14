@@ -34,16 +34,26 @@ fn tribute_non_zk_and_zk_creation_run_through_the_unified_interface() {
 
         // The in-process enclave step is the one latency the scenario cannot
         // derive from an outer timer, so it must be reported on its own.
-        assert!(report.component_latency_ns.contains_key("enclave.process_offer"));
+        assert!(report
+            .component_latency_ns
+            .contains_key("enclave.process_offer"));
 
         // One issuance: the body projection and the ERC-721 issue event, both
         // emitted by the Tribute contract.
         assert_eq!(
-            emitted(&report, TRIBUTE_ADDRESS, ITribute::TributeBodyStored::SIGNATURE_HASH),
+            emitted(
+                &report,
+                TRIBUTE_ADDRESS,
+                ITribute::TributeBodyStored::SIGNATURE_HASH
+            ),
             1
         );
         assert_eq!(
-            emitted(&report, TRIBUTE_ADDRESS, ITribute::TributeIssued::SIGNATURE_HASH),
+            emitted(
+                &report,
+                TRIBUTE_ADDRESS,
+                ITribute::TributeIssued::SIGNATURE_HASH
+            ),
             1
         );
 
@@ -70,15 +80,14 @@ fn tribute_non_zk_and_zk_creation_run_through_the_unified_interface() {
             entry.count > 0 && entry.gas == entry.count * unit
         }));
         assert!(
-            report
-                .storage
-                .iter()
-                .any(|entry| {
-                    entry.module == "tribute" && entry.operation == StorageOperationKind::Write
-                }),
+            report.storage.iter().any(|entry| {
+                entry.module == "tribute" && entry.operation == StorageOperationKind::Write
+            }),
             "issuing a Tribute must write Tribute state"
         );
-        let reported_gas: u64 = report.gas_components.iter()
+        let reported_gas: u64 = report
+            .gas_components
+            .iter()
             .filter(|component| component.ledger == GasLedger::UserTransaction)
             .map(|component| component.gas)
             .sum();

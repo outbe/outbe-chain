@@ -585,18 +585,9 @@ pub(in crate::world::ocomp) fn capacity_tribute_private_keys(count: usize) -> Re
     Ok(private_keys)
 }
 
-/// Seed pre-launch L2Registry registrations for the bulk Tribute owner fixtures.
-///
-/// `TributeFactory` admits an offer only from an operator L2Registry knows, and
-/// registration is governance-only. A fixture that offers from tens or hundreds
-/// of distinct owners cannot express that precondition through governance
-/// inside its genesis-bound OFFERING window, so the registrations for exactly
-/// those owners are seeded into the not-yet-started genesis through the
-/// production contract API - the same idiom the Oracle, Metadosis and Radicle
-/// fixtures use. Nothing else is registered, so an operator a fixture intends
-/// to leave unregistered stays unregistered.
-///
-/// Returns whether genesis changed.
+/// Seed explicitly listed bulk operators through the production registry API
+/// before launch, avoiding a governance window per owner. Returns whether the
+/// genesis changed; existing registrations must match the requested fixture.
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
     genesis: &mut serde_json::Value,
@@ -648,13 +639,28 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
     }
 
     provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
+    let changed = StorageHandle::enter(&mut provider, |storage| -> Result<bool> {
         let mut registry = L2RegistryContract::new(storage);
+        let mut changed = false;
         for (operator_chain_id, l1_address, public_key) in &registrations {
-            registry.register_network(*operator_chain_id, *l1_address, public_key)?;
+            if let Some(record) = registry.networks.get(*operator_chain_id)? {
+                eyre::ensure!(
+                    record.l1_address == *l1_address
+                        && record.public_key_bytes().as_slice() == public_key.as_slice()
+                        && !record.zk_enabled
+                        && registry.l1_to_chain.read(l1_address)? == *operator_chain_id,
+                    "conflicting bulk L2 registration for chain {operator_chain_id}"
+                );
+            } else {
+                registry.register_network(*operator_chain_id, *l1_address, public_key)?;
+                changed = true;
+            }
         }
-        Ok(())
+        Ok(changed)
     })?;
+    if !changed {
+        return Ok(false);
+    }
 
     let alloc = genesis
         .get_mut("alloc")
@@ -755,4 +761,30 @@ pub(in crate::world::ocomp) fn fund_capacity_tribute_accounts(
         }
     }
     Ok(changed)
+}
+
+#[cfg(all(test, feature = "ocomp-integration"))]
+mod l2_registration_tests {
+    use super::*;
+
+    #[test]
+    fn bulk_l2_genesis_seeding_is_idempotent_and_rejects_conflicts() {
+        let owner = format!("{:#x}", Address::repeat_byte(0x77));
+        let account = serde_json::json!({ "balance": "0x1234" });
+        let mut genesis = serde_json::json!({ "alloc": { owner.clone(): account.clone() } });
+        let keys = [format!("{:064x}", 1), format!("{:064x}", 2)];
+        let chain_id = outbe_primitives::chain::DEVNET_CHAIN_ID;
+
+        assert!(seed_capacity_operator_l2_registrations(&mut genesis, chain_id, &keys).unwrap());
+        assert_eq!(genesis["alloc"][&owner], account);
+        let seeded = genesis.clone();
+        assert!(!seed_capacity_operator_l2_registrations(&mut genesis, chain_id, &keys).unwrap());
+        assert_eq!(genesis, seeded);
+
+        let conflicting = [keys[1].clone(), keys[0].clone()];
+        assert!(
+            seed_capacity_operator_l2_registrations(&mut genesis, chain_id, &conflicting).is_err()
+        );
+        assert_eq!(genesis, seeded);
+    }
 }

@@ -471,8 +471,13 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
-            .unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("nft_hash"));
     }
 
@@ -484,8 +489,13 @@ mod zk_result_tests {
             binding_hash: B256::from([9; 32]),
         };
 
-        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
-            .unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("binding_hash"));
     }
 
@@ -497,8 +507,13 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
-            .unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, PrecompileError::Fatal(_)),
             "unexpected error: {error}"
@@ -553,7 +568,8 @@ mod zk_result_tests {
         let mut tampered = proof.to_vec();
         tampered[100..132].fill(0);
         let public = decode_zk_public_inputs(&tampered, verification_key()).unwrap();
-        let error = validate_zk_result(&tampered, verification_key(), public, Some(&expected)).unwrap_err();
+        let error =
+            validate_zk_result(&tampered, verification_key(), public, Some(&expected)).unwrap_err();
         assert!(matches!(error, PrecompileError::Revert(_)));
     }
 }
