@@ -3,7 +3,7 @@ use crate::{
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     errors::CcaError,
     precompile::ICca,
-    schema::{CcaContract, CcaRecord},
+    schema::{address_day_key, CcaContract, CcaRecord},
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
@@ -142,7 +142,7 @@ pub fn position_opened(
         if contract.load(cca)?.state != ICca::State::Active {
             return Err(CcaError::NotActive.into());
         }
-        let key = CcaContract::reward_weight_key(cca, day);
+        let key = address_day_key(cca, day);
         let deficit = contract.gratis_deficits_per_utc_day.read(&key)?;
         let offset = gratis.min(deficit);
         let weight = contract
@@ -169,7 +169,7 @@ pub fn position_voided(
     storage.with_checkpoint(|| {
         let contract = CcaContract::new(storage.clone());
         contract.load(cca)?;
-        let key = CcaContract::reward_weight_key(cca, day);
+        let key = address_day_key(cca, day);
         let weight = contract.gratis_sum_per_utc_day.read(&key)?;
         let offset = gratis_burned.min(weight);
         let deficit = contract

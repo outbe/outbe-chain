@@ -4,7 +4,7 @@ use crate::{
     emission_sink,
     precompile::{dispatch, ICca},
     runtime,
-    schema::{CcaContract, CcaRecordEntryExt},
+    schema::{address_day_key, CcaContract, CcaRecordEntryExt},
 };
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
@@ -528,7 +528,7 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         runtime::position_voided(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert!(runtime::position_voided(&storage, ALICE, DAY, U256::ONE).is_err());
         let contract = CcaContract::new(storage.clone());
-        let key = CcaContract::reward_weight_key(ALICE, DAY);
+        let key = address_day_key(ALICE, DAY);
         assert_eq!(
             contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
             U256::MAX

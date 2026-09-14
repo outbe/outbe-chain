@@ -1,7 +1,10 @@
 //! Shared registry queries and trusted position-accounting entrypoints.
 pub use crate::precompile::ICca;
 pub use crate::runtime::{position_opened, position_voided};
-use crate::{schema::CcaContract, state::validate_state};
+use crate::{
+    schema::{address_day_key, CcaContract},
+    state::validate_state,
+};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -20,7 +23,7 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
 pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     CcaContract::new(storage.clone())
         .gratis_sum_per_utc_day
-        .read(&CcaContract::reward_weight_key(cca, day))
+        .read(&address_day_key(cca, day))
 }
 
 pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {

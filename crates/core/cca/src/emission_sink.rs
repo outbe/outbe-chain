@@ -1,5 +1,9 @@
 //! Daily CCA rewards, sampled when Cycle settles the emission day.
-use crate::{errors::CcaError, precompile::ICca, schema::CcaContract};
+use crate::{
+    errors::CcaError,
+    precompile::ICca,
+    schema::{address_day_key, CcaContract},
+};
 use alloy_primitives::{U256, U512};
 use outbe_primitives::{
     addresses::CCA_ADDRESS, block::BlockRuntimeContext, error::Result,
@@ -20,7 +24,7 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
         for cca in contract.active.read_all()? {
             let weight = contract
                 .gratis_sum_per_utc_day
-                .read(&CcaContract::reward_weight_key(cca, day))?;
+                .read(&address_day_key(cca, day))?;
             total = total.checked_add(weight).ok_or(CcaError::Arithmetic)?;
             weights.push((cca, weight));
         }

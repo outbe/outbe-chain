@@ -42,14 +42,11 @@ pub struct CcaContract {
     pub reward_amounts: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
-impl CcaContract<'_> {
-    /// keccak256(cca's 20 bytes || UTC day's big-endian u32).
-    pub fn reward_weight_key(cca: Address, day: u32) -> B256 {
-        let mut bytes = [0u8; 24];
-        bytes[..20].copy_from_slice(cca.as_slice());
-        bytes[20..].copy_from_slice(&day.to_be_bytes());
-        keccak256(bytes)
-    }
+pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {
+    let mut bytes = [0u8; 24];
+    bytes[..20].copy_from_slice(cca.as_slice());
+    bytes[20..].copy_from_slice(&day.to_be_bytes());
+    keccak256(bytes)
 }
 
 impl StorableType for ICca::State {
