@@ -512,7 +512,7 @@ pub fn set_remote_messenger(
     )
 }
 
-/// Bring several series home in one message, the way a owner with more than one
+/// Bring several series home in one message, the way an owner with more than one
 /// would: a single burn set on this side and a single mint set at home.
 pub fn batch_bridge_home(
     url: &str,

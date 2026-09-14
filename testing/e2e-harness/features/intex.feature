@@ -67,7 +67,7 @@ Feature: Intex from auction to Promis
   # unrealized units alone from one and the whole tirage from the other.
   #
   # The two hops home also take the bridge's two routes: one series at a time
-  # first, then both together, which is how a owner of several actually moves
+  # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle
   Scenario: Four Intex series qualify as one group, settle from both states, and burn or expire

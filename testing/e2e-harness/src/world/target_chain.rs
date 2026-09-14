@@ -302,7 +302,7 @@ impl TargetChain {
 
         // The router is what an inbound message becomes, so it is the account
         // allowed to create series and mint. The bridge needs the same right on the
-        // collection to burn a owner's units here and mint them at home.
+        // collection to burn an owner's units here and mint them at home.
         // A router pays the bridge fee out of its own native float and reverts
         // `NotEnoughNative` when it holds none; production tops it up, and so
         // must a chain that is expected to send anything home.

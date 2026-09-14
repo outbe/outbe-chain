@@ -48,7 +48,7 @@ pub const FLOOR_RATE: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.
 pub const CALL_RATE: u16 = 128;
 
-/// Notice a owner gets to settle after a series is Called.
+/// Notice an owner gets to settle after a series is Called.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
 /// Call-trigger evaluation window: the most recent stretch scanned for breaches.

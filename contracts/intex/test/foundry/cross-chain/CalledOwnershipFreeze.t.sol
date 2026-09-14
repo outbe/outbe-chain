@@ -10,7 +10,7 @@ import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/I
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @dev Called freezes who owns a series. The bridge stays open so a owner can reach the chain that
+/// @dev Called freezes who owns a series. The bridge stays open so an owner can reach the chain that
 ///      settles, but only for their own balance.
 contract CalledOwnershipFreezeTest is CrossChainTest {
     uint32 internal constant DST_CHAIN_ID = 2;
