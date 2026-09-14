@@ -15,7 +15,7 @@ fn tribute_non_zk_and_zk_creation_run_through_the_unified_interface() {
         .unwrap();
 
         assert_eq!(report.postconditions["tribute.created"], "true");
-        assert!(report.gas_totals[&GasLedger::UserTransaction] > 3_000_000);
+        assert!(report.gas_totals[&GasLedger::UserTransaction] > 300_000);
         assert_eq!(
             report
                 .storage

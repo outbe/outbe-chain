@@ -27,6 +27,30 @@ pub(super) fn assert_mined_revert_reason<C: SolCall>(
     .into()
 }
 
+/// Use an explicitly proven observer cohort after an intentional node exit.
+pub(super) fn assert_mined_revert_reason_on<C: SolCall>(
+    world: &World,
+    ports: &[u16],
+    to: Address,
+    key: &str,
+    call: &C,
+    reason: &str,
+) -> crate::world::rpc::TxOutcome {
+    assert_mined_revert_on(
+        world,
+        ports,
+        to,
+        key,
+        call,
+        U256::ZERO,
+        &Revert {
+            reason: reason.to_owned(),
+        }
+        .abi_encode(),
+    )
+    .into()
+}
+
 pub(super) fn assert_registration_revert(
     world: &World,
     key: &str,
@@ -57,6 +81,18 @@ pub(super) fn assert_mined_revert<C: SolCall>(
     expected: &[u8],
 ) -> eth::MinedCallOutcome {
     let ports = world.validators.committee_ports();
+    assert_mined_revert_on(world, &ports, to, key, call, value, expected)
+}
+
+fn assert_mined_revert_on<C: SolCall>(
+    world: &World,
+    ports: &[u16],
+    to: Address,
+    key: &str,
+    call: &C,
+    value: U256,
+    expected: &[u8],
+) -> eth::MinedCallOutcome {
     assert!(
         !ports.is_empty(),
         "negative requires validator observations"
@@ -66,7 +102,7 @@ pub(super) fn assert_mined_revert<C: SolCall>(
     let head = world.rpc.head(primary).expect("negative precondition head");
     let before = world
         .rpc
-        .wait_finalized_checkpoint(&ports, head, 40)
+        .wait_finalized_checkpoint(ports, head, 40)
         .expect("negative preconditions finalized on every validator");
 
     let assert_reason_at = |height| {
@@ -74,7 +110,7 @@ pub(super) fn assert_mined_revert<C: SolCall>(
             .rpc
             .checkpoint_at(primary, height)
             .expect("revert checkpoint");
-        for &port in &ports {
+        for &port in ports {
             assert_eq!(
                 world
                     .rpc
@@ -156,7 +192,7 @@ pub(super) fn assert_mined_revert<C: SolCall>(
     let height = u64::from_str_radix(block.trim_start_matches("0x"), 16).expect("receipt height");
     world
         .rpc
-        .wait_finalized_checkpoint(&ports, height, 40)
+        .wait_finalized_checkpoint(ports, height, 40)
         .expect("negative receipt finalized on every validator");
     let checkpoint = assert_reason_at(height);
     assert_eq!(
@@ -165,7 +201,7 @@ pub(super) fn assert_mined_revert<C: SolCall>(
             .expect("receipt block hash"),
         format!("{:#x}", checkpoint.block_hash)
     );
-    for &port in &ports {
+    for &port in ports {
         let receipt = eth::receipt_json(&world.rpc.url(port), &outcome.transaction_hash)
             .expect("negative receipt on every validator");
         for field in [
