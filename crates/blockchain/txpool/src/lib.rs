@@ -1293,8 +1293,8 @@ mod tests {
     // EIP-7702 sponsorship admission - pin the pool/executor contract:
     //   1. classify_sponsorship rejects shape violations (executor would
     //      do the same - codes must match).
-    //   2. precheck_sponsorship rejects self-sponsorship and zero-
-    //      balance signers but DELIBERATELY does no quota check.
+    //   2. precheck_sponsorship rejects self-sponsorship and has no
+    //      account balance or quota input.
     // The pool's `try_eip7702_sponsorship` chains classify + precheck;
     // these tests cover both individually and the policy code surface.
     // -----------------------------------------------------------------
@@ -1362,22 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_precheck_admits_zero_balance_non_paymaster_signer() {
-        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
-    }
-
-    #[test]
-    fn pool_precheck_admits_funded_non_paymaster_signer() {
-        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
-    }
-
-    #[test]
-    fn pool_precheck_does_not_run_quota_check() {
-        // The pool MUST admit even when storage state says the daily
-        // quota is exhausted - the executor produces the soft-failure
-        // receipt code 110 at block time. precheck has no StorageHandle
-        // parameter to enforce this contract at compile time; this
-        // smoke test pins the runtime behaviour.
+    fn pool_precheck_accepts_non_paymaster_signer() {
         assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
     }
 
@@ -1415,7 +1400,7 @@ mod tests {
     }
 
     #[test]
-    fn decision_accepts_delegated_funded_well_formed() {
+    fn decision_accepts_well_formed_delegated_envelope() {
         let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
             Some(ZEROFEE_ADDRESS),
@@ -1426,19 +1411,8 @@ mod tests {
     }
 
     #[test]
-    fn decision_accepts_zero_balance_delegated_well_formed() {
-        let out = sponsorship_decision(
-            NON_VALIDATOR_SIGNER,
-            Some(ZEROFEE_ADDRESS),
-            &ok_sponsored_envelope(),
-        )
-        .expect("zero native balance must not reject sponsorship");
-        assert_eq!(out, SponsorshipOutcome::Accepted);
-    }
-
-    #[test]
     fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
-        // Delegated + funded, but the envelope carries native value, so
+        // Delegated, but the envelope carries native value, so
         // it is NOT a sponsorship request. It must fall through to the
         // normal fee path (NotSponsored), NOT be rejected - EIP-7702
         // delegation is additive and must never block a normal tx.
@@ -1482,7 +1456,7 @@ mod tests {
     #[test]
     fn decision_does_not_quota_check() {
         // sponsorship_decision has no storage access at all - it cannot
-        // perform a quota check by construction. A delegated, funded,
+        // perform a quota check by construction. A delegated,
         // well-formed tx is always Accepted regardless of how many slots
         // the signer has burned; the executor enforces the quota. This
         // pins the F2 contract at the pool layer.

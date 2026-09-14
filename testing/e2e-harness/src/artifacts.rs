@@ -120,8 +120,12 @@ impl ArtifactLedger {
         scenario: &Scenario,
     ) -> Result<()> {
         self.load(env)?;
+        self.check_artifacts(required_artifacts(env, feature, scenario)?)
+    }
+
+    fn check_artifacts(&self, artifacts: Vec<ArtifactSpec>) -> Result<()> {
         let manifest = self.manifest.as_ref().expect("manifest loaded");
-        for spec in required_artifacts(env, feature, scenario)? {
+        for spec in artifacts {
             let expected = manifest.artifacts.get(spec.name).ok_or_else(|| {
                 eyre::eyre!(
                     "E2E build manifest for {:?} does not contain required artifact {}",
@@ -680,6 +684,14 @@ mod tests {
             env.tee_mode = tee;
             let specs = required_artifacts(&env, &feature, &feature.scenarios[0])
                 .expect("ordinary scenario artifacts");
+            assert_eq!(
+                specs
+                    .iter()
+                    .find(|spec| spec.name == "outbe_e2e")
+                    .unwrap()
+                    .path,
+                std::env::current_exe().unwrap()
+            );
             let sidecar = specs
                 .iter()
                 .find(|spec| spec.name == "outbe_radicle")
@@ -743,8 +755,10 @@ mod tests {
             let manifest_path = directory.path().join("artifacts.json");
             publish_manifest(&manifest_path, &manifest).expect("publish fixture manifest");
             env.artifact_manifest = Some(manifest_path);
-            let error = ArtifactLedger::new(&env)
-                .preflight_scenario(&env, &feature, &feature.scenarios[0])
+            let mut ledger = ArtifactLedger::new(&env);
+            ledger.load(&env).expect("load fixture manifest");
+            let error = ledger
+                .check_artifacts(fixture_artifacts(&env, &feature))
                 .expect_err("untagged scenario must reject invalid sidecar before execution");
             assert!(
                 error.to_string().contains("outbe_radicle"),
@@ -756,7 +770,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn untagged_sidecar_is_rechecked_before_final_evidence() {
-        let (directory, mut env, feature, manifest) = manifest_fixture();
+        let (directory, mut env, feature, mut manifest) = manifest_fixture();
+        // Keep a complete preflight/snapshot check with the actual running
+        // executable; the independent sidecar negatives use small fixtures.
+        manifest.artifacts.insert(
+            "outbe_e2e".to_owned(),
+            identify(&std::env::current_exe().unwrap(), true).unwrap(),
+        );
         let manifest_path = directory.path().join("artifacts.json");
         publish_manifest(&manifest_path, &manifest).expect("publish fixture manifest");
         env.artifact_manifest = Some(manifest_path);
@@ -806,20 +826,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn scenario_preflight_accepts_exact_manifest_then_rejects_binary_tampering() {
+    fn artifact_check_accepts_exact_manifest_then_rejects_binary_tampering() {
         let (directory, mut env, feature, manifest) = manifest_fixture();
         let manifest_path = directory.path().join("artifacts.json");
         publish_manifest(&manifest_path, &manifest).expect("publish fixture manifest");
         env.artifact_manifest = Some(manifest_path);
 
         let mut ledger = ArtifactLedger::new(&env);
+        ledger.load(&env).expect("load fixture manifest");
         ledger
-            .preflight_scenario(&env, &feature, &feature.scenarios[0])
+            .check_artifacts(fixture_artifacts(&env, &feature))
             .expect("exact manifest accepted");
 
         fs::write(&env.chain_bin, b"tampered executable").expect("tamper executable");
         let error = ledger
-            .preflight_scenario(&env, &feature, &feature.scenarios[0])
+            .check_artifacts(fixture_artifacts(&env, &feature))
             .expect_err("tampered executable must be rejected");
         assert!(error.to_string().contains("differs from build manifest"));
     }
@@ -839,6 +860,18 @@ mod tests {
         assert!(error
             .to_string()
             .contains("source differs from the current checkout"));
+    }
+
+    #[cfg(unix)]
+    fn fixture_artifacts(env: &Environment, feature: &Feature) -> Vec<ArtifactSpec> {
+        let mut artifacts = required_artifacts(env, feature, &feature.scenarios[0])
+            .expect("resolve required fixture artifacts");
+        artifacts
+            .iter_mut()
+            .find(|spec| spec.name == "outbe_e2e")
+            .expect("running harness is required")
+            .path = env.repo.join("target/release/outbe-e2e");
+        artifacts
     }
 
     #[cfg(unix)]
@@ -864,6 +897,10 @@ mod tests {
         fs::write(&sidecar, b"sidecar").expect("write fixture sidecar");
         fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o755))
             .expect("make sidecar executable");
+        let harness = repo.join("target/release/outbe-e2e");
+        fs::write(&harness, b"harness").expect("write fixture harness");
+        fs::set_permissions(&harness, fs::Permissions::from_mode(0o755))
+            .expect("make fixture harness executable");
         let mut env = Environment {
             repo,
             ..Environment::default()
@@ -887,8 +924,7 @@ mod tests {
             GherkinEnv::default(),
         )
         .expect("parse artifact fixture feature");
-        let artifacts = required_artifacts(&env, &feature, &feature.scenarios[0])
-            .expect("resolve required fixture artifacts")
+        let artifacts = fixture_artifacts(&env, &feature)
             .into_iter()
             .map(|spec| {
                 let identity =

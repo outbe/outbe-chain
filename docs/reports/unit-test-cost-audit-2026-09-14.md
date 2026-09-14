@@ -79,7 +79,7 @@ not interchangeable merely because assertions look similar.
 
 The entire ZeroFee library took 0.03 seconds in the sampled CI job. Its redundant
 assertions matter for maintainability and accuracy of test names, not minutes of
-runtime. No duplicate cleanup was implemented in this change.
+runtime. The approved follow-up below implements a bounded duplicate cleanup.
 
 ## Other concrete optimization candidates
 
@@ -160,3 +160,96 @@ unoptimized coverage timings: the build profile, instrumentation and machine
 differ. No full workspace, Cucumber or hardware E2E suite was executed for this
 test-selection change. Local diagnostic logs are under
 `/tmp/unit-audit-20260914/`.
+
+## Approved follow-up: duplicates and fixture cost
+
+The capacity migration was committed and pushed as `4426d7d8`. The subsequent
+cleanup removes nine redundant tests: four in ZeroFee runtime tests, three in
+txpool tests, one root-CLI parsing duplicate and one DKG bootstrap duplicate.
+Retained policy tests have names describing the actual signer/envelope inputs;
+they no longer imply that a funded account was configured. The DKG tests still
+exercise the distinct 4/3, 7/5 and 4/2 populations. Pool decision/wiring tests and
+separate entity/backend repository checks remain.
+
+Reconstruction tests now compute each immutable expected root once and pass it
+to the verifier fixture and assertions. Populations, input permutations, the
+eager-versus-bounded comparison and corruption cases are unchanged.
+
+Artifact checks use the same private validation loop in full preflight and unit
+tests. Sidecar and executable-tampering fixtures substitute a small executable
+file for the running harness. An existing full preflight/snapshot test still
+checks the actual executable, and artifact-discovery assertions explicitly pin
+that executable path. Production validation does not cache or skip hashes.
+All six sidecar mutation cases remain, including permissions, path and symlink
+substitution. One leftover use of the old fixture was caught and corrected by
+the focused tests before workspace validation.
+
+The ten artifact tests took **1.21 s before and 0.41 s after** with the same
+Rust 1.96.0 release command, default package features and four pinned CPUs
+(`artifacts-before.log` and `artifacts-after.log`). This is one before/after
+observation, approximately a 66% reduction for that group; it is not a measured
+66% improvement of the entire suite. Compilation is excluded from these libtest
+times. The initial audit's broader cleanup-fault fixture and test-profile
+suggestions remain recommendations, not implemented changes.
+
+### Ordinary workspace validation
+
+The final ordinary run completed with **6,023 passed, 0 failed, 28 ignored**
+across 302 test executables. The 28 ignored cases include the three deliberately
+moved capacity cases; no additional tests were disabled during this follow-up.
+This covers workspace unit and integration tests, including compile-fail cases;
+it does not claim a doctest or Cucumber/SGX acceptance run.
+
+The command used the default unoptimized test profile, Rust 1.96.0, four pinned
+CPUs and the host's `umask 0002`:
+
+```sh
+umask 002
+SOURCE_DATE_EPOCH=0 RAYON_NUM_THREADS=4 CARGO_BUILD_JOBS=4 \
+  taskset -c 0-3 rustup run 1.96.0 cargo test --locked --offline \
+  --workspace --tests --no-fail-fast -j 4 -- --test-threads=4
+```
+
+| Run | Wall time including Cargo | Main Cargo build | Sum of test-executable times | Result |
+| --- | ---: | ---: | ---: | --- |
+| First diagnostic run after optimization | 26m31.95s | 3m45s | 22m44.26s | 6,019 passed, four Paynote fixture failures |
+| Final run after fixture correction | 13m57.06s | 4.20s | 13m51.13s | 6,023 passed, zero failed |
+
+The first run exposed an existing environment dependency in Paynote tests:
+`tempfile` directories created under `umask 0002` are group-writable and are
+correctly rejected by the CLI's private-directory check. All eight Paynote tests
+passed unchanged under `umask 0022`. The correction sets the test directories to
+`0700` explicitly; the CLI security check is unchanged. The final run used
+`0002` and all 275 CLI tests passed. No global umask setting was changed.
+
+The wall-time difference between the diagnostic and final runs is **not** the
+speedup caused by duplicate removal: both runs already contained that cleanup,
+and the second reused build caches. In particular, the first macro compile-fail
+test took 537.58 seconds, including nested Cargo/native builds. Ordinary tests
+include these `trybuild` cases, whereas the historical coverage job skips their
+execution and CI runs them in a separate compile-contracts job. Its 26m37s
+execution interval is therefore not an equivalent before/after baseline.
+
+Logs and machine-readable results: `workspace-after.log`, `workspace-after.time`,
+`paynote-umask022.log`, `workspace-final.log`, `workspace-final.time` and
+`workspace-final-summary.json` under `/tmp/unit-audit-20260914/`. Target totals
+use the final parent libtest summary per executable, excluding nested child
+summaries from the aggregate.
+
+### Capacity recheck after expected-root reuse
+
+The exact combined E2E capacity command was rerun with the same release profile,
+Rust 1.96.0 and four CPUs. All three selected cases passed, with four unrelated
+cases filtered out in each executable:
+
+| Case | Before root reuse | After root reuse |
+| --- | ---: | ---: |
+| Boundary reconstruction through 4,097 leaves | 11.18 s | 7.20 s |
+| Inventory of 4,097 bodies | 12.53 s | 12.72 s |
+| Publisher with 1,000,000 records | 18.41 s | 18.58 s |
+
+The changed reconstruction case improved by approximately 36% in this paired
+observation. The other two cases were unchanged and their small timing variation
+is not claimed as a regression or an improvement. These execution times exclude
+the 1m47s incremental release build. Evidence: `capacity-explicit.log` and
+`capacity-optimized.log`. Rust formatting and Git whitespace checks also passed.
