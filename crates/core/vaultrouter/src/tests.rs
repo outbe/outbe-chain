@@ -2138,12 +2138,6 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
 }
 
 fn bond_cca(storage: &StorageHandle<'_>) {
-    outbe_primitives::cycle::Cycle::new(storage.clone())
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(
-            storage.timestamp().unwrap().to::<u64>(),
-        ))
-        .unwrap();
     let amount = outbe_cca::constants::BOND_REQUIREMENT;
     storage
         .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, amount)

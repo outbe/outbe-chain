@@ -87,10 +87,6 @@ fn iso_word(iso: u16) -> Bytes {
 }
 
 fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
-    outbe_primitives::cycle::Cycle::new(storage.clone())
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(CREATED_AT))
-        .map_err(|error| error.to_string())?;
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_ADDRESS,

@@ -104,12 +104,6 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
 
     let mut provider = DirectStorageProvider::new(&mut database, block());
     StorageHandle::enter(&mut provider, |storage| {
-        outbe_primitives::cycle::Cycle::new(storage.clone())
-            .active_utc_day
-            .write(outbe_primitives::time::timestamp_to_date_key(
-                storage.timestamp().unwrap().to::<u64>(),
-            ))
-            .unwrap();
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_ADDRESS,
