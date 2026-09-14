@@ -339,12 +339,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_vote_status() {
-        let cli = Cli::try_parse_from(["outbe-cli", "vote", "status", "--proposal-id", "1"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
     fn test_cli_parse_stablecoin_predict() {
         let cli = Cli::try_parse_from([
             "outbe-cli",

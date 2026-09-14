@@ -97,6 +97,7 @@ fn tiny_work() -> TributeInventoryWorkConfig {
 }
 
 #[test]
+#[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
     const COUNT: u32 = 4_097;
     let (day, records, root) = fixture_records(COUNT);

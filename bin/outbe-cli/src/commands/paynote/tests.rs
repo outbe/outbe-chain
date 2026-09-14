@@ -11,6 +11,17 @@ const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000
 const CHAIN: u64 = 1337;
 const ASSET: Address = Address::new([0x33; 20]);
 
+fn private_tempdir() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Existing note directories must be private regardless of the caller's umask.
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    directory
+}
+
 fn note() -> Note {
     Note::new(
         CHAIN,
@@ -171,7 +182,7 @@ fn command_inputs_and_note_validation() {
 
 #[test]
 fn note_files_are_private_immutable_and_roundtrip_full_u256() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_tempdir();
     let dir = temp.path().join("paynotes");
     let n = note();
     let path = save_note(&dir, &n).unwrap();
@@ -250,7 +261,7 @@ async fn deposit_approves_only_when_needed_and_preserves_note_on_failure() {
             receipt(vec![event(&n, 0, tree.root(), n.amount)]),
         ));
         let rpc = RecordingRpc::new(calls);
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let output = deposit(&rpc, &TxSigner::new(KEY).unwrap(), temp.path(), &n)
             .await
             .unwrap();
@@ -270,7 +281,7 @@ async fn deposit_approves_only_when_needed_and_preserves_note_on_failure() {
     ));
     calls.push(allowance_call(U256::ZERO));
     let rpc = RecordingRpc::new(calls);
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_tempdir();
     assert!(deposit(&rpc, &TxSigner::new(KEY).unwrap(), temp.path(), &n)
         .await
         .is_err());
@@ -300,7 +311,7 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
             )]))),
             ..Default::default()
         };
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         assert!(deposit(&rpc, &TxSigner::new(KEY).unwrap(), temp.path(), &n)
             .await
             .is_err());
@@ -378,7 +389,7 @@ async fn tree_history_requires_dense_indexes_and_matching_roots() {
 
 #[tokio::test]
 async fn wrong_chain_overspend_and_spent_notes_fail_before_proving() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_tempdir();
     let n = note();
     let rpc = MockRpc {
         chain_id: Ok(CHAIN + 1),
@@ -418,7 +429,7 @@ async fn wrong_chain_overspend_and_spent_notes_fail_before_proving() {
 #[tokio::test]
 async fn expired_proof_does_not_publish_artifacts_or_change_state() {
     let n = note();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_tempdir();
     let path = save_note(temp.path(), &n).unwrap();
     let before = fs::read(&path).unwrap();
     let mut tree = new_tree(CHAIN).unwrap();
@@ -454,7 +465,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
 async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let n = note();
     let owner = TxSigner::new(KEY).unwrap().address();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_tempdir();
     let mut tree = new_tree(CHAIN).unwrap();
     tree.append(n.commitment.to_field().unwrap()).unwrap();
     let origin_log = event(&n, 0, tree.root(), n.amount);
