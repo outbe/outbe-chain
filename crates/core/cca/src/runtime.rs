@@ -3,7 +3,7 @@ use crate::{
     errors::CcaError,
     precompile::ICca,
     schema::{CcaContract, CcaRecord},
-    state::decode_state,
+    state::validate_state,
 };
 use alloy_primitives::{uint, Address, U256};
 use outbe_primitives::{
@@ -34,14 +34,13 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result
         let mut contract = CcaContract::new(storage.clone());
         let mut record = contract.records.get(caller)?.unwrap_or(CcaRecord {
             cca: caller,
-            state: ICca::State::Unknown as u8,
+            state: ICca::State::Bonding,
             bonded_amount: U256::ZERO,
             unbond_unlock_after: 0,
-            exists: true,
             reward_amount: U256::ZERO,
         });
-        decode_state(record.state)?;
-        if record.state == ICca::State::Deregistering as u8 {
+        validate_state(record.state)?;
+        if record.state == ICca::State::Deregistering {
             return Err(CcaError::UnbondPending.into());
         }
         record.bonded_amount = record
@@ -51,14 +50,14 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result
         record.state = if record.bonded_amount >= BOND_REQUIREMENT {
             ICca::State::Active
         } else {
-            ICca::State::Unknown
-        } as u8;
+            ICca::State::Bonding
+        };
         contract.save(&record)?;
         contract.emit(ICca::Bonded {
             cca: caller,
             amount,
             selfBond: record.bonded_amount,
-            state: decode_state(record.state)?,
+            state: record.state,
         })
     })
 }
@@ -67,20 +66,20 @@ pub fn unbond(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     storage.with_checkpoint(|| {
         let mut contract = CcaContract::new(storage.clone());
         let mut record = contract.load(caller)?;
-        let state = decode_state(record.state)?;
-        if record.state == ICca::State::Deregistering as u8 {
+        let state = record.state;
+        if record.state == ICca::State::Deregistering {
             return Err(CcaError::UnbondPending.into());
         }
         if record.bonded_amount.is_zero() {
             return Err(CcaError::InvalidAmount.into());
         }
-        if !matches!(state, ICca::State::Active | ICca::State::Unknown) {
-            return Err(CcaError::InvalidState(record.state).into());
+        if !matches!(state, ICca::State::Active | ICca::State::Bonding) {
+            return Err(CcaError::InvalidState(record.state.into()).into());
         }
         record.unbond_unlock_after = now(&storage)?
             .checked_add(UNBOND_COOLDOWN_SECONDS)
             .ok_or(CcaError::Arithmetic)?;
-        record.state = ICca::State::Deregistering as u8;
+        record.state = ICca::State::Deregistering;
         contract.save(&record)?;
         contract.emit(ICca::UnbondRequested {
             cca: caller,
@@ -97,8 +96,8 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         if record.bonded_amount.is_zero() {
             return Err(CcaError::NoUnbond.into());
         }
-        if record.state != ICca::State::Deregistering as u8 {
-            return Err(CcaError::InvalidState(record.state).into());
+        if record.state != ICca::State::Deregistering {
+            return Err(CcaError::InvalidState(record.state.into()).into());
         }
         if now(&storage)? < record.unbond_unlock_after {
             return Err(CcaError::Cooldown.into());
@@ -106,7 +105,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         let amount = record.bonded_amount;
         record.bonded_amount = U256::ZERO;
         record.unbond_unlock_after = 0;
-        record.state = ICca::State::Deregistered as u8;
+        record.state = ICca::State::Deregistered;
         contract.save(&record)?;
         storage.transfer_balance(CCA_ADDRESS, caller, amount)?;
         contract.emit(ICca::UnbondClaimed {
@@ -143,7 +142,7 @@ pub fn position_opened(
 ) -> Result<()> {
     storage.with_checkpoint(|| {
         let contract = CcaContract::new(storage.clone());
-        if contract.load(cca)?.state != ICca::State::Active as u8 {
+        if contract.load(cca)?.state != ICca::State::Active {
             return Err(CcaError::NotActive.into());
         }
         let key = CcaContract::reward_weight_key(cca, day);

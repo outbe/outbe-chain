@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {ICca} from "@precompiles/ICca.sol";
 
 /// @notice Standing-only test double, etched at the protocol address.
-/// @dev Empty storage means Unknown. Tests fund and bond their CCA explicitly.
+/// @dev Empty storage is unregistered. Tests fund and bond their CCA explicitly.
 contract MockCcaRegistry {
     mapping(address => ICca.State) private _states;
     mapping(address => uint256) private _bonds;
@@ -12,7 +12,7 @@ contract MockCcaRegistry {
     function bond() external payable {
         require(msg.value > 0, "positive bond required");
         _bonds[msg.sender] += msg.value;
-        _states[msg.sender] = _bonds[msg.sender] >= 1_000_000_000 ether ? ICca.State.Active : ICca.State.Unknown;
+        _states[msg.sender] = _bonds[msg.sender] >= 1_000_000_000 ether ? ICca.State.Active : ICca.State.Bonding;
     }
 
     function setState(address cca, ICca.State state) external {
@@ -20,6 +20,7 @@ contract MockCcaRegistry {
     }
 
     function getCcaState(address cca) external view returns (ICca.State) {
+        require(_bonds[cca] != 0 || _states[cca] != ICca.State.Bonding, "CCA is not registered");
         return _states[cca];
     }
 

@@ -39,7 +39,7 @@ pub fn distribute_daily(
         }
         let mut distributed = U256::ZERO;
         for (mut record, weight) in records {
-            if record.state != ICca::State::Active as u8 {
+            if record.state != ICca::State::Active {
                 return Err(CcaError::NotActive.into());
             }
             // The product of two U256 values fits U512. Since weight <= total,

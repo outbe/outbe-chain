@@ -7,7 +7,10 @@ use outbe_primitives::dispatch::{
 };
 use outbe_primitives::{erc::ERC165_INTERFACE_ID, error::Result, storage::StorageHandle};
 
-sol!("../../../contracts/precompiles/src/ICca.sol");
+sol!(
+    #[sol(all_derives)]
+    "../../../contracts/precompiles/src/ICca.sol"
+);
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICca::bondCall::SELECTOR];
 
 pub fn dispatch(

@@ -459,15 +459,25 @@ contract CCAFlow is BaseAATest {
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 9);
     }
 
-    /// @dev `Unknown` is the state of an address that never registered. It is the case the gate
-    ///      exists for, and it must not be conflated with `Active`.
+    /// @dev An unregistered address must not be treated as a partially bonded CCA.
     function test_RevertWhen_CcaNeverRegistered() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
         (address stranger,) = makeAddrAndKey("unregistered-cca");
-        ccaRegistry.setState(stranger, ICca.State.Unknown);
 
-        vm.expectRevert(abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, stranger, ICca.State.Unknown));
+        vm.expectRevert(bytes("CCA is not registered"));
         factory.createAccount(user.addr, stranger, bundleTokens, bundleSenders, 10);
+    }
+
+    function test_RevertWhen_CcaBonding() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+        address bondingCca = makeAddr("bonding-cca");
+        vm.deal(bondingCca, 1);
+        vm.prank(bondingCca);
+        ccaRegistry.bond{value: 1}();
+        vm.expectRevert(
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, bondingCca, ICca.State.Bonding)
+        );
+        factory.createAccount(user.addr, bondingCca, bundleTokens, bundleSenders, 10);
     }
 
     /// @dev Address prediction is deliberately left unguarded, so a client can compute the

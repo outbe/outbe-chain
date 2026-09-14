@@ -36,7 +36,12 @@ async function main() {
     throw new Error("CCA_PRIVATE_KEY does not match CCA_ADDRESS");
   }
   const registry = ICca__factory.connect(CCA_REGISTRY, ccaWallet);
-  const registration = await registry.getCca(ccaAddress);
+  const registration = await registry.getCca(ccaAddress).catch((error: unknown) => {
+    if (ethers.isError(error, "CALL_EXCEPTION") && error.reason === "CCA is not registered") {
+      return { state: null, bondedAmount: 0n };
+    }
+    throw error;
+  });
   if (registration.state === 2n) {
     throw new Error("CCA has a pending unbond; claim it before registering again");
   }

@@ -87,7 +87,7 @@ struct ContractFieldInfo {
 
 #[derive(Default)]
 struct StorageRecordConfig {
-    exists_field: Option<Ident>,
+    exists_fields: Vec<Ident>,
 }
 
 impl Parse for StorageRecordConfig {
@@ -95,14 +95,28 @@ impl Parse for StorageRecordConfig {
         let mut config = Self::default();
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
-            if ident != "exists_field" {
+            if !config.exists_fields.is_empty() {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "expected `exists_field = ident`",
+                    "record existence is already specified",
                 ));
             }
             input.parse::<Token![=]>()?;
-            config.exists_field = Some(input.parse()?);
+            if ident == "exists_field" {
+                config.exists_fields.push(input.parse()?);
+            } else if ident == "exists_fields" {
+                let fields;
+                syn::bracketed!(fields in input);
+                config.exists_fields = fields
+                    .parse_terminated(Ident::parse, Token![,])?
+                    .into_iter()
+                    .collect();
+            } else {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "expected `exists_field = ident` or `exists_fields = [ident, ...]`",
+                ));
+            }
             if input.is_empty() {
                 break;
             }
@@ -736,14 +750,24 @@ fn generate_storage_record(
     let key_name = &key_field.name;
     let key_ty = &key_field.ty;
 
-    let exists_field_ident = config.exists_field.ok_or_else(|| {
-        syn::Error::new_spanned(
+    let exists_fields = config.exists_fields;
+    if exists_fields.is_empty() {
+        return Err(syn::Error::new_spanned(
             name,
-            "#[storage_record(...)] requires `exists_field = field_name`",
-        )
-    })?;
-
+            "#[storage_record(...)] requires at least one existence field",
+        ));
+    }
     let non_key_fields: Vec<_> = fields.iter().filter(|f| !f.attrs.key).cloned().collect();
+    for (index, field) in exists_fields.iter().enumerate() {
+        if exists_fields[..index].contains(field)
+            || !non_key_fields.iter().any(|f| f.name == *field)
+        {
+            return Err(syn::Error::new_spanned(
+                field,
+                "existence fields must name distinct non-key fields",
+            ));
+        }
+    }
     let non_key_offsets = compute_order_based_offsets(
         &non_key_fields,
         |f| record_field_storage_slots(&f.ty),
@@ -802,7 +826,7 @@ fn generate_storage_record(
     let mut load_fields = Vec::new();
     let mut write_fields = Vec::new();
     let mut delete_fields = Vec::new();
-    let mut exists_expr = None;
+    let mut exists_exprs = Vec::new();
 
     for (field, offset) in non_key_fields.iter().zip(non_key_offsets.iter()) {
         let fname = &field.name;
@@ -810,7 +834,7 @@ fn generate_storage_record(
         let offset_lit = *offset;
         let dynamic_kind = dynamic_field_kind(&field.ty);
 
-        if field.name == exists_field_ident && dynamic_kind.is_some() {
+        if exists_fields.contains(&field.name) && dynamic_kind.is_some() {
             return Err(syn::Error::new_spanned(
                 &field.name,
                 "exists_field cannot be a dynamic String or Vec<u8> record field",
@@ -946,34 +970,24 @@ fn generate_storage_record(
             mapping_delete
         });
 
-        if field.name == exists_field_ident {
-            exists_expr = Some(if is_optional_type(&field.ty) {
+        if exists_fields.contains(&field.name) {
+            exists_exprs.push(if is_optional_type(&field.ty) {
                 quote! {
-                    Ok(::outbe_primitives::storage::dsl::OptionalField::<#key_ty, #storage_ty>::new(
+                    ::outbe_primitives::storage::dsl::OptionalField::<#key_ty, #storage_ty>::new(
                         entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),
-                        entry.address(),
-                        entry.storage(),
-                        entry.key(),
-                    ).read()?.is_some())
+                        entry.address(), entry.storage(), entry.key(),
+                    ).read()?.is_some()
                 }
             } else {
                 quote! {
                     let value = #mapping_read;
-                    Ok(!<#storage_ty as ::outbe_primitives::storage::types::Storable>::to_word(&value).is_zero())
+                    !<#storage_ty as ::outbe_primitives::storage::types::Storable>::to_word(&value).is_zero()
                 }
             });
         }
     }
-
-    let exists_expr = exists_expr.ok_or_else(|| {
-        syn::Error::new_spanned(
-            name,
-            format!(
-                "exists_field `{}` not found among non-key fields",
-                exists_field_ident
-            ),
-        )
-    })?;
+    // Any nonzero (or present optional) field marks the record as present.
+    let exists_expr = quote! { Ok(false #(|| { #exists_exprs })*) };
 
     let record_impl = quote! {
         impl ::outbe_primitives::storage::dsl::StorageRecord for #name {

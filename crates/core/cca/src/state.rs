@@ -7,25 +7,22 @@ use crate::{
 use alloy_primitives::Address;
 use outbe_primitives::error::Result;
 
-pub(crate) fn decode_state(state: u8) -> Result<ICca::State> {
-    match state {
-        0 => Ok(ICca::State::Unknown),
-        1 => Ok(ICca::State::Active),
-        2 => Ok(ICca::State::Deregistering),
-        3 => Ok(ICca::State::Deregistered),
-        other => Err(CcaError::InvalidState(other).into()),
+pub(crate) fn validate_state(state: ICca::State) -> Result<ICca::State> {
+    if state == ICca::State::__Invalid {
+        return Err(CcaError::InvalidState(state.into()).into());
     }
+    Ok(state)
 }
 
 impl CcaContract<'_> {
     pub(crate) fn load(&self, cca: Address) -> Result<CcaRecord> {
-        self.records
-            .get(cca)?
-            .ok_or_else(|| CcaError::NotRegistered.into())
+        let record = self.records.get(cca)?.ok_or(CcaError::NotRegistered)?;
+        validate_state(record.state)?;
+        Ok(record)
     }
 
     pub(crate) fn save(&mut self, record: &CcaRecord) -> Result<()> {
-        if decode_state(record.state)? as u8 == ICca::State::Active as u8 {
+        if validate_state(record.state)? == ICca::State::Active {
             self.active.insert(record.cca)?;
         } else {
             self.active.remove(&record.cca)?;

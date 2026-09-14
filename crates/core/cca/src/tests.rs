@@ -2,7 +2,7 @@ use crate::{
     api, emission_sink,
     precompile::{dispatch, ICca},
     runtime::{self, BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
-    schema::CcaContract,
+    schema::{CcaContract, CcaRecordEntryExt},
 };
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
@@ -45,10 +45,15 @@ fn native(amount: u64) -> U256 {
 #[test]
 fn incremental_registration_exit_and_reregistration_preserve_history() {
     run(|storage| {
-        assert_eq!(api::cca_state(&storage, ALICE).unwrap() as u8, 0);
+        assert!(api::cca_state(&storage, ALICE).is_err());
+        assert!(api::get_cca(&storage, ALICE).is_err());
+        assert!(!api::is_active(&storage, ALICE).unwrap());
         let first = BOND_REQUIREMENT - U256::ONE;
         bond(&storage, ALICE, first);
-        assert_eq!(api::cca_state(&storage, ALICE).unwrap() as u8, 0);
+        assert_eq!(
+            api::cca_state(&storage, ALICE).unwrap(),
+            ICca::State::Bonding
+        );
         assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
         bond(&storage, ALICE, U256::ONE);
         assert!(api::is_active(&storage, ALICE).unwrap());
@@ -59,7 +64,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         runtime::unbond(storage.clone(), ALICE).unwrap();
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.cca, ALICE);
-        assert_eq!(record.state as u8, ICca::State::Deregistering as u8);
+        assert_eq!(record.state, ICca::State::Deregistering);
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT + U256::from(7));
         assert_eq!(record.unbondUnlockAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
@@ -77,7 +82,10 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
             storage.balance(ALICE).unwrap(),
             BOND_REQUIREMENT + U256::from(7)
         );
-        assert_eq!(api::cca_state(&storage, ALICE).unwrap() as u8, 3);
+        assert_eq!(
+            api::cca_state(&storage, ALICE).unwrap(),
+            ICca::State::Deregistered
+        );
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         assert_eq!(
             api::get_cca(&storage, ALICE).unwrap().bondedAmount,
@@ -218,7 +226,10 @@ fn failed_claim_preserves_record_and_balance() {
             api::get_cca(&storage, ALICE).unwrap().bondedAmount,
             BOND_REQUIREMENT
         );
-        assert_eq!(api::cca_state(&storage, ALICE).unwrap() as u8, 2);
+        assert_eq!(
+            api::cca_state(&storage, ALICE).unwrap(),
+            ICca::State::Deregistering
+        );
         assert_eq!(storage.balance(ALICE).unwrap(), U256::ZERO);
     });
 }
@@ -287,7 +298,7 @@ fn static_registration_is_rejected_without_state_or_events() {
             U256::ONE
         )
         .is_err());
-        assert_eq!(api::cca_state(&storage, ALICE).unwrap() as u8, 0);
+        assert!(api::cca_state(&storage, ALICE).is_err());
     });
     assert!(provider.get_ordered_events().is_empty());
 }
@@ -446,5 +457,38 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         );
         runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
         assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::ONE);
+    });
+}
+
+#[test]
+fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        let contract = CcaContract::new(storage.clone());
+        let slot = contract.records.entry(ALICE).state();
+        for (word, state) in [
+            (0, ICca::State::Bonding),
+            (1, ICca::State::Active),
+            (2, ICca::State::Deregistering),
+            (3, ICca::State::Deregistered),
+        ] {
+            storage
+                .sstore(CCA_ADDRESS, slot.slot(), U256::from(word))
+                .unwrap();
+            assert_eq!(contract.load(ALICE).unwrap().state, state);
+            assert_eq!(api::cca_state(&storage, ALICE).unwrap(), state);
+            slot.write(state).unwrap();
+            assert_eq!(
+                storage.sload(CCA_ADDRESS, slot.slot()).unwrap(),
+                U256::from(word)
+            );
+        }
+        for word in [U256::from(4), U256::from(255), U256::from(256), U256::MAX] {
+            storage.sstore(CCA_ADDRESS, slot.slot(), word).unwrap();
+            assert!(contract.load(ALICE).is_err());
+            assert!(api::get_cca(&storage, ALICE).is_err());
+            assert!(runtime::bond(storage.clone(), ALICE, U256::ONE).is_err());
+            assert_eq!(storage.sload(CCA_ADDRESS, slot.slot()).unwrap(), word);
+        }
     });
 }

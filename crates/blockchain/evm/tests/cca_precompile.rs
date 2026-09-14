@@ -86,6 +86,13 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         },
     );
 
+    assert!(!tx(
+        &mut db,
+        U256::ZERO,
+        ICca::getCcaCall { cca: CCA }.abi_encode(),
+        NOW
+    )
+    .is_success());
     assert!(tx(
         &mut db,
         BOND_REQUIREMENT - U256::ONE,
@@ -93,7 +100,12 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW
     )
     .is_success());
-    with_storage(&mut db, |s| assert!(!api::is_active(&s, CCA).unwrap()));
+    with_storage(&mut db, |s| {
+        assert!(!api::is_active(&s, CCA).unwrap());
+        let record = api::get_cca(&s, CCA).unwrap();
+        assert_eq!(record.state, ICca::State::Bonding);
+        assert_eq!(record.bondedAmount, BOND_REQUIREMENT - U256::ONE);
+    });
     assert!(tx(&mut db, U256::ONE, ICca::bondCall {}.abi_encode(), NOW).is_success());
     assert_eq!(
         db.cache.accounts[&CCA].info.balance,
