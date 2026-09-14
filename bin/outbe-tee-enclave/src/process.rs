@@ -73,7 +73,7 @@ fn process_one(
     .map_err(|e| format!("decryption failed: {e}"))?;
 
     let payload = parse_and_validate(&plaintext)?;
-    let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_atto)?;
+    let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_micro)?;
     let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
     let amount_minor = amount.amount_minor;
     if amount_minor.is_zero() {
@@ -190,15 +190,15 @@ mod tests {
         "creator": "alice",
         "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
         "amount_base": "100",
-        "amount_atto": "0",
+        "amount_micro": "0",
         "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
     }"#;
 
-    const BASE_AND_ATTO_JSON: &str = r#"{
+    const BASE_AND_MICRO_JSON: &str = r#"{
         "creator": "alice",
         "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
         "amount_base": "1",
-        "amount_atto": "500000",
+        "amount_micro": "500000",
         "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
     }"#;
 
@@ -275,9 +275,9 @@ mod tests {
     }
 
     #[test]
-    fn zk_and_non_zk_share_one_canonical_base_atto_contract() {
-        let plain = make_tribute_offer(Address::repeat_byte(0x31), BASE_AND_ATTO_JSON);
-        let mut zk = make_tribute_offer(Address::repeat_byte(0x32), BASE_AND_ATTO_JSON);
+    fn zk_and_non_zk_share_one_canonical_base_micro_contract() {
+        let plain = make_tribute_offer(Address::repeat_byte(0x31), BASE_AND_MICRO_JSON);
+        let mut zk = make_tribute_offer(Address::repeat_byte(0x32), BASE_AND_MICRO_JSON);
         zk.zk_context = Some(zk_context());
 
         let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]);
@@ -291,13 +291,13 @@ mod tests {
 
     #[test]
     fn cross_currency_golden_returns_effective_reference_price() {
-        let mut offer = make_tribute_offer(Address::repeat_byte(0x55), BASE_AND_ATTO_JSON);
+        let mut offer = make_tribute_offer(Address::repeat_byte(0x55), BASE_AND_MICRO_JSON);
         offer.issuance_wwd_vwap_minor = U256::from(10_250_000u64);
         offer.reference_wwd_vwap_minor = U256::from(250_000u64);
         offer.reference_scurve_minor = U256::from(320_000u64);
-        let json = BASE_AND_ATTO_JSON
+        let json = BASE_AND_MICRO_JSON
             .replace(r#""amount_base": "1""#, r#""amount_base": "0""#)
-            .replace(r#""amount_atto": "500000""#, r#""amount_atto": "410000""#);
+            .replace(r#""amount_micro": "500000""#, r#""amount_micro": "410000""#);
         offer = make_tribute_offer(offer.owner, &json);
         offer.issuance_wwd_vwap_minor = U256::from(10_250_000u64);
         offer.reference_wwd_vwap_minor = U256::from(250_000u64);
@@ -413,7 +413,8 @@ mod tests {
         for (needle, replacement) in [
             (r#""amount_base": "100""#, r#""amount_base": "1.5""#),
             (r#""amount_base": "100""#, r#""amount_base": "01""#),
-            (r#""amount_atto": "0""#, r#""amount_atto": "1000000""#),
+            (r#""amount_micro": "0""#, r#""amount_micro": "1000000""#),
+            (r#""amount_micro": "0""#, r#""amount_atto": "0""#),
         ] {
             let json = GOOD_JSON.replace(needle, replacement);
             let plain = make_tribute_offer(Address::repeat_byte(0x41), &json);
@@ -479,7 +480,7 @@ mod tests {
             "creator": "alice",
             "tribute_draft_id": "not-a-32-byte-hex",
             "amount_base": "100",
-            "amount_atto": "0",
+            "amount_micro": "0",
             "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
         }"#;
         let offers = vec![make_tribute_offer(Address::repeat_byte(0x04), bad_json)];

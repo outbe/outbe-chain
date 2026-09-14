@@ -9,7 +9,7 @@ use outbe_compressed_entities::{
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 
 use crate::internal::{eth, nod_reference};
-use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE};
+use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO};
 use crate::world::World;
 
 fn submitted_inputs(world: &World) -> Vec<(String, Address, U256)> {
@@ -46,7 +46,7 @@ fn submitted_inputs(world: &World) -> Vec<(String, Address, U256)> {
         .expect("submitted capacity keys");
     let amount = super::tribute_expectations::amount_minor(
         OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
-        OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
+        OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
     );
     transactions
         .iter()

@@ -294,21 +294,21 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         let scale = outbe_primitives::units::SCALE_1E6_U256;
         assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
         assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "2");
-        assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, "0");
+        assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO, "0");
         let amount_base = U256::from(
             OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE
                 .parse::<u64>()
                 .expect("canonical amount_base"),
         );
-        let amount_atto = U256::from(
-            OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO
+        let amount_micro = U256::from(
+            OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO
                 .parse::<u64>()
-                .expect("canonical amount_atto"),
+                .expect("canonical amount_micro"),
         );
-        assert!(amount_atto < scale);
+        assert!(amount_micro < scale);
         let issuance = amount_base
             .checked_mul(scale)
-            .and_then(|value| value.checked_add(amount_atto))
+            .and_then(|value| value.checked_add(amount_micro))
             .expect("canonical Tribute amount");
         assert_eq!(issuance, U256::from(2_000_000));
         let nominal = issuance * scale / day.current_vwap;

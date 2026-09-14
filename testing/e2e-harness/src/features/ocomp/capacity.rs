@@ -65,7 +65,7 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
                             private_key,
                             &worldwide_day,
                             OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
-                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
+                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
                             840,
                             false,
                         )
