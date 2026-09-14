@@ -14644,6 +14644,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudis-gems"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "hex",
+ "k256 0.13.4",
+ "outbe-common",
+ "outbe-protocol",
+ "outbe-tee",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "ruint"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

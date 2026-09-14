@@ -4,6 +4,8 @@
   "description": "Outbe Credis user-flow demo (imported from credis/ts-cca)",
   "type": "module",
   "scripts": {
+    "rudis-gems": "node --import tsx src/rudis-gems.ts",
+    "test:rudis-gems": "node --import tsx --test src/rudis-gems.test.ts",
     "prepare-abis": "node scripts/prepare-abis.mjs",
     "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json'",
     "build": "npm run generate-types && tsc",

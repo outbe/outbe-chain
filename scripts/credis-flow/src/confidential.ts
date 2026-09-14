@@ -152,7 +152,11 @@ export interface GratisKeys {
  * (recovered + matched server-side), so only the account's key holder can obtain
  * its keys.
  */
-export async function deriveKeys(signer: ethers.Wallet, ledger: Ledger): Promise<GratisKeys> {
+export async function deriveKeys(
+  signer: ethers.Wallet,
+  ledger: Ledger,
+  rpcMethod = "outbe_deriveKeys",
+): Promise<GratisKeys> {
   const provider = signer.provider as ethers.JsonRpcProvider | null;
   if (!provider) throw new Error("deriveKeys: signer must be connected to a JsonRpcProvider");
   const account = ethers.getAddress(await signer.getAddress());
@@ -168,7 +172,7 @@ export async function deriveKeys(signer: ethers.Wallet, ledger: Ledger): Promise
   const signature = await signer.signMessage(message);
 
   const resp: { sealed: string; nonce: string; enclaveEphemeralPubkey: string } =
-    await provider.send("outbe_deriveKeys", [
+    await provider.send(rpcMethod, [
       ledger,
       account,
       ethers.hexlify(ephPublic),

@@ -4,6 +4,10 @@ End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. E
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
 flow - from pledging Gratis to settling the Credis position and unpledging.
 
+For Rehearsal GEM listing and WUSDC settlement followed by PROMIS -> native RUDIS
+(COEN), see [Rudis GEM script](RUDIS-GEMS.md). It accepts `--private-key` and
+computes the required PoW and both modify MACs automatically.
+
 ### Confidential (TEE) Gratis/Credis design
 
 These scripts target the confidential Gratis/Credis interfaces after the TEE

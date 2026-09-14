@@ -1,0 +1,31 @@
+[package]
+name = "rudis-gems"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+clap.workspace = true
+eyre.workspace = true
+hex.workspace = true
+k256.workspace = true
+outbe-common.workspace = true
+outbe-protocol.workspace = true
+outbe-tee.workspace = true
+outbe-zk-backend.workspace = true
+outbe-zk-canonical.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

@@ -70,6 +70,7 @@ members = [
     "bin/outbe-chain",
     "bin/outbe-keygen",
     "bin/outbe-cli",
+    "bin/rudis-gems",
     "bin/outbe-feeder",
     "bin/outbe-ocomp",
     "bin/outbe-radicle",
