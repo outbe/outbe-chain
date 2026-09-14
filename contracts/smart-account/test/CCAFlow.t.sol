@@ -439,12 +439,12 @@ contract CCAFlow is BaseAATest {
         assertTrue(account.code.length > 0, "account should be deployed");
     }
 
-    function test_RevertWhen_CcaSuspended() external {
+    function test_RevertWhen_CcaDeregistering() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
-        ccaRegistry.setState(cca.addr, ICca.State.Suspended);
+        ccaRegistry.setState(cca.addr, ICca.State.Deregistering);
 
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Suspended)
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Deregistering)
         );
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 8);
     }

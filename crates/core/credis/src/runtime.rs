@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY, UTC_PLUS_14_OFFSET};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::{
@@ -17,6 +17,16 @@ use crate::constants::{
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
+
+/// Bound the date before the shared helper adds UTC+14 and encodes YYYYMMDD.
+fn reward_day(timestamp: u64) -> Result<WorldwideDay> {
+    // 9999-12-31 23:59:59 in UTC+14: fits the calendar and its u32 date key.
+    const MAX_TIMESTAMP: u64 = 253_402_300_799 - UTC_PLUS_14_OFFSET;
+    if timestamp > MAX_TIMESTAMP {
+        return Err(CredisError::ArithmeticOverflow.into());
+    }
+    Ok(WorldwideDay::from_timestamp(timestamp))
+}
 
 /// Terms captured when a position opens. Grouped rather than passed positionally
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
@@ -173,7 +183,12 @@ impl CredisContract<'_> {
                 call_window: CALL_WINDOW,
                 call_threshold: CALL_THRESHOLD,
             };
-            outbe_cca::api::position_opened(&self.storage, params.cca, params.collateral)?;
+            outbe_cca::api::position_opened(
+                &self.storage,
+                params.cca,
+                reward_day(params.originated_at)?,
+                params.collateral,
+            )?;
             self.create_position_record(&position)?;
             self.widen_max_call_window(position.reference_currency, position.call_window)?;
             self.append_to_address_index(params.smart_account, position_id)?;
@@ -345,7 +360,12 @@ impl CredisContract<'_> {
                 .ok_or(CredisError::ArithmeticOverflow)?
                 / position.principal;
 
-            outbe_cca::api::position_voided(&self.storage, position.cca, gratis_burned)?;
+            outbe_cca::api::position_voided(
+                &self.storage,
+                position.cca,
+                reward_day(now)?,
+                gratis_burned,
+            )?;
             position.outstanding = U256::ZERO;
             position.collateral_locked = U256::ZERO;
             position.state = CredisState::Void as u8;

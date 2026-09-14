@@ -112,10 +112,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         );
     }
     with_storage(&mut db, |s| {
-        api::position_opened(&s, CCA, U256::from(100)).unwrap();
+        api::position_opened(&s, CCA, 20231115.into(), U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
         assert_eq!(
-            outbe_cca::emission_sink::distribute_daily(&ctx, 20231114.into(), U256::from(23))
+            outbe_cca::emission_sink::distribute_daily(&ctx, 20231115.into(), U256::from(23))
                 .unwrap(),
             U256::ZERO
         );
@@ -124,8 +124,12 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(tx(&mut db, U256::ZERO, ICca::unbondCall {}.abi_encode(), NOW).is_success());
     assert!(!tx(&mut db, U256::ONE, ICca::bondCall {}.abi_encode(), NOW).is_success());
     with_storage(&mut db, |s| {
+        let record = api::get_cca(&s, CCA).unwrap();
+        assert_eq!(record.state as u8, ICca::State::Deregistering as u8);
+        assert_eq!(record.bondedAmount, BOND_REQUIREMENT);
+        assert_eq!(record.unbondUnlockAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&s, CCA).unwrap());
-        assert!(api::position_opened(&s, CCA, U256::ONE).is_err());
+        assert!(api::position_opened(&s, CCA, 20231115.into(), U256::ONE).is_err());
     });
     assert!(tx(
         &mut db,
@@ -157,7 +161,11 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICca::State::Deregistered as u8);
-        assert_eq!(record.rewardWeight, U256::from(100));
+        assert_eq!(record.bondedAmount, U256::ZERO);
+        assert_eq!(
+            api::reward_weight(&s, CCA, 20231115.into()).unwrap(),
+            U256::from(100)
+        );
     });
     assert!(!tx(
         &mut db,

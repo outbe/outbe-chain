@@ -12,7 +12,7 @@ contract MockCcaRegistry {
     function bond() external payable {
         require(msg.value > 0, "positive bond required");
         _bonds[msg.sender] += msg.value;
-        _states[msg.sender] = _bonds[msg.sender] >= 1_000_000_000 ether ? ICca.State.Active : ICca.State.Suspended;
+        _states[msg.sender] = _bonds[msg.sender] >= 1_000_000_000 ether ? ICca.State.Active : ICca.State.Unknown;
     }
 
     function setState(address cca, ICca.State state) external {

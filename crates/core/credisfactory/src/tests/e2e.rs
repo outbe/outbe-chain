@@ -889,9 +889,12 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
         .is_err());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
-            outbe_cca::api::get_cca(&storage, cca())
-                .unwrap()
-                .rewardWeight,
+            outbe_cca::api::reward_weight(
+                &storage,
+                cca(),
+                outbe_primitives::time::WorldwideDay::from_timestamp(CREATED_AT)
+            )
+            .unwrap(),
             U256::ZERO
         );
         fund_stake(&storage, pledge_stake());
@@ -906,9 +909,12 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
         )
         .unwrap();
         assert_eq!(
-            outbe_cca::api::get_cca(&storage, cca())
-                .unwrap()
-                .rewardWeight,
+            outbe_cca::api::reward_weight(
+                &storage,
+                cca(),
+                outbe_primitives::time::WorldwideDay::from_timestamp(CREATED_AT)
+            )
+            .unwrap(),
             pledge_cost()
         );
         outbe_cca::runtime::unbond(storage.clone(), cca()).unwrap();

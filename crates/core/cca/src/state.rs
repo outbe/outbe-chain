@@ -11,7 +11,7 @@ pub(crate) fn decode_state(state: u8) -> Result<ICca::State> {
     match state {
         0 => Ok(ICca::State::Unknown),
         1 => Ok(ICca::State::Active),
-        2 => Ok(ICca::State::Suspended),
+        2 => Ok(ICca::State::Deregistering),
         3 => Ok(ICca::State::Deregistered),
         other => Err(CcaError::InvalidState(other).into()),
     }

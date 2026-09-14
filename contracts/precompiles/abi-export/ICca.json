@@ -37,32 +37,27 @@
         "internalType": "struct ICca.Cca",
         "components": [
           {
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "enum ICca.State"
           },
           {
-            "name": "selfBond",
+            "name": "bondedAmount",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "unbondAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "unbondCompleteTime",
+            "name": "unbondUnlockAfter",
             "type": "uint64",
             "internalType": "uint64"
           },
           {
-            "name": "rewardWeight",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "claimableRewards",
+            "name": "rewardAmount",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -165,25 +160,6 @@
       },
       {
         "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardWeightChanged",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "weight",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

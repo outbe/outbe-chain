@@ -1,29 +1,27 @@
 //! Persistent CCA records and the current active-agent index.
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::CCA_ADDRESS;
+use outbe_primitives::{addresses::CCA_ADDRESS, time::WorldwideDay};
 
 #[derive(Debug, Clone)]
-#[storage_record(exists_field = state)]
+#[storage_record(exists_field = exists)]
 pub struct CcaRecord {
     #[key]
     pub cca: Address,
     #[attribute(order = 0)]
     pub state: u8,
-    /// Native COEN atomic units, 18 decimals.
+    /// Native COEN atomic units, retained during deregistration until claimed.
     #[attribute(order = 1)]
-    pub self_bond: U256,
-    #[attribute(order = 2)]
-    pub unbond_amount: U256,
+    pub bonded_amount: U256,
     /// Unix seconds; checked conversion from the execution timestamp.
-    #[attribute(order = 3)]
-    pub unbond_complete_time: u64,
-    /// Six-decimal opening GRATIS less the remaining GRATIS burned on void.
-    #[attribute(order = 4)]
-    pub reward_weight: U256,
+    #[attribute(order = 2)]
+    pub unbond_unlock_after: u64,
     /// Native COEN atomic units, independent of the bond.
-    #[attribute(order = 5)]
-    pub claimable_rewards: U256,
+    #[attribute(order = 3)]
+    pub reward_amount: U256,
+    /// Partial bonds use Unknown (zero), so state cannot mark record existence.
+    #[attribute(order = 4)]
+    pub exists: bool,
 }
 
 #[storage_schema]
@@ -33,4 +31,20 @@ pub struct CcaContract {
     pub records: outbe_primitives::storage::dsl::Map<Address, CcaRecord>,
     #[attribute(order = 1)]
     pub active: outbe_primitives::storage::dsl::Set<Address>,
+    /// Six-decimal net GRATIS per WWD. At most one of weight/deficit is nonzero.
+    #[attribute(order = 2)]
+    pub reward_weights: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Excess burns offset later openings for the same CCA and WWD only.
+    #[attribute(order = 3)]
+    pub reward_deficits: outbe_primitives::storage::dsl::Map<B256, U256>,
+}
+
+impl CcaContract<'_> {
+    /// keccak256(cca's 20 bytes || worldwide day's big-endian u32).
+    pub fn reward_weight_key(cca: Address, day: WorldwideDay) -> B256 {
+        let mut bytes = [0u8; 24];
+        bytes[..20].copy_from_slice(cca.as_slice());
+        bytes[20..].copy_from_slice(&day.value().to_be_bytes());
+        keccak256(bytes)
+    }
 }

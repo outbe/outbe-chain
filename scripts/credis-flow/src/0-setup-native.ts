@@ -37,11 +37,11 @@ async function main() {
   }
   const registry = ICca__factory.connect(CCA_REGISTRY, ccaWallet);
   const registration = await registry.getCca(ccaAddress);
-  if (registration.unbondAmount !== 0n) {
+  if (registration.state === 2n) {
     throw new Error("CCA has a pending unbond; claim it before registering again");
   }
-  const remainingBond = registration.selfBond < BOND_REQUIREMENT
-    ? BOND_REQUIREMENT - registration.selfBond : 0n;
+  const remainingBond = registration.bondedAmount < BOND_REQUIREMENT
+    ? BOND_REQUIREMENT - registration.bondedAmount : 0n;
   const requiredCcaBalance = remainingBond + CCA_GAS_AND_POSITION_FUNDS;
 
   console.log("=== Setup Native ===");
