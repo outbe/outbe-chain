@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title ICca - Checkout Credis Agent interface.
-interface ICca {
+/// @title ICcaRegistry - Checkout Credis Agent interface.
+interface ICcaRegistry {
     enum State {
         Bonding,
         Active,

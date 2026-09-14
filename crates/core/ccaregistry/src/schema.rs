@@ -1,5 +1,5 @@
 //! Persistent CCA records and the current active-agent index.
-use crate::precompile::ICca;
+use crate::precompile::ICcaRegistry;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::{
@@ -14,8 +14,8 @@ pub struct CcaRecord {
     pub cca: Address,
     #[attribute(order = 0)]
     pub name: String,
-    #[attribute(order = 1, default = ICca::State::Bonding)]
-    pub state: ICca::State,
+    #[attribute(order = 1, default = ICcaRegistry::State::Bonding)]
+    pub state: ICcaRegistry::State,
     /// Native COEN atomic units, retained during deregistration until claimed.
     #[attribute(order = 2)]
     pub bonded_amount: U256,
@@ -49,11 +49,11 @@ pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {
     keccak256(bytes)
 }
 
-impl StorableType for ICca::State {
+impl StorableType for ICcaRegistry::State {
     const SLOTS: usize = 1;
 }
 
-impl Storable for ICca::State {
+impl Storable for ICcaRegistry::State {
     fn from_word(word: U256) -> Self {
         // Check the full word fits u8 before decoding the enum; never truncate storage.
         // Storable is infallible, so validation rejects this sentinel at the record boundary.

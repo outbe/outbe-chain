@@ -1,5 +1,5 @@
 //! Shared registry queries and trusted position-accounting entrypoints.
-pub use crate::precompile::ICca;
+pub use crate::precompile::ICcaRegistry;
 pub use crate::runtime::{position_opened, position_voided};
 use crate::{
     schema::{address_day_key, CcaContract},
@@ -8,13 +8,13 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::State> {
+pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry::State> {
     Ok(CcaContract::new(storage.clone()).load(cca)?.state)
 }
 
 pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
     match CcaContract::new(storage.clone()).records.get(cca)? {
-        Some(record) => Ok(validate_state(record.state)? == ICca::State::Active),
+        Some(record) => Ok(validate_state(record.state)? == ICcaRegistry::State::Active),
         None => Ok(false),
     }
 }
@@ -26,10 +26,10 @@ pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Res
         .read(&address_day_key(cca, day))
 }
 
-pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {
+pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry::Cca> {
     let contract = CcaContract::new(storage.clone());
     let record = contract.load(cca)?;
-    Ok(ICca::Cca {
+    Ok(ICcaRegistry::Cca {
         cca: record.cca,
         name: record.name,
         state: record.state,

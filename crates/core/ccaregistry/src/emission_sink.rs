@@ -1,7 +1,7 @@
 //! Daily CCA rewards, sampled when Cycle settles the emission day.
 use crate::{
     errors::CcaError,
-    precompile::ICca,
+    precompile::ICcaRegistry,
     schema::{address_day_key, CcaContract},
 };
 use alloy_primitives::{U256, U512};
@@ -51,7 +51,7 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
                 .ok_or(CcaError::Arithmetic)?;
             contract.reward_amounts.write(&cca, reward)?;
             ctx.storage.increase_balance(CCA_REGISTRY_ADDRESS, native)?;
-            contract.emit(ICca::RewardAccrued {
+            contract.emit(ICcaRegistry::RewardAccrued {
                 cca,
                 utcDay: day,
                 amount: native,

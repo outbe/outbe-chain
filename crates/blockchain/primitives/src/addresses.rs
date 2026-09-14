@@ -75,7 +75,7 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
 /// Checkout Credis Agent registry precompile. Holds agent bonds and daily CCA
-/// emission rewards, and exposes agent standing (`ICca.getCcaState`).
+/// emission rewards, and exposes agent standing (`ICcaRegistry.getCcaState`).
 /// See `outbe_ccaregistry::precompile`.
 pub const CCA_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 

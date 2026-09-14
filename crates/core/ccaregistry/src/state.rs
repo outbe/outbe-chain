@@ -1,14 +1,14 @@
 //! Local record reads and active-index maintenance.
 use crate::{
     errors::CcaError,
-    precompile::ICca,
+    precompile::ICcaRegistry,
     schema::{CcaContract, CcaRecord},
 };
 use alloy_primitives::Address;
 use outbe_primitives::error::Result;
 
-pub(crate) fn validate_state(state: ICca::State) -> Result<ICca::State> {
-    if state == ICca::State::__Invalid {
+pub(crate) fn validate_state(state: ICcaRegistry::State) -> Result<ICcaRegistry::State> {
+    if state == ICcaRegistry::State::__Invalid {
         return Err(CcaError::InvalidState(state.into()).into());
     }
     Ok(state)
@@ -22,7 +22,7 @@ impl CcaContract<'_> {
     }
 
     pub(crate) fn save(&mut self, record: &CcaRecord) -> Result<()> {
-        if validate_state(record.state)? == ICca::State::Active {
+        if validate_state(record.state)? == ICcaRegistry::State::Active {
             self.active.insert(record.cca)?;
         } else {
             self.active.remove(&record.cca)?;

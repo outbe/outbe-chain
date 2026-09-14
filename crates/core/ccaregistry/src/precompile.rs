@@ -9,9 +9,9 @@ use outbe_primitives::{erc::ERC165_INTERFACE_ID, error::Result, storage::Storage
 
 sol!(
     #[sol(all_derives)]
-    "../../../contracts/precompiles/src/ICca.sol"
+    "../../../contracts/precompiles/src/ICcaRegistry.sol"
 );
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICca::bondCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICcaRegistry::bondCall::SELECTOR];
 
 pub fn dispatch(
     storage: StorageHandle<'_>,
@@ -20,8 +20,8 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
-    dispatch_call(data, ICca::ICcaCalls::abi_decode, |call| {
-        use ICca::ICcaCalls::*;
+    dispatch_call(data, ICcaRegistry::ICcaRegistryCalls::abi_decode, |call| {
+        use ICcaRegistry::ICcaRegistryCalls::*;
         match call {
             bond(c) => {
                 mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, amount| {

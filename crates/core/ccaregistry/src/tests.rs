@@ -2,7 +2,7 @@ use crate::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     emission_sink,
-    precompile::{dispatch, ICca},
+    precompile::{dispatch, ICcaRegistry},
     runtime,
     schema::{address_day_key, CcaContract, CcaRecordEntryExt},
 };
@@ -31,7 +31,7 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
         .unwrap();
     dispatch(
         storage.clone(),
-        &ICca::bondCall {
+        &ICcaRegistry::bondCall {
             name: "Test CCA".into(),
         }
         .abi_encode(),
@@ -51,7 +51,7 @@ fn native(amount: u64) -> U256 {
 #[test]
 fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration() {
     run(|storage| {
-        let empty_name = ICca::bondCall {
+        let empty_name = ICcaRegistry::bondCall {
             name: String::new(),
         }
         .abi_encode();
@@ -71,14 +71,14 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
             storage
                 .increase_balance(CCA_REGISTRY_ADDRESS, U256::ONE)
                 .unwrap();
-            let call = ICca::bondCall { name: name.clone() }.abi_encode();
+            let call = ICcaRegistry::bondCall { name: name.clone() }.abi_encode();
             dispatch(storage.clone(), &call, ALICE, U256::ONE).unwrap();
-            let query = ICca::getCcaCall { cca: ALICE }.abi_encode();
+            let query = ICcaRegistry::getCcaCall { cca: ALICE }.abi_encode();
             let output = dispatch(storage.clone(), &query, BOB, U256::ZERO).unwrap();
-            let record = ICca::getCcaCall::abi_decode_returns(&output).unwrap();
+            let record = ICcaRegistry::getCcaCall::abi_decode_returns(&output).unwrap();
             assert_eq!(record.cca, ALICE);
             assert_eq!(record.name, name);
-            assert_eq!(record.state, ICca::State::Bonding);
+            assert_eq!(record.state, ICcaRegistry::State::Bonding);
             assert_eq!(record.bondedAmount, U256::from(index + 1));
 
             assert!(dispatch(storage.clone(), &empty_name, ALICE, U256::ONE).is_err());
@@ -92,7 +92,7 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
         runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.name, "B");
-        assert_eq!(record.state, ICca::State::Deregistered);
+        assert_eq!(record.state, ICcaRegistry::State::Deregistered);
         assert_eq!(record.bondedAmount, U256::ZERO);
         assert_eq!(record.rewardAmount, U256::ZERO);
     });
@@ -108,7 +108,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         bond(&storage, ALICE, first);
         assert_eq!(
             api::cca_state(&storage, ALICE).unwrap(),
-            ICca::State::Bonding
+            ICcaRegistry::State::Bonding
         );
         assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
         bond(&storage, ALICE, U256::ONE);
@@ -120,7 +120,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         runtime::unbond(storage.clone(), ALICE).unwrap();
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.cca, ALICE);
-        assert_eq!(record.state, ICca::State::Deregistering);
+        assert_eq!(record.state, ICcaRegistry::State::Deregistering);
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT + U256::from(7));
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
@@ -140,7 +140,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         );
         assert_eq!(
             api::cca_state(&storage, ALICE).unwrap(),
-            ICca::State::Deregistered
+            ICcaRegistry::State::Deregistered
         );
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         assert_eq!(
@@ -314,7 +314,7 @@ fn failed_claim_preserves_record_and_balance() {
         );
         assert_eq!(
             api::cca_state(&storage, ALICE).unwrap(),
-            ICca::State::Deregistering
+            ICcaRegistry::State::Deregistering
         );
         assert_eq!(storage.balance(ALICE).unwrap(), U256::ZERO);
     });
@@ -343,24 +343,24 @@ fn abi_reads_and_nonpayable_selectors() {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         let out = dispatch(
             storage.clone(),
-            &ICca::getCcaCall { cca: ALICE }.abi_encode(),
+            &ICcaRegistry::getCcaCall { cca: ALICE }.abi_encode(),
             BOB,
             U256::ZERO,
         )
         .unwrap();
         assert_eq!(
-            ICca::getCcaCall::abi_decode_returns(&out)
+            ICcaRegistry::getCcaCall::abi_decode_returns(&out)
                 .unwrap()
                 .bondedAmount,
             BOND_REQUIREMENT
         );
         for data in [
-            ICca::getCcaCall { cca: ALICE }.abi_encode(),
-            ICca::getCcaStateCall { cca: ALICE }.abi_encode(),
-            ICca::unbondCall {}.abi_encode(),
-            ICca::claimUnbondedCall {}.abi_encode(),
-            ICca::claimRewardsCall {}.abi_encode(),
-            ICca::supportsInterfaceCall {
+            ICcaRegistry::getCcaCall { cca: ALICE }.abi_encode(),
+            ICcaRegistry::getCcaStateCall { cca: ALICE }.abi_encode(),
+            ICcaRegistry::unbondCall {}.abi_encode(),
+            ICcaRegistry::claimUnbondedCall {}.abi_encode(),
+            ICcaRegistry::claimRewardsCall {}.abi_encode(),
+            ICcaRegistry::supportsInterfaceCall {
                 interfaceId: [0x01, 0xff, 0xc9, 0xa7].into(),
             }
             .abi_encode(),
@@ -379,7 +379,7 @@ fn static_registration_is_rejected_without_state_or_events() {
     StorageHandle::enter(&mut provider, |storage| {
         assert!(dispatch(
             storage.clone(),
-            &ICca::bondCall {
+            &ICcaRegistry::bondCall {
                 name: "Test CCA".into()
             }
             .abi_encode(),
@@ -564,10 +564,10 @@ fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
         let contract = CcaContract::new(storage.clone());
         let slot = contract.records.entry(ALICE).state();
         for (word, state) in [
-            (0, ICca::State::Bonding),
-            (1, ICca::State::Active),
-            (2, ICca::State::Deregistering),
-            (3, ICca::State::Deregistered),
+            (0, ICcaRegistry::State::Bonding),
+            (1, ICcaRegistry::State::Active),
+            (2, ICcaRegistry::State::Deregistering),
+            (3, ICcaRegistry::State::Deregistered),
         ] {
             storage
                 .sstore(CCA_REGISTRY_ADDRESS, slot.slot(), U256::from(word))

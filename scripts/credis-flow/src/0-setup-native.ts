@@ -11,7 +11,7 @@
  */
 
 import { ethers, Wallet } from "ethers";
-import { ICca__factory } from "./contracts/index.js";
+import { ICcaRegistry__factory } from "./contracts/index.js";
 import { coen, formatCoen, DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
 
 // Registration escrow is separate from the COEN spent on individual positions.
@@ -35,7 +35,7 @@ async function main() {
   if (ccaWallet.address.toLowerCase() !== ccaAddress.toLowerCase()) {
     throw new Error("CCA_PRIVATE_KEY does not match CCA_ADDRESS");
   }
-  const registry = ICca__factory.connect(CCA_REGISTRY, ccaWallet);
+  const registry = ICcaRegistry__factory.connect(CCA_REGISTRY, ccaWallet);
   const registration = await registry.getCca(ccaAddress).catch((error: unknown) => {
     if (ethers.isError(error, "CALL_EXCEPTION") && error.reason === "CCA is not registered") {
       return { state: null, bondedAmount: 0n };

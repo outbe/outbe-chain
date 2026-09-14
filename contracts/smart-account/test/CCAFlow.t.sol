@@ -4,7 +4,7 @@ import {BaseAATest} from "./BaseAATest.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
 import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
 import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
-import {ICca} from "@precompiles/ICca.sol";
+import {ICcaRegistry} from "@precompiles/ICcaRegistry.sol";
 import {SmartAccountFactory} from "src/SmartAccountFactory.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
@@ -433,7 +433,7 @@ contract CCAFlow is BaseAATest {
     ///      the negative tests pass.
     function test_CreateAccount_SucceedsWhenCcaActive() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
-        ccaRegistry.setState(cca.addr, ICca.State.Active);
+        ccaRegistry.setState(cca.addr, ICcaRegistry.State.Active);
 
         address account = factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 7);
         assertTrue(account.code.length > 0, "account should be deployed");
@@ -441,20 +441,22 @@ contract CCAFlow is BaseAATest {
 
     function test_RevertWhen_CcaDeregistering() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
-        ccaRegistry.setState(cca.addr, ICca.State.Deregistering);
+        ccaRegistry.setState(cca.addr, ICcaRegistry.State.Deregistering);
 
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Deregistering)
+            abi.encodeWithSelector(
+                SmartAccountFactory.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistering
+            )
         );
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 8);
     }
 
     function test_RevertWhen_CcaDeregistered() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
-        ccaRegistry.setState(cca.addr, ICca.State.Deregistered);
+        ccaRegistry.setState(cca.addr, ICcaRegistry.State.Deregistered);
 
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Deregistered)
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistered)
         );
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 9);
     }
@@ -475,7 +477,7 @@ contract CCAFlow is BaseAATest {
         vm.prank(bondingCca);
         ccaRegistry.bond{value: 1}("Test CCA");
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, bondingCca, ICca.State.Bonding)
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, bondingCca, ICcaRegistry.State.Bonding)
         );
         factory.createAccount(user.addr, bondingCca, bundleTokens, bundleSenders, 10);
     }
@@ -485,10 +487,10 @@ contract CCAFlow is BaseAATest {
     function test_GetAccountAddress_IgnoresCcaState() external {
         (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
 
-        ccaRegistry.setState(cca.addr, ICca.State.Active);
+        ccaRegistry.setState(cca.addr, ICcaRegistry.State.Active);
         address whenActive = factory.getAccountAddress(user.addr, cca.addr, bundleTokens, bundleSenders, 11);
 
-        ccaRegistry.setState(cca.addr, ICca.State.Deregistered);
+        ccaRegistry.setState(cca.addr, ICcaRegistry.State.Deregistered);
         address whenDeregistered = factory.getAccountAddress(user.addr, cca.addr, bundleTokens, bundleSenders, 11);
 
         assertEq(whenActive, whenDeregistered, "prediction must not depend on registry state");

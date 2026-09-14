@@ -40,7 +40,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICca.Cca",
+        "internalType": "struct ICcaRegistry.Cca",
         "components": [
           {
             "name": "cca",
@@ -55,7 +55,7 @@
           {
             "name": "state",
             "type": "uint8",
-            "internalType": "enum ICca.State"
+            "internalType": "enum ICcaRegistry.State"
           },
           {
             "name": "bondedAmount",
@@ -91,7 +91,7 @@
       {
         "name": "",
         "type": "uint8",
-        "internalType": "enum ICca.State"
+        "internalType": "enum ICcaRegistry.State"
       }
     ],
     "stateMutability": "view"
@@ -142,7 +142,7 @@
         "name": "state",
         "type": "uint8",
         "indexed": false,
-        "internalType": "enum ICca.State"
+        "internalType": "enum ICcaRegistry.State"
       }
     ],
     "anonymous": false

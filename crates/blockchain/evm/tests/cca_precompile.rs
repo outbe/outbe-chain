@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_ccaregistry::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
-    precompile::ICca,
+    precompile::ICcaRegistry,
 };
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{
@@ -89,14 +89,14 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(!tx(
         &mut db,
         U256::ZERO,
-        ICca::getCcaCall { cca: CCA }.abi_encode(),
+        ICcaRegistry::getCcaCall { cca: CCA }.abi_encode(),
         NOW
     )
     .is_success());
     assert!(!tx(
         &mut db,
         U256::ONE,
-        ICca::bondCall {
+        ICcaRegistry::bondCall {
             name: String::new()
         }
         .abi_encode(),
@@ -107,7 +107,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(tx(
         &mut db,
         BOND_REQUIREMENT - U256::ONE,
-        ICca::bondCall {
+        ICcaRegistry::bondCall {
             name: "Test CCA".into()
         }
         .abi_encode(),
@@ -117,14 +117,14 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         assert!(!api::is_active(&s, CCA).unwrap());
         let record = api::get_cca(&s, CCA).unwrap();
-        assert_eq!(record.state, ICca::State::Bonding);
+        assert_eq!(record.state, ICcaRegistry::State::Bonding);
         assert_eq!(record.name, "Test CCA");
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT - U256::ONE);
     });
     let bonded = tx(
         &mut db,
         U256::ONE,
-        ICca::bondCall {
+        ICcaRegistry::bondCall {
             name: "Test CCA".into(),
         }
         .abi_encode(),
@@ -134,10 +134,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert_eq!(bonded.logs().len(), 1);
     let log = &bonded.logs()[0];
     assert_eq!(log.address, CCA_REGISTRY_ADDRESS);
-    let event = ICca::Bonded::decode_log(log).unwrap().data;
+    let event = ICcaRegistry::Bonded::decode_log(log).unwrap().data;
     assert_eq!(event.cca, CCA);
     assert_eq!(event.amount, U256::ONE);
-    assert_eq!(event.state, ICca::State::Active);
+    assert_eq!(event.state, ICcaRegistry::State::Active);
     assert_eq!(
         db.cache.accounts[&CCA].info.balance,
         initial - BOND_REQUIREMENT
@@ -147,7 +147,11 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         BOND_REQUIREMENT
     );
     // Malformed and nonpayable funded calls refund value and preserve registration.
-    for data in [vec![], vec![0, 1, 2, 3], ICca::unbondCall {}.abi_encode()] {
+    for data in [
+        vec![],
+        vec![0, 1, 2, 3],
+        ICcaRegistry::unbondCall {}.abi_encode(),
+    ] {
         assert!(!tx(&mut db, U256::ONE, data, NOW).is_success());
         assert_eq!(
             db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
@@ -164,11 +168,17 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         );
     });
     let reward = checked_protocol_to_native(U256::from(23)).unwrap();
-    assert!(tx(&mut db, U256::ZERO, ICca::unbondCall {}.abi_encode(), NOW).is_success());
+    assert!(tx(
+        &mut db,
+        U256::ZERO,
+        ICcaRegistry::unbondCall {}.abi_encode(),
+        NOW
+    )
+    .is_success());
     assert!(!tx(
         &mut db,
         U256::ONE,
-        ICca::bondCall {
+        ICcaRegistry::bondCall {
             name: "Test CCA".into()
         }
         .abi_encode(),
@@ -177,7 +187,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     .is_success());
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
-        assert_eq!(record.state as u8, ICca::State::Deregistering as u8);
+        assert_eq!(record.state as u8, ICcaRegistry::State::Deregistering as u8);
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT);
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&s, CCA).unwrap());
@@ -186,7 +196,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(tx(
         &mut db,
         U256::ZERO,
-        ICca::claimRewardsCall {}.abi_encode(),
+        ICcaRegistry::claimRewardsCall {}.abi_encode(),
         NOW
     )
     .is_success());
@@ -197,14 +207,14 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(!tx(
         &mut db,
         U256::ZERO,
-        ICca::claimUnbondedCall {}.abi_encode(),
+        ICcaRegistry::claimUnbondedCall {}.abi_encode(),
         NOW + UNBOND_COOLDOWN_SECONDS - 1
     )
     .is_success());
     assert!(tx(
         &mut db,
         U256::ZERO,
-        ICca::claimUnbondedCall {}.abi_encode(),
+        ICcaRegistry::claimUnbondedCall {}.abi_encode(),
         NOW + UNBOND_COOLDOWN_SECONDS
     )
     .is_success());
@@ -215,7 +225,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert_eq!(db.cache.accounts[&CCA].info.balance, initial + reward);
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
-        assert_eq!(record.state as u8, ICca::State::Deregistered as u8);
+        assert_eq!(record.state as u8, ICcaRegistry::State::Deregistered as u8);
         assert_eq!(record.bondedAmount, U256::ZERO);
         assert_eq!(record.name, "Test CCA");
         assert_eq!(
@@ -226,7 +236,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert!(!tx(
         &mut db,
         U256::ZERO,
-        ICca::claimUnbondedCall {}.abi_encode(),
+        ICcaRegistry::claimUnbondedCall {}.abi_encode(),
         NOW + UNBOND_COOLDOWN_SECONDS
     )
     .is_success());
