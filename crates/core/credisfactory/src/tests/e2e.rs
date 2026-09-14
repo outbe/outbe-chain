@@ -876,17 +876,19 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
         bootstrap(&storage, pledge_cost());
         let handle = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
-        // Stake validation follows pledge consumption: failure must restore the ticket.
-        assert!(runtime::request_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            handle,
-            spend,
-            REFERENCE_ISO,
-            U256::ZERO
-        )
-        .is_err());
+        // Model the EVM call frame: stake validation fails after pledge consumption,
+        // so the enclosing transaction must restore the ticket.
+        assert!(storage
+            .with_checkpoint(|| runtime::request_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                handle,
+                spend,
+                REFERENCE_ISO,
+                U256::ZERO
+            ))
+            .is_err());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_cca::api::reward_weight(
