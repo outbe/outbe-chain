@@ -156,7 +156,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 34)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 35)]
-    pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 36)]

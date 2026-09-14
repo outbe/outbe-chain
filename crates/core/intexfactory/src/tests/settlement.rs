@@ -374,7 +374,7 @@ fn mine_promis_rejects_missing_series() {
 }
 
 /// The view hands a reader the disjoint classes, so nobody has to redo the arithmetic
-/// against the cumulative ledgers.
+/// against the separate ledgers.
 #[test]
 fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {

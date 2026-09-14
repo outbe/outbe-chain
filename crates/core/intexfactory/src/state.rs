@@ -133,9 +133,9 @@ impl IntexFactoryContract<'_> {
         if call_threshold_seconds < secs_per_day {
             return Ok(());
         }
-        let min = self.min_call_threshold.read(&reference_currency)?;
+        let min = self.min_call_threshold_seconds.read(&reference_currency)?;
         if min == 0 || call_threshold_seconds < min {
-            self.min_call_threshold
+            self.min_call_threshold_seconds
                 .write(&reference_currency, call_threshold_seconds)?;
         }
         Ok(())
@@ -153,7 +153,7 @@ impl IntexFactoryContract<'_> {
         let stored_window = self.max_call_window_seconds.read(&reference_currency)?;
         let days = stored_window.max(live_window) / secs_per_day;
 
-        let stored_threshold = self.min_call_threshold.read(&reference_currency)?;
+        let stored_threshold = self.min_call_threshold_seconds.read(&reference_currency)?;
         let threshold = if stored_threshold == 0 {
             live_threshold
         } else {

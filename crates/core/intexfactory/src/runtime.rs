@@ -586,12 +586,8 @@ pub(crate) fn owner_unit_counts(
 ) -> Result<crate::precompile::IIntexFactory::OwnerUnitCounts> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     // The two live classes are token balances; only history is kept in the ledgers.
-    let issued = u32::try_from(nft_balance_of(
-        storage,
-        owner,
-        U256::from_be_slice(series_id.as_bytes()),
-    )?)
-    .map_err(|_| PrecompileError::Revert("issued balance exceeds a uint32".into()))?;
+    let issued = u32::try_from(nft_balance_of(storage, owner, issued_token_id(series_id))?)
+        .map_err(|_| PrecompileError::Revert("issued balance exceeds a uint32".into()))?;
     let settled = u32::try_from(nft_balance_of(storage, owner, settled_token_id(series_id))?)
         .map_err(|_| PrecompileError::Revert("settled balance exceeds a uint32".into()))?;
     let expired = series.lifecycle_state()? == IntexState::Expired;
@@ -807,9 +803,7 @@ pub fn settle(
         }
     }
 
-    // Issued balance (NFT). Issued token id = uint256(seriesId).
-    let issued_token_id = U256::from_be_slice(series_id.as_bytes());
-    let balance = nft_balance_of(storage, intex_owner, issued_token_id)?;
+    let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
@@ -1061,11 +1055,16 @@ pub fn mine_promis(
     Ok(promis_amount)
 }
 
+/// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
+pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
+    U256::from_be_slice(series_id.as_bytes())
+}
+
 /// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
 /// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
 /// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    U256::from_be_slice(series_id.as_bytes()) | SETTLED_TAG
+    issued_token_id(series_id) | SETTLED_TAG
 }
 
 /// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.

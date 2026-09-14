@@ -114,7 +114,9 @@ interface IIntexFactory {
 
     /// @notice One owner's share of the same classes. `issuedUnits` here is that
     ///         owner's current Issued-class balance, not the series total, and
-    ///         `ownerUnits` is what they can still use: Issued plus Settled.
+    ///         `ownerUnits` is what they can still use: Issued plus Settled. These
+    ///         do not sum to a fixed per-owner total, because a transfer moves
+    ///         Issued units between owners while their history stays put.
     struct OwnerUnitCounts {
         uint32 issuedUnits;
         uint32 activeUnits;
