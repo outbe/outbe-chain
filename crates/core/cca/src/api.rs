@@ -28,10 +28,10 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICca::Cca> {
     let record = contract.load(cca)?;
     Ok(ICca::Cca {
         cca: record.cca,
+        name: record.name,
         state: record.state,
         bondedAmount: record.bonded_amount,
         unbondUnlocksAfter: record.unbond_unlocks_after,
         rewardAmount: contract.reward_amounts.read(&cca)?,
-        name: record.name,
     })
 }

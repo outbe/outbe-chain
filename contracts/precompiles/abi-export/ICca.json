@@ -48,6 +48,11 @@
             "internalType": "address"
           },
           {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "enum ICca.State"
@@ -66,11 +71,6 @@
             "name": "rewardAmount",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "name",
-            "type": "string",
-            "internalType": "string"
           }
         ]
       }
@@ -134,12 +134,6 @@
       },
       {
         "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "selfBond",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

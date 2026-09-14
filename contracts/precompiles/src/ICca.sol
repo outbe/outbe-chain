@@ -12,14 +12,14 @@ interface ICca {
 
     struct Cca {
         address cca;
+        string name;
         State state;
         uint256 bondedAmount;
         uint64 unbondUnlocksAfter;
         uint256 rewardAmount;
-        string name;
     }
 
-    event Bonded(address indexed cca, uint256 amount, uint256 selfBond, State state);
+    event Bonded(address indexed cca, uint256 amount, State state);
     event UnbondRequested(address indexed cca, uint256 amount, uint64 unbondUnlocksAfter);
     event UnbondClaimed(address indexed cca, uint256 amount);
     event RewardAccrued(address indexed cca, uint32 indexed utcDay, uint256 amount);

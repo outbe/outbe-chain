@@ -55,7 +55,6 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
         contract.emit(ICca::Bonded {
             cca: caller,
             amount,
-            selfBond: record.bonded_amount,
             state: record.state,
         })
     })

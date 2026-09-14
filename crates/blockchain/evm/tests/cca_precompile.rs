@@ -1,7 +1,7 @@
 //! CCA custody and registration through real EVM transactions.
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_cca::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
@@ -121,16 +121,23 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(record.name, "Test CCA");
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT - U256::ONE);
     });
-    assert!(tx(
+    let bonded = tx(
         &mut db,
         U256::ONE,
         ICca::bondCall {
-            name: "Test CCA".into()
+            name: "Test CCA".into(),
         }
         .abi_encode(),
-        NOW
-    )
-    .is_success());
+        NOW,
+    );
+    assert!(bonded.is_success());
+    assert_eq!(bonded.logs().len(), 1);
+    let log = &bonded.logs()[0];
+    assert_eq!(log.address, CCA_ADDRESS);
+    let event = ICca::Bonded::decode_log(log).unwrap().data;
+    assert_eq!(event.cca, CCA);
+    assert_eq!(event.amount, U256::ONE);
+    assert_eq!(event.state, ICca::State::Active);
     assert_eq!(
         db.cache.accounts[&CCA].info.balance,
         initial - BOND_REQUIREMENT
