@@ -791,15 +791,9 @@ fn expected_ocomp_full_node_mismatch_records(
     validators: usize,
     job_id: B256,
 ) -> Result<BTreeSet<(PathBuf, usize)>, String> {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum Record {
-        Evidence,
-        Engine,
-        Cli,
-    }
-
     let mut accepted = BTreeSet::new();
     let mut sinks = BTreeSet::new();
+    let mut result_digests = None;
     for (path, content) in logs {
         if validator_log_index(path, validators.saturating_add(1)) != Some(validators) {
             continue;
@@ -811,33 +805,101 @@ fn expected_ocomp_full_node_mismatch_records(
             continue;
         }
 
-        let records = content
-            .lines()
-            .enumerate()
-            .filter_map(|(index, line)| {
-                if exact_ocomp_mismatch_evidence(line, job_id) {
-                    Some((index, Record::Evidence))
-                } else if exact_engine_fatal_trailer(line) {
-                    Some((index, Record::Engine))
-                } else if exact_cli_fatal_trailer(line) {
-                    Some((index, Record::Cli))
-                } else {
-                    None
-                }
+        let malformed = || {
+            format!(
+                "malformed expected OCOMP FullNode mismatch shutdown bundle in {}",
+                path.display()
+            )
+        };
+        let lines = content.lines().collect::<Vec<_>>();
+        let prefix = format!(
+            "ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure=embedded OCOMP job {job_id:#x}: local result "
+        );
+        let pairs = lines
+            .iter()
+            .filter_map(|line| {
+                let (_, detail) = line.split_once(&prefix)?;
+                let (local, canonical) = detail
+                    .trim_end()
+                    .split_once(" differs from canonical result ")?;
+                Some((local.parse::<B256>().ok()?, canonical.parse::<B256>().ok()?))
             })
             .collect::<Vec<_>>();
-        if records.is_empty() {
-            continue;
+        let [(local, canonical)] = pairs.as_slice() else {
+            return Err(malformed());
+        };
+        if local == canonical || result_digests.is_some_and(|pair| pair != (*local, *canonical)) {
+            return Err(malformed());
         }
-        let kinds = records
-            .iter()
-            .map(|(_, record)| *record)
-            .collect::<Vec<_>>();
-        if kinds != [Record::Evidence, Record::Engine, Record::Cli] {
-            return Err(format!(
-                "malformed expected OCOMP FullNode mismatch shutdown bundle in {}: {kinds:?}",
-                path.display()
+        result_digests = Some((*local, *canonical));
+        let detail =
+            format!("local result {local:#x} differs from canonical result {canonical:#x}");
+        let mismatch = format!("embedded OCOMP job {job_id:#x}: {detail}");
+        let sticky = format!("embedded OCOMP persisted fatal evidence: job_id={job_id:#x}");
+        let recovery = format!("OCOMP recovery readiness failed (Other): {sticky}");
+
+        // Each sink spans the initial mismatch exit and one sticky-fatal restart.
+        // Only stderr (node.log) receives the returned error and its cause.
+        let mut expected = vec![
+            (1, format!("ERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::failure: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail={detail}"), false),
+            (1, format!("ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"), false),
+        ];
+        if sink == "node.log" {
+            expected.push((
+                1,
+                format!("Error: embedded OCOMP failure (Other): {mismatch}"),
+                false,
             ));
+        }
+        expected.extend([
+            (2, format!("ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"), true),
+            (2, format!("ERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"), true),
+        ]);
+        if sink == "node.log" {
+            expected.extend([
+                (2, format!("Error: additional shutdown failure: consensus task exited with error: {recovery}"), true),
+                (2, format!("embedded OCOMP failure (Other): {sticky}"), true),
+            ]);
+        }
+        let mut starts = 0;
+        let mut records = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            if line.contains("reth::cli: Starting Reth version=") {
+                starts += 1;
+            }
+            let Some(position) = expected.iter().position(|(_, message, _)| {
+                if message.starts_with("ERROR ") {
+                    line.split_once("ERROR ")
+                        .is_some_and(|(_, body)| body.trim_end() == &message[6..])
+                        && !contains_nonfatal_alarm(&line.to_ascii_lowercase())
+                } else {
+                    line.trim() == message
+                }
+            }) else {
+                continue;
+            };
+            let (expected_start, _, multiline) = &expected[position];
+            if starts != *expected_start {
+                return Err(malformed());
+            }
+            if *multiline
+                && (lines.get(index + 1).map(|line| line.trim())
+                    != Some(format!("local_result_digest={local:#x}").as_str())
+                    || lines.get(index + 2).map(|line| line.trim())
+                        != Some(format!("canonical_result_digest={canonical:#x}").as_str()))
+            {
+                return Err(malformed());
+            }
+            records.push((index, position));
+        }
+        if starts != 2
+            || records
+                .iter()
+                .map(|(_, position)| *position)
+                .collect::<Vec<_>>()
+                != (0..expected.len()).collect::<Vec<_>>()
+        {
+            return Err(malformed());
         }
         if !sinks.insert(sink) {
             return Err(format!(
@@ -1102,13 +1164,13 @@ fn expected_tee_lease_full_node_shutdown_records(
 fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end().ends_with(
-        "outbe_chain: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
+        "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
     ) && line.contains("error")
         && !contains_nonfatal_alarm(&line)
 }
 
 fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
-    const PREFIX: &str = "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const PREFIX: &str = "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();
@@ -1127,7 +1189,7 @@ fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
 fn exact_consensus_stack_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end()
-        .ends_with("outbe_chain: consensus stack shutting down")
+        .ends_with("outbe_chain::launch::node: consensus stack shutting down")
         && line.contains("info")
         && !contains_nonfatal_alarm(&line)
 }
@@ -1135,31 +1197,6 @@ fn exact_consensus_stack_shutdown(line: &str) -> bool {
 fn process_start_boundary(line: &str) -> bool {
     line.contains("reth::cli: Initialized tracing, debug log directory:")
         || line.contains("reth::cli: Starting Reth version=")
-}
-
-fn exact_ocomp_mismatch_evidence(line: &str, job_id: B256) -> bool {
-    let line = line.to_ascii_lowercase();
-    fatal_at_runtime_severity(&line)
-        && line.trim_end().ends_with(&format!(
-            "embedded ocomp persisted fatal evidence: job_id={job_id:#x}"
-        ))
-        && !contains_nonfatal_alarm(&line)
-}
-
-fn exact_engine_fatal_trailer(line: &str) -> bool {
-    let line = line.to_ascii_lowercase();
-    fatal_at_runtime_severity(&line)
-        && line.trim_end().ends_with("engine::tree: fatal error")
-        && !contains_nonfatal_alarm(&line)
-}
-
-fn exact_cli_fatal_trailer(line: &str) -> bool {
-    let line = line.to_ascii_lowercase();
-    fatal_at_runtime_severity(&line)
-        && line
-            .trim_end()
-            .ends_with("reth::cli: fatal error in consensus engine")
-        && !contains_nonfatal_alarm(&line)
 }
 
 fn exact_expected_dkg_reveal(line: &str, expected_public_key: &str) -> bool {
@@ -1630,23 +1667,40 @@ mod tests {
     #[test]
     fn full_node_mismatch_requires_the_exact_two_sink_shutdown_bundle() {
         let job_id = B256::repeat_byte(0x42);
-        let anchor =
-            format!("ERROR failure=embedded OCOMP persisted fatal evidence: job_id={job_id:#x}");
-        let engine = "ERROR poll_next_event: engine::tree: Fatal error";
-        let cli = "ERROR reth::cli: Fatal error in consensus engine";
+        let local = B256::repeat_byte(0x51);
+        let canonical = B256::repeat_byte(0x61);
+        let start = "INFO reth::cli: Starting Reth version=\"2.5.2-dev\"";
+        let mismatch = format!(
+            "embedded OCOMP job {job_id:#x}: local result {local:#x} differs from canonical result {canonical:#x}"
+        );
+        let initial = format!(
+            "{start}\nERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::failure: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail=local result {local:#x} differs from canonical result {canonical:#x}\nERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"
+        );
+        let sticky = format!(
+            "embedded OCOMP persisted fatal evidence: job_id={job_id:#x}\nlocal_result_digest={local:#x}\ncanonical_result_digest={canonical:#x}"
+        );
+        let anchor = format!(
+            "ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"
+        );
+        let recovery = format!("OCOMP recovery readiness failed (Other): {sticky}");
+        let restart = format!(
+            "{start}\n{anchor}\nERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"
+        );
         let expected = vec![
             (
                 PathBuf::from("scenario-1/validator-4/node.log"),
-                format!("{anchor}\nERROR engine::tree: Fatal error\n{cli}"),
+                format!(
+                    "{initial}\nError: embedded OCOMP failure (Other): {mismatch}\n{restart}\nError: additional shutdown failure: consensus task exited with error: {recovery}\nCaused by:\n    embedded OCOMP failure (Other): {sticky}"
+                ),
             ),
             (
                 PathBuf::from("scenario-1/validator-4/logs/54322345/reth.log"),
-                format!("{anchor}\n{engine}\n{cli}"),
+                format!("{initial}\n{restart}"),
             ),
         ];
         let audit = audit_loaded_logs_with_expectations(&expected, 4, None, None, Some(job_id));
         assert!(audit.is_clean(), "{:?}", audit.findings);
-        assert_eq!(audit.counts.expected_ocomp_full_node_mismatch, 6);
+        assert_eq!(audit.counts.expected_ocomp_full_node_mismatch, 11);
 
         let wrong_job = audit_loaded_logs_with_expectations(
             &expected,
@@ -1679,7 +1733,7 @@ mod tests {
         let mut unrelated_fatal = expected.clone();
         unrelated_fatal[0]
             .1
-            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+            .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
         assert!(!audit_loaded_logs_with_expectations(
             &unrelated_fatal,
             4,
@@ -1691,7 +1745,7 @@ mod tests {
 
         let reordered = expected
             .iter()
-            .map(|(path, _)| (path.clone(), format!("{engine}\n{anchor}\n{cli}")))
+            .map(|(path, _)| (path.clone(), format!("{restart}\n{initial}")))
             .collect::<Vec<_>>();
         assert!(
             !audit_loaded_logs_with_expectations(&reordered, 4, None, None, Some(job_id))
@@ -1705,6 +1759,63 @@ mod tests {
                 .is_clean()
         );
 
+        for (current, obsolete) in [
+            ("outbe_chain::launch::node:", "outbe_chain:"),
+            (
+                "outbe_chain::ocomp_exex::failure:",
+                "outbe_chain::ocomp_exex:",
+            ),
+        ] {
+            let stale = expected
+                .iter()
+                .map(|(path, content)| (path.clone(), content.replace(current, obsolete)))
+                .collect::<Vec<_>>();
+            assert!(
+                !audit_loaded_logs_with_expectations(&stale, 4, None, None, Some(job_id))
+                    .is_clean()
+            );
+        }
+
+        for altered in [
+            expected
+                .iter()
+                .map(|(path, content)| {
+                    (
+                        path.clone(),
+                        content.replace(&format!("{canonical:#x}"), &format!("{local:#x}")),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                expected[0].clone(),
+                (
+                    expected[1].0.clone(),
+                    expected[1].1.replace(
+                        &format!("{canonical:#x}"),
+                        &format!("{:#x}", B256::repeat_byte(0x71)),
+                    ),
+                ),
+            ],
+            expected
+                .iter()
+                .map(|(path, content)| {
+                    (
+                        path.clone(),
+                        content.replace("canonical_result_digest=", "missing_digest="),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|(path, content)| (path.clone(), content.replace(start, "")))
+                .collect::<Vec<_>>(),
+        ] {
+            assert!(
+                !audit_loaded_logs_with_expectations(&altered, 4, None, None, Some(job_id))
+                    .is_clean()
+            );
+        }
+
         let mut panic = expected.clone();
         panic[0].1.push_str("\nERROR panic in unrelated teardown");
         assert!(
@@ -1716,9 +1827,10 @@ mod tests {
     }
 
     fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
-        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
+        let guard =
+            "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown \
             reason=validator is jailed; complete ordinary unjail and then run tee join";
-        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
@@ -1734,8 +1846,8 @@ mod tests {
     }
 
     fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
-        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
-        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
+        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
@@ -1786,10 +1898,10 @@ mod tests {
         let mut later_unrelated_shutdown = expected.clone();
         later_unrelated_shutdown[0]
             .1
-            .push_str("\nINFO outbe_chain: consensus stack shutting down");
+            .push_str("\nINFO outbe_chain::launch::node: consensus stack shutting down");
         later_unrelated_shutdown[1].1.push_str(
             "\nINFO reth::cli: Starting Reth version=1.2.3\n\
-             INFO outbe_chain: consensus stack shutting down",
+             INFO outbe_chain::launch::node: consensus stack shutting down",
         );
         let accepted_with_later_shutdown = audit_loaded_logs_with_all_expectations(
             &later_unrelated_shutdown,
@@ -1868,8 +1980,8 @@ mod tests {
                 (
                     path.clone(),
                     content.replacen(
-                        "\nINFO outbe_chain: consensus stack shutting down",
-                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain: consensus stack shutting down",
+                        "\nINFO outbe_chain::launch::node: consensus stack shutting down",
+                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain::launch::node: consensus stack shutting down",
                         1,
                     ),
                 )
@@ -1889,7 +2001,7 @@ mod tests {
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
-            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+            .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
         assert!(!audit_loaded_logs_with_all_expectations(
             &extra_fatal,
             4,
@@ -1994,12 +2106,12 @@ mod tests {
             }
         }
         for replacement in [
-            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain: consensus stack shutting down",
-            "INFO outbe_chain: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
+            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain::launch::node: consensus stack shutting down",
+            "INFO outbe_chain::launch::node: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
         ] {
             let mut bad = baseline.clone();
             bad[1].1 = bad[1].1.replace(
-                "INFO outbe_chain: consensus stack shutting down",
+                "INFO outbe_chain::launch::node: consensus stack shutting down",
                 replacement,
             );
             assert!(!check(&bad));
@@ -2009,12 +2121,14 @@ mod tests {
             "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: shutdown signal received, terminating engine");
         assert!(!check(&reordered));
         for replacement in [
-            "WARN outbe_chain:",
+            "WARN outbe_chain::launch::node:",
             "ERROR other:",
-            "ERROR outbe_chain: unrelated reason ",
+            "ERROR outbe_chain::launch::node: unrelated reason ",
         ] {
             let mut bad = baseline.clone();
-            bad[0].1 = bad[0].1.replace("ERROR outbe_chain:", replacement);
+            bad[0].1 = bad[0]
+                .1
+                .replace("ERROR outbe_chain::launch::node:", replacement);
             assert!(!check(&bad));
         }
         let mut too_far = baseline.clone();

@@ -11,7 +11,7 @@ use alloy_sol_types::sol;
 use cucumber::{then, when};
 
 use crate::internal::{economic_reference, eth};
-use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE};
+use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO};
 use crate::world::rpc::FinalizedCheckpoint;
 use crate::world::state::{
     ContributorPayoutEvidenceV1, ContributorPayoutSnapshotV1, ExpectedContributorV1,
@@ -96,7 +96,7 @@ fn expected_contributors(world: &World) -> Vec<ExpectedContributorV1> {
             .collect::<Vec<_>>();
         let amount = super::tribute_expectations::amount_minor(
             OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
-            OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
+            OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
         );
         let heights = world
             .state

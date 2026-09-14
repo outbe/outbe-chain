@@ -162,7 +162,10 @@ where
 
     // Canonical handler frame loop
     // (revm-handler-18.1.0/src/handler.rs:416-446).
-    let frame_result = run_exec_loop(&mut evm, frame_input)?;
+    let frame_result = run_exec_loop(
+        &mut crate::native_delegation::NativeDelegationEvm(&mut evm),
+        frame_input,
+    )?;
 
     // Translate FrameResult -> SubCallOutput.
     let call_outcome = match frame_result {

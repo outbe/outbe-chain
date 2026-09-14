@@ -27,15 +27,16 @@ use reth_ethereum::evm::{
         inspector::{Inspector, NoOpInspector},
         interpreter::{interpreter::EthInterpreter, InterpreterResult},
         primitives::hardfork::SpecId,
-        ExecuteEvm, MainBuilder, MainContext, SystemCallEvm,
+        ExecuteEvm, MainBuilder, MainContext,
     },
 };
-use revm::handler::{Handler, MainnetHandler};
+use revm::handler::{system_call::SystemCallTx, Handler, MainnetHandler};
 use revm::inspector::InspectorHandler;
 use std::sync::Arc;
 
 use crate::{
     create_guard::{self, ReservedNamespaceHandler},
+    native_delegation::NativeDelegationEvm,
     precompiles::{extend_outbe_precompiles, OutbePrecompileExecutionContext},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
@@ -229,9 +230,9 @@ where
         self.inner.ctx.set_tx(tx);
         let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
         let output = if self.inspect {
-            handler.inspect_run(&mut self.inner)
+            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
         } else {
-            handler.run(&mut self.inner)
+            handler.run(&mut NativeDelegationEvm(&mut self.inner))
         };
         let state = self.inner.finalize();
         Ok(ResultAndState::new(output?, state))
@@ -244,7 +245,12 @@ where
         data: Bytes,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         if contract != outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS {
-            return self.inner.system_call_with_caller(caller, contract, data);
+            self.inner
+                .ctx
+                .set_tx(TxEnv::new_system_tx_with_caller(caller, contract, data));
+            let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> = Default::default();
+            let result = handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner))?;
+            return Ok(ResultAndState::new(result, self.inner.finalize()));
         }
 
         #[cfg(test)]
@@ -291,7 +297,7 @@ where
         self.inner.ctx.set_tx(tx);
         let mut handler: MainnetHandler<_, EVMError<DB::Error>, EthFrame> =
             MainnetHandler::default();
-        let result = handler.run_system_call(&mut self.inner)?;
+        let result = handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner))?;
         let state = self.inner.finalize();
 
         Ok(ResultAndState::new(result, state))

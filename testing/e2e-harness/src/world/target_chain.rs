@@ -258,12 +258,20 @@ impl TargetChain {
         let url = self
             .rpc_url()
             .ok_or_else(|| eyre!("syncing the clock needs a running target chain"))?;
-        crate::internal::eth::raw_json_with_params(
+        let current = eth::latest_block_timestamp(&url)
+            .ok_or_else(|| eyre!("read target timestamp before clock synchronization"))?;
+        let timestamp = timestamp.max(current);
+        eth::raw_json_result(
             &url,
             "anvil_setTime",
             serde_json::json!([format!("0x{timestamp:x}")]),
-        );
-        crate::internal::eth::raw_json_with_params(&url, "evm_mine", serde_json::json!([]));
+        )?;
+        eth::raw_json_result(&url, "evm_mine", serde_json::json!([]))?;
+        let mined = eth::latest_block_timestamp(&url)
+            .ok_or_else(|| eyre!("read target timestamp after clock synchronization"))?;
+        if mined < timestamp {
+            bail!("target clock did not advance to {timestamp}: mined timestamp is {mined}");
+        }
         Ok(())
     }
 

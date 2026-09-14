@@ -229,7 +229,9 @@ fn log_u64(line: &str, key: &str) -> Option<u64> {
 fn activation_record(log: &str, version: u64) -> Option<(u64, u64)> {
     let mut completed = false;
     for line in log.lines() {
-        if info_message(line, "outbe_consensus::dkg_actor::actor") == Some(DKG_COMPLETE_MARKER) {
+        if info_message(line, "outbe_consensus::dkg_actor::actor::round")
+            == Some(DKG_COMPLETE_MARKER)
+        {
             completed = true;
         }
         if completed
@@ -1661,7 +1663,7 @@ mod tests {
     }
 
     fn activation_fixture() -> &'static str {
-        "INFO outbe_consensus::dkg_actor::actor: DKG ceremony complete - threshold material obtained\n\
+        "INFO outbe_consensus::dkg_actor::actor::round: DKG ceremony complete - threshold material obtained\n\
          INFO outbe_engine::stack: VRF/DKG material activated dkg_cycle=9 activation_height=540 vrf_material_version=9"
     }
 
@@ -1837,7 +1839,14 @@ mod tests {
         for changed in [
             baseline.lines().rev().collect::<Vec<_>>().join("\n"),
             baseline.replace("complete - threshold", "complete — threshold"),
-            baseline.replace("outbe_consensus::dkg_actor::actor", "outbe_engine::stack"),
+            baseline.replace(
+                "outbe_consensus::dkg_actor::actor::round",
+                "outbe_engine::stack",
+            ),
+            baseline.replace(
+                "outbe_consensus::dkg_actor::actor::round",
+                "outbe_consensus::dkg_actor::actor",
+            ),
             baseline.replace("INFO", "DEBUG"),
             baseline.replace("vrf_material_version=9", "vrf_material_version=8"),
             baseline.replace("activation_height=540", "activation_height=bad"),
@@ -1869,6 +1878,13 @@ mod tests {
             9
         )
         .is_none());
+    }
+
+    #[test]
+    fn lease_activation_accepts_current_dkg_completion_and_activation_logs() {
+        let captured = "2026-09-13T17:18:01.654150Z INFO outbe_consensus::dkg_actor::actor::round: DKG ceremony complete - threshold material obtained\n\
+            2026-09-13T17:18:44.198768Z INFO outbe_engine::stack: VRF/DKG material activated dkg_cycle=9 activation_height=540 vrf_material_version=9";
+        assert_eq!(super::activation_record(captured, 9), Some((9, 540)));
     }
 
     #[test]

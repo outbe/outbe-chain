@@ -63,7 +63,7 @@ pub fn canary_offer_json(worldwide_day: u32) -> String {
     "worldwide_day": {worldwide_day},
     "currency": 840,
     "amount_base": "100",
-    "amount_atto": "0",
+    "amount_micro": "0",
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
 }}"#
     )

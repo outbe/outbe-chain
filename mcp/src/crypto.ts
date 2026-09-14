@@ -75,7 +75,7 @@ export function buildPayload(p: OfferPayload): Uint8Array {
     creator: p.creator,
     tribute_draft_id: hex32(),
     amount_base: canonicalAmountBase(p.amount_base),
-    amount_atto: "0",
+    amount_micro: "0",
     su_hashes: [hex32()],
     wallet_addresses: [] as string[],
     sra_addresses: [] as string[],

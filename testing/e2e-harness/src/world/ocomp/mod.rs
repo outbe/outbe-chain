@@ -123,7 +123,7 @@ pub(crate) use evidence::OcompCanonicalArtifactProof;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) use fixtures::genesis::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS,
-    OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+    OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
 };
 
 #[cfg(feature = "ocomp-integration")]
