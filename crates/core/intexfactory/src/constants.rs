@@ -35,12 +35,12 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 pub const QUALIFY_SWEEP: u8 = 0;
 pub const CALL_SWEEP: u8 = 1;
 
-/// Router calls one `intex_notify` firing may make; an entry costing none still
+/// Router calls one `intex_drain_notices` firing may make; an entry costing none still
 /// spends one. Sized to clear a day of calls inside [`CALL_NOTICE_PERIOD`] while
 /// leaving CycleTick its block headroom.
 pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
 
-/// Router calls one `intex_parked` firing may make. Each spends a view read and then a cross-chain
+/// Router calls one `intex_drain_parked` firing may make. Each spends a view read and then a cross-chain
 /// send, so this sits well under the notice drain's budget; the queue is a dozen messages a day.
 pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 

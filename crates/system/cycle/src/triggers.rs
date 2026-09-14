@@ -24,11 +24,11 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemDaily = 4,
     AuctionClearing = 5,
-    IntexNotify = 6,
+    IntexDrainNotices = 6,
     CredisCallDaily = 7,
     NodCallDaily = 8,
     GemPositionDaily = 9,
-    IntexParked = 10,
+    IntexDrainParked = 10,
 }
 
 impl TriggerId {
@@ -75,11 +75,11 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemDaily,
     AuctionClearing,
-    IntexNotify,
+    IntexDrainNotices,
     CredisCallDaily,
     NodDaily,
     GemPositionDaily,
-    IntexParked,
+    IntexDrainParked,
 }
 
 impl TriggerHandler {
@@ -95,11 +95,11 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
+            Self::IntexDrainNotices => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
-            Self::IntexParked => outbe_intexfactory::parked::drain(ctx),
+            Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
         }
     }
 }
@@ -221,15 +221,15 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionClearing,
         },
         TriggerSpec {
-            id: TriggerId::IntexNotify.as_u32(),
-            label: "intex_notify",
+            id: TriggerId::IntexDrainNotices.as_u32(),
+            label: "intex_drain_notices",
             period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,
-            handler: TriggerHandler::IntexNotify,
+            handler: TriggerHandler::IntexDrainNotices,
         },
         TriggerSpec {
             id: TriggerId::CredisCallDaily.as_u32(),
@@ -264,8 +264,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::GemPositionDaily,
         },
         TriggerSpec {
-            id: TriggerId::IntexParked.as_u32(),
-            label: "intex_parked",
+            id: TriggerId::IntexDrainParked.as_u32(),
+            label: "intex_drain_parked",
             // Polls what the origin router parked, on the same cadence as the other outbound polls.
             period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
@@ -273,7 +273,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one sweep.
             coalesces_backlog: true,
-            handler: TriggerHandler::IntexParked,
+            handler: TriggerHandler::IntexDrainParked,
         },
     ]
 }
@@ -341,7 +341,10 @@ mod protocol_parameter_tests {
             TriggerHandler::AuctionClearing
         ));
         assert_eq!(configured[5].period_seconds, INTEX_NOTIFY_PERIOD_SECONDS);
-        assert!(matches!(configured[5].handler, TriggerHandler::IntexNotify));
+        assert!(matches!(
+            configured[5].handler,
+            TriggerHandler::IntexDrainNotices
+        ));
         assert_eq!(configured[6].period_seconds, 86_400);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
@@ -359,8 +362,11 @@ mod protocol_parameter_tests {
         ));
 
         assert_eq!(configured[9].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[9].id, TriggerId::IntexParked.as_u32());
-        assert!(matches!(configured[9].handler, TriggerHandler::IntexParked));
+        assert_eq!(configured[9].id, TriggerId::IntexDrainParked.as_u32());
+        assert!(matches!(
+            configured[9].handler,
+            TriggerHandler::IntexDrainParked
+        ));
 
         let defaults =
             active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);

@@ -1,4 +1,4 @@
-//! Coalescing of Called notices in the `intex_notify` drain.
+//! Coalescing of Called notices in the `intex_drain_notices` drain.
 //!
 //! The harness cannot observe outbound calls, so the grouping rule is pinned as a predicate and the
 //! rest covers the queue walk: what each firing consumes and where it resumes.
