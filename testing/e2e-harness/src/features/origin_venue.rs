@@ -433,10 +433,9 @@ fn flush_parked_deliveries(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn flush_parked_bid_relays(world: &mut World) {
-    let day = settled_day(world);
+fn flush_parked_bid_relays(world: &mut World, worldwide_day: u32) {
     for venue in venue_sides(world) {
-        push_one_venue_bid_relay(&venue, day);
+        push_one_venue_bid_relay(&venue, worldwide_day);
     }
 }
 
@@ -575,7 +574,7 @@ fn auction_clears(world: &mut World) {
         if stage == Some(5) {
             return;
         }
-        flush_parked_bid_relays(world);
+        flush_parked_bid_relays(world, worldwide_day);
         flush_parked_deliveries(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
