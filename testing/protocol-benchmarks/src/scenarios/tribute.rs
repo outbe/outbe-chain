@@ -1,13 +1,16 @@
 //! Permanent local gas + latency benchmark for successful Tribute creation.
 //!
 //! Run from the repository root:
-//! `cargo bench --locked -p outbe-tributefactory --features bench-utils --bench tribute_creation`
+//! `cargo bench -p outbe-protocol-benchmarks --bench protocol_operations -- run --filter tribute`
 //!
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
 //! canonical enclave offer processor in-process. The ZK scenario uses a real
-//! generated `outbe.full_proof@1.0.0`, a registered ZK-enabled L2, and a valid
-//! BLS MinSig signature over the proof's Merkle root.
+//! generated FullProof, a registered ZK-enabled L2, and a valid
+//! BLS MinSig signature over the proof's Merkle root. The non-ZK scenario
+//! registers the same caller as an L2 whose ZK verification is disabled:
+//! TributeFactory rejects an unregistered caller, so registered-but-Disabled is
+//! the only permitted non-ZK path.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -70,7 +73,7 @@ use outbe_zk_canonical::full_proof::{
     COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
 };
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk_canonical::{CircuitId, INCLUSION_DEPTH};
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -85,8 +88,8 @@ use crate::{
     StorageTraceEntry,
 };
 
-const CHAIN_ID: u64 = 1;
-const L2_CHAIN_ID: u64 = 4_242;
+const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+const L2_CHAIN_ID: u64 = 0xdead;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
 const REWARD_UTC_DAY: u32 = 20_260_825;
@@ -329,6 +332,18 @@ fn build_fixture() -> Fixture {
     }
 }
 
+/// The raw verification key both the runtime lookup and the ABI call carry.
+///
+/// Kept in one place so the bench cannot measure a runtime key that differs
+/// from the one it encodes into calldata.
+fn verification_key(zk: bool) -> Bytes {
+    if zk {
+        Bytes::from_static(FullProof::VK_BYTES)
+    } else {
+        Bytes::new()
+    }
+}
+
 fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
     BenchOfferInput {
         caller: CALLER,
@@ -344,6 +359,7 @@ fn bench_input(fixture: &Fixture, zk: bool) -> BenchOfferInput {
         } else {
             Bytes::new()
         },
+        zk_verification_key: verification_key(zk),
         zk_merkle_root: if zk {
             Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
         } else {
@@ -371,7 +387,7 @@ fn calldata(fixture: &Fixture, zk: bool) -> Vec<u8> {
         } else {
             Bytes::new()
         },
-        zkVerificationKey: Bytes::new(),
+        zkVerificationKey: verification_key(zk),
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: if zk {
             Bytes::copy_from_slice(fixture.public_inputs.merkle_root.as_slice())
@@ -442,13 +458,13 @@ fn seeded_world(fixture: &Fixture, zk: bool) -> HashMapStorageProvider {
     ));
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone());
-        if zk {
-            let mut registry = L2RegistryContract::new(storage.clone());
-            registry
-                .register_network(L2_CHAIN_ID, CALLER, &fixture.l2_public_key)
-                .unwrap();
-            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
-        }
+        // Both scenarios authenticate through a registered L2 operator: ZK
+        // verifies against the registered key, non-ZK is the same registration
+        // with verification disabled. TributeFactory rejects an unregistered
+        // caller outright, so an unseeded registry is not a valid non-ZK case.
+        L2RegistryContract::new(storage)
+            .register_network_with_zk(L2_CHAIN_ID, CALLER, &fixture.l2_public_key, zk)
+            .unwrap();
     });
     provider
 }
@@ -483,8 +499,18 @@ fn measure_gate(fixture: &Fixture, zk: bool) -> GateMeasurement {
         )
         .expect("L2 gate succeeds");
         match (zk, outcome) {
-            (true, outbe_l2registry::api::ZkOfferCheck::Verified { .. })
-            | (false, outbe_l2registry::api::ZkOfferCheck::NotRegistered) => {}
+            (
+                true,
+                outbe_l2registry::api::ZkOfferCheck::Verified {
+                    chain_id: L2_CHAIN_ID,
+                },
+            )
+            | (
+                false,
+                outbe_l2registry::api::ZkOfferCheck::Disabled {
+                    chain_id: L2_CHAIN_ID,
+                },
+            ) => {}
             _ => panic!("unexpected L2 gate result"),
         }
         storage.gas_used().unwrap()

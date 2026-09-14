@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_compressed_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
@@ -7,16 +7,13 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
+use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
 use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
 };
 use outbe_tribute::{TributeContract, TributeData};
-use outbe_zk_backend::barretenberg::verify_circuit;
-use outbe_zk_canonical::full_proof::{
-    alloy::PublicInputs as FullProofPublicInputs,
-    decode_public_inputs as decode_full_proof_public_inputs,
-};
-use outbe_zk_canonical::noir::full_proof::FullProof;
+use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
+use outbe_zk_canonical::full_proof::alloy::PublicInputs as FullProofPublicInputs;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -31,6 +28,7 @@ pub(crate) struct OfferTributeInput {
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
+    pub zk_verification_key: Bytes,
     pub zk_merkle_root: Bytes,
     pub signature: Bytes,
 }
@@ -92,6 +90,7 @@ impl TributeFactoryContract<'_> {
             reference_currency,
             exclude_from_intex_issuance,
             zk_proof,
+            zk_verification_key,
             zk_merkle_root,
             signature,
         } = input;
@@ -99,10 +98,9 @@ impl TributeFactoryContract<'_> {
         validate_currency_code(tribute_currency)?;
         validate_currency_code(reference_currency)?;
 
-        // When the caller is a registered L2 operator with ZK verification
-        // enabled, the offer must carry a valid BLS MinSig signature over
-        // `zkMerkleRoot` from the network's registered key. Unregistered
-        // callers and zk-disabled networks pass through unchanged.
+        // Every offer must come from a registered L2 operator. ZK-enabled
+        // networks additionally require a valid root signature and proof;
+        // registered networks with ZK disabled keep their explicit non-ZK path.
         let zk_check = outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
@@ -110,13 +108,12 @@ impl TributeFactoryContract<'_> {
             &signature,
         )?;
         let zk_public_inputs = match zk_check {
-            outbe_l2registry::api::ZkOfferCheck::Verified { .. } => {
+            outbe_l2registry::api::ZkOfferCheck::Verified { chain_id } => {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
                 }
-                let public: FullProofPublicInputs = decode_full_proof_public_inputs(&zk_proof)
-                    .and_then(TryInto::try_into)
-                    .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+                require_zk_verification_key(chain_id, &zk_verification_key)?;
+                let public = decode_zk_public_inputs(&zk_proof, &zk_verification_key)?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
                         field: "merkle_root",
@@ -125,8 +122,10 @@ impl TributeFactoryContract<'_> {
                 }
                 Some(public)
             }
-            outbe_l2registry::api::ZkOfferCheck::NotRegistered
-            | outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
+            outbe_l2registry::api::ZkOfferCheck::NotRegistered => {
+                return Err(TributeFactoryError::UnregisteredL2Operator { caller }.into());
+            }
+            outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
         };
 
         // Everything below is settled from chain state before the enclave is
@@ -204,7 +203,12 @@ impl TributeFactoryContract<'_> {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
         if let Some(public) = zk_public_inputs {
-            validate_zk_result(&zk_proof, public, result.zk_expected_hashes.as_ref())?;
+            validate_zk_result(
+                &zk_proof,
+                &zk_verification_key,
+                public,
+                result.zk_expected_hashes.as_ref(),
+            )?;
         }
 
         // Recomputed from this call's own inputs, so it checks the enclave's
@@ -281,8 +285,51 @@ impl TributeFactoryContract<'_> {
     }
 }
 
+fn require_zk_verification_key(l2_chain_id: u64, verification_key: &[u8]) -> Result<()> {
+    let vk_hash = keccak256(verification_key);
+    if !outbe_zk_canonical::l2_circuits(l2_chain_id)
+        .iter()
+        .any(|entry| entry.vk_hash == vk_hash.0)
+    {
+        return Err(TributeFactoryError::ZkVerificationKeyNotEnabled {
+            chain_id: l2_chain_id,
+            vk_hash,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<FullProofPublicInputs> {
+    // bb-keccak-v1 VK: log circuit size, public count (including eight
+    // pairing-accumulator words), offset, then 28 two-word commitments.
+    // The whitelist authenticates these bytes. Canonical key generation pins
+    // bb-keccak-v1; retain its layout checks before calling the backend.
+    if verification_key.len() != 59 * 32 {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
+    }
+    let log_n = read_u64_be_padded(&verification_key[..32])
+        .filter(|size| (1..=28).contains(size))
+        .ok_or(TributeFactoryError::UnsupportedZkCircuit)?;
+    if read_u64_be_padded(&verification_key[32..64]) != Some(4 + 8) {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
+    }
+    // UltraKeccakZK: DefaultIO + Oink + Sumcheck + Shplemini.
+    let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
+    let [derived_owner, nft_hash, binding_hash, merkle_root] =
+        decode_public_words::<4>(proof, combined_len)
+            .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+    Ok(FullProofPublicInputs {
+        derived_owner: B256::from(derived_owner),
+        nft_hash: B256::from(nft_hash),
+        binding_hash: B256::from(binding_hash),
+        merkle_root: B256::from(merkle_root),
+    })
+}
+
 fn validate_zk_result(
     zk_proof: &[u8],
+    verification_key: &[u8],
     public: FullProofPublicInputs,
     expected: Option<&outbe_tee::protocol::TributeZkExpectedHashes>,
 ) -> Result<()> {
@@ -298,11 +345,13 @@ fn validate_zk_result(
         }
         .into());
     }
-    let verified = verify_circuit::<FullProof>(zk_proof).map_err(|error| {
-        PrecompileError::Fatal(format!(
-            "ZK verifier unavailable: zk verification backend failed: {error}"
-        ))
-    })?;
+    let verified = Barretenberg::default()
+        .verify_combined(verification_key, zk_proof)
+        .map_err(|error| {
+            PrecompileError::Fatal(format!(
+                "ZK verifier unavailable: zk verification backend failed: {error}"
+            ))
+        })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
     }
@@ -383,6 +432,12 @@ mod zk_result_tests {
     use super::*;
     use outbe_tee::protocol::TributeZkExpectedHashes;
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
+    use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
+
+    fn verification_key() -> &'static [u8] {
+        require_zk_verification_key(0xdead, FullProof::VK_BYTES).unwrap();
+        FullProof::VK_BYTES
+    }
 
     fn public_inputs() -> FullProofPublicInputs {
         FullProofPublicInputs {
@@ -416,7 +471,8 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
+            .unwrap_err();
         assert!(error.to_string().contains("nft_hash"));
     }
 
@@ -428,7 +484,8 @@ mod zk_result_tests {
             binding_hash: B256::from([9; 32]),
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
+            .unwrap_err();
         assert!(error.to_string().contains("binding_hash"));
     }
 
@@ -440,10 +497,63 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(&dummy_proof(public), verification_key(), public, Some(&expected))
+            .unwrap_err();
         assert!(
-            error.to_string().contains("ZK verifier unavailable"),
+            matches!(error, PrecompileError::Fatal(_)),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn verification_keys_must_belong_to_the_authenticated_l2() {
+        for l2_chain_id in [0, 4242] {
+            assert!(matches!(
+                require_zk_verification_key(l2_chain_id, FullProof::VK_BYTES),
+                Err(PrecompileError::Revert(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn registered_proof_rejects_malformed_public_inputs_before_backend() {
+        let proof = dummy_proof(public_inputs());
+        let mut wrong_count = proof.clone();
+        wrong_count[..4].copy_from_slice(&3u32.to_be_bytes());
+        let mut noncanonical = proof.clone();
+        noncanonical[4..36].fill(0xff);
+        let mut truncated = proof.clone();
+        truncated.pop();
+        let mut trailing = proof;
+        trailing.extend_from_slice(&[0; 32]);
+        for malformed in [wrong_count, noncanonical, truncated, trailing] {
+            assert!(matches!(
+                decode_zk_public_inputs(&malformed, verification_key()),
+                Err(PrecompileError::Revert(_))
+            ));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the pinned Barretenberg CRS"]
+    fn registered_circuit_verifies_real_proof_and_rejects_changed_statement() {
+        outbe_zk_backend::barretenberg::init_crs().unwrap();
+        let proof = include_bytes!(
+            "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
+        );
+        let public = decode_zk_public_inputs(proof, verification_key()).unwrap();
+        let expected = TributeZkExpectedHashes {
+            nft_hash: public.nft_hash,
+            binding_hash: public.binding_hash,
+        };
+        validate_zk_result(proof, verification_key(), public, Some(&expected)).unwrap();
+
+        // Keep the encrypted-draft hashes unchanged but claim a different
+        // Merkle root. The real proof, not just the TEE hash checks, must fail.
+        let mut tampered = proof.to_vec();
+        tampered[100..132].fill(0);
+        let public = decode_zk_public_inputs(&tampered, verification_key()).unwrap();
+        let error = validate_zk_result(&tampered, verification_key(), public, Some(&expected)).unwrap_err();
+        assert!(matches!(error, PrecompileError::Revert(_)));
     }
 }

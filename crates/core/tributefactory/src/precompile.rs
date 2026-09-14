@@ -64,6 +64,7 @@ pub fn dispatch(
                                 reference_currency: c.referenceCurrency,
                                 exclude_from_intex_issuance: c.excludeFromIntexIssuance,
                                 zk_proof: c.zkProof,
+                                zk_verification_key: c.zkVerificationKey,
                                 zk_merkle_root: c.zkMerkleRoot,
                                 signature: c.signature,
                             },

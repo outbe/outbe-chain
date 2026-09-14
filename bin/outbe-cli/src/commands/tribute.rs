@@ -5,6 +5,7 @@ use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 use outbe_primitives::time::WorldwideDay;
+use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
 use serde_json::Value;
 
 use crate::abi::{
@@ -89,10 +90,16 @@ pub enum TributeCmd {
         /// network has ZK verification enabled in the L2Registry.
         #[arg(long, default_value = "0x")]
         zk_merkle_root: String,
-        /// Combined `outbe.full_proof@1.0.0` bytes (`0x`-hex), including its
-        /// four embedded public inputs.
+        /// Combined Tribute proof bytes (`0x`-hex), including its four public
+        /// inputs. Uses the canonical FullProof verification key unless overridden.
         #[arg(long, default_value = "0x")]
         zk_proof: String,
+        /// Circuit verification key bytes (`0x`-hex) matching `--zk-proof`.
+        /// Defaults to the canonical FullProof key when omitted with a proof.
+        /// Explicit keys, including empty bytes, are sent unchanged; the
+        /// precompile still enforces the L2 whitelist and proof validity.
+        #[arg(long)]
+        zk_verification_key: Option<String>,
         /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
         /// `nft_hash` and `binding_hash`. Required with `--zk-proof`; otherwise
         /// generated randomly.
@@ -127,6 +134,7 @@ impl TributeCmd {
                 exclude_from_intex_issuance,
                 zk_merkle_root,
                 zk_proof,
+                zk_verification_key,
                 tribute_draft_id,
                 su_hash,
                 signature,
@@ -141,6 +149,7 @@ impl TributeCmd {
                     exclude_from_intex_issuance,
                     &zk_merkle_root,
                     &zk_proof,
+                    zk_verification_key.as_deref(),
                     tribute_draft_id.as_deref(),
                     su_hash.as_deref(),
                     &signature,
@@ -284,6 +293,7 @@ async fn offer(
     exclude_from_intex_issuance: bool,
     zk_merkle_root: &str,
     zk_proof: &str,
+    zk_verification_key: Option<&str>,
     tribute_draft_id: Option<&str>,
     su_hash: Option<&str>,
     signature: &str,
@@ -292,8 +302,9 @@ async fn offer(
     let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
     let zk_proof = decode_hex_bytes(zk_proof, "--zk-proof")?;
-    let signature = decode_hex_bytes(signature, "--signature")?;
     let has_zk_proof = !zk_proof.is_empty();
+    let zk_verification_key = offer_verification_key(zk_verification_key, has_zk_proof)?;
+    let signature = decode_hex_bytes(signature, "--signature")?;
     let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id", has_zk_proof)?;
     let su_hash = offer_hex32(su_hash, "--su-hash", has_zk_proof)?;
 
@@ -359,7 +370,7 @@ async fn offer(
         referenceCurrency: currency,
         excludeFromIntexIssuance: exclude_from_intex_issuance,
         zkProof: zk_proof,
-        zkVerificationKey: Bytes::new(),
+        zkVerificationKey: zk_verification_key,
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: zk_merkle_root,
         signature,
@@ -392,6 +403,14 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
     }
     let bytes = hex::decode(stripped).map_err(|e| eyre::eyre!("{flag} is not valid hex: {e}"))?;
     Ok(Bytes::from(bytes))
+}
+
+fn offer_verification_key(value: Option<&str>, has_proof: bool) -> Result<Bytes> {
+    match value {
+        Some(value) => decode_hex_bytes(value, "--zk-verification-key"),
+        None if has_proof => Ok(Bytes::from_static(FullProof::VK_BYTES)),
+        None => Ok(Bytes::new()),
+    }
 }
 
 /// 32 fresh random bytes as a `0x`-hex string (offer draft id / su hash).
@@ -540,6 +559,22 @@ mod tests {
         assert!(error
             .to_string()
             .contains("--tribute-draft-id is required with --zk-proof"));
+    }
+
+    #[test]
+    fn verification_key_defaults_only_for_an_omitted_key_with_a_proof() {
+        assert_eq!(
+            offer_verification_key(None, true).unwrap().as_ref(),
+            FullProof::VK_BYTES
+        );
+        assert!(offer_verification_key(None, false).unwrap().is_empty());
+        // Explicit empty or invalid-for-the-precompile keys must not be
+        // replaced with the default and thereby hide the caller's input.
+        assert!(offer_verification_key(Some("0x"), true).unwrap().is_empty());
+        assert_eq!(
+            offer_verification_key(Some("0xdeadbeef"), true).unwrap(),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])
+        );
     }
 
     #[test]

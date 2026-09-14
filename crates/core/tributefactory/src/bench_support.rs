@@ -27,6 +27,7 @@ pub struct BenchOfferInput {
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
+    pub zk_verification_key: Bytes,
     pub zk_merkle_root: Bytes,
     pub signature: Bytes,
 }
@@ -57,6 +58,7 @@ pub fn execute_offer_with_processor(
             reference_currency: input.reference_currency,
             exclude_from_intex_issuance: input.exclude_from_intex_issuance,
             zk_proof: input.zk_proof,
+            zk_verification_key: input.zk_verification_key,
             zk_merkle_root: input.zk_merkle_root,
             signature: input.signature,
         },

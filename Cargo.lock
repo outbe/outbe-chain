@@ -8546,6 +8546,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-evm",
  "outbe-fidelity",
+ "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",
@@ -9460,7 +9461,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9531,7 +9532,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9878,6 +9879,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tribute",
  "outbe-zk-backend",
@@ -10019,7 +10021,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "acir",
  "acvm",
@@ -10037,7 +10039,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

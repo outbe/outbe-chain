@@ -21,7 +21,7 @@ pub const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 /// Outcome of the offer-time ZK signature check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZkOfferCheck {
-    /// The caller is not a registered L2 operator address; no check applies.
+    /// The caller is not a registered L2 operator address.
     NotRegistered,
     /// The caller's network is registered with ZK verification disabled.
     Disabled { chain_id: u64 },

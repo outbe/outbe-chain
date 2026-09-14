@@ -15893,7 +15893,7 @@
         "nonzero_byte_gas": 6304
       },
       "gas_totals": {
-        "user_transaction": 3314312
+        "user_transaction": 604312
       },
       "gas_components": [
         {
@@ -15917,7 +15917,7 @@
         {
           "ledger": "user_transaction",
           "key": "precompile.configured_base",
-          "gas": 3000000,
+          "gas": 300000,
           "operations": 1
         },
         {
@@ -15986,7 +15986,7 @@
         {
           "ledger": "user_transaction",
           "key": "compressed_entities.cleanup.first_body_touch",
-          "gas": 65000,
+          "gas": 55000,
           "operations": 1,
           "module": "compressed_entities"
         },
@@ -16635,7 +16635,7 @@
         }
       ],
       "artifacts": {
-        "full_proof": "keccak256:0x08bf15419acc1b9b69c043294c66bd4750286a918c28c30bc66881e7401436b5"
+        "full_proof": "keccak256:0x7f57acdf3d550502515c28e3c466857c784559876403fe31a015f2dfe59b8855"
       }
     },
     "tribute/create/zk/cold": {
@@ -16649,15 +16649,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 10020,
-        "zero_bytes": 968,
-        "nonzero_bytes": 9052,
+        "bytes": 11908,
+        "zero_bytes": 1134,
+        "nonzero_bytes": 10774,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 3872,
-        "nonzero_byte_gas": 144832
+        "zero_byte_gas": 4536,
+        "nonzero_byte_gas": 172384
       },
       "gas_totals": {
-        "user_transaction": 3454904
+        "user_transaction": 773120
       },
       "gas_components": [
         {
@@ -16669,19 +16669,19 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 3872,
-          "operations": 968
+          "gas": 4536,
+          "operations": 1134
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 144832,
-          "operations": 9052
+          "gas": 172384,
+          "operations": 10774
         },
         {
           "ledger": "user_transaction",
           "key": "precompile.configured_base",
-          "gas": 3000000,
+          "gas": 300000,
           "operations": 1
         },
         {
@@ -16750,7 +16750,7 @@
         {
           "ledger": "user_transaction",
           "key": "compressed_entities.cleanup.first_body_touch",
-          "gas": 65000,
+          "gas": 55000,
           "operations": 1,
           "module": "compressed_entities"
         },
@@ -17076,7 +17076,39 @@
         {
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0x8c170dcd42ae34c91051362b3a792057d24385244020963977d1ab46bade24e6",
+          "slot": "0x262bb27bbdd95c1cdc8e16957e36e38579ea44f7f6413dd7a9c75939def06b2c",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x42c63635470f1fb1d6d4b6441c413cb435b1ebb6fedd1896dd5e25d1399147dd",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x44ad89ba62b98ff34f51403ac22759b55759460c0bb5521eb4b6ee3cff49cf83",
+          "operation": "read",
+          "count": 2,
+          "gas": 200
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0x6a9609baa168169acaea398c4407efea4be641bb08e21e88806d9836fd9333cc",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0xb34209a263f6c38fe55f099e9e70f9d67e93982480ff3234a5e0108028ad164d",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -17085,38 +17117,6 @@
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
           "slot": "0xc8d887cfdff0669df7f3c531d80732bd2dc6cabe63010461475ed8dc3dcad722",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xd150c06dcc85be3485278e9752e83529b870f914d16d105cdc4e960fd4de686",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xf1557e9498019f6044fef0f9701ac98fde0fb95ffc804a0f3478bfbe6a8a68a0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xf3b9476bb77d3be9725af72df7be677e98f50d773ac0df92dcd927e11414c9d8",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xfad47b17fa56fc43ddf00981812a38141d29d5cdc8cfff0bc0cc9bfd3995cb4b",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -17439,7 +17439,7 @@
         }
       ],
       "artifacts": {
-        "full_proof": "keccak256:0x08bf15419acc1b9b69c043294c66bd4750286a918c28c30bc66881e7401436b5"
+        "full_proof": "keccak256:0x7f57acdf3d550502515c28e3c466857c784559876403fe31a015f2dfe59b8855"
       }
     }
   }

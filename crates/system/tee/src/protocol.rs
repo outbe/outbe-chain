@@ -40,8 +40,11 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 ///     `reference_scurve_minor` - resolved by the node from committed Oracle
 ///     state; not ABI fields.
 ///
-/// The ZK fields (`zkProof`/`zkVerificationKey`/`zkPublicKey`/`zkMerkleRoot`)
-/// are verified BEFORE the enclave call and are NOT forwarded.
+/// Before the enclave call, the host requires a registered L2 operator. For
+/// ZK-enabled networks it validates the root signature, verification-key
+/// whitelist, and proof framing. After decryption it compares the enclave's
+/// expected hashes and verifies the proof. Raw proof/key/signature bytes are
+/// not forwarded; registered ZK-disabled networks retain their non-ZK path.
 ///
 /// Every field here is public and host-supplied, so the enclave never echoes any
 /// of them back - [`TributeOfferResult`] carries only what the enclave itself

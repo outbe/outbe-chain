@@ -25,7 +25,7 @@ use outbe_tribute::TributeContract;
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
 
-const CHAIN_ID: u64 = 1;
+const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 
 struct NoParentBodies;
 
@@ -57,12 +57,13 @@ mod l2_zk_gate {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
+    use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
 
     use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
 
-    const L2_CHAIN_ID: u64 = 4242;
+    const L2_CHAIN_ID: u64 = 0xdead;
 
     fn caller() -> Address {
         Address::repeat_byte(0x77)
@@ -83,6 +84,7 @@ mod l2_zk_gate {
             reference_currency: 840,
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
+            zk_verification_key: Bytes::copy_from_slice(FullProof::VK_BYTES),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
@@ -147,6 +149,22 @@ mod l2_zk_gate {
             )
             .encode()
             .to_vec();
+            // A signed root does not authorize an arbitrary verification key,
+            // even when the proof itself has the expected public-input shape.
+            for key in [
+                &[][..],
+                &FullProof::VK_HASH[..],
+                outbe_zk_canonical::noir::emit_mint::EmitMint::VK_BYTES,
+            ] {
+                let mut wrong_key = offer(&root, &good_sig);
+                wrong_key.zk_proof = dummy_full_proof(root);
+                wrong_key.zk_verification_key = Bytes::copy_from_slice(key);
+                let error = factory
+                    .offer_tribute(&scope, &NoParentBodies, wrong_key)
+                    .unwrap_err();
+                assert!(revert_message(error)
+                    .contains(&format!("not enabled for L2 chain {L2_CHAIN_ID}")));
+            }
             let mut valid_gate = offer(&root, &good_sig);
             valid_gate.zk_proof = dummy_full_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
@@ -204,7 +222,7 @@ mod l2_zk_gate {
     }
 
     #[test]
-    fn offer_skips_signature_check_for_unregistered_and_disabled() {
+    fn unregistered_offers_are_rejected_and_registered_disabled_networks_skip_zk() {
         use commonware_codec::Encode;
         use commonware_cryptography::bls12381::primitives::{
             ops::{self},
@@ -220,12 +238,14 @@ mod l2_zk_gate {
         StorageHandle::enter(&mut storage, |storage| {
             let scope = ExecutionScope::new();
 
-            // Unregistered caller with empty zk fields sails past the gate.
+            // An unregistered caller must fail before any enclave work.
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
+                .offer_tribute_with_processor(&scope, &NoParentBodies, offer(&[], &[]), |_| {
+                    panic!("unregistered caller reached the enclave")
+                })
                 .unwrap_err();
-            assert!(revert_message(err).contains("is not in OFFERING status"));
+            assert!(revert_message(err).contains("not a registered L2 operator"));
 
             // Registered but zk disabled: still no signature requirement.
             let mut registry = L2RegistryContract::new(storage.clone());
@@ -249,6 +269,7 @@ mod l2_zk_gate {
     fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
+            super::register_disabled_operators(storage.clone(), &[caller()]);
             let scope = ExecutionScope::new();
             let mut bad_day = offer(&[], &[]);
             bad_day.worldwide_day = 20250230u32.into(); // February 30th
@@ -274,6 +295,7 @@ mod l2_zk_gate {
     fn host_rejects_a_non_offering_day_before_pricing() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
+            super::register_disabled_operators(storage.clone(), &[caller()]);
             let scope = ExecutionScope::new();
             let mut unpriced = offer(&[], &[]);
             unpriced.tribute_currency = 999; // never registered
@@ -327,7 +349,28 @@ const TARGET_WWD_B: WorldwideDay = WorldwideDay::new(20_260_803);
 const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
 
-fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
+fn register_disabled_operators(storage: StorageHandle<'_>, callers: &[Address]) {
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
+
+    let mut rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+    let (_, public_key) = ops::keypair::<_, MinSig>(&mut rng);
+    let public_key = public_key.encode();
+    let mut registry = outbe_l2registry::L2RegistryContract::new(storage);
+    for (index, caller) in callers.iter().enumerate() {
+        registry
+            .register_network(index as u64 + 1, *caller, &public_key)
+            .unwrap();
+    }
+}
+
+fn seed_offer_world(
+    storage: StorageHandle<'_>,
+    target_days: &[WorldwideDay],
+    callers: &[Address],
+) {
+    register_disabled_operators(storage.clone(), callers);
     storage
         .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
@@ -392,6 +435,7 @@ fn offer_input(caller: Address, worldwide_day: WorldwideDay) -> OfferTributeInpu
         reference_currency: 840,
         exclude_from_intex_issuance: false,
         zk_proof: Bytes::new(),
+        zk_verification_key: Bytes::new(),
         zk_merkle_root: Bytes::new(),
         signature: Bytes::new(),
     }
@@ -447,7 +491,9 @@ fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_ut
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_offer_world(storage.clone(), &[TARGET_WWD_A, TARGET_WWD_B]);
+        let callers: [Address; 100] =
+            std::array::from_fn(|index| Address::repeat_byte(index as u8 + 1));
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A, TARGET_WWD_B], &callers);
         storage
             .set_block_timestamp(U256::from(
                 date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
@@ -455,7 +501,7 @@ fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_ut
             .unwrap();
         let scope = active_scope(storage.clone());
 
-        for index in 0..100u8 {
+        for (index, caller) in callers.into_iter().enumerate() {
             let target = if index % 2 == 0 {
                 TARGET_WWD_A
             } else {
@@ -464,7 +510,7 @@ fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_ut
             execute_successful_offer(
                 storage.clone(),
                 &scope,
-                Address::repeat_byte(index + 1),
+                caller,
                 target,
             )
             .unwrap();
@@ -493,7 +539,11 @@ fn real_offer_writer_uses_utc_calendar_boundaries() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     StorageHandle::enter(&mut provider, |storage| {
-        seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+        seed_offer_world(
+            storage.clone(),
+            &[TARGET_WWD_A],
+            &[Address::repeat_byte(0x31), Address::repeat_byte(0x32)],
+        );
         let scope = active_scope(storage.clone());
         storage
             .set_block_timestamp(U256::from(
@@ -540,7 +590,7 @@ fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
     let mutation_count = {
         let mut probe = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut probe, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+            seed_offer_world(storage.clone(), &[TARGET_WWD_A], &[Address::repeat_byte(0x41)]);
             storage
                 .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
                 .unwrap();
@@ -567,7 +617,7 @@ fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut provider, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+            seed_offer_world(storage.clone(), &[TARGET_WWD_A], &[Address::repeat_byte(0x41)]);
             storage
                 .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
                 .unwrap();

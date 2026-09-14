@@ -6,6 +6,7 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
+use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -15,7 +16,7 @@ use crate::precompile;
 use crate::schema::L2RegistryContract;
 
 const CHAIN_ID: u64 = 1;
-const L2_CHAIN_ID: u64 = 4242;
+const L2_CHAIN_ID: u64 = 0xdead;
 
 sol! {
     interface RemovedL2RegistryMutators {
@@ -142,6 +143,36 @@ fn register_rejects_duplicates() {
             .unwrap_err();
         assert!(revert_message(err).contains("already registered"));
     });
+}
+
+#[test]
+fn zero_chain_id_is_rejected_on_every_host_network() {
+    let (_, public) = keypair();
+    for host in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID, 31_337] {
+        let mut provider = HashMapStorageProvider::new(host);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut registry = L2RegistryContract::new(storage.clone());
+            for error in [
+                registry
+                    .register_network(0, l1_addr(), &public)
+                    .unwrap_err(),
+                registry
+                    .register_network_with_zk(0, l1_addr(), &public, true)
+                    .unwrap_err(),
+            ] {
+                assert!(matches!(error, PrecompileError::Revert(_)));
+            }
+            assert!(!registry.networks.exists(0).unwrap());
+            assert!(registry.network_by_l1_address(l1_addr()).unwrap().is_none());
+            registry
+                .register_network(L2_CHAIN_ID, l1_addr(), &public)
+                .unwrap();
+            assert_eq!(
+                registry.load_network(L2_CHAIN_ID).unwrap().l1_address,
+                l1_addr()
+            );
+        });
+    }
 }
 
 #[test]

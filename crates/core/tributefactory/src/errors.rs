@@ -21,8 +21,20 @@ pub enum TributeFactoryError {
     #[error("enclave rejected the offer: {0}")]
     EnclaveRejected(String),
 
+    #[error("caller {caller} is not a registered L2 operator")]
+    UnregisteredL2Operator { caller: alloy_primitives::Address },
+
     #[error("zkProof is required when ZK verification is enabled")]
     ZkProofRequired,
+
+    #[error("ZK verification key {vk_hash} is not enabled for L2 chain {chain_id}")]
+    ZkVerificationKeyNotEnabled {
+        chain_id: u64,
+        vk_hash: alloy_primitives::B256,
+    },
+
+    #[error("ZK circuit does not support the Tribute proof interface")]
+    UnsupportedZkCircuit,
 
     #[error("malformed zkProof: {0}")]
     MalformedZkProof(String),
