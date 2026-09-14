@@ -737,6 +737,15 @@ contract OriginInboundGasTest is CrossChainTest {
         emit log_named_uint("bids_done", spent);
         assertLt(spent, IntexGas.BIDS_DONE, "bids done must fit the quote");
     }
+
+    /// @dev The dearest of the inbound bids messages: its handler answers with an outbound CLEARING, so the
+    ///      budget has to cover a dispatch as well as the decode.
+    function test_TheQuoteCoversBidsRemaining() public {
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsRemaining(WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 3));
+
+        emit log_named_uint("bids_remaining", spent);
+        assertLt(spent, IntexGas.BIDS_REMAINING, "the remainder report must fit the quote");
+    }
 }
 
 /// @dev On Outbe the real Desis is a precompile, so these measure the router's own share of an inbound

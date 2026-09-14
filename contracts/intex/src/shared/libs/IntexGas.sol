@@ -41,6 +41,11 @@ library IntexGas {
     ///         while it can still afford this, then leaves the rest to the next round.
     uint256 internal constant RELAY_CHUNK_GAS = 300_000;
 
+    /// @notice Gas the completeness marker needs on top of the last chunk. Without it a round that just
+    ///         affords its final chunk runs out on the marker, reverts whole, and - having made no
+    ///         progress to report - leaves the day for a hand-pushed `relayBids`.
+    uint256 internal constant RELAY_MARKER_GAS = 300_000;
+
     /// @notice Gas a CLEARING delivery holds back from the relay so it can still report an unfinished day:
     ///         the 63/64 rule leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
@@ -51,8 +56,10 @@ library IntexGas {
     /// @dev 88k.
     uint256 internal constant BIDS_DONE = 135_000;
 
-    /// @dev The remainder report a stopped relay sends home; the origin answers it with another round.
-    uint256 internal constant BIDS_REMAINING = 135_000;
+    /// @dev The remainder report a stopped relay sends home. Dearer than the other inbound bids messages
+    ///      because its handler answers with an outbound CLEARING: 136k of it is the handler's own work
+    ///      against the stand, and the rest is what a real dispatch costs over the mock's.
+    uint256 internal constant BIDS_REMAINING = 400_000;
 
     /// @dev The one budget no test can measure - the receiver forwards into the Desis precompile. Derived
     ///      from its tariff (read 100, write 2,900, six per bid), 17.6k on the generation-reset branch and

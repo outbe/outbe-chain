@@ -317,7 +317,12 @@ contract TargetRouter is
         }
 
         uint16 batch = progress.nextBatch;
-        while (batch < totalBatches && gasleft() > IntexGas.RELAY_CHUNK_GAS) {
+        while (batch < totalBatches) {
+            // The last chunk has to leave room for the marker that follows it in the same round.
+            uint256 need = batch + 1 == totalBatches
+                ? IntexGas.RELAY_CHUNK_GAS + IntexGas.RELAY_MARKER_GAS
+                : IntexGas.RELAY_CHUNK_GAS;
+            if (gasleft() <= need) break;
             _sendBidsChunk(worldwideDay, generation, batch, totalBatches, bidsCount);
             ++batch;
         }

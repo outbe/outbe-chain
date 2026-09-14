@@ -572,17 +572,32 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     // Addressed per chain: each one's round is sized from its own recent bid counts, and a chain that
     // cannot finish in the round it gets reports the remainder and is sent another.
     for chain_id in fetch_targets(storage, worldwide_day)? {
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendAuctionStageClearingCall {
-                worldwideDay: worldwide_day.into(),
-                dstChainId: chain_id,
-                gasLimit: U256::from(clearing_round_gas(storage, worldwide_day, chain_id)?),
-            }
-            .abi_encode()
-            .into(),
-        )?;
+        // One checkpoint per chain: a chain whose send fails must not take the day's arming, nor the
+        // other chains' rounds, with it. The fan-in deadline is what covers a chain left behind.
+        let sent = storage.with_checkpoint(|| {
+            let gas = clearing_round_gas(storage, worldwide_day, chain_id)?;
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendAuctionStageClearingCall {
+                    worldwideDay: worldwide_day.into(),
+                    dstChainId: chain_id,
+                    gasLimit: U256::from(gas),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = sent {
+            tracing::warn!(
+                target: "outbe::desis",
+                %worldwide_day,
+                chain_id,
+                error = ?error,
+                "clearing round: chain skipped"
+            );
+        }
     }
     Ok(())
 }
