@@ -75,7 +75,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "parkedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -100,7 +100,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalIntexParked",
+        "name": "totalGemFactoryUnits",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -305,6 +305,31 @@
   },
   {
     "type": "event",
+    "name": "GemExercised",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "promisLoad",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "GemIssued",
     "inputs": [
       {
@@ -360,31 +385,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GemMined",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "promisLoad",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false

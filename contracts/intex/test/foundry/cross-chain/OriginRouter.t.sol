@@ -117,7 +117,7 @@ contract OriginRouterTest is CrossChainTest {
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: 10_000,
+            issuedUnits: 10_000,
             promisLoadMinor: 1000,
             entryPriceMinor: 100e6,
             floorPriceMinor: 50e6,
@@ -297,7 +297,7 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendAuctionResult() public view {
-        // (dstChainId, worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount)
+        // (dstChainId, worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount)
         uint256 fee = originRouter.quoteSendAuctionResult(BNB_CHAIN_ID, WORLDWIDE_DAY, 500, 75e6, 42);
 
         assertEq(fee, 0.001 ether);

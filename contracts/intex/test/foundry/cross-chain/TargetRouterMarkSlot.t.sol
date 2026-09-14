@@ -61,7 +61,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         payload.seriesId = CreateSeriesLib.seriesId(DAY);
         payload.worldwideDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedIntexCount = 10;
+        payload.issuedUnits = 10;
         payload.promisLoadMinor = 1;
         payload.issuanceCurrency = 840;
         payload.referenceCurrency = 840;

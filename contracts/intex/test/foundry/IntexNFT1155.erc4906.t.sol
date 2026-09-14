@@ -73,16 +73,16 @@ contract IntexNFT1155Erc4906Test is Test {
         assertEq(count, 1, "markQualified changes the document");
         assertEq(tokenId, iTok);
 
-        nft.parkIntex(user, SERIES_ID, 1);
+        nft.sendToGemFactory(user, SERIES_ID, 1);
         (count,) = _metadataUpdates();
-        assertEq(count, 0, "parkIntex is supply-only");
+        assertEq(count, 0, "sendToGemFactory is supply-only");
 
         nft.markCalled(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
         assertEq(count, 1, "markCalled changes the document");
         assertEq(tokenId, iTok);
 
-        nft.settle(SERIES_ID, user, user2, 2);
+        nft.settleIntex(SERIES_ID, user, user2, 2);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "settle is supply-only");
 

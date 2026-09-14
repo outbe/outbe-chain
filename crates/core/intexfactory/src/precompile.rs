@@ -1,7 +1,7 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` name the
-//! holder they act for, so `caller = msg.sender` only binds the PayNote spent.
+//! Routing only: decode -> runtime -> encode. `settleIntex` / `minePromis` name the
+//! owner they act for, so `caller = msg.sender` only binds the PayNote spent.
 //! None accept value, except `distribute`, which credits auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -28,12 +28,12 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
-/// Base gas charged by the registry before invoking [`dispatch`]: `settle`
+/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntex`
 /// verifies a PayNote spend proof, which is real native work every validator
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleCall::SELECTOR) => ZK_VERIFY_GAS,
+        Some(&IIntexFactory::settleIntexCall::SELECTOR) => ZK_VERIFY_GAS,
         _ => PRECOMPILE_BASE_GAS,
     }
 }
@@ -52,7 +52,7 @@ sol! {
             uint16[] issuanceCurrencies,
             uint32 worldwideDay,
             uint32 issuedAt,
-            uint32 issuedIntexCount,
+            uint32 issuedUnits,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
@@ -156,7 +156,7 @@ pub fn dispatch(
                 crate::schema::IssuanceParams {
                     series_id: SeriesId::from(series_id),
                     worldwide_day: call.worldwideDay.into(),
-                    issued_intex_count: call.issuedIntexCount,
+                    issued_units: call.issuedUnits,
                     promis_load_minor: call.promisLoadMinor,
                     entry_price_minor: call.entryPriceMinor,
                     issuance_currency,
@@ -204,11 +204,11 @@ pub fn dispatch(
         |call| {
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
-                settle(c) => mutate_void(c, caller, |sender, c| {
+                settleIntex(c) => mutate_void(c, caller, |sender, c| {
                     runtime::settle(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.intexHolder,
+                        c.intexOwner,
                         sender,
                         c.amount,
                         &c.payNoteProof,
@@ -226,10 +226,10 @@ pub fn dispatch(
                         payableUnits: amount,
                     })
                 }),
-                // Off-chain the holder brute-forces `nonce` so the work hash
-                // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
+                // Off-chain the owner brute-forces `nonce` so the work hash
+                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has the protocol's leading zero bytes; `seq` is the on-chain
-                // per-(series, holder) counter.
+                // per-(series, owner) counter.
                 minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
@@ -238,7 +238,7 @@ pub fn dispatch(
                     runtime::mine_promis(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        c.holder,
+                        c.owner,
                         c.amount,
                         c.nonce,
                         auth,
@@ -273,6 +273,9 @@ pub fn dispatch(
                 }),
                 contributorPaidWord(c) => view(c, |c| {
                     outbe_intex::api::paid_leaves_word(&storage, c.worldwideDay, c.wordIndex)
+                }),
+                seriesUnitCounts(c) => view(c, |c| {
+                    runtime::series_unit_counts(&storage, c.seriesId.into())
                 }),
             }
         },

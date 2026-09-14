@@ -666,7 +666,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     assert_receipt_event(
         &mint.receipt,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::GemMined {
+        &eth::IGemFactory::GemExercised {
             gemId: gem_id,
             owner,
             promisLoad: gem.promisLoad,

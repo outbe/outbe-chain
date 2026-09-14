@@ -55,7 +55,7 @@ contract StubAuctionWithBids {
 
 /// @title PatternADeferTest
 /// @notice Behavioural coverage of Pattern A on `TargetRouter`: the inbound clearing/mark-called handlers fire an
-///         outbound relay (bids batch / holders bridge) that parks on failure and is retried permissionlessly via
+///         outbound relay (bids batch / owners bridge) that parks on failure and is retried permissionlessly via
 ///         `flushPending*`. Failure is forced by starving the relay float - a positive bridge fee with a zero native
 ///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
 contract PatternADeferTest is CrossChainTest {
@@ -102,7 +102,7 @@ contract PatternADeferTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        // Series so markCalled + holder enumeration work.
+        // Series so markCalled + owner enumeration work.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.markQualified(SERIES_ID);
     }

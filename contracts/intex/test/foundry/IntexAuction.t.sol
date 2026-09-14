@@ -201,10 +201,10 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.auctionClearingRate, 75);
-        assertEq(fin.result.issuedIntexCount, 100);
+        assertEq(fin.result.issuedUnits, 100);
         assertEq(fin.result.wonBidsCount, 2);
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
-        // issuedIntexLoadedPromis is derived on-chain as issuedIntexCount * promisLoadMinor.
+        // issuedIntexLoadedPromis is derived on-chain as issuedUnits * promisLoadMinor.
         assertEq(fin.result.issuedIntexLoadedPromis, uint128(100) * PROMIS_LOAD_MINOR);
     }
 
@@ -718,7 +718,7 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.wonBidsCount, 0);
-        assertEq(fin.result.issuedIntexCount, 0);
+        assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.auctionClearingRate, floor);
         assertEq(fin.result.issuedIntexLoadedPromis, 0);
     }
@@ -748,7 +748,7 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(worldwideDay);
         assertEq(fin.result.auctionClearingRate, 0);
-        assertEq(fin.result.issuedIntexCount, 0);
+        assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedIntexLoadedPromis, 0);
 

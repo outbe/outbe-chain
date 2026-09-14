@@ -33,10 +33,10 @@ interface ITargetRouter {
     /// @notice Emitted when an auction result is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param issuedIntexCount Number of Intex units issued.
+    /// @param issuedUnits Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultReceived(
-        uint32 indexed srcChainId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
+        uint32 indexed srcChainId, uint32 indexed worldwideDay, uint32 issuedUnits, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are received from Outbe.

@@ -136,7 +136,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read.
-   *  ERC-1155 carries no on-chain holder enumeration, so wallets and explorers derive holdings the same
+   *  ERC-1155 carries no on-chain owner enumeration, so wallets and explorers derive holdings the same
    *  way. The scan starts at the pair's deployment block - see `intexNftFromBlock`. */
   async function ownedWithBalances(n: Network, owner: Address): Promise<[bigint[], bigint[]]> {
     const address = addr(n, "nft");
@@ -330,7 +330,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
       "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
       "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
-      "and how the issued units split into settled, parked and still-outstanding.",
+      "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -340,6 +340,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         functionName: "seriesData",
         args: [series],
       })) as Record<string, bigint | number>;
+      // The engine owns the split; exercised units are not on the series record.
+      const counts = (await n.client.readContract({
+        address: addr(n, "factory"),
+        abi: FACTORY_ABI,
+        functionName: "seriesUnitCounts",
+        args: [series],
+      })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
       const metadata = await seriesMetadata(n, series);
@@ -351,11 +358,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        issuedIntexCount: Number(d.issuedIntexCount),
-        settledUnits: Number(d.settledUnits),
-        parkedUnits: Number(d.parkedUnits),
-        // Unrealized units lose their load to the pool when the call window closes.
-        unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.parkedUnits),
+        issuedUnits: Number(counts.issuedUnits),
+        // Disjoint classes summing to issuedUnits. Active units lose their load to
+        // the pool once the call window closes and they are forfeited.
+        activeUnits: Number(counts.activeUnits),
+        settledUnits: Number(counts.settledUnits),
+        exercisedUnits: Number(counts.exercisedUnits),
+        gemFactoryUnits: Number(counts.gemFactoryUnits),
+        forfeitedUnits: Number(counts.forfeitedUnits),
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
@@ -556,7 +566,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           }[];
           commitBondMinor: bigint;
         };
-        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedIntexCount: number; issuedIntexLoadedPromis: bigint };
+        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedUnits: number; issuedIntexLoadedPromis: bigint };
       };
       return ok({
         network: n.name,
@@ -598,7 +608,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           note: "populated only after clearing",
           auctionClearingRate: { raw: d.result.auctionClearingRate.toString(), value: formatUnits(d.result.auctionClearingRate, 6) },
           wonBidsCount: Number(d.result.wonBidsCount),
-          issuedIntexCount: Number(d.result.issuedIntexCount),
+          issuedUnits: Number(d.result.issuedUnits),
           issuedIntexLoadedPromis: d.result.issuedIntexLoadedPromis.toString(),
         },
       });
@@ -1031,7 +1041,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_quote",
-    "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is holder-initiated at every stage: " +
+    "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is owner-initiated at every stage: " +
       "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
       "its callDeadline (read it with intex_series_info).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
@@ -1098,24 +1108,24 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "no tokens of its own and needs no approval. Get the price with intex_settlement_tokens, deposit a " +
       "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
       "keeps the two unlinked), then build the spend proof off-chain; the MCP cannot produce it. " +
-      "Defaults to your own wallet; pass holder to pay for someone else's position. " +
+      "Defaults to your own wallet; pass owner to pay for someone else's position. " +
       "Allowed when the series is Qualified (voluntary) or Called (forced, within the call period). The " +
-      "Settled token (soulbound) stays with holder whoever pays, and only holder can mine its Promis. " +
+      "Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. " +
       "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
       "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
     {
       series: seriesArg,
       amount: amountArg,
-      holder: accountArg,
+      owner: accountArg,
       pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its owner"),
       network: networkArg.optional(),
       wait: waitArg,
     },
-    handler(async ({ series, amount, holder, pay_note_proof, network, wait }) => {
+    handler(async ({ series, amount, owner, pay_note_proof, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
-      const intexHolder = holder ? getAddress(holder) : account.address;
+      const intexOwner = owner ? getAddress(owner) : account.address;
       if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
         throw new Error("pay_note_proof must be a 0x-prefixed hex PayNote spend proof");
       }
@@ -1123,16 +1133,16 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const factory = addr(n, "factory");
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
-        functionName: "settle",
-        args: [series, intexHolder, BigInt(amount), pay_note_proof as Hex],
+        functionName: "settleIntex",
+        args: [series, intexOwner, BigInt(amount), pay_note_proof as Hex],
       });
       const receipt = await submit(n, factory, data, 0n, wait);
       return ok({
         network: n.name,
         series,
-        intexHolder,
+        intexOwner,
         amount,
-        self: intexHolder === account.address,
+        self: intexOwner === account.address,
         ...receipt,
       });
     }),
@@ -1180,7 +1190,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     handler(async ({ series, amount, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
-      const holder = account.address;
+      const owner = account.address;
       const amt = BigInt(amount);
       const sd = (await n.client.readContract({
         address: addr(n, "intex"),
@@ -1189,23 +1199,23 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as { promisLoadMinor: bigint };
       const promisAmount = sd.promisLoadMinor * amt;
-      // seq = this holder's prior mines for the series (feeds the PoW preimage).
+      // seq = this owner's prior mines for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
         event: PROMIS_MINED_EVENT,
-        args: { seriesId: series, holder },
+        args: { seriesId: series, owner },
         fromBlock: 0n,
         toBlock: "latest",
       });
       const seq = logs.length;
-      const pow = grindNonce(holder, promisAmount, series, seq);
+      const pow = grindNonce(owner, promisAmount, series, seq);
       throw new Error(
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
           "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
           `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
-          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${holder}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
+          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${owner}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",
       );
     }),

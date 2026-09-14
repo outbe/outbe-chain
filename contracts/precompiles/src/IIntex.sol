@@ -26,7 +26,7 @@ interface IIntex {
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
         uint256 floorPriceMinor;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
@@ -37,10 +37,12 @@ interface IIntex {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 worldwideDay;
-        /// @notice Units settled so far; their load belongs to the settler.
+        /// @notice Units paid for and not yet exercised; their load belongs to the settler.
         uint32 settledUnits;
-        /// @notice Units parked into Gem positions; their load moved with them.
-        uint32 parkedUnits;
+        /// @notice Units already burned into Promis; they leave `settledUnits` for good.
+        uint32 exercisedUnits;
+        /// @notice Units sent to the Gem Factory; their load moved with them.
+        uint32 gemFactoryUnits;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

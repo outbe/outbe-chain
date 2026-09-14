@@ -22,9 +22,9 @@ pub const PROFILE_PROD: u8 = 2;
 /// percentage points over [`crate::constants::PRICE_RATE_DEN`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
-    pub call_window: u32,
-    pub call_threshold: u32,
-    pub call_notice_period: u32,
+    pub call_window_seconds: u32,
+    pub call_threshold_seconds: u32,
+    pub call_notice_period_seconds: u32,
     pub call_rate: u16,
     pub floor_rate: u16,
     /// Commit-entry bond on the target-chain auction in 18-decimal WCOEN units.
@@ -34,9 +34,9 @@ pub struct IntexParams {
 impl IntexParams {
     /// Real protocol timings; the default on mainnet.
     pub const PROD: Self = Self {
-        call_window: CALL_WINDOW,
-        call_threshold: CALL_THRESHOLD,
-        call_notice_period: CALL_NOTICE_PERIOD,
+        call_window_seconds: CALL_WINDOW,
+        call_threshold_seconds: CALL_THRESHOLD,
+        call_notice_period_seconds: CALL_NOTICE_PERIOD,
         call_rate: CALL_RATE,
         floor_rate: FLOOR_RATE,
         commit_bond_minor: COMMIT_BOND_MINOR,
@@ -46,12 +46,12 @@ impl IntexParams {
     /// so window/threshold stay whole multiples of a day. The bond drops to
     /// 100 wCOEN so test bidders are not forced to mint 100M per commit.
     pub const DEV: Self = Self {
-        call_window: 3 * 24 * 3600,
-        call_threshold: 2 * 24 * 3600,
+        call_window_seconds: 3 * 24 * 3600,
+        call_threshold_seconds: 2 * 24 * 3600,
         #[cfg(not(feature = "e2e-test"))]
-        call_notice_period: 3 * 24 * 3600,
+        call_notice_period_seconds: 3 * 24 * 3600,
         #[cfg(feature = "e2e-test")]
-        call_notice_period: 600,
+        call_notice_period_seconds: 600,
         call_rate: 10,
         floor_rate: 5,
         commit_bond_minor: 100 * SCALE_1E18_U128,

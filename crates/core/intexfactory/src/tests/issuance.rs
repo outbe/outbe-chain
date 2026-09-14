@@ -12,16 +12,16 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
         // Floor and trigger are derived from the clearing price at issuance.
         assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
-        assert_eq!(r.issued_intex_count, 100);
-        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
+        assert_eq!(r.issued_units, 100);
+        assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: 28 * DAY as u32,
-                call_threshold: 21 * DAY as u32,
-                call_notice_period: CALL_NOTICE_PERIOD,
+                call_window_seconds: 28 * DAY as u32,
+                call_threshold_seconds: 21 * DAY as u32,
+                call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
         // Born Issued; issued_at is the block timestamp.
@@ -50,11 +50,11 @@ fn issue_zero_winners_leaves_the_day_untouched() {
         outbe_intex::api::record_contributors(
             &s,
             WorldwideDay::new(7),
-            &[(holder(), U256::from(100u64))],
+            &[(owner(), U256::from(100u64))],
         )
         .unwrap();
         let mut p = sample(7);
-        p.issued_intex_count = 0;
+        p.issued_units = 0;
         runtime::issue(&s, p).unwrap();
 
         // No series is created, and the day's map is left for its caller to
@@ -72,14 +72,14 @@ fn issuance_legs_route_winners_to_their_own_chain() {
     // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
-    p.recipients = vec![holder(), other];
+    p.recipients = vec![owner(), other];
     p.quantities = vec![U256::from(1), U256::from(2)];
     p.recipient_chains = vec![10, 20];
     p.snapshot_chains = vec![10, 20, 30];
 
     let legs = runtime::issuance_legs(&p);
     assert_eq!(legs.len(), 3);
-    assert_eq!(legs[0], (10, vec![holder()], vec![U256::from(1)]));
+    assert_eq!(legs[0], (10, vec![owner()], vec![U256::from(1)]));
     assert_eq!(legs[1], (20, vec![other], vec![U256::from(2)]));
     assert_eq!(legs[2], (30, vec![], vec![])); // create-only leg
 }
@@ -139,7 +139,7 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         seriesId: sid(series).into(),
         worldwideDay: series,
         issuedAt: ISSUED_AT,
-        issuedIntexCount: 1,
+        issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,
         floorPriceMinor: 0,

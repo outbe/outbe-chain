@@ -262,7 +262,7 @@ mod group_scans {
             )
             .unwrap(),
             worldwide_day: worldwide_day.into(),
-            issued_intex_count: 100,
+            issued_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: U256::from(ENTRY_PRICE),
             issuance_currency,

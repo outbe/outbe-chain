@@ -124,8 +124,8 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "gem_position_get",
-    "Parked-Intex position terms by id: merchant, source series, remaining capacity, " +
-      "the entry/floor prices its gems are anchored to, both currencies and when it was parked.",
+    "Gem Factory position terms by id: merchant, source series, remaining capacity, " +
+      "the entry/floor prices its gems are anchored to, both currencies and when it was opened.",
     { id: z.string().describe("Position token id (decimal or 0x hex)") },
     handler(async ({ id }) =>
       ok(await view(ctx, "gemfactory", "getPosition", [BigInt(id)])),
