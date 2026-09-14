@@ -282,10 +282,26 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 # the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
+depends = ["e2e-capacity"]
 run = """
 cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock --repo . --jobs 4 --output target/e2e-artifacts/mock.json
 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --tee mock --validators 4 --all "$@"
 """
+
+# Capacity checks stay in their owning crates, but run with the full E2E tasks
+# rather than the default unit/integration suite. Exact filters avoid enabling
+# unrelated ignored tests that require external services.
+[tasks.e2e-capacity]
+description = "Run the three large-data capacity checks used by the full E2E suite"
+env = { RAYON_NUM_THREADS = "4" }
+run = '''
+cargo test --locked --release -j 4 -p outbe-ocomp -p outbe-compressed-entities \
+  --test streaming_input_artifacts --test bounded_collection_reconstruction --test input_inventory \
+  -- --exact --ignored --test-threads=1 \
+  production_publisher_streams_one_million_records_with_a_256_record_peak \
+  boundary_populations_match_the_existing_eager_reconstruction \
+  inventory_streams_4097_bodies_and_disk_sorts_unique_owners
+'''
 
 [tasks.e2e-offchain-storage]
 description = "Run the separate Linux RocksDB OCOMP storage E2E"
@@ -350,6 +366,7 @@ run = 'cargo xtask ocomp closure "$@"'
 # real enclave binary and makes the harness request gramine-sgx containers.
 [tasks.e2e-sgx]
 description = "Run the testnet Rust/Cucumber suite on SGX hardware without DCAP"
+depends = ["e2e-capacity"]
 run = """
 cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 4 --output target/e2e-artifacts/sgx-no-attest.json
 OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --all "$@"

@@ -91,6 +91,13 @@ enum Commands {
         key: PathBuf,
     },
 
+    /// Display the EVM address of an existing secp256k1 private key (offline).
+    ShowAddress {
+        /// Private key as 32-byte hex, with or without the 0x prefix.
+        #[arg(long)]
+        private_key: String,
+    },
+
     /// Sign a registration message for the ValidatorSet precompile.
     SignRegistration {
         /// Path to the signing-key.hex file.
@@ -171,11 +178,20 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let backend = resolve_backend(&cli)?;
+    let backend = if matches!(&cli.command, Commands::ShowAddress { .. }) {
+        KeyBackend::Plaintext
+    } else {
+        resolve_backend(&cli)?
+    };
 
     match cli.command {
         Commands::Generate { output_dir } => cmd_generate(output_dir, &backend),
         Commands::ShowPubkey { key } => cmd_show_pubkey(key, &backend),
+        Commands::ShowAddress { private_key } => {
+            let address = show_address(private_key)?;
+            println!("{address}");
+            Ok(())
+        }
         Commands::SignRegistration {
             key,
             validator_address,
@@ -392,6 +408,18 @@ struct ValidatorBundle {
     ocomp_evm_address: Address,
     radicle: RadicleIdentity,
     registration_signature: [u8; 96],
+}
+
+fn show_address(private_key: String) -> Result<Address> {
+    let encoded = Zeroizing::new(private_key);
+    let encoded = encoded.trim();
+    let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    hex::decode_to_slice(encoded, bytes.as_mut())
+        .map_err(|_| eyre::eyre!("EVM private key must be exactly 32 bytes of hex"))?;
+    let signing_key =
+        SigningKey::from_slice(bytes.as_ref()).wrap_err("invalid secp256k1 private key")?;
+    evm_address(&signing_key)
 }
 
 fn evm_address(signing_key: &SigningKey) -> Result<Address> {
@@ -854,6 +882,55 @@ mod tests {
         let mut full = vec!["keygen"];
         full.extend_from_slice(args);
         Cli::parse_from(full)
+    }
+
+    #[test]
+    fn show_address_requires_private_key() {
+        assert!(
+            Cli::try_parse_from(["keygen", "show-address", "--private-key", "hex-key",]).is_ok()
+        );
+        assert!(Cli::try_parse_from(["keygen", "show-address"]).is_err());
+        assert!(Cli::try_parse_from([
+            "keygen",
+            "show-address",
+            "--key",
+            "evm-key.hex",
+            "--private-key",
+            "hex-key",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn show_address_matches_known_evm_address() {
+        // Scalar one is public test material; derive its hex instead of storing a key.
+        let mut scalar = [0u8; 32];
+        scalar[31] = 1;
+        let encoded = hex::encode(scalar);
+        let expected: Address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+            .parse()
+            .unwrap();
+        for text in [
+            encoded.clone(),
+            format!("0x{encoded}"),
+            format!("{encoded}\n"),
+        ] {
+            assert_eq!(show_address(text).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn show_address_rejects_invalid_keys() {
+        for text in [
+            String::new(),
+            "ab".repeat(31),
+            "ab".repeat(33),
+            "zz".repeat(32),
+            "00".repeat(32),
+            "ff".repeat(32),
+        ] {
+            assert!(show_address(text).is_err());
+        }
     }
 
     #[test]
