@@ -597,7 +597,7 @@ fn top_siblings(roots: &[B256], selected: u32) -> Result<[B256; 4], PointReadSer
     while level_roots.len() > 1 {
         siblings.push(B256::from(level_roots[position ^ 1]));
         let mut parents = Vec::with_capacity(level_roots.len() / 2);
-        for pair in level_roots.chunks_exact(2) {
+        for pair in level_roots.as_chunks::<2>().0 {
             parents.push(top_hash(level, 0, pair[0], pair[1])?);
         }
         level_roots = parents;

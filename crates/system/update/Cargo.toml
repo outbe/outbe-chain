@@ -23,3 +23,6 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-ocomp-protocol.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+
+[lints]
+workspace = true
