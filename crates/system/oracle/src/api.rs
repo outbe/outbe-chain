@@ -141,14 +141,15 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-const FOUR_HOURS: u64 = 4 * 60 * 60;
-
 /// Rolling four-hour VWAP in the pair's registered scale, capped by the
 /// configured lookback. An empty window returns `None`; other errors propagate.
-pub fn four_hour_vwap(storage: StorageHandle, pair: AddressPair, now: u64) -> Result<Option<U256>> {
+pub fn four_hour_vwap(
+    storage: StorageHandle,
+    pair: AddressPair,
+    end_date: u64,
+) -> Result<Option<U256>> {
     let oracle = OracleContract::new(storage);
-    let lookback = oracle.config_lookback_duration.read()?.min(FOUR_HOURS);
-    oracle.try_calculate_vwap(pair, now.saturating_sub(lookback), now)
+    oracle.four_hour_vwap(pair, end_date)
 }
 
 /// Reference currencies available for pricing through a storage-only caller.

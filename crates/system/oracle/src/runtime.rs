@@ -1,6 +1,10 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
 //! and UTC-day finalization, and the OCOMP projection profile.
 
+use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
+use crate::errors::{OracleError, OracleOcompError};
+use crate::precompile::IOracle;
+use crate::schema::OracleContract;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
@@ -10,11 +14,6 @@ use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
-
-use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
-use crate::errors::{OracleError, OracleOcompError};
-use crate::precompile::IOracle;
-use crate::schema::OracleContract;
 
 /// `(pairs, values, lookbacks)` - one row per active vote-target pair, each
 /// carrying the orientation it was registered in.
@@ -55,6 +54,8 @@ impl VwapAccumulator {
         (!self.volume.is_zero()).then(|| self.price_volume / self.volume)
     }
 }
+
+const FOUR_HOURS: u64 = 4 * 60 * 60;
 
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
@@ -280,6 +281,11 @@ impl OracleContract<'_> {
     ) -> Result<U256> {
         self.try_calculate_vwap(pair, start_time, end_time)?
             .ok_or_else(|| OracleError::NoVwapData.into())
+    }
+
+    pub(crate) fn four_hour_vwap(&self, pair: AddressPair, end_date: u64) -> Result<Option<U256>> {
+        let lookback = self.config_lookback_duration.read()?.min(FOUR_HOURS);
+        self.try_calculate_vwap(pair, end_date.saturating_sub(lookback), end_date)
     }
 
     /// [`Self::calculate_vwap`] with "the window held no samples" as `Ok(None)`.
