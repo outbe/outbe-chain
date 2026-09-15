@@ -320,7 +320,7 @@ pub(crate) fn try_qualify_group(
     )?;
 
     // A slice of this sweep runs in a block hook, which cannot call contracts: the
-    // notice leaves from the `intex_notify` cycle trigger instead.
+    // notice leaves from the `intex_drain_notices` cycle trigger instead.
     enqueue_notice(
         factory,
         NOTICE_QUALIFIED,

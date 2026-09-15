@@ -35,10 +35,16 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 pub const QUALIFY_SWEEP: u8 = 0;
 pub const CALL_SWEEP: u8 = 1;
 
-/// Router calls one `intex_notify` firing may make; an entry costing none still
+/// Router calls one `intex_drain_notices` firing may make; an entry costing none still
 /// spends one. Sized to clear a day of calls inside [`CALL_NOTICE_PERIOD`] while
 /// leaving CycleTick its block headroom.
 pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
+
+/// Router calls one `intex_drain_parked` firing may make; each is a view read plus a cross-chain send.
+pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
+
+/// Consecutive failures that end a parked pass: an empty relay float fails every entry alike.
+pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;

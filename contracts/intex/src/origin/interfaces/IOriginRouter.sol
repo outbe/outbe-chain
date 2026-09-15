@@ -8,7 +8,7 @@ pragma solidity 0.8.30;
 /// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. The target set is
 ///      a registry (see {addTarget}); it is snapshotted per day at STAGE_START so a mid-day membership change never
 ///      reshapes an in-flight auction. Broadcast sends fan out over the snapshot; addressed sends carry a leading
-///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) - a single failing leg
+///      `dstChainId` and are checked against it. Every leg is isolated (see {resendParkedMessage}) - a single failing leg
 ///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
 ///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
@@ -18,6 +18,20 @@ interface IOriginRouter {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids received.
     event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 bidsCount);
+
+    /// @notice Emitted when a target's unfinished relay is answered with another round.
+    /// @param sendId Transport id of the CLEARING that carries the round.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param dstChainId Chain whose relay carries on.
+    /// @param nextBatch First chunk the target still has to send.
+    /// @param totalBatches Chunks the day's relay spans.
+    event BidsRelayRoundSent(
+        bytes32 indexed sendId,
+        uint32 indexed worldwideDay,
+        uint32 indexed dstChainId,
+        uint16 nextBatch,
+        uint16 totalBatches
+    );
 
     /// @notice Emitted when a BIDS_DONE completeness marker is received from a target chain.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -37,9 +51,9 @@ interface IOriginRouter {
     /// @param idx Parked-send index.
     /// @param dstChainId Destination chainId of the parked leg.
     /// @param msgType Codec message type of the parked payload.
-    event SendParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
+    event MessageParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
     /// @notice Emitted when a parked outbound leg is flushed successfully.
-    event PendingSendFlushed(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
+    event ParkedMessageResent(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
 
     /// @notice Emitted when an auction stage message is sent to a target chain.
     /// @param sendId Bridge send identifier.
@@ -97,7 +111,7 @@ interface IOriginRouter {
     /// @notice Emitted when distribution failed and the proceeds were parked for retry.
     event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when a parked distribution was retried successfully.
-    event ProceedsRetried(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
+    event ParkedProceedsDistributed(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
@@ -118,7 +132,7 @@ interface IOriginRouter {
     }
 
     /// @notice An outbound leg that failed to dispatch, retained for a permissionless flush.
-    struct ParkedSend {
+    struct ParkedMessage {
         uint32 dstChainId;
         uint64 gasLimit;
         bool sent;
@@ -203,7 +217,7 @@ interface IOriginRouter {
     /// @notice `sendLeg` is an internal self-call seam; caller was not this contract.
     error OnlySelf();
     /// @notice No live parked send at `idx`.
-    error NoParkedSend(uint256 idx);
+    error NoParkedMessage(uint256 idx);
     /// @notice Array lengths do not match.
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
@@ -254,54 +268,12 @@ interface IOriginRouter {
     /// @param amount Amount in wei to sweep; must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
-    // --- Quote ---
-    /// @notice Native fee to broadcast auction stage start (summed over the registered targets).
-    function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256 fee);
-    /// @notice Native fee to broadcast auction stage clearing (summed over the registered targets).
-    function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256 fee);
-    /// @notice Native fee to send auction result to a single target chain.
-    function quoteSendAuctionResult(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to send one issuance chunk to `dstChainId`.
-    function quoteSendIssuanceInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        IssuanceInstructionsParams[] calldata series
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
-    function quoteSendRefundInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
-    ) external view returns (uint256 fee);
-    /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds)
-        external
-        view
-        returns (uint256 fee);
-    /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
-    function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
-        external
-        view
-        returns (uint256 fee);
-
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
     ///         Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
     /// @notice Broadcast auction stage clearing over the day's snapshot. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageClearing(uint32 worldwideDay) external payable;
+    function sendAuctionStageClearing(uint32 worldwideDay, uint32 dstChainId, uint256 gasLimit) external payable;
     /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.
     function sendAuctionResult(
         uint32 dstChainId,
@@ -341,9 +313,12 @@ interface IOriginRouter {
     function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
-    function flushPendingSend(uint256 idx) external;
+    function resendParkedMessage(uint256 idx) external;
     /// @notice Parked outbound leg by index.
-    function parkedSend(uint256 idx) external view returns (ParkedSend memory);
+    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
+
+    /// @notice How many messages have ever parked; `sent` in {parkedMessage} tells which are resolved.
+    function parkedMessageCount() external view returns (uint256);
 
     // --- Proceeds ---
     /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
@@ -354,6 +329,9 @@ interface IOriginRouter {
     function wcoen() external view returns (address);
     /// @notice Parked proceeds awaiting retry, by enqueue index.
     function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
+
+    /// @notice How many proceeds have ever parked; `settled` in {parkedProceeds} tells which are resolved.
+    function parkedProceedsCount() external view returns (uint256);
     /// @notice Permissionless retry of a parked distribution.
-    function retryProceeds(uint256 idx) external;
+    function distributeParkedProceeds(uint256 idx) external;
 }

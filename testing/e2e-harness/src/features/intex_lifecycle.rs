@@ -1180,14 +1180,14 @@ fn unsettled_series_expired(world: &mut World) {
         let parked = eth::read_call(
             &target_url,
             target_router,
-            &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
+            &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
         );
         if parked.is_some_and(|mark| mark != 0) {
             eth::send_call(
                 &target_url,
                 target_router,
                 crate::world::forge::DEPLOYER_KEY,
-                &venue_probes::IIssuedSeries::applyPendingMarkCall { seriesId: series },
+                &venue_probes::IIssuedSeries::applyParkedMarkCall { seriesId: series },
                 None,
             )
             .expect("apply the mark the target chain parked");
@@ -1210,7 +1210,7 @@ fn unsettled_series_expired(world: &mut World) {
                     eth::read_call(
                         &target_url,
                         target_router,
-                        &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
+                        &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
                     )
                 );
                 sleep(Duration::from_secs(2));

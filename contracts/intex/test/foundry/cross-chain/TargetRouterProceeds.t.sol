@@ -157,26 +157,26 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         // Finalization still settled; the send was parked instead of rolling back.
         assertEq(tokenBridge.calls(), 0);
-        (uint32 s, uint128 a, bool exists, bool done) = target.pendingProceedsRoutes(0);
+        (uint32 s, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
         assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);
         assertTrue(exists);
         assertFalse(done);
     }
 
-    function test_FlushPendingProceedsRoute_Retries() public {
+    function test_FlushParkedProceeds_Retries() public {
         escrow.setTotalPaid(AMOUNT);
         tokenBridge.setShouldRevert(true);
         _deliverRefund(SERIES_ID);
 
         tokenBridge.setShouldRevert(false);
         vm.expectEmit(true, true, false, true, address(target));
-        emit ITargetRouter.ProceedsRouteFlushed(0, SERIES_ID);
-        target.flushPendingProceedsRoute(0);
+        emit ITargetRouter.ParkedProceedsResent(0, SERIES_ID);
+        target.resendParkedProceeds(0);
 
         assertEq(tokenBridge.calls(), 1);
         assertEq(tokenBridge.lastAmount(), AMOUNT);
-        (,,, bool done) = target.pendingProceedsRoutes(0);
+        (,,, bool done) = target.parkedProceeds(0);
         assertTrue(done);
     }
 
@@ -185,14 +185,14 @@ contract TargetRouterProceedsTest is CrossChainTest {
         tokenBridge.setShouldRevert(true);
         _deliverRefund(SERIES_ID);
         tokenBridge.setShouldRevert(false);
-        target.flushPendingProceedsRoute(0);
+        target.resendParkedProceeds(0);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
-        target.flushPendingProceedsRoute(0);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
+        target.resendParkedProceeds(0);
     }
 
     function test_RevertWhen_FlushUnknownIdx() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingProceedsRoute.selector, uint256(99)));
-        target.flushPendingProceedsRoute(99);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchParkedProceeds.selector, uint256(99)));
+        target.resendParkedProceeds(99);
     }
 }

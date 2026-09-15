@@ -60,19 +60,6 @@
     },
     {
       "type": "function",
-      "name": "NO_SPLIT_REFUND_DELAY",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "PAYMENT_TOKEN_DECIMALS",
       "inputs": [],
       "outputs": [
@@ -875,46 +862,6 @@
     },
     {
       "type": "function",
-      "name": "retryFinalize",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "inst",
-          "type": "tuple",
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction",
-          "components": [
-            {
-              "name": "bidder",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "refundedAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "paidAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            }
-          ]
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "revokeRole",
       "inputs": [
         {
@@ -1068,43 +1015,6 @@
           "type": "bytes",
           "indexed": false,
           "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "BidderRetried",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "refundedAmount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        },
-        {
-          "name": "paidAmount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1559,17 +1469,6 @@
     },
     {
       "type": "error",
-      "name": "NotFinalizedYet",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "NotInitializing",
       "inputs": []
     },
@@ -1621,22 +1520,6 @@
       "inputs": [
         {
           "name": "token",
-          "type": "address",
-          "internalType": "address"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SplitNotRecorded",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
           "type": "address",
           "internalType": "address"
         }

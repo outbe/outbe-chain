@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
@@ -189,7 +190,7 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, "");
         vm.prank(address(desisMock));
-        origin.sendAuctionStageClearing(day);
+        origin.sendAuctionStageClearing(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING);
 
         OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
@@ -203,7 +204,7 @@ contract UpgradeDrillTest is CrossChainTest {
         uint32[] memory snapshot = origin.targetsOf(day);
         assertEq(snapshot.length, 1, "day snapshot lost");
         assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
-        IOriginRouter.ParkedSend memory parked = origin.parkedSend(0);
+        IOriginRouter.ParkedMessage memory parked = origin.parkedMessage(0);
         assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
         assertFalse(parked.sent, "parked send flag lost");
 
@@ -211,8 +212,8 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        origin.flushPendingSend(0);
-        assertTrue(origin.parkedSend(0).sent, "flush broken after upgrade");
+        origin.resendParkedMessage(0);
+        assertTrue(origin.parkedMessage(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {

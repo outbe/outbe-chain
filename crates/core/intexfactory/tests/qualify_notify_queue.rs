@@ -1,4 +1,4 @@
-//! Queue mechanics of the lifecycle notices the `intex_notify` trigger sends.
+//! Queue mechanics of the lifecycle notices the `intex_drain_notices` trigger sends.
 //!
 //! The notice itself is best-effort, so these pin what must hold regardless of
 //! whether it reaches the router: the chunk bound, the resume point, and that a
