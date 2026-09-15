@@ -51,6 +51,10 @@ struct TargetRouterStorage {
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
+    /// @dev Retired: the bids relay queue and its index, replaced by resumable rounds. Held so every field
+    ///      below keeps the slot it was deployed on.
+    uint256 __retiredPendingBidsRelays;
+    uint256 __retiredNextPendingBidsRelayIdx;
     /// @dev Per-day counter stamped on every BIDS_BATCH of the day's relay. Bumped once, when the first
     ///      round starts: every round of the same day shares it, so the receiver collects them together.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
@@ -66,8 +70,8 @@ struct TargetRouterStorage {
     mapping(uint256 idx => ParkedProceeds) parkedProceeds;
     /// @dev Next index to assign in `parkedProceeds`; also the count ever enqueued.
     uint256 nextParkedProceedsIdx;
-    /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
-    mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
+    /// @dev Retired: the per-day `clearingRelayed` flag, replaced by `bidsRelay` at the tail.
+    uint256 __retiredClearingRelayed;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
@@ -90,6 +94,8 @@ struct TargetRouterStorage {
     /// @dev Bit per applied issuance chunk, so a repeat neither issues nor counts. Mirrors
     ///      `refundChunksApplied`; one word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
+    /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
+    mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
