@@ -17,6 +17,7 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
+import {BidsRelay} from "./libs/BidsRelay.sol";
 import {
     ChunkProgress,
     ParkedMark,
@@ -42,6 +43,7 @@ contract TargetRouter is
     UUPSUpgradeable
 {
     using SafeERC20 for IERC20;
+    using BidsRelay for BidsRelayProgress;
 
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
@@ -276,11 +278,9 @@ contract TargetRouter is
         _reportIfAdvanced(worldwideDay, batchBefore);
     }
 
-    /// @dev Report the remainder only when the round moved: a round that sent nothing would have the origin
-    ///      answer with the same budget for the same outcome, and that is a loop, not a recovery.
     function _reportIfAdvanced(uint32 worldwideDay, uint16 batchBefore) internal {
         BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
-        if (p.done || p.nextBatch <= batchBefore) return;
+        if (!p.advanced(batchBefore)) return;
         // solhint-disable-next-line no-empty-blocks
         try this.reportBidsRemaining(worldwideDay) {}
         catch {

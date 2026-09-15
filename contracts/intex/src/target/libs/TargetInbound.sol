@@ -9,6 +9,7 @@ import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
+import {BidsRelay} from "./BidsRelay.sol";
 import {
     BidsRelayProgress,
     ChunkProgress,
@@ -34,6 +35,8 @@ interface ITargetRouterShims {
 /// @notice Inbound message handlers of {TargetRouter}, linked as an external library so their bodies stay off
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
+    using BidsRelay for BidsRelayProgress;
+
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
     /// @dev An auction the day already has (same terms -> duplicate, other terms -> conflict), a schedule the day
     ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
@@ -113,9 +116,7 @@ library TargetInbound {
                 // The round rolled back whole, so progress reads as it did before it started.
                 emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
             }
-            // Report on the gas held back, but only if the round moved: an unmoved round would have the
-            // origin answer with the same budget for the same outcome, which is a loop, not a recovery.
-            if (!relay.done && relay.nextBatch > batchBefore) {
+            if (relay.advanced(batchBefore)) {
                 // solhint-disable-next-line no-empty-blocks
                 try ITargetRouterShims(address(this)).reportBidsRemaining(worldwideDay) {}
                 catch {
