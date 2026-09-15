@@ -47,6 +47,8 @@ wire_struct! {
         pub wwd: u32,
         pub subjects: OpeningSubjectsV1,
         pub fidelity: RawContractOpeningProofV1,
+        // Legacy pricing channel name. The current codec authenticates the
+        // frozen entry-price map at NOD_ADDRESS.
         pub oracle: RawContractOpeningProofV1,
     }
     validate = validate_lysis_openings;

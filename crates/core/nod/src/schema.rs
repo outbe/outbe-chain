@@ -174,7 +174,7 @@ impl NodCertifiedGenerationProjection {
 /// own independent trie. See `state::CurrencyBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=38 in declaration order. New fields append, which keeps the
+/// 0..=42 in declaration order. New fields append, which keeps the
 /// genesis-seeded materialization FIFO counters at slots 19 and 20.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
@@ -370,6 +370,17 @@ pub struct NodContract {
     /// bucket whose sealed window outruns the current constant.
     #[attribute(order = 49)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Complete entry-price snapshot captured before issuance, once per day.
+    #[attribute(order = 50)]
+    pub entry_prices_frozen: Mapping<WorldwideDay, bool>,
+    #[attribute(order = 51)]
+    pub entry_price_currency_count: Mapping<WorldwideDay, u32>,
+    #[attribute(order = 52)]
+    pub entry_price_currency: Mapping<WorldwideDay, Mapping<u32, u16>>,
+    /// Six-decimal entry price by reference ISO, independent of Oracle indices.
+    #[attribute(order = 53)]
+    pub entry_price_value: Mapping<WorldwideDay, Mapping<u16, U256>>,
 }
 
 impl<'storage> NodContract<'storage> {

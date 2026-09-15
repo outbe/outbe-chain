@@ -288,6 +288,10 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(37)
         );
         assert_eq!(nod.max_call_window.base_slot(), U256::from(38));
+        assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(39));
+        assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(40));
+        assert_eq!(nod.entry_price_currency.base_slot(), U256::from(41));
+        assert_eq!(nod.entry_price_value.base_slot(), U256::from(42));
     });
 }
 

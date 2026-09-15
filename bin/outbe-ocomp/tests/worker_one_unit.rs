@@ -27,6 +27,7 @@ use outbe_lysis::program_v1::planner::{
 use outbe_lysis::program_v1::result::{
     decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
 };
+use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
@@ -75,7 +76,6 @@ use outbe_ocomp_protocol::{
     ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
-use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_primitives::time::WorldwideDay;
 use tempfile::tempdir;
 
@@ -217,29 +217,19 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
-        .expect("fixture Oracle slot plan");
+    let oracle_plan = entry_price_slots(day, &[840, 978]).expect("fixture Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
-        U256::from(2),   // reference_currencies length
-        U256::from(840), // reference_currencies[0]
-        U256::from(978), // reference_currencies[1]
-        U256::from(1),   // pair_index[COEN/840]
-        U256::from(2),   // pair_index[COEN/978]
-        U256::from(1),   // wwd_vwap_exists
-        // One value word per subject pair, at its registry index.
-        coen840_price,                       // wwd_vwap_value[1]
-        generic_price_scale * U256::from(2), // wwd_vwap_value[2]
-        U256::ZERO,                          // scurve_count
-        U256::ZERO,                          // scurve_oldest
+        U256::from(1),
+        coen840_price,
+        generic_price_scale * U256::from(2),
     ];
-    assert_eq!(oracle_plan.slots.len(), oracle_values.len());
+    assert_eq!(oracle_plan.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
-        contract_address: Address::repeat_byte(0x56),
+        contract_address: outbe_primitives::addresses::NOD_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: oracle_plan
-            .slots
             .into_iter()
             .zip(oracle_values)
             .map(|(slot, value)| RawStorageSlotV1 { slot, value })

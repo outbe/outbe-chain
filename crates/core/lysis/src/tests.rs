@@ -27,6 +27,25 @@ fn coen(whole: u64) -> U256 {
     U256::from(whole) * SIX_DECIMAL_SCALE
 }
 
+fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256, current: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    let mut oracle = OracleContract::new(storage.clone());
+    let index = oracle.pair_index_of(pair).unwrap();
+    if !oracle
+        .reference_currencies
+        .read_all()
+        .unwrap()
+        .contains(&iso)
+    {
+        oracle.reference_currencies.push(iso).unwrap();
+    }
+    oracle.config_lookback_duration.write(86_400).unwrap();
+    oracle.exchange_rate.write(&index, current).unwrap();
+    oracle
+        .write_snapshot(now - 1, &[(pair, vwap, SIX_DECIMAL_SCALE)])
+        .unwrap();
+}
+
 struct TestBodyRepository {
     tribute_reader: TributeRepositoryReader,
     nod_reader: NodRepositoryReader,
@@ -162,16 +181,13 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        let oracle = OracleContract::new(storage.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, U256::from(500_000u64))
-            .unwrap();
+        seed_entry_prices(
+            &storage,
+            T_NOW,
+            840,
+            U256::from(500_000u64),
+            U256::from(500_000u64),
+        );
 
         let first = gas_audit_tribute(1, owner, wwd, nominal);
         let mut second = gas_audit_tribute(2, Address::repeat_byte(0x32), wwd, nominal);
@@ -217,31 +233,92 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
 }
 
 #[test]
-fn non_usd_lysis_price_ignores_a_higher_scurve() {
-    let wwd = WorldwideDay::new(20_260_718);
-    let mut storage = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut storage, |storage| {
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
-        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        let oracle = OracleContract::new(storage.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&index, U256::from(250_000_u64))
-            .unwrap();
-        outbe_oracle::scurve::store_scurve_entry(
-            &mut OracleContract::new(storage.clone()),
-            pair,
-            wwd.to_timestamp_utc(),
-            U256::from(320_000_u64),
-        )
-        .unwrap();
+fn lysis_entry_price_takes_the_max_for_usd_and_other_currencies() {
+    const NOW: u64 = 1_700_000_000;
+    for iso in [840, 978] {
+        for (vwap, current, expected) in [
+            (250_000, 200_000, 250_000),
+            (250_000, 320_000, 320_000),
+            (250_000, 250_000, 250_000),
+        ] {
+            let mut provider = HashMapStorageProvider::new(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+                outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+                seed_entry_prices(&storage, NOW, iso, U256::from(vwap), U256::from(current));
+                assert_eq!(
+                    crate::runtime::resolve_entry_price_minor_for_test(
+                        &crate::api::freeze_entry_price_snapshot(
+                            storage,
+                            WorldwideDay::new(20260715),
+                            NOW
+                        )
+                        .unwrap(),
+                        iso
+                    )
+                    .unwrap(),
+                    U256::from(expected),
+                );
+            });
+        }
+    }
+}
 
+#[test]
+fn entry_price_map_is_frozen_once_for_all_available_currencies() {
+    const NOW: u64 = 1_700_000_000;
+    let day = WorldwideDay::new(20260715);
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let usd = outbe_oracle::api::AddressPair::new_coen_to(840);
+        let eur = outbe_oracle::api::AddressPair::new_coen_to(978);
+        for iso in [826, 840, 978] {
+            let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+            let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            oracle.reference_currencies.push(iso).unwrap();
+            if iso != 826 {
+                oracle
+                    .exchange_rate
+                    .write(&index, coen(if iso == 840 { 150 } else { 180 }))
+                    .unwrap();
+            }
+        }
+        oracle.config_lookback_duration.write(86_400).unwrap();
+        for (time, usd_price, eur_price, volume) in [
+            (NOW - 14_401, 900, 900, 10),
+            (NOW - 14_400, 100, 50, 1),
+            (NOW - 1, 200, 150, 3),
+            (NOW, 800, 800, 10),
+        ] {
+            oracle
+                .write_snapshot(
+                    time,
+                    &[
+                        (usd, coen(usd_price), coen(volume)),
+                        (eur, coen(eur_price), coen(volume)),
+                    ],
+                )
+                .unwrap();
+        }
+        let prices = crate::api::freeze_entry_price_snapshot(storage.clone(), day, NOW).unwrap();
         assert_eq!(
-            crate::runtime::resolve_entry_price_minor_for_test(storage, wwd, 978).unwrap(),
-            U256::from(250_000_u64),
-            "Lysis must use the EUR WWD VWAP rather than its higher S-curve"
+            prices,
+            std::collections::BTreeMap::from([(840, coen(175)), (978, coen(180))])
+        );
+        assert!(crate::runtime::resolve_entry_price_minor_for_test(&prices, 826).is_err());
+        oracle.config_lookback_duration.write(3_600).unwrap();
+        assert_eq!(
+            outbe_oracle::api::four_hour_vwap(storage.clone(), usd, NOW).unwrap(),
+            Some(coen(200))
+        );
+        assert_eq!(
+            crate::api::freeze_entry_price_snapshot(storage.clone(), day, NOW + 60).unwrap(),
+            prices
+        );
+        assert_eq!(
+            outbe_nod::api::entry_price_snapshot(storage, day).unwrap(),
+            Some(prices)
         );
     });
 }
@@ -264,14 +341,25 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
 
             let usd = outbe_oracle::api::DAY_TYPE_PAIR;
             let eur = outbe_oracle::api::AddressPair::new_coen_to(978);
-            let usd_index = outbe_oracle::api::register_pair(storage.clone(), usd).unwrap();
+            outbe_oracle::api::register_pair(storage.clone(), usd).unwrap();
             let eur_index = outbe_oracle::api::register_pair(storage.clone(), eur).unwrap();
-            let oracle = OracleContract::new(storage.clone());
-            oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-            let values = oracle.worldwide_day_vwap_value.get_nested(&wwd);
-            values.write(&usd_index, U256::from(500_000_u64)).unwrap();
+            seed_entry_prices(
+                &storage,
+                T_NOW,
+                840,
+                U256::from(500_000_u64),
+                U256::from(500_000_u64),
+            );
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.reference_currencies.push(978).unwrap();
+            oracle
+                .exchange_rate
+                .write(&eur_index, U256::from(900_000_u64))
+                .unwrap();
             if explicitly_write_zero {
-                values.write(&eur_index, U256::ZERO).unwrap();
+                oracle
+                    .write_snapshot(T_NOW - 1, &[(eur, U256::ZERO, SIX_DECIMAL_SCALE)])
+                    .unwrap();
             }
             outbe_oracle::scurve::store_scurve_entry(
                 &mut OracleContract::new(storage.clone()),
@@ -297,10 +385,10 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 wwd,
                 nominal / U256::from(10_u64),
             ) {
-                Ok(_) => panic!("S-curve must not substitute for a missing or zero WWD VWAP"),
+                Ok(_) => panic!("Current price and S-curve must not substitute for a missing or zero four-hour VWAP"),
                 Err(error) => error,
             };
-            assert!(error.to_string().contains("WWD VWAP"));
+            assert!(error.to_string().contains("missing nod entry price"));
             let after = TributeContract::new(storage.clone())
                 .get_day_totals(wwd)
                 .unwrap();
@@ -341,16 +429,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         begin_block(storage.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        let oracle = OracleContract::new(storage.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, cost_of_gratis)
-            .unwrap();
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         for token_id in 1..=DENSE_TRIBUTE_COUNT {
@@ -707,7 +786,6 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 #[test]
 fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     use alloy_primitives::{address, U256};
-    use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::WorldwideDay;
@@ -730,19 +808,21 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
-        // 1. Register COEN/840 pair and seed its WorldwideDay VWAP. We
-        //    write directly into the oracle schema (no real vote tally),
-        //    because lysis only reads `get_worldwide_day_vwap_for_pair_id`.
+        // Register COEN/840 and seed its current price and four-hour VWAP.
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, cost_of_gratis)
+        seed_entry_prices(
+            &s,
+            T_NOW,
+            840,
+            cost_of_gratis / U256::from(2),
+            cost_of_gratis,
+        );
+        let frozen = crate::api::freeze_entry_price_snapshot(s.clone(), wwd, T_NOW).unwrap();
+        assert_eq!(frozen.get(&840), Some(&cost_of_gratis));
+        // Issuance must use the snapshot even when a subsequent live VWAP query would fail.
+        OracleContract::new(s.clone())
+            .config_lookback_duration
+            .write(0)
             .unwrap();
         outbe_oracle::scurve::store_scurve_entry(
             &mut OracleContract::new(s.clone()),
@@ -759,7 +839,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             )
             .unwrap(),
             U256::from(900_000u64),
-            "fixture must prove an S-curve above the WWD VWAP"
+            "fixture must prove an S-curve above the four-hour VWAP"
         );
 
         // Seed compact lifecycle state plus the canonical direct-map commitment,
@@ -1046,7 +1126,6 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 #[test]
 fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     use alloy_primitives::{address, U256};
-    use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::WorldwideDay;
@@ -1073,16 +1152,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, cost_of_gratis)
-            .unwrap();
+        seed_entry_prices(&s, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
@@ -1150,19 +1220,10 @@ fn lysis_records_contributors_aggregated_by_owner() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        // Oracle: register ISO 840 -> COEN/840 and seed a day VWAP snapshot.
+        // Oracle: register ISO 840 -> COEN/840 and seed current price and four-hour VWAP.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        let oracle = OracleContract::new(storage.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, cost_of_gratis)
-            .unwrap();
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         // Distinct owners: lysis derives nod_id from (owner, day), so an owner
         // can have at most one processed tribute per day.
@@ -1237,16 +1298,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         begin_block(storage.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        let oracle = OracleContract::new(storage.clone());
-        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
-        let pair_index = oracle
-            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(840))
-            .unwrap();
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&wwd)
-            .write(&pair_index, cost_of_gratis)
-            .unwrap();
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         let owner_a = gas_audit_address(1);
         let owner_b = gas_audit_address(2);

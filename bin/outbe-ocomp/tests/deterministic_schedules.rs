@@ -12,6 +12,7 @@ use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, 
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
+use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
@@ -52,8 +53,7 @@ use outbe_ocomp_protocol::{
     FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
     UnitFinishedV1,
 };
-use outbe_oracle::oracle_opening_slot_plan_v1;
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
 use tempfile::tempdir;
 
@@ -637,29 +637,19 @@ fn raw_fidelity_opening(
 }
 
 fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
-    let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
-        .expect("deterministic Oracle slot plan");
+    let plan = entry_price_slots(day, &[840, 978]).expect("deterministic Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
-        U256::from(2),   // reference_currencies length
-        U256::from(840), // reference_currencies[0]
-        U256::from(978), // reference_currencies[1]
-        U256::from(1),   // pair_index[COEN/840]
-        U256::from(2),   // pair_index[COEN/978]
-        U256::from(1),   // wwd_vwap_exists
-        // One value word per subject pair, at its registry index.
-        coen840_price,                       // wwd_vwap_value[1]
-        generic_price_scale * U256::from(2), // wwd_vwap_value[2]
-        U256::ZERO,                          // scurve_count
-        U256::ZERO,                          // scurve_oldest
+        U256::from(1),
+        coen840_price,
+        generic_price_scale * U256::from(2),
     ];
-    assert_eq!(plan.slots.len(), values.len());
+    assert_eq!(plan.len(), values.len());
     RawContractOpeningProofV1 {
-        contract_address: ORACLE_ADDRESS,
+        contract_address: NOD_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: plan
-            .slots
             .into_iter()
             .zip(values)
             .map(|(slot, value)| RawStorageSlotV1 { slot, value })
