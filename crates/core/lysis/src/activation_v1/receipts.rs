@@ -193,7 +193,7 @@ pub fn verify_receipts(
     let request = plan.request_budget_split();
     ensure(
         plan.nod()
-            .nod_gratis_consumed()
+            .lysis_allocation_minor()
             .checked_add(plan.carry_over().credited_unused_lysis())
             == Some(request.lysis_limit_minor),
         "Lysis receipt budget conservation",
@@ -300,7 +300,7 @@ fn verify_nod_receipt(
             && receipt.nod_count == expected.exact_counts().nod_count
             && receipt.nod_root == expected.nod_root()
             && receipt.nod_amount_total == expected.nod_amount_total()
-            && receipt.nod_gratis_consumed == expected.nod_gratis_consumed()
+            && receipt.lysis_allocation_minor == expected.lysis_allocation_minor()
             && receipt.issued_at == expected.issued_at(),
         "Lysis Nod receipt",
     )?;
@@ -311,7 +311,7 @@ fn verify_nod_receipt(
         nod_count: expected.exact_counts().nod_count,
         nod_root: expected.nod_root(),
         nod_amount_total: expected.nod_amount_total(),
-        nod_gratis_consumed: expected.nod_gratis_consumed(),
+        lysis_allocation_minor: expected.lysis_allocation_minor(),
         issued_at: expected.issued_at(),
     };
     receipt.validate_projection(&projection, limits)?;

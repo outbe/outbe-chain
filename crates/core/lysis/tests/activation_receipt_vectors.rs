@@ -475,7 +475,7 @@ fn owner_receipts(
         nod_count: plan.nod().exact_counts().nod_count,
         nod_root: plan.nod().nod_root(),
         nod_amount_total: plan.nod().nod_amount_total(),
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
     let contributor_projection = ContributorStateEventProjectionV1 {
@@ -507,7 +507,7 @@ fn owner_receipts(
             nod_count: plan.nod().exact_counts().nod_count,
             nod_root: plan.nod().nod_root(),
             nod_amount_total: plan.nod().nod_amount_total(),
-            nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+            lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
             issued_at: plan.nod().issued_at(),
             state_event_digest: nod_state_event_digest(&binding, &nod_projection, limits).unwrap(),
         },

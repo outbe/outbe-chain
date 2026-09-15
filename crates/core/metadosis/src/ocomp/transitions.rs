@@ -441,7 +441,7 @@ impl MetadosisContract<'_> {
         intent_id: B256,
         active_generation: ActiveGenerationV1,
         result_evidence_hash: B256,
-        nod_gratis_consumed: U256,
+        lysis_allocation_minor: U256,
         unused_lysis: U256,
         activated_at_height: u64,
         activated_at_time: u64,
@@ -517,7 +517,7 @@ impl MetadosisContract<'_> {
                         .frozen_metadosis_values
                         .request_budget_split_receipt_hash
                 || unused_lysis > record.intent.frozen_metadosis_values.lysis_limit_minor
-                || nod_gratis_consumed.checked_add(unused_lysis)
+                || lysis_allocation_minor.checked_add(unused_lysis)
                     != Some(record.intent.frozen_metadosis_values.lysis_limit_minor)
             {
                 return Err(storage_corruption_message(
@@ -623,7 +623,7 @@ impl MetadosisContract<'_> {
                 dayGratisLimit: frozen.gratis_supply,
                 dayGratisAllocation: frozen.lysis_limit_minor,
                 dayGratisAllocationRemainder: unused_lysis,
-                netDayGratisAllocation: nod_gratis_consumed,
+                netDayGratisAllocation: lysis_allocation_minor,
                 dayMetadosisLimitRemainder: unused_lysis,
                 status: "COMPLETED".into(),
                 blockNumber: activated_at_height,

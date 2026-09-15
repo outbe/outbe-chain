@@ -241,7 +241,7 @@ where
     let frozen = &inputs.intent.frozen_metadosis_values;
     let unused_lysis = frozen
         .lysis_limit_minor
-        .checked_sub(streamed.nod_gratis_consumed)
+        .checked_sub(streamed.lysis_allocation_minor)
         .ok_or(LysisFinalizationErrorV1::Authority(
             "Lysis consumption within frozen budget",
         ))?;
@@ -260,7 +260,7 @@ where
         gratis_supply: frozen.gratis_supply,
         lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
-        nod_gratis_consumed: streamed.nod_gratis_consumed,
+        lysis_allocation_minor: streamed.lysis_allocation_minor,
         unused_lysis,
         carry_over_credit: unused_lysis,
         nod_cost_total: streamed.nod_cost_total,
@@ -286,7 +286,7 @@ where
         gratis_supply: frozen.gratis_supply,
         lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
-        nod_gratis_consumed: streamed.nod_gratis_consumed,
+        lysis_allocation_minor: streamed.lysis_allocation_minor,
         unused_lysis,
         carry_over_credit: unused_lysis,
         status: CompletionStatus::Completed,
@@ -442,7 +442,7 @@ struct StreamedResultV1 {
     contributor_count: u32,
     tribute_nominal_total: U256,
     eligible_nominal_total: U256,
-    nod_gratis_consumed: U256,
+    lysis_allocation_minor: U256,
     nod_cost_total: U256,
 }
 
@@ -479,7 +479,7 @@ where
     let mut contributor_count = 0_u32;
     let mut tribute_nominal_total = U256::ZERO;
     let mut eligible_nominal_total = U256::ZERO;
-    let mut nod_gratis_consumed = U256::ZERO;
+    let mut lysis_allocation_minor = U256::ZERO;
     let mut nod_cost_total = U256::ZERO;
 
     for item in chunks {
@@ -555,8 +555,8 @@ where
                 tribute_id: action.tribute_id,
                 nod_id: action.nod_id,
             });
-            nod_gratis_consumed = checked_add(
-                nod_gratis_consumed,
+            lysis_allocation_minor = checked_add(
+                lysis_allocation_minor,
                 action.gratis_load_minor,
                 "Nod Gratis consumed",
             )?;
@@ -680,7 +680,7 @@ where
         contributor_count,
         tribute_nominal_total,
         eligible_nominal_total,
-        nod_gratis_consumed,
+        lysis_allocation_minor,
         nod_cost_total,
     })
 }
@@ -730,7 +730,7 @@ fn require_leaf_summary(
         &[result_chunk_hash.as_slice()],
         B256::len_bytes(),
     )?;
-    let nod_gratis_consumed = chunk
+    let lysis_allocation_minor = chunk
         .ordered_nod_actions
         .iter()
         .try_fold(U256::ZERO, |total, action| {
@@ -758,7 +758,7 @@ fn require_leaf_summary(
         || summary.bucket_count != u32::try_from(bucket_records.len()).unwrap_or(u32::MAX)
         || summary.contributor_count != u32::try_from(contributor_records.len()).unwrap_or(u32::MAX)
         || summary.eligible_nominal_total != eligible_nominal_total
-        || summary.nod_gratis_consumed != nod_gratis_consumed
+        || summary.lysis_allocation_minor != lysis_allocation_minor
         || summary.nod_cost_total != nod_cost_total
         || summary.first_error_ordinal.is_some()
     {
@@ -930,7 +930,7 @@ fn canonical_empty_summary(
         contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,
     })

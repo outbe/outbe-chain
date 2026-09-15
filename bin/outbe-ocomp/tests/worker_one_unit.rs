@@ -1603,7 +1603,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(summary.tribute_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(summary.eligible_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(
-        summary.nod_gratis_consumed,
+        summary.lysis_allocation_minor,
         finalized.ordered_records[0].nod_action.gratis_load_minor
     );
 

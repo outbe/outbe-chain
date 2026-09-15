@@ -24,7 +24,7 @@ pub struct CertifiedCarryOverCreditV1 {
     pub binding: EffectBindingV1,
     pub source_wwd: u32,
     pub lysis_limit_minor: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub unused_lysis: U256,
 }
 
@@ -93,7 +93,8 @@ fn validate_input(
     if capability.activation_call_id() != input.binding.activation_call_id {
         return Err(revert("certified carry-over activation binding mismatch"));
     }
-    if input.nod_gratis_consumed.checked_add(input.unused_lysis) != Some(input.lysis_limit_minor) {
+    if input.lysis_allocation_minor.checked_add(input.unused_lysis) != Some(input.lysis_limit_minor)
+    {
         return Err(revert("invalid certified carry-over budget conservation"));
     }
     Ok(())
@@ -288,7 +289,7 @@ mod tests {
             },
             source_wwd: 20_260_725,
             lysis_limit_minor: U256::from(consumed + unused),
-            nod_gratis_consumed: U256::from(consumed),
+            lysis_allocation_minor: U256::from(consumed),
             unused_lysis: U256::from(unused),
         }
     }
@@ -415,7 +416,7 @@ mod tests {
         assert!(wrong_budget.inner.get_ordered_events().is_empty());
 
         let mut overflowing_split_input = expected;
-        overflowing_split_input.nod_gratis_consumed = U256::MAX;
+        overflowing_split_input.lysis_allocation_minor = U256::MAX;
         overflowing_split_input.unused_lysis = U256::from(1);
         overflowing_split_input.lysis_limit_minor = U256::ZERO;
         let mut overflowing_split = ActivationTestProvider::new();

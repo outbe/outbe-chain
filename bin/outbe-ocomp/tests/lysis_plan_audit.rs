@@ -494,7 +494,7 @@ fn synthetic_fixture_with_options(
                     contributor_count: u32::try_from(contributors.len()).unwrap(),
                     tribute_nominal_total: raw_nominal_total,
                     eligible_nominal_total: raw_nominal_total,
-                    nod_gratis_consumed: U256::from(count),
+                    lysis_allocation_minor: U256::from(count),
                     nod_cost_total,
                     first_error_ordinal: None,
                 };

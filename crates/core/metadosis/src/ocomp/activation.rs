@@ -327,7 +327,7 @@ fn apply_certified_result(
         roots: result.roots.clone(),
         counts: plan.nod().exact_counts().clone(),
         nod_amount_total: plan.nod().nod_amount_total(),
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
     let contributor_input = CertifiedContributorRootV1 {
@@ -346,14 +346,14 @@ fn apply_certified_result(
     };
     let lysis_limit_minor = plan
         .nod()
-        .nod_gratis_consumed()
+        .lysis_allocation_minor()
         .checked_add(plan.carry_over().credited_unused_lysis())
         .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
         lysis_limit_minor,
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         unused_lysis: plan.carry_over().credited_unused_lysis(),
     };
 
@@ -373,7 +373,7 @@ fn apply_certified_result(
         // known two days later, and the limit bounds it.
         let allocated = plan
             .nod()
-            .nod_gratis_consumed()
+            .lysis_allocation_minor()
             .checked_add(request_receipt.auction_base)
             .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
         if allocated > plan.tribute().consumed_nominal_total() {
@@ -409,7 +409,7 @@ fn apply_certified_result(
             binding.intent_id,
             active_generation,
             result_evidence_hash,
-            plan.nod().nod_gratis_consumed(),
+            plan.nod().lysis_allocation_minor(),
             plan.carry_over().credited_unused_lysis(),
             current_height,
             current_time,

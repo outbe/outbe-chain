@@ -113,7 +113,7 @@ pub fn verify_result(
             output_manifest_root: result.roots.output_manifest_root,
             exact_counts: result.counts.clone(),
             nod_amount_total: result.conservation.nod_cost_total,
-            nod_gratis_consumed: result.conservation.nod_gratis_consumed,
+            lysis_allocation_minor: result.conservation.lysis_allocation_minor,
             issued_at: intent.logical_evaluation_time,
         }),
         contributors: contributor_apply(

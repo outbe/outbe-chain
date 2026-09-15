@@ -102,7 +102,7 @@ wire_struct! {
         pub gratis_supply: U256,
         pub lysis_limit_minor: U256,
         pub auction_base: U256,
-        pub nod_gratis_consumed: U256,
+        pub lysis_allocation_minor: U256,
         pub unused_lysis: U256,
         pub carry_over_credit: U256,
         pub status: CompletionStatus,
@@ -159,7 +159,7 @@ wire_struct! {
         pub gratis_supply: U256,
         pub lysis_limit_minor: U256,
         pub auction_base: U256,
-        pub nod_gratis_consumed: U256,
+        pub lysis_allocation_minor: U256,
         pub unused_lysis: U256,
         pub carry_over_credit: U256,
         pub nod_cost_total: U256,
@@ -485,7 +485,7 @@ impl LysisResultV1 {
         )?;
         let lysis_sum = self
             .conservation
-            .nod_gratis_consumed
+            .lysis_allocation_minor
             .checked_add(self.conservation.unused_lysis)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Lysis budget conservation",
@@ -509,7 +509,7 @@ impl LysisResultV1 {
                 && completion.gratis_supply == self.conservation.gratis_supply
                 && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
                 && completion.auction_base == self.conservation.auction_base
-                && completion.nod_gratis_consumed == self.conservation.nod_gratis_consumed
+                && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
                 && completion.unused_lysis == self.conservation.unused_lysis
                 && completion.carry_over_credit == self.conservation.carry_over_credit,
             "Metadosis completion conservation binding",

@@ -30,7 +30,7 @@ pub struct NodGenerationApplyV1 {
     output_manifest_root: B256,
     exact_counts: ExactCountsV1,
     nod_amount_total: U256,
-    nod_gratis_consumed: U256,
+    lysis_allocation_minor: U256,
     issued_at: u64,
 }
 
@@ -66,8 +66,8 @@ impl NodGenerationApplyV1 {
     }
 
     #[must_use]
-    pub const fn nod_gratis_consumed(&self) -> U256 {
-        self.nod_gratis_consumed
+    pub const fn lysis_allocation_minor(&self) -> U256 {
+        self.lysis_allocation_minor
     }
 
     #[must_use]
@@ -240,7 +240,7 @@ pub(super) struct NodGenerationApplyPartsV1 {
     pub output_manifest_root: B256,
     pub exact_counts: ExactCountsV1,
     pub nod_amount_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub issued_at: u64,
 }
 
@@ -252,7 +252,7 @@ pub(super) fn nod_apply(parts: NodGenerationApplyPartsV1) -> NodGenerationApplyV
         output_manifest_root: parts.output_manifest_root,
         exact_counts: parts.exact_counts,
         nod_amount_total: parts.nod_amount_total,
-        nod_gratis_consumed: parts.nod_gratis_consumed,
+        lysis_allocation_minor: parts.lysis_allocation_minor,
         issued_at: parts.issued_at,
     }
 }

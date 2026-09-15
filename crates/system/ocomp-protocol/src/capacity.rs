@@ -207,7 +207,7 @@ pub struct CapacityRecoveredGenerationBindingV1 {
     pub nod_count: u32,
     pub bucket_count: u32,
     pub nod_amount_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub issued_at: u64,
     pub result_evidence_hash: B256,
     pub block_number: u64,

@@ -376,7 +376,7 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         contributor_count: 1,
         tribute_nominal_total: U256::from(10_000),
         eligible_nominal_total: U256::from(100),
-        nod_gratis_consumed: U256::from(90),
+        lysis_allocation_minor: U256::from(90),
         nod_cost_total: U256::from(9_000),
         first_error_ordinal: None,
     };
@@ -449,7 +449,7 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
         contributor_count: 1,
         tribute_nominal_total: U256::from(100),
         eligible_nominal_total: U256::from(100),
-        nod_gratis_consumed: U256::from(10),
+        lysis_allocation_minor: U256::from(10),
         nod_cost_total: U256::from(90),
         first_error_ordinal: None,
     };
@@ -645,7 +645,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
             contributor_count,
             tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
             eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
-            nod_gratis_consumed: U256::from(tribute_count) * U256::from(3),
+            lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
             nod_cost_total: U256::from(tribute_count) * U256::from(7),
             first_error_ordinal,
         }
@@ -729,7 +729,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
         contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,
     };
