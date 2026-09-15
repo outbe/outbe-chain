@@ -40,7 +40,6 @@ pub(crate) struct PendingNodV1 {
 /// Stateful sequential reducer. It owns no storage and emits no chain effects.
 pub(crate) struct ProgramExecutionV1 {
     prepared: PreparedProgramV1,
-    mandatory_entry_price_840: U256,
     next_ordinal: usize,
     remaining: U256,
     nod_actions: Vec<NodActionV1>,
@@ -89,30 +88,19 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
         input.gratis_allocation,
         input.logical_evaluation_time,
     )?;
-    let mandatory = input
-        .mandatory_entry_price_840
-        .copied()
-        .ok_or(ProgramErrorV1::MandatoryOracleUnavailable)?;
-    let mut execution = prepared.start(mandatory)?;
+    let mut execution = prepared.start();
 
     for observed in &input.tributes {
         let pending = execution.quote_next()?;
         let ordinal = pending.ordinal;
-        let entry_price = if observed.tribute.reference_currency == 840 {
-            mandatory
-        } else {
-            observed.conditional_entry_price_minor.copied().ok_or(
-                ProgramErrorV1::ConditionalOracleUnavailable {
+        let entry_price =
+            observed
+                .entry_price_minor
+                .copied()
+                .ok_or(ProgramErrorV1::EntryPriceUnavailable {
                     ordinal,
                     currency: observed.tribute.reference_currency,
-                },
-            )?
-        };
-        validate_entry_price(
-            entry_price,
-            Some(ordinal),
-            observed.tribute.reference_currency,
-        )?;
+                })?;
         let second_league =
             observed
                 .second_league
@@ -184,28 +172,18 @@ pub(crate) fn prepare(
 }
 
 impl PreparedProgramV1 {
-    /// Bind the mandatory ISO 840 observation before any per-Tribute output.
-    pub(crate) fn start(
-        self,
-        mandatory_entry_price_840: U256,
-    ) -> Result<ProgramExecutionV1, ProgramErrorV1> {
-        validate_entry_price(mandatory_entry_price_840, None, 840)?;
+    /// Start the reducer before consuming per-Tribute observations.
+    pub(crate) fn start(self) -> ProgramExecutionV1 {
         let gratis_allocation = self.gratis_allocation;
-        let mut observations = self.observations.clone();
-        observations.push(SemanticObservationV1::Oracle {
-            ordinal: None,
-            currency: 840,
-            entry_price_minor: mandatory_entry_price_840,
-        });
-        Ok(ProgramExecutionV1 {
+        let observations = self.observations.clone();
+        ProgramExecutionV1 {
             prepared: self,
-            mandatory_entry_price_840,
             next_ordinal: 0,
             remaining: gratis_allocation,
             nod_actions: Vec::new(),
             contributors: BTreeMap::new(),
             observations,
-        })
+        }
     }
 }
 
@@ -247,18 +225,11 @@ impl ProgramExecutionV1 {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
         let tribute = &self.prepared.tributes[ordinal];
-        validate_entry_price(entry_price_minor, Some(ordinal), tribute.reference_currency)?;
-        if tribute.reference_currency != 840 {
-            self.observations.push(SemanticObservationV1::Oracle {
-                ordinal: Some(ordinal),
-                currency: tribute.reference_currency,
-                entry_price_minor,
-            });
-        } else if entry_price_minor != self.mandatory_entry_price_840 {
-            return Err(ProgramErrorV1::Arithmetic {
-                message: "ISO 840 entry price was not reused".to_owned(),
-            });
-        }
+        self.observations.push(SemanticObservationV1::Oracle {
+            ordinal,
+            currency: tribute.reference_currency,
+            entry_price_minor,
+        });
 
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
@@ -540,17 +511,6 @@ pub(crate) fn checked_nominal_step(
     total
         .checked_add(nominal_amount_minor)
         .ok_or(ProgramErrorV1::TotalNominalOverflow { ordinal })
-}
-
-pub(crate) fn validate_entry_price(
-    entry_price_minor: U256,
-    ordinal: Option<usize>,
-    currency: u16,
-) -> Result<(), ProgramErrorV1> {
-    if entry_price_minor.is_zero() {
-        return Err(ProgramErrorV1::ZeroEntryPrice { ordinal, currency });
-    }
-    Ok(())
 }
 
 pub(crate) fn validate_required_gratis(

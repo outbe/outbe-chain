@@ -208,11 +208,6 @@ pub(in super::super) fn execute_amount_map_unit(
     let entry_prices =
         evaluate_entry_prices(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)
             .map_err(|_| WorkerError::UnitBindingMismatch)?;
-    let mandatory_entry_price = entry_prices
-        .get(&840)
-        .copied()
-        .ok_or(WorkerError::UnitBindingMismatch)?;
-
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
@@ -232,7 +227,7 @@ pub(in super::super) fn execute_amount_map_unit(
             tribute: record.tribute.clone(),
             first_league: ObservationValueV1::Value(fidelity.pre_distribution_league),
             second_league: ObservationValueV1::Value(fidelity.issuance_league),
-            conditional_entry_price_minor: entry_prices
+            entry_price_minor: entry_prices
                 .get(&record.tribute.reference_currency)
                 .copied()
                 .map_or(ObservationValueV1::Unavailable, ObservationValueV1::Value),
@@ -244,7 +239,6 @@ pub(in super::super) fn execute_amount_map_unit(
         &observed,
         &fidelity.observations,
         &root_output.ordered_fractions,
-        mandatory_entry_price,
     )
     .map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = amount.coverage_root()?;

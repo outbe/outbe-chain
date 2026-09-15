@@ -82,10 +82,7 @@ fn lysis_inner(
     let prepared = program_v1::prepare(wwd, tribute_inputs, first_leagues, gratis_allocation, now)
         .map_err(program_error)?;
     let entry_prices = freeze_entry_price_snapshot(storage.clone(), wwd, now)?;
-    let entry_price_minor_840 = resolve_entry_price_minor(&entry_prices, 840)?;
-    let mut execution = prepared
-        .start(entry_price_minor_840)
-        .map_err(program_error)?;
+    let mut execution = prepared.start();
 
     let mut nod_ids = Vec::with_capacity(tributes.len());
     for loaded in &tributes {

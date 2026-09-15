@@ -12,7 +12,7 @@ use crate::constants::calc_floor_price;
 use super::{
     execute::{
         calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
-        validate_entry_price, validate_required_gratis,
+        validate_required_gratis,
     },
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
@@ -360,7 +360,6 @@ pub fn amount_map(
     observed: &[ObservedTributeV1],
     fidelity_observations: &[FidelityObservationV1],
     fractions: &[LeagueFractionV1],
-    mandatory_entry_price_840: U256,
 ) -> Result<AmountRunV1, ProgramErrorV1> {
     if observed.is_empty()
         || observed.len() != fidelity_observations.len()
@@ -370,7 +369,6 @@ pub fn amount_map(
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    validate_entry_price(mandatory_entry_price_840, None, 840)?;
     let mut fraction_by_league = BTreeMap::new();
     let mut previous_league = None;
     for fraction in fractions {
@@ -432,21 +430,13 @@ pub fn amount_map(
             fraction,
             raw_ordinal as usize,
         )?;
-        let entry_price_minor = if item.tribute.reference_currency == 840 {
-            mandatory_entry_price_840
-        } else {
-            item.conditional_entry_price_minor.copied().ok_or(
-                ProgramErrorV1::ConditionalOracleUnavailable {
+        let entry_price_minor =
+            item.entry_price_minor
+                .copied()
+                .ok_or(ProgramErrorV1::EntryPriceUnavailable {
                     ordinal: raw_ordinal as usize,
                     currency: item.tribute.reference_currency,
-                },
-            )?
-        };
-        validate_entry_price(
-            entry_price_minor,
-            Some(raw_ordinal as usize),
-            item.tribute.reference_currency,
-        )?;
+                })?;
         if !item.nod_target_available || item.tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget {
                 ordinal: raw_ordinal as usize,

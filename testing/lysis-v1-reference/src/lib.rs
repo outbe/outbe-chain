@@ -39,7 +39,6 @@ struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
     gratis_allocation: String,
-    mandatory_price_840: Option<String>,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -56,7 +55,7 @@ struct CorpusTribute {
     excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
-    conditional_price: Option<String>,
+    entry_price: Option<String>,
     nod_target_available: bool,
 }
 
@@ -81,14 +80,6 @@ impl ReferenceFailure {
             kind,
             ordinal: Some(ordinal),
             currency: None,
-        }
-    }
-
-    const fn currency(kind: &'static str, currency: u16) -> Self {
-        Self {
-            kind,
-            ordinal: None,
-            currency: Some(currency),
         }
     }
 
@@ -524,21 +515,6 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         })
         .collect::<BTreeMap<_, _>>();
 
-    let mandatory_price = input
-        .mandatory_price_840
-        .as_deref()
-        .ok_or_else(|| ReferenceFailure::currency("MANDATORY_ORACLE_UNAVAILABLE", 840))
-        .and_then(decimal)?;
-    if mandatory_price.is_zero() {
-        return Err(ReferenceFailure::currency("ZERO_ENTRY_PRICE", 840));
-    }
-    observations.push(json!({
-        "kind": "ORACLE",
-        "ordinal": Value::Null,
-        "currency": 840,
-        "entry_price": mandatory_price.to_string(),
-    }));
-
     let unit = scale();
     let mut remaining = allocation.clone();
     let mut actions = Vec::with_capacity(tributes.len());
@@ -563,35 +539,19 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         remaining -= &load;
 
         let currency = tribute.reference_currency;
-        let entry_price = if currency == 840 {
-            mandatory_price.clone()
-        } else {
-            let price = tribute
-                .conditional_price
-                .as_deref()
-                .ok_or_else(|| {
-                    ReferenceFailure::ordinal_currency(
-                        "CONDITIONAL_ORACLE_UNAVAILABLE",
-                        ordinal,
-                        currency,
-                    )
-                })
-                .and_then(decimal)?;
-            if price.is_zero() {
-                return Err(ReferenceFailure::ordinal_currency(
-                    "ZERO_ENTRY_PRICE",
-                    ordinal,
-                    currency,
-                ));
-            }
-            observations.push(json!({
-                "kind": "ORACLE",
-                "ordinal": ordinal,
-                "currency": currency,
-                "entry_price": price.to_string(),
-            }));
-            price
-        };
+        let entry_price = tribute
+            .entry_price
+            .as_deref()
+            .ok_or_else(|| {
+                ReferenceFailure::ordinal_currency("ENTRY_PRICE_UNAVAILABLE", ordinal, currency)
+            })
+            .and_then(decimal)?;
+        observations.push(json!({
+            "kind": "ORACLE",
+            "ordinal": ordinal,
+            "currency": currency,
+            "entry_price": entry_price.to_string(),
+        }));
 
         let tribute_price = decimal(&tribute.tribute_price)?;
         let base_price = tribute_price.max(entry_price.clone());

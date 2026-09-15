@@ -870,7 +870,6 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             worldwide_day: wwd,
             logical_evaluation_time: T_NOW,
             gratis_allocation,
-            mandatory_entry_price_840: crate::program_v1::ObservationValueV1::Value(cost_of_gratis),
             tributes: vec![crate::program_v1::ObservedTributeV1 {
                 tribute: crate::program_v1::TributeInputV1 {
                     tribute_id: entity_id(wwd, owner),
@@ -884,7 +883,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
                 },
                 first_league: crate::program_v1::ObservationValueV1::Value(league_id),
                 second_league: crate::program_v1::ObservationValueV1::Value(league_id),
-                conditional_entry_price_minor: crate::program_v1::ObservationValueV1::Unavailable,
+                entry_price_minor: crate::program_v1::ObservationValueV1::Value(cost_of_gratis),
                 nod_target_available: true,
             }],
         })
