@@ -722,7 +722,7 @@ fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
         day_type: DayType::Green,
         day_limit: U256::from(100),
         lysis_limit_minor: U256::from(60),
-        auction_base: U256::from(40),
+        desis_limit_minor: U256::from(40),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
@@ -778,7 +778,7 @@ fn intent(
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
             lysis_limit_minor: U256::from(60),
-            auction_base: U256::from(40),
+            desis_limit_minor: U256::from(40),
             auction_entry_prices: test_entry_prices(),
             request_budget_split_receipt_hash: request_receipt_hash,
         },
@@ -845,7 +845,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
         gratis_demand: U256::from(60),
         gratis_supply: U256::from(60),
         lysis_limit_minor: U256::from(60),
-        auction_base: U256::from(40),
+        desis_limit_minor: U256::from(40),
         lysis_allocation_minor: U256::from(45),
         unused_lysis_limit_minor: U256::from(15),
         carry_over_credit: U256::from(15),
@@ -887,7 +887,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
             lysis_limit_minor: U256::from(60),
-            auction_base: U256::from(40),
+            desis_limit_minor: U256::from(40),
             lysis_allocation_minor: U256::from(45),
             unused_lysis_limit_minor: U256::from(15),
             carry_over_credit: U256::from(15),
@@ -940,7 +940,7 @@ pub fn lysis_result_for_intent(
         gratis_demand: frozen.gratis_demand,
         gratis_supply: frozen.gratis_supply,
         lysis_limit_minor: frozen.lysis_limit_minor,
-        auction_base: frozen.auction_base,
+        desis_limit_minor: frozen.desis_limit_minor,
         lysis_allocation_minor: U256::ZERO,
         unused_lysis_limit_minor: frozen.lysis_limit_minor,
         carry_over_credit: frozen.lysis_limit_minor,
@@ -982,7 +982,7 @@ pub fn lysis_result_for_intent(
             gratis_demand: frozen.gratis_demand,
             gratis_supply: frozen.gratis_supply,
             lysis_limit_minor: frozen.lysis_limit_minor,
-            auction_base: frozen.auction_base,
+            desis_limit_minor: frozen.desis_limit_minor,
             lysis_allocation_minor: U256::ZERO,
             unused_lysis_limit_minor: frozen.lysis_limit_minor,
             carry_over_credit: frozen.lysis_limit_minor,
@@ -1467,7 +1467,7 @@ impl ActivationFixture {
             // A real request credits what Lysis left of the day's emission before the auction is
             // sized, so the accumulator holds at least what this receipt says the auction draws.
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .checked_add_carry_over(request_receipt.auction_base)
+                .checked_add_carry_over(request_receipt.desis_limit_minor)
                 .unwrap();
             contract
                 .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)

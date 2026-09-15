@@ -338,7 +338,7 @@ fn build_and_commit_request(
             gratis_demand: calculation.gratis_demand,
             gratis_supply: calculation.gratis_supply,
             lysis_limit_minor,
-            auction_base: receipt.auction_base,
+            desis_limit_minor: receipt.desis_limit_minor,
             auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_budget_split_receipt_hash: receipt_hash,
         },

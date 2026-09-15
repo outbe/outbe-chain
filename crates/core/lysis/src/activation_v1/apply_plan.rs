@@ -17,7 +17,7 @@ pub(super) struct RequestBudgetSplitApplyV1 {
     pub day_type: DayType,
     pub day_limit: U256,
     pub lysis_limit_minor: U256,
-    pub auction_base: U256,
+    pub desis_limit_minor: U256,
     pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }

@@ -188,7 +188,7 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
         day_type: DayType::Green,
         day_limit: DAY_LIMIT,
         lysis_limit_minor: LYSIS_BUDGET,
-        auction_base: AUCTION_BASE,
+        desis_limit_minor: AUCTION_BASE,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
@@ -247,7 +247,7 @@ fn intent(
             gratis_demand: LYSIS_BUDGET,
             gratis_supply: DAY_LIMIT,
             lysis_limit_minor: LYSIS_BUDGET,
-            auction_base: AUCTION_BASE,
+            desis_limit_minor: AUCTION_BASE,
             auction_entry_prices: entry_prices(),
             request_budget_split_receipt_hash: receipt_hash,
         },

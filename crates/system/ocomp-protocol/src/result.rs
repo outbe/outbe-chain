@@ -101,7 +101,7 @@ wire_struct! {
         pub gratis_demand: U256,
         pub gratis_supply: U256,
         pub lysis_limit_minor: U256,
-        pub auction_base: U256,
+        pub desis_limit_minor: U256,
         pub lysis_allocation_minor: U256,
         pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
@@ -158,7 +158,7 @@ wire_struct! {
         pub gratis_demand: U256,
         pub gratis_supply: U256,
         pub lysis_limit_minor: U256,
-        pub auction_base: U256,
+        pub desis_limit_minor: U256,
         pub lysis_allocation_minor: U256,
         pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
@@ -474,7 +474,7 @@ impl LysisResultV1 {
         let split_sum = self
             .conservation
             .lysis_limit_minor
-            .checked_add(self.conservation.auction_base)
+            .checked_add(self.conservation.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "day budget conservation",
             })?;
@@ -508,7 +508,7 @@ impl LysisResultV1 {
                 && completion.gratis_demand == self.conservation.gratis_demand
                 && completion.gratis_supply == self.conservation.gratis_supply
                 && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
-                && completion.auction_base == self.conservation.auction_base
+                && completion.desis_limit_minor == self.conservation.desis_limit_minor
                 && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
                 && completion.unused_lysis_limit_minor
                     == self.conservation.unused_lysis_limit_minor
@@ -580,7 +580,7 @@ impl LysisResultV1 {
                 && completion.gratis_demand == frozen.gratis_demand
                 && completion.gratis_supply == frozen.gratis_supply
                 && completion.lysis_limit_minor == frozen.lysis_limit_minor
-                && completion.auction_base == frozen.auction_base
+                && completion.desis_limit_minor == frozen.desis_limit_minor
                 && completion.status == CompletionStatus::Completed
                 && completion.logical_evaluation_height == intent.logical_evaluation_height
                 && completion.logical_evaluation_time == intent.logical_evaluation_time,

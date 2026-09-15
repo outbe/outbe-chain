@@ -142,7 +142,7 @@ fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() 
             assert_eq!(
                 calculation
                     .lysis_limit_minor
-                    .checked_add(calculation.auction_base),
+                    .checked_add(calculation.desis_limit_minor),
                 Some(total)
             );
             assert!(calculation.lysis_limit_minor <= calculation.gratis_supply);
@@ -331,7 +331,7 @@ fn test_calculate_metadosis_green_day() {
         //   allocation = min(demand, limit) = 3_200
         //   auction    = min(total, limit) - allocation = 1_800
         assert_eq!(calc.lysis_limit_minor, U256::from(3_200u64));
-        assert_eq!(calc.auction_base, U256::from(1_800u64));
+        assert_eq!(calc.desis_limit_minor, U256::from(1_800u64));
     });
 }
 
@@ -354,7 +354,7 @@ fn test_calculate_metadosis_green_day_below_the_limit() {
         //   auction    = min(1_000, 10_000) - 320          = 680
         //   unissued   = 10_000 - 320 - 680                = 9_000
         assert_eq!(calc.lysis_limit_minor, U256::from(320u64));
-        assert_eq!(calc.auction_base, U256::from(680u64));
+        assert_eq!(calc.desis_limit_minor, U256::from(680u64));
     });
 }
 
@@ -371,7 +371,7 @@ fn test_calculate_metadosis_red_day() {
         let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
-        let (allocation, auction_base) = (calc.lysis_limit_minor, calc.auction_base);
+        let (allocation, desis_limit_minor) = (calc.lysis_limit_minor, calc.desis_limit_minor);
 
         // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
         //   demand     = 10_000 * 32 / 100 / 8 = 400
@@ -379,7 +379,7 @@ fn test_calculate_metadosis_red_day() {
         //   allocation = min(demand, limit)     = 400
         //   auction    = min(total, day_limit) - allocation = 4_600
         assert_eq!(allocation, U256::from(400u64));
-        assert_eq!(auction_base, U256::from(4_600u64));
+        assert_eq!(desis_limit_minor, U256::from(4_600u64));
     });
 }
 

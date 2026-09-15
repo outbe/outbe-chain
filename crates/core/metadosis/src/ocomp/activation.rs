@@ -374,7 +374,7 @@ fn apply_certified_result(
         let allocated = plan
             .nod()
             .lysis_allocation_minor()
-            .checked_add(request_receipt.auction_base)
+            .checked_add(request_receipt.desis_limit_minor)
             .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
         if allocated > plan.tribute().consumed_nominal_total() {
             return Err(crate::errors::business_failure(

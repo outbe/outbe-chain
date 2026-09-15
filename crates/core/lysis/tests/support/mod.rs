@@ -66,7 +66,7 @@ pub fn recommit_result(result: &mut LysisResultV1, limits: &SchemaLimits) {
 fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
     let protocol_bundle_hash = hash(41);
     let wwd = 7;
-    let auction_base = U256::from(40);
+    let desis_limit_minor = U256::from(40);
     let auction_entry_prices = vec![ReferenceEntryPriceV1 {
         reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
         entry_price_minor: U256::from(9),
@@ -82,7 +82,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
         day_type,
         day_limit: U256::from(100),
         lysis_limit_minor: U256::from(60),
-        auction_base,
+        desis_limit_minor,
         destination: if green {
             BudgetSplitDestination::DesisAuction
         } else {
@@ -92,13 +92,13 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
             desis_request_brief_hash(
                 protocol_bundle_hash,
                 wwd,
-                if green { auction_base } else { U256::ZERO },
+                if green { desis_limit_minor } else { U256::ZERO },
                 &auction_entry_prices,
                 logical_anchor,
             )
             .unwrap(),
         ),
-        carry_over_credit: if green { U256::ZERO } else { auction_base },
+        carry_over_credit: if green { U256::ZERO } else { desis_limit_minor },
         auction_entry_prices,
         logical_anchor,
     }
@@ -128,7 +128,7 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
             lysis_limit_minor: U256::from(60),
-            auction_base: U256::from(40),
+            desis_limit_minor: U256::from(40),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(9),
@@ -197,7 +197,7 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
         gratis_demand: U256::from(60),
         gratis_supply: U256::from(60),
         lysis_limit_minor: U256::from(60),
-        auction_base: U256::from(40),
+        desis_limit_minor: U256::from(40),
         lysis_allocation_minor: U256::from(45),
         unused_lysis_limit_minor: U256::from(15),
         carry_over_credit: U256::from(15),
@@ -239,7 +239,7 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
             lysis_limit_minor: U256::from(60),
-            auction_base: U256::from(40),
+            desis_limit_minor: U256::from(40),
             lysis_allocation_minor: U256::from(45),
             unused_lysis_limit_minor: U256::from(15),
             carry_over_credit: U256::from(15),

@@ -202,7 +202,7 @@ pub fn verify_receipts(
     ensure(
         request
             .lysis_limit_minor
-            .checked_add(request.auction_base)
+            .checked_add(request.desis_limit_minor)
             .is_some_and(|total| total <= request.day_limit),
         "Lysis receipt day conservation",
     )?;
@@ -257,7 +257,7 @@ fn verify_request_receipt(
             && receipt.day_type == expected.day_type
             && receipt.day_limit == expected.day_limit
             && receipt.lysis_limit_minor == expected.lysis_limit_minor
-            && receipt.auction_base == expected.auction_base
+            && receipt.desis_limit_minor == expected.desis_limit_minor
             && receipt.auction_entry_prices == expected.auction_entry_prices,
         "Lysis request receipt fields",
     )?;
@@ -269,8 +269,8 @@ fn verify_request_receipt(
         receipt.logical_anchor <= expected.logical_anchor,
         "Lysis request receipt logical anchor",
     )?;
-    let briefed_supply = if expected.day_type == DayType::Green {
-        expected.auction_base
+    let desis_limit_minor = if expected.day_type == DayType::Green {
+        expected.desis_limit_minor
     } else {
         U256::ZERO
     };
@@ -279,7 +279,7 @@ fn verify_request_receipt(
             == Some(desis_request_brief_hash(
                 expected.protocol_bundle_hash,
                 expected.wwd,
-                briefed_supply,
+                desis_limit_minor,
                 &expected.auction_entry_prices,
                 receipt.logical_anchor,
             )?),

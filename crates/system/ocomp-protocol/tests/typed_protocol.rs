@@ -201,7 +201,7 @@ fn intent() -> JobIntentV1 {
             gratis_demand: U256::ZERO,
             gratis_supply: U256::ZERO,
             lysis_limit_minor: U256::ZERO,
-            auction_base: U256::ZERO,
+            desis_limit_minor: U256::ZERO,
             auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
                 reference_currency: 840,
                 entry_price_minor: U256::ZERO,
@@ -290,7 +290,7 @@ fn result() -> LysisResultV1 {
         gratis_demand: U256::ZERO,
         gratis_supply: U256::ZERO,
         lysis_limit_minor: U256::ZERO,
-        auction_base: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,
         unused_lysis_limit_minor: U256::ZERO,
         carry_over_credit: U256::ZERO,
@@ -318,7 +318,7 @@ fn result() -> LysisResultV1 {
         gratis_demand: U256::ZERO,
         gratis_supply: U256::ZERO,
         lysis_limit_minor: U256::ZERO,
-        auction_base: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,
         unused_lysis_limit_minor: U256::ZERO,
         carry_over_credit: U256::ZERO,
@@ -1048,7 +1048,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         day_type: DayType::Green,
         day_limit: U256::ZERO,
         lysis_limit_minor: U256::ZERO,
-        auction_base: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
@@ -1637,7 +1637,7 @@ fn a_split_short_of_the_day_limit_is_accepted() {
     let mut short_intent = intent();
     short_intent.frozen_metadosis_values.day_limit = U256::from(10);
     short_intent.frozen_metadosis_values.lysis_limit_minor = U256::from(3);
-    short_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    short_intent.frozen_metadosis_values.desis_limit_minor = U256::from(2);
     short_intent.encode_canonical(&LIMITS).unwrap();
 }
 
@@ -1650,7 +1650,7 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
         day_type: DayType::Green,
         day_limit: U256::from(10),
         lysis_limit_minor: U256::from(4),
-        auction_base: U256::from(5),
+        desis_limit_minor: U256::from(5),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::from(1),
@@ -1683,7 +1683,7 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
 fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut invalid_intent = intent();
     invalid_intent.frozen_metadosis_values.day_limit = U256::from(1);
-    invalid_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    invalid_intent.frozen_metadosis_values.desis_limit_minor = U256::from(2);
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("Metadosis budget split"))
@@ -1696,7 +1696,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         day_type: DayType::Green,
         day_limit: U256::from(10),
         lysis_limit_minor: U256::from(4),
-        auction_base: U256::from(6),
+        desis_limit_minor: U256::from(6),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
@@ -1713,7 +1713,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut green_to_carry_over = green_split.clone();
     green_to_carry_over.destination = BudgetSplitDestination::CarryOver;
     green_to_carry_over.desis_brief_hash = None;
-    green_to_carry_over.carry_over_credit = green_to_carry_over.auction_base;
+    green_to_carry_over.carry_over_credit = green_to_carry_over.desis_limit_minor;
     assert!(matches!(
         green_to_carry_over.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
@@ -1724,7 +1724,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut red_split = green_split;
     red_split.day_type = DayType::Red;
     red_split.destination = BudgetSplitDestination::CarryOver;
-    red_split.carry_over_credit = red_split.auction_base;
+    red_split.carry_over_credit = red_split.desis_limit_minor;
     red_split.encode_canonical(&LIMITS).unwrap();
 
     let mut red_without_brief = red_split.clone();
@@ -1839,7 +1839,7 @@ fn applied_receipt_validates_the_fixed_owner_event_order() {
 fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let protocol_bundle_hash = hash(41);
     let wwd = 7_u32;
-    let auction_base = U256::from(6);
+    let desis_limit_minor = U256::from(6);
     let prices = |price: u64, currency: u16| {
         vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
             reference_currency: currency,
@@ -1854,7 +1854,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let digest = desis_request_brief_hash(
         protocol_bundle_hash,
         wwd,
-        auction_base,
+        desis_limit_minor,
         &entry_prices,
         logical_anchor,
     )
@@ -1862,7 +1862,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(protocol_bundle_hash.as_slice());
     preimage.extend_from_slice(&wwd.to_be_bytes());
-    preimage.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    preimage.extend_from_slice(&desis_limit_minor.to_be_bytes::<32>());
     preimage.extend_from_slice(&1_u16.to_be_bytes());
     preimage.extend_from_slice(&840_u16.to_be_bytes());
     preimage.extend_from_slice(&U256::from(2).to_be_bytes::<32>());
@@ -1882,12 +1882,18 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         rows
     };
     for changed in [
-        desis_request_brief_hash(hash(42), wwd, auction_base, &entry_prices, logical_anchor)
-            .unwrap(),
+        desis_request_brief_hash(
+            hash(42),
+            wwd,
+            desis_limit_minor,
+            &entry_prices,
+            logical_anchor,
+        )
+        .unwrap(),
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd + 1,
-            auction_base,
+            desis_limit_minor,
             &entry_prices,
             logical_anchor,
         )
@@ -1895,7 +1901,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base + U256::from(1),
+            desis_limit_minor + U256::from(1),
             &entry_prices,
             logical_anchor,
         )
@@ -1903,7 +1909,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &prices(3, 840),
             logical_anchor,
         )
@@ -1911,7 +1917,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &prices(2, 978),
             logical_anchor,
         )
@@ -1919,7 +1925,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &two_rows,
             logical_anchor,
         )
@@ -1927,7 +1933,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &entry_prices,
             logical_anchor + 1,
         )

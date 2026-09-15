@@ -178,7 +178,7 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
     mutation.metadosis_completion_summary.lysis_limit_minor += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
-    mutation.metadosis_completion_summary.auction_base += U256::from(1);
+    mutation.metadosis_completion_summary.desis_limit_minor += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
     mutation
@@ -286,12 +286,12 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
     let mut anchor_fixture = activation_fixture(DayType::Green);
     anchor_fixture.request_receipt.logical_anchor =
         anchor_fixture.intent.logical_evaluation_time + 1;
-    let briefed_supply = anchor_fixture.request_receipt.auction_base;
+    let desis_limit_minor = anchor_fixture.request_receipt.desis_limit_minor;
     anchor_fixture.request_receipt.desis_brief_hash = Some(
         outbe_ocomp_protocol::receipts::desis_request_brief_hash(
             anchor_fixture.request_receipt.protocol_bundle_hash,
             anchor_fixture.request_receipt.wwd,
-            briefed_supply,
+            desis_limit_minor,
             &anchor_fixture.request_receipt.auction_entry_prices,
             anchor_fixture.request_receipt.logical_anchor,
         )

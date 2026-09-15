@@ -741,11 +741,11 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(
             frozen.day_limit,
-            base_limit.checked_add(frozen.auction_base).unwrap()
+            base_limit.checked_add(frozen.desis_limit_minor).unwrap()
         );
         // The auction never asks for more than the nominal beyond the symbolic share.
         assert!(
-            frozen.auction_base
+            frozen.desis_limit_minor
                 <= prepared
                     .nominal
                     .checked_sub(frozen.lysis_limit_minor)
@@ -754,7 +754,7 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
         // Lysis took this day's whole emission, so it credited nothing and the auction, with an
         // empty accumulator behind it, had nothing to draw.
         assert_eq!(frozen.lysis_limit_minor, base_limit);
-        assert_eq!(frozen.auction_base, U256::ZERO);
+        assert_eq!(frozen.desis_limit_minor, U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
@@ -784,10 +784,10 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&prepared.wwd)
                 .unwrap(),
-            record.intent.frozen_metadosis_values.auction_base
+            record.intent.frozen_metadosis_values.desis_limit_minor
         );
 
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);

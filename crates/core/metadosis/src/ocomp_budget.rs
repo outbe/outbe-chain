@@ -29,7 +29,7 @@ pub(crate) struct RequestBudgetSplit {
     /// The day's own emission plus what it drew from the accumulator.
     pub day_limit: U256,
     pub lysis_limit_minor: U256,
-    pub auction_base: U256,
+    pub desis_limit_minor: U256,
     /// What Lysis left of the day's own emission, credited before the auction draws.
     pub carry_over_credit: U256,
 }
@@ -55,7 +55,7 @@ impl RequestBudgetSplit {
         let available = carry_over_before
             .checked_add(carry_over_credit)
             .ok_or_else(invalid)?;
-        let auction_base = if green {
+        let desis_limit_minor = if green {
             nominal_total
                 .checked_sub(lysis_limit_minor)
                 .ok_or_else(invalid)?
@@ -66,7 +66,7 @@ impl RequestBudgetSplit {
         Self::assemble(
             base_limit,
             lysis_limit_minor,
-            auction_base,
+            desis_limit_minor,
             carry_over_credit,
         )
     }
@@ -74,7 +74,7 @@ impl RequestBudgetSplit {
     fn assemble(
         base_limit: U256,
         lysis_limit_minor: U256,
-        auction_base: U256,
+        desis_limit_minor: U256,
         carry_over_credit: U256,
     ) -> Result<Self> {
         let invalid = || MetadosisError::InvalidOcompBudgetSplit {
@@ -84,11 +84,13 @@ impl RequestBudgetSplit {
         if lysis_limit_minor.checked_add(carry_over_credit) != Some(base_limit) {
             return Err(invalid().into());
         }
-        let day_limit = base_limit.checked_add(auction_base).ok_or_else(invalid)?;
+        let day_limit = base_limit
+            .checked_add(desis_limit_minor)
+            .ok_or_else(invalid)?;
         Ok(Self {
             day_limit,
             lysis_limit_minor,
-            auction_base,
+            desis_limit_minor,
             carry_over_credit,
         })
     }
@@ -144,18 +146,18 @@ pub(crate) fn apply_auction_brief(
     let green = receipt.day_type == DayType::Green;
     // One checkpoint: the draw and the brief may not survive each other's failure.
     storage.with_checkpoint(|| {
-        if !receipt.auction_base.is_zero() {
+        if !receipt.desis_limit_minor.is_zero() {
             let drawn = PromisLimitContract::new(storage.clone())
-                .checked_take_carry_over_up_to(receipt.auction_base)?;
-            if drawn.taken != receipt.auction_base {
+                .checked_take_carry_over_up_to(receipt.desis_limit_minor)?;
+            if drawn.taken != receipt.desis_limit_minor {
                 return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
             }
         }
-        let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
+        let actual = outbe_desis::ocomp_budget::apply_request_desis_limit(
             storage.clone(),
             receipt.protocol_bundle_hash,
             receipt.wwd.into(),
-            receipt.auction_base,
+            receipt.desis_limit_minor,
             &receipt.auction_entry_prices,
             receipt.logical_anchor,
             green,
@@ -172,8 +174,11 @@ fn expected_receipt(
     split: RequestBudgetSplit,
     effect_nonce: u64,
 ) -> Result<RequestBudgetSplitReceiptV1> {
-    let (destination, briefed_supply) = match request.day_type {
-        DayType::Green => (BudgetSplitDestination::DesisAuction, split.auction_base),
+    let (destination, desis_limit_minor) = match request.day_type {
+        DayType::Green => (
+            BudgetSplitDestination::DesisAuction,
+            split.desis_limit_minor,
+        ),
         DayType::Red => (BudgetSplitDestination::CarryOver, U256::ZERO),
     };
     let carry_over_credit = split.carry_over_credit;
@@ -181,7 +186,7 @@ fn expected_receipt(
         desis_request_brief_hash(
             request.protocol_bundle_hash,
             request.wwd,
-            briefed_supply,
+            desis_limit_minor,
             &request.auction_entry_prices,
             request.logical_anchor,
         )
@@ -194,7 +199,7 @@ fn expected_receipt(
         day_type: request.day_type,
         day_limit: split.day_limit,
         lysis_limit_minor: split.lysis_limit_minor,
-        auction_base: split.auction_base,
+        desis_limit_minor: split.desis_limit_minor,
         destination,
         desis_brief_hash,
         carry_over_credit,

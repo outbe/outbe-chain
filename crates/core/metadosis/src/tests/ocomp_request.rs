@@ -298,7 +298,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap()
             .unwrap();
         let desis_supply_before = DesisContract::new(storage.clone())
-            .pending_supply_promis
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap();
         let finality_recorded_height = block_number + 2;
@@ -354,7 +354,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
             desis_supply_before
@@ -376,7 +376,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
             desis_supply_before
@@ -1434,7 +1434,7 @@ fn request_observables(
             .read(&wwd)
             .unwrap(),
         desis_supply: DesisContract::new(storage.clone())
-            .pending_supply_promis
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
@@ -1546,12 +1546,12 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .unwrap();
         assert_eq!(receipt.day_limit, day_limit + U256::from(68));
         assert_eq!(receipt.lysis_limit_minor, U256::from(32));
-        assert_eq!(receipt.auction_base, U256::from(68));
+        assert_eq!(receipt.desis_limit_minor, U256::from(68));
         assert_eq!(receipt.carry_over_credit, U256::from(968));
 
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
             U256::ZERO,

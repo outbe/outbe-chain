@@ -84,7 +84,7 @@ pub(crate) fn record_preflighted_brief(
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
-        .pending_supply_promis
+        .pending_desis_limit_minor
         .write(&worldwide_day, U256::from(supply_promis))?;
     contract
         .brief_green
@@ -531,12 +531,12 @@ fn refund_unsold_supply(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
-    let supply = contract.pending_supply_promis.read(&worldwide_day)?;
+    let supply = contract.pending_desis_limit_minor.read(&worldwide_day)?;
     if supply.is_zero() {
         return Ok(());
     }
     contract
-        .pending_supply_promis
+        .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
     contract.emit(IDesis::UnusedSupplyReported {
         worldwideDay: worldwide_day.into(),
@@ -554,7 +554,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     if config.promis_load_minor == 0 {
         return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
-    let supply_promis = u128::try_from(contract.pending_supply_promis.read(&worldwide_day)?)
+    let supply_promis = u128::try_from(contract.pending_desis_limit_minor.read(&worldwide_day)?)
         .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
     let supply_intex = (supply_promis / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
 
@@ -955,14 +955,14 @@ fn clear_inner(
     contract.write_last_clearing_issued_count(result.issued_units)?;
 
     // Clear the bid working-set, pending inputs and the gate (CEI: state writes before external calls).
-    let supply_promis = contract.pending_supply_promis.read(&worldwide_day)?;
+    let supply_promis = contract.pending_desis_limit_minor.read(&worldwide_day)?;
     for &chain_id in snapshot {
         contract.reset_chain_intake(worldwide_day, chain_id)?;
     }
     contract.day_bid_count.write(&worldwide_day, 0)?;
     contract.pending_supply_intex.write(&worldwide_day, 0)?;
     contract
-        .pending_supply_promis
+        .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
     contract.clearing_initiated.write(&worldwide_day, 0u8)?;
     contract.clearing_deadline.clear(&worldwide_day)?;

@@ -97,7 +97,7 @@ wire_struct! {
         pub day_type: DayType,
         pub day_limit: U256,
         pub lysis_limit_minor: U256,
-        pub auction_base: U256,
+        pub desis_limit_minor: U256,
         pub destination: BudgetSplitDestination,
         pub desis_brief_hash: Option<B256>,
         pub carry_over_credit: U256,
@@ -395,14 +395,14 @@ pub fn empty_apply_event_summary_hash() -> Result<B256, ProtocolError> {
 pub fn desis_request_brief_hash(
     protocol_bundle_hash: B256,
     wwd: u32,
-    auction_base: U256,
+    desis_limit_minor: U256,
     auction_entry_prices: &[ReferenceEntryPriceV1],
     logical_anchor: u64,
 ) -> Result<B256, ProtocolError> {
     let mut payload = Vec::with_capacity(84 + auction_entry_prices.len() * 39);
     payload.extend_from_slice(protocol_bundle_hash.as_slice());
     payload.extend_from_slice(&wwd.to_be_bytes());
-    payload.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    payload.extend_from_slice(&desis_limit_minor.to_be_bytes::<32>());
     payload.extend_from_slice(&(auction_entry_prices.len() as u16).to_be_bytes());
     for row in auction_entry_prices {
         payload.extend_from_slice(&row.reference_currency.to_be_bytes());
@@ -426,14 +426,18 @@ impl RequestBudgetSplitReceiptV1 {
         // The base a red day never opens is still a share of its limit.
         let split_total = self
             .lysis_limit_minor
-            .checked_add(self.auction_base)
+            .checked_add(self.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "request budget split",
             })?;
         require(split_total <= self.day_limit, "request budget split")?;
         // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
         // the warehouse; a red day briefs nothing, so its base returns with the headroom.
-        let briefed = if green { self.auction_base } else { U256::ZERO };
+        let briefed = if green {
+            self.desis_limit_minor
+        } else {
+            U256::ZERO
+        };
         let accounted = self
             .lysis_limit_minor
             .checked_add(briefed)
