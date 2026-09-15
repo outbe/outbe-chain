@@ -2,7 +2,7 @@
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
-  # it exists - qualifying, being settled by its holder, and burning into Promis.
+  # it exists - qualifying, being settled by its owner, and burning into Promis.
 
   # Applying the day's OCOMP result hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
@@ -67,7 +67,7 @@ Feature: Intex from auction to Promis
   # unrealized units alone from one and the whole tirage from the other.
   #
   # The two hops home also take the bridge's two routes: one series at a time
-  # first, then both together, which is how a holder of several actually moves
+  # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle
   Scenario: Four Intex series qualify as one group, settle from both states, and burn or expire
@@ -79,24 +79,24 @@ Feature: Intex from auction to Promis
     Then the committee chain hosts the intex engine
     When a relay carries messages between the two chains
     And the settlement currency is registered on the committee chain
-    Then holders may settle in that currency
-    When four test Intex series sharing a reference currency are issued to a funded holder
-    Then the holder holds issued units of every series on each chain
+    Then owners may settle in that currency
+    When four test Intex series sharing a reference currency are issued to a funded owner
+    Then the owner holds issued units of every series on each chain
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
     Then every series qualifies in one group decision
-    When the holder brings part of the target-chain units home
-    And the holder settles part of their units
+    When the owner brings part of the target-chain units home
+    And the owner settles part of their units
     Then those units move from issued to settled
     And the settlement payment lands in the reserve vault
     When the call trigger holds above the call price across the call window
     Then every series becomes Called
-    When the holder brings the remaining units home to their own address in one batch
-    And the holder settles the remaining units inside the notice period
+    When the owner brings the remaining units home to their own address in one batch
+    And the owner settles the remaining units inside the notice period
     Then no issued units remain of the pair being settled whole
-    When the holder mines Promis against their settled units
+    When the owner mines Promis against their settled units
     Then the settled units are burned and Promis is mined
-    When the holder settles part of one series they let run out
+    When the owner settles part of one series they let run out
     And the call notice runs out on both of them
     Then both series read Expired on both chains
     And only their unrealized load returns to the unallocated pool

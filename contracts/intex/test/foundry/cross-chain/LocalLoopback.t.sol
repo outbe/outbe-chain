@@ -299,7 +299,7 @@ contract LocalLoopbackTest is Test {
         vm.prank(address(desis));
         origin.sendAuctionResult(local, DAY, 50, 700_000, 2);
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(DAY).result;
-        assertEq(result.issuedIntexCount, 50, "issued");
+        assertEq(result.issuedUnits, 50, "issued");
         assertEq(result.auctionClearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery finalizes the escrow AND routes the paid wCOEN to
@@ -339,7 +339,7 @@ contract LocalLoopbackTest is Test {
             seriesId: CreateSeriesLib.seriesId(DAY),
             worldwideDay: DAY,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: 50,
+            issuedUnits: 50,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: 1e6,
             floorPriceMinor: 100,

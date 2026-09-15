@@ -1,5 +1,5 @@
 //! Daily Called scan: force-calls a Qualified series once its COEN VWAP exceeded
-//! the call trigger on `call_threshold` of the last `call_window`. Candidates
+//! the call trigger on `call_threshold_seconds` of the last `call_window_seconds`. Candidates
 //! come from the call-trigger bin index; counts are recomputed each run from the
 //! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
 //! closes before the CycleTick that drives this scan. Driven by the Cycle daily
@@ -164,8 +164,11 @@ fn call_currency(
     let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
     // Widest terms ever issued here, not the live profile: a series keeps the terms
     // it was issued with, and a narrowed profile must not hide it from the search.
-    let (window_days, threshold_days) =
-        factory.scan_call_terms(iso_code, params.call_window, params.call_threshold)?;
+    let (window_days, threshold_days) = factory.scan_call_terms(
+        iso_code,
+        params.call_window_seconds,
+        params.call_threshold_seconds,
+    )?;
 
     let mut vwaps = DayVwaps::new(pair_index);
     let Some(window) = call_window(
@@ -394,8 +397,8 @@ pub(crate) fn try_call_group(
     let trigger = series.call_price_minor;
     // The scan walks finalized daily VWAPs, so both bounds floor to whole days.
     let secs_per_day = SECONDS_PER_DAY as u32;
-    let group_days = series.call_window / secs_per_day;
-    let group_threshold = series.call_threshold / secs_per_day;
+    let group_days = series.call_window_seconds / secs_per_day;
+    let group_threshold = series.call_threshold_seconds / secs_per_day;
     if group_days == 0 || group_threshold == 0 {
         return Ok(0);
     }
@@ -434,7 +437,7 @@ pub(crate) fn try_call_group(
     factory.push_called_group(
         group.iso_code,
         group.worldwide_day,
-        u64::from(called_at) + u64::from(series.call_notice_period),
+        u64::from(called_at) + u64::from(series.call_notice_period_seconds),
         &group.members,
     )?;
 

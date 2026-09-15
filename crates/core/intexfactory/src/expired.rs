@@ -90,7 +90,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             };
             let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-            // Strictly after, like `settle`: a hook runs before the block's transactions.
+            // Strictly after, like `settleIntex`: a hook runs before the block's transactions.
             if now <= factory.called_group_deadline.read(&key)? {
                 slot += 1;
                 continue;

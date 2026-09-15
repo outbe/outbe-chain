@@ -306,7 +306,7 @@ fn distribute_rejects_non_origin_router() {
         .unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        let err = runtime::distribute(&s, holder(), 7.into(), 10, U256::from(100u64)).unwrap_err();
+        let err = runtime::distribute(&s, owner(), 7.into(), 10, U256::from(100u64)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("origin router"));
     });
 }
@@ -476,9 +476,9 @@ fn begin_block_drain_isolates_failing_series() {
 fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
-    let calls = [IIntexFactory::settleCall {
+    let calls = [IIntexFactory::settleIntexCall {
         seriesId: Default::default(),
-        intexHolder: Address::ZERO,
+        intexOwner: Address::ZERO,
         amount: U256::ZERO,
         payNoteProof: Default::default(),
     }

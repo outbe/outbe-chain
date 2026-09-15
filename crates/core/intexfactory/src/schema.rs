@@ -12,7 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 pub struct IssuanceParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
     pub entry_price_minor: U256,
@@ -37,7 +37,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 0)]
     pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 
-    /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
+    /// `keccak256(series_id ++ owner)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
@@ -154,9 +154,9 @@ pub struct IntexFactoryContract {
     // Widest terms ever issued in a currency; both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 35)]
-    pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 36)]
@@ -195,11 +195,11 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.
-    pub fn mine_seq_key(series_id: SeriesId, holder: Address) -> B256 {
+    /// Composite key for `mine_seq`: `keccak256(series_id ++ owner)`.
+    pub fn mine_seq_key(series_id: SeriesId, owner: Address) -> B256 {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
-        buf[SERIES_ID_LEN..].copy_from_slice(holder.as_slice());
+        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
         keccak256(buf)
     }
 }

@@ -288,15 +288,15 @@ fn try_call_excludes_pre_issuance_days() {
             outbe_intex::CreateSeriesParams {
                 series_id: sid(8),
                 worldwide_day: 8.into(),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: 30 * DAY as u32,
-                    call_threshold: 27 * DAY as u32,
-                    call_notice_period: CALL_NOTICE_PERIOD,
+                    call_window_seconds: 30 * DAY as u32,
+                    call_threshold_seconds: 27 * DAY as u32,
+                    call_notice_period_seconds: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -352,6 +352,7 @@ mod call_sweep {
     use crate::called;
     use crate::constants::{MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK};
     use crate::schema::IntexFactoryContract;
+    use crate::tests::owner;
 
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
@@ -436,15 +437,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -612,7 +613,7 @@ mod call_sweep {
             let series_id =
                 SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
             outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
-            outbe_intex::api::record_parked_units(&s, series_id, 25).unwrap();
+            outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
             sweep_at(&s, due(deadline));
@@ -641,15 +642,15 @@ mod call_sweep {
                 let params = outbe_intex::CreateSeriesParams {
                     series_id,
                     worldwide_day: day,
-                    issued_intex_count: count,
+                    issued_units: count,
                     promis_load_minor: 1_000_000_000_000_000_000,
                     entry_price_minor: trigger,
                     floor_price_minor: trigger,
                     call_price_minor: trigger,
                     call_trigger: outbe_intex::IntexCallTrigger {
-                        call_window: WINDOW_DAYS * DAY as u32,
-                        call_threshold: 21 * DAY as u32,
-                        call_notice_period: 7 * DAY as u32,
+                        call_window_seconds: WINDOW_DAYS * DAY as u32,
+                        call_threshold_seconds: 21 * DAY as u32,
+                        call_notice_period_seconds: 7 * DAY as u32,
                     },
                     issued_at: ISSUED_AT,
                     issuance_currency: issuance,
@@ -927,15 +928,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -1112,15 +1113,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -1323,15 +1324,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -1587,15 +1588,15 @@ mod called_pstar {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(LAST_DAY),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW * DAY_SECS as u32,
-                    call_threshold: THRESHOLD * DAY_SECS as u32,
-                    call_notice_period: 7 * DAY_SECS as u32,
+                    call_window_seconds: WINDOW * DAY_SECS as u32,
+                    call_threshold_seconds: THRESHOLD * DAY_SECS as u32,
+                    call_notice_period_seconds: 7 * DAY_SECS as u32,
                 },
                 issued_at,
                 issuance_currency: 840,

@@ -31,11 +31,11 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
-/// the holder must settle. Once elapsed the gem is forfeit-burned.
+/// the owner must settle. Once elapsed the gem is forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
-/// GemPosition validity period: a parked Intex expires this long after
-/// `parked_at`; no new gems may be issued afterward. 1 year.
+/// GemPosition validity period: an Intex in the Gem Factory expires this long after
+/// `issued_at`; no new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 
 /// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.

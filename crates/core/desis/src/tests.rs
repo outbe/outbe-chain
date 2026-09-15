@@ -1151,7 +1151,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
         open_clearing(&s, 100);
         relay_bids(&s, SRC_CHAIN, 1, 100, 200);
-        assert_eq!(clear(&s).issued_intex_count, 100);
+        assert_eq!(clear(&s).issued_units, 100);
 
         // Ten times the rate of the fixture, which is past the deadband.
         brief_at_rate(
@@ -1566,7 +1566,7 @@ fn no_bids_clears_as_no_sale() {
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
         let result = clear(&s);
-        assert_eq!(result.issued_intex_count, 0);
+        assert_eq!(result.issued_units, 0);
         assert!(result.winners.is_empty());
         assert_eq!(
             s.contract::<DesisContract>()
@@ -1603,7 +1603,7 @@ fn clearing_allocates_up_to_supply() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 5);
         let result = clear(&s);
-        assert_eq!(result.issued_intex_count, supply);
+        assert_eq!(result.issued_units, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
 }
@@ -1666,7 +1666,7 @@ fn clearing_empty_supply_refunds_all_bidders() {
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result = clear(&s);
 
-        assert_eq!(result.issued_intex_count, 0);
+        assert_eq!(result.issued_units, 0);
         assert!(result.winners.is_empty());
         assert_eq!(result.all_bidders.len(), 3);
         assert!(result.paid_amounts.iter().all(|&p| p == 0));
@@ -1726,7 +1726,7 @@ fn clearing_uniform_price_is_last_allocated_bid() {
         let result = clear(&s);
         // Supply 2 -> top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
-        assert_eq!(result.issued_intex_count, 2);
+        assert_eq!(result.issued_units, 2);
     });
 }
 
@@ -1770,7 +1770,7 @@ fn clear_bids_below_min_price_skipped() {
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result = clear(&s);
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
-        assert_eq!(result.issued_intex_count, 1);
+        assert_eq!(result.issued_units, 1);
     });
 }
 
@@ -1832,7 +1832,7 @@ fn clear_refunds_equal_locked_minus_paid() {
             result.refunded_amounts[l_idx],
             LOAD_MINOR * 200 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
-        assert_eq!(supply, result.issued_intex_count);
+        assert_eq!(supply, result.issued_units);
     });
 }
 
@@ -1928,7 +1928,7 @@ fn clearing_returns_unsold_supply_and_dust_to_promis() {
         mark_done(&s, SRC_CHAIN, 1, 1, 1);
         let result = clear(&s);
 
-        assert_eq!(result.issued_intex_count, 1);
+        assert_eq!(result.issued_units, 1);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
@@ -1996,7 +1996,7 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         mark_done(&s, chain_b, 1, 1, 1);
 
         let result = clear(&s);
-        assert_eq!(result.issued_intex_count, 2);
+        assert_eq!(result.issued_units, 2);
         // Both bidders win; each is tagged with its own chain.
         let a = result.winners.iter().position(|&w| w == bidder(1)).unwrap();
         let b = result.winners.iter().position(|&w| w == bidder(2)).unwrap();
@@ -2098,7 +2098,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
         assert!(result.is_some());
         let result = result.unwrap();
         // Only chain A's bid participated.
-        assert_eq!(result.issued_intex_count, 1);
+        assert_eq!(result.issued_units, 1);
         assert!(result.bidder_chains.iter().all(|&c| c == chain_a));
         s.contract::<DesisContract>()
             .read_stage(WORLDWIDE_DAY)
@@ -2246,7 +2246,7 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         mark_done(&s, chain, 1, 1, 3);
 
         let result = clear(&s);
-        assert_eq!(result.issued_intex_count, 3);
+        assert_eq!(result.issued_units, 3);
 
         let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
         let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
@@ -2256,8 +2256,8 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         // Each series holds only its own winners and its own reference price.
         let usd_series = outbe_intex::api::read_series(&s, usd).unwrap();
         let lira_series = outbe_intex::api::read_series(&s, lira).unwrap();
-        assert_eq!(usd_series.issued_intex_count, 2);
-        assert_eq!(lira_series.issued_intex_count, 1);
+        assert_eq!(usd_series.issued_units, 2);
+        assert_eq!(lira_series.issued_units, 1);
         assert_eq!(
             usd_series.entry_price_minor,
             U256::from(ENTRY_PRICE) * U256::from(840u16)
@@ -2308,7 +2308,7 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
         let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1)
             .unwrap()
             .unwrap();
-        assert_eq!(result.issued_intex_count, 0);
+        assert_eq!(result.issued_units, 0);
         assert_eq!(
             outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
             0

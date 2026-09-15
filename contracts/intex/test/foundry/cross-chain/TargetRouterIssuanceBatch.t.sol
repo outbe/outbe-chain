@@ -36,7 +36,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.worldwideDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedIntexCount = 1_000;
+        payload.issuedUnits = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.floorPriceMinor = 40e6;
@@ -76,8 +76,8 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     }
 
     function test_OneMessageCreatesEverySeriesItCarries() public {
-        address holder = makeAddr("holder");
-        (address[] memory recipients, uint256[] memory quantities) = _issueTo(holder, 7);
+        address owner = makeAddr("owner");
+        (address[] memory recipients, uint256[] memory quantities) = _issueTo(owner, 7);
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](3);
         series[0] = _series("20250101-USD-U", recipients, quantities);
@@ -89,8 +89,8 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         assertTrue(intex.seriesExists("20250101-USD-U"), "dollar series");
         assertTrue(intex.seriesExists("20250101-EUR-E"), "euro series");
         assertTrue(intex.seriesExists("20250101-TRY-U"), "series with no local winners");
-        assertEq(intex.balanceOf(holder, intex.issuedTokenId("20250101-USD-U")), 7);
-        assertEq(intex.balanceOf(holder, intex.issuedTokenId("20250101-EUR-E")), 7);
+        assertEq(intex.balanceOf(owner, intex.issuedTokenId("20250101-USD-U")), 7);
+        assertEq(intex.balanceOf(owner, intex.issuedTokenId("20250101-EUR-E")), 7);
     }
 
     function test_ASeriesSplitAcrossMessagesIsCreatedOnceAndIssuesEveryPiece() public {

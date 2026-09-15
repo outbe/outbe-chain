@@ -12,7 +12,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Positions queue in parking order, so a head still inside its year ends the pass.
+/// Positions queue in the order they opened, so a head still inside its year ends the pass.
 pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let storage = &ctx.storage;
     let mut factory = GemFactoryContract::new(storage.clone());

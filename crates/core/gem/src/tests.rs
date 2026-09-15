@@ -955,7 +955,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     });
 }
 
-/// Its holder paid the strike, so the load is theirs.
+/// Its owner paid the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {
@@ -1187,15 +1187,15 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         profile(crate::config::PROFILE_DEV);
         api::add_gem(storage, sample_params(ALICE)).unwrap();
         assert_eq!(
-            gem.max_call_window.read(&iso).unwrap(),
-            GemParams::DEV.call_window
+            gem.max_call_window_seconds.read(&iso).unwrap(),
+            GemParams::DEV.call_window_seconds
         );
 
         profile(crate::config::PROFILE_PROD);
         api::add_gem(storage, sample_params(BOB)).unwrap();
         assert_eq!(
-            gem.max_call_window.read(&iso).unwrap(),
-            GemParams::PROD.call_window,
+            gem.max_call_window_seconds.read(&iso).unwrap(),
+            GemParams::PROD.call_window_seconds,
             "a wider profile widens the span"
         );
 
@@ -1204,8 +1204,8 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         third.promis_load_minor = U256::from(2_000_000u64);
         api::add_gem(storage, third).unwrap();
         assert_eq!(
-            gem.max_call_window.read(&iso).unwrap(),
-            GemParams::PROD.call_window,
+            gem.max_call_window_seconds.read(&iso).unwrap(),
+            GemParams::PROD.call_window_seconds,
             "going back to the narrow one does not shrink it"
         );
     });
@@ -1222,7 +1222,7 @@ fn config_unset_resolves_by_chain_id() {
             .write(crate::config::PROFILE_PROD)
             .unwrap();
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
-        assert_eq!(GemParams::PROD.call_window, 28 * 24 * 3600);
+        assert_eq!(GemParams::PROD.call_window_seconds, 28 * 24 * 3600);
         assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
     });
 }
@@ -1319,10 +1319,16 @@ fn config_dev_profile_terms_a_new_gem() {
         // A gem snapshots its call terms at issuance, so the dev bundle has to
         // reach the record; the prod one must not.
         let item = api::get_gem(storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.call_window, GemParams::DEV.call_window);
-        assert_eq!(item.call_threshold, GemParams::DEV.call_threshold);
-        assert_eq!(item.call_notice_period, GemParams::DEV.call_notice_period);
-        assert!(item.call_window < GemParams::PROD.call_window);
+        assert_eq!(item.call_window_seconds, GemParams::DEV.call_window_seconds);
+        assert_eq!(
+            item.call_threshold_seconds,
+            GemParams::DEV.call_threshold_seconds
+        );
+        assert_eq!(
+            item.call_notice_period_seconds,
+            GemParams::DEV.call_notice_period_seconds
+        );
+        assert!(item.call_window_seconds < GemParams::PROD.call_window_seconds);
     });
 }
 

@@ -176,7 +176,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "issuedIntexCount",
+          "name": "issuedUnits",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -329,7 +329,7 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "issuedIntexCount",
+                  "name": "issuedUnits",
                   "type": "uint32",
                   "internalType": "uint32"
                 },
@@ -517,7 +517,7 @@
                   "internalType": "uint32"
                 },
                 {
-                  "name": "issuedIntexCount",
+                  "name": "issuedUnits",
                   "type": "uint32",
                   "internalType": "uint32"
                 },
@@ -682,7 +682,7 @@
           "internalType": "uint64"
         },
         {
-          "name": "issuedIntexCount",
+          "name": "issuedUnits",
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
@@ -976,7 +976,7 @@
       "name": "IssuedPromisOverflow",
       "inputs": [
         {
-          "name": "issuedIntexCount",
+          "name": "issuedUnits",
           "type": "uint32",
           "internalType": "uint32"
         },

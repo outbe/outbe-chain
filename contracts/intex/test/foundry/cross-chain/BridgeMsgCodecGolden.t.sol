@@ -129,11 +129,11 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_AuctionResult_AllFields() public view {
-        (uint32 worldwideDay, uint32 issuedIntexCount, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
+        (uint32 worldwideDay, uint32 issuedUnits, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
             BridgeMsgCodec.encodeAuctionResult(0x11223344, 0x55667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4)
         );
         assertEq(worldwideDay, 0x11223344, "worldwideDay");
-        assertEq(issuedIntexCount, 0x55667788, "issuedIntexCount");
+        assertEq(issuedUnits, 0x55667788, "issuedUnits");
         assertEq(clearingPrice, 0x99AABBCCDDEEFF00, "clearingPrice");
         assertEq(wonBidsCount, 0xA1B2C3D4, "wonBidsCount");
     }
@@ -246,7 +246,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.seriesId = "20260212-TRY-U";
         p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedAt = 0x66778899;
-        p.issuedIntexCount = 0x55667788;
+        p.issuedUnits = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.floorPriceMinor = 0x99AABBCCDDEEFF00;
@@ -266,7 +266,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
         assertEq(d.issuedAt, 0x66778899, "issuedAt");
-        assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
+        assertEq(d.issuedUnits, 0x55667788, "issuedUnits");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");

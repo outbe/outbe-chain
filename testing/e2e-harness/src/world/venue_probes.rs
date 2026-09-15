@@ -45,7 +45,7 @@ sol! {
             ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
-            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
         }
         function auctions(uint32 worldwideDay)
             external view
@@ -552,7 +552,7 @@ sol! {
     struct SeriesData {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -643,13 +643,13 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
     None
 }
 
-/// What `holder` owns of `series`: units still issued, and units already settled.
+/// What `owner` owns of `series`: units still issued, and units already settled.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_balances(
     url: &str,
     nft: Address,
     series: alloy_primitives::FixedBytes<14>,
-    holder: Address,
+    owner: Address,
 ) -> Option<(u64, u64)> {
     let issued_id = eth::read_call(
         url,
@@ -665,7 +665,7 @@ pub(crate) fn series_balances(
         url,
         nft,
         &IIssuedSeries::balanceOfCall {
-            account: holder,
+            account: owner,
             id: issued_id,
         },
     )?;
@@ -673,7 +673,7 @@ pub(crate) fn series_balances(
         url,
         nft,
         &IIssuedSeries::balanceOfCall {
-            account: holder,
+            account: owner,
             id: settled_id,
         },
     )?;
@@ -715,7 +715,7 @@ pub(crate) fn series_issued_count(
     series: alloy_primitives::FixedBytes<14>,
 ) -> Option<u32> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
-        .map(|data| data.issuedIntexCount)
+        .map(|data| data.issuedUnits)
 }
 
 /// When the series was Called, as both chains recorded it.

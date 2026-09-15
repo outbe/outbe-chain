@@ -56,11 +56,11 @@ contract UpgradeDrillTest is CrossChainTest {
 
     function test_Drill_IntexNFT1155() public {
         IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
-        address holder = makeAddr("holder");
+        address owner = makeAddr("owner");
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(owner, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -68,7 +68,7 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
+        assertEq(nft.balanceOf(owner, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
         assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
         (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) =
             nft.seriesData(nft.issuedTokenId(CreateSeriesLib.seriesId(7)));
@@ -86,11 +86,11 @@ contract UpgradeDrillTest is CrossChainTest {
     ///      migration that sets a new v2 field, while pre-upgrade state survives.
     function test_Drill_IntexNFT1155_ReinitializerPath() public {
         IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
-        address holder = makeAddr("holder");
+        address owner = makeAddr("owner");
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(owner, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
@@ -101,7 +101,7 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
+        assertEq(nft.balanceOf(owner, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
         assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost across reinit");
     }
 

@@ -115,9 +115,13 @@ impl GemContract<'_> {
             self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
-        if item.call_window > self.max_call_window.read(&item.reference_currency)? {
-            self.max_call_window
-                .write(&item.reference_currency, item.call_window)?;
+        if item.call_window_seconds
+            > self
+                .max_call_window_seconds
+                .read(&item.reference_currency)?
+        {
+            self.max_call_window_seconds
+                .write(&item.reference_currency, item.call_window_seconds)?;
         }
 
         Ok(())
@@ -285,7 +289,10 @@ impl GemContract<'_> {
         self.gem_items.update(&item)?;
 
         self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
-        self.push_called(gem_id, called_at + u64::from(item.call_notice_period))
+        self.push_called(
+            gem_id,
+            called_at + u64::from(item.call_notice_period_seconds),
+        )
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
