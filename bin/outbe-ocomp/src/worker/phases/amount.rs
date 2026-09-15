@@ -40,7 +40,7 @@ use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::unit::UnitSpecV1;
 use outbe_ocomp_protocol::unit::WorkOutputHeaderV1;
 
-use outbe_oracle::evaluate_oracle_opening_v1;
+use outbe_nod::openings::evaluate_entry_prices;
 
 use outbe_primitives::time::WorldwideDay;
 
@@ -202,12 +202,12 @@ pub(in super::super) fn execute_amount_map_unit(
         .iter()
         .map(|slot| (slot.slot, slot.value))
         .collect::<Vec<_>>();
-    let oracle =
-        evaluate_oracle_opening_v1(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)?;
-    let mandatory_entry_price = oracle
-        .entry_price(840)
-        .ok_or(WorkerError::UnitBindingMismatch)?;
-
+    if raw.contract_address != outbe_primitives::addresses::NOD_ADDRESS {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let entry_prices =
+        evaluate_entry_prices(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)
+            .map_err(|_| WorkerError::UnitBindingMismatch)?;
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
@@ -227,8 +227,9 @@ pub(in super::super) fn execute_amount_map_unit(
             tribute: record.tribute.clone(),
             first_league: ObservationValueV1::Value(fidelity.pre_distribution_league),
             second_league: ObservationValueV1::Value(fidelity.issuance_league),
-            conditional_entry_price_minor: oracle
-                .entry_price(record.tribute.reference_currency)
+            entry_price_minor: entry_prices
+                .get(&record.tribute.reference_currency)
+                .copied()
                 .map_or(ObservationValueV1::Unavailable, ObservationValueV1::Value),
             nod_target_available: true,
         });
@@ -238,7 +239,6 @@ pub(in super::super) fn execute_amount_map_unit(
         &observed,
         &fidelity.observations,
         &root_output.ordered_fractions,
-        mandatory_entry_price,
     )
     .map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = amount.coverage_root()?;

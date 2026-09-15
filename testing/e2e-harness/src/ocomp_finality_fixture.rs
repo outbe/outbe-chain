@@ -41,6 +41,7 @@ use outbe_consensus::{
 };
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
+use outbe_nod::openings::entry_price_slots;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
@@ -53,10 +54,9 @@ use outbe_ocomp_protocol::{
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
-use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, VALIDATOR_SET_ADDRESS},
     header::OutbeHeader,
     storage::types::StorageKey as _,
     OutbeBlock,
@@ -555,7 +555,7 @@ fn build_finalized_intent_proof_fixture(
                 vec![
                     (METADOSIS_ADDRESS, intent_account),
                     (VALIDATOR_SET_ADDRESS, validator_account),
-                    (ORACLE_ADDRESS, oracle_contract.account),
+                    (NOD_ADDRESS, oracle_contract.account),
                 ],
                 vec![fidelity_opening, oracle_contract],
             )
@@ -795,51 +795,16 @@ fn lysis_contracts(
         })
         .collect();
 
-    let reference_currency_count = u32::try_from(subjects.reference_isos.len())
-        .expect("fixture reference ISO set fits the frozen profile");
-    let oracle_counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
-        .expect("fixture reference ISO set is canonical");
-    // Distinct registry indices: two ISOs sharing one index would address the
-    // same day-VWAP value slot and collide in the plan.
-    let oracle_pair_indices = (1..=reference_currency_count).collect::<Vec<_>>();
-    let oracle_plan = oracle_opening_slot_plan_v1(
-        day,
-        &subjects.reference_isos,
-        reference_currency_count,
-        &oracle_pair_indices,
-        1,
-        0,
-    )
-    .expect("fixture Oracle counts fit the frozen profile");
-    // Default every slot to a non-zero filler, then pin the words the
-    // evaluator actually interprets.
-    let mut oracle_values = oracle_plan
-        .slots
-        .iter()
+    let oracle_values = entry_price_slots(day, &subjects.reference_isos)
+        .expect("canonical Nod price subjects")
+        .into_iter()
         .enumerate()
-        .map(|(index, slot)| (*slot, U256::from(index + 1)))
+        .map(|(index, slot)| (slot, U256::from(index + 1)))
         .collect::<BTreeMap<_, _>>();
-    // The on-chain reference-currency list the subject ISOs must be a subset of.
-    // Plan order is: length, then one element slot per registered currency.
-    for (index, iso) in subjects.reference_isos.iter().enumerate() {
-        oracle_values.insert(oracle_plan.slots[index + 1], U256::from(*iso));
-    }
-    oracle_values.insert(oracle_counts.slots[0], U256::from(reference_currency_count));
-    oracle_values.insert(oracle_counts.slots[1], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[2], U256::from(1));
-    oracle_values.insert(oracle_counts.slots[3], U256::ZERO);
-    // The pair-index words must agree with the indices the plan was built from,
-    // or the verifier rebuilds a different round-two plan.
-    for (slot, index) in oracle_counts.slots[ORACLE_COUNT_SLOTS_V1..]
-        .iter()
-        .zip(&oracle_pair_indices)
-    {
-        oracle_values.insert(*slot, U256::from(*index));
-    }
 
     (
         fidelity_league_slots,
-        opening_contract(ORACLE_ADDRESS, oracle_values.into_iter().collect()),
+        opening_contract(NOD_ADDRESS, oracle_values.into_iter().collect()),
     )
 }
 

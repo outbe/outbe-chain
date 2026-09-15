@@ -50,15 +50,15 @@ impl<T: Copy> ObservationValueV1<T> {
     }
 }
 
-/// One Tribute plus the two Fidelity observations, conditional Oracle result
+/// One Tribute plus the two Fidelity observations, entry price
 /// and reserved-target fact consumed at its semantic ordinal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedTributeV1 {
     pub tribute: TributeInputV1,
     pub first_league: ObservationValueV1<u16>,
     pub second_league: ObservationValueV1<u16>,
-    /// Required only when `reference_currency != 840`.
-    pub conditional_entry_price_minor: ObservationValueV1<U256>,
+    /// Snapshot price for this Tribute's reference currency.
+    pub entry_price_minor: ObservationValueV1<U256>,
     pub nod_target_available: bool,
 }
 
@@ -68,7 +68,6 @@ pub struct ProgramInputV1 {
     pub worldwide_day: WorldwideDay,
     pub logical_evaluation_time: u64,
     pub gratis_allocation: U256,
-    pub mandatory_entry_price_840: ObservationValueV1<U256>,
     pub tributes: Vec<ObservedTributeV1>,
 }
 
@@ -89,8 +88,7 @@ pub enum SemanticObservationV1 {
         league: u16,
     },
     Oracle {
-        /// `None` is the mandatory ISO 840 observation before the output loop.
-        ordinal: Option<usize>,
+        ordinal: usize,
         currency: u16,
         entry_price_minor: U256,
     },
@@ -170,13 +168,8 @@ pub enum ProgramErrorV1 {
         first: u16,
         second: u16,
     },
-    MandatoryOracleUnavailable,
-    ConditionalOracleUnavailable {
+    EntryPriceUnavailable {
         ordinal: usize,
-        currency: u16,
-    },
-    ZeroEntryPrice {
-        ordinal: Option<usize>,
         currency: u16,
     },
     Arithmetic {
@@ -240,16 +233,9 @@ impl fmt::Display for ProgramErrorV1 {
                 formatter,
                 "Lysis V1 Fidelity mismatch at {ordinal}: {first} != {second}"
             ),
-            Self::MandatoryOracleUnavailable => {
-                formatter.write_str("Lysis V1 mandatory ISO 840 Oracle unavailable")
-            }
-            Self::ConditionalOracleUnavailable { ordinal, currency } => write!(
+            Self::EntryPriceUnavailable { ordinal, currency } => write!(
                 formatter,
                 "Lysis V1 Oracle {currency} unavailable at {ordinal}"
-            ),
-            Self::ZeroEntryPrice { ordinal, currency } => write!(
-                formatter,
-                "Lysis V1 Oracle {currency} returned zero at {ordinal:?}"
             ),
             Self::Arithmetic { message } => write!(formatter, "Lysis V1 arithmetic: {message}"),
             Self::ZeroGratisLoad { ordinal } => {

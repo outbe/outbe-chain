@@ -86,6 +86,26 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(840).unwrap();
+        oracle.config_lookback_duration.write(86_400).unwrap();
+        let usd_index = oracle
+            .pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        oracle
+            .exchange_rate
+            .write(&usd_index, U256::from(320_000))
+            .unwrap();
+        oracle
+            .write_snapshot(
+                block_time - 1,
+                &[(
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(250_000),
+                    U256::from(1_000_000),
+                )],
+            )
+            .unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -151,6 +171,18 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             storage.clone(),
         );
         run_terminal_request(&ctx, &scope).unwrap();
+        assert!(NodContract::new(storage.clone())
+            .entry_prices_frozen
+            .read(&wwd)
+            .unwrap());
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .entry_price_value
+                .get_nested(&wwd)
+                .read(&840)
+                .unwrap(),
+            U256::from(320_000)
+        );
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
@@ -1380,6 +1412,7 @@ struct RequestObservables {
     desis_stage: u8,
     desis_supply: U256,
     nod_supply: u64,
+    nod_prices_frozen: bool,
     tribute_supply: u64,
     tribute_pre_admission: outbe_tribute::TributePreAdmissionProjection,
 }
@@ -1405,6 +1438,10 @@ fn request_observables(
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
+        nod_prices_frozen: NodContract::new(storage.clone())
+            .entry_prices_frozen
+            .read(&wwd)
+            .unwrap(),
         tribute_supply: TributeContract::new(storage.clone())
             .total_supply()
             .unwrap(),

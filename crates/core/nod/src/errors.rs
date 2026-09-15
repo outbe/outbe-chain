@@ -26,6 +26,13 @@ pub enum NodError {
 
     #[error("reference currency must be a nonzero ISO 4217 numeric code")]
     ZeroReferenceCurrency,
+
+    #[error("nod entry-price snapshot is already frozen")]
+    EntryPricesAlreadyFrozen,
+    #[error("invalid nod entry-price snapshot")]
+    InvalidEntryPriceSnapshot,
+    #[error("missing nod entry price for reference currency {0}")]
+    MissingEntryPrice(u16),
 }
 
 impl From<NodError> for PrecompileError {

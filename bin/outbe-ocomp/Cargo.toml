@@ -37,6 +37,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-oracle.workspace = true
+outbe-nod.workspace = true
 outbe-primitives.workspace = true
 outbe-tribute.workspace = true
 outbe-zerofee.workspace = true

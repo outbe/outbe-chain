@@ -77,7 +77,7 @@ fn observed(
         tribute: tribute(seed, day, nominal, excluded),
         first_league: ObservationValueV1::Value(league),
         second_league: ObservationValueV1::Value(league),
-        conditional_entry_price_minor: ObservationValueV1::Value(U256::from(3)),
+        entry_price_minor: ObservationValueV1::Value(U256::from(3)),
         nod_target_available: true,
     }
 }
@@ -1946,7 +1946,7 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
                 },
                 first_league: ObservationValueV1::Value(7),
                 second_league: ObservationValueV1::Value(7),
-                conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                 nod_target_available: true,
             }
         })
@@ -1961,7 +1961,6 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
         worldwide_day: day,
         logical_evaluation_time: 1_784_765_900,
         gratis_allocation,
-        mandatory_entry_price_840: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -1995,7 +1994,7 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
         },
         first_league: ObservationValueV1::Unavailable,
         second_league: ObservationValueV1::Value(7),
-        conditional_entry_price_minor: ObservationValueV1::Unavailable,
+        entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
         nod_target_available: true,
     };
     assert!(fidelity_map(0, &[observed.clone()]).is_err());
@@ -2030,7 +2029,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
                 },
                 first_league: ObservationValueV1::Value(7),
                 second_league: ObservationValueV1::Value(7),
-                conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                 nod_target_available: true,
             }
         })
@@ -2042,12 +2041,10 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .sum::<U256>();
     let lysis_budget = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let logical_time = 1_784_765_900;
-    let entry_price = SIX_DECIMAL_SCALE;
     let sequential = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: logical_time,
         gratis_allocation: lysis_budget,
-        mandatory_entry_price_840: ObservationValueV1::Value(entry_price),
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -2057,20 +2054,13 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let fidelity_root =
         fidelity_reduce(&fidelity_left.aggregate, &fidelity_right.aggregate).unwrap();
     let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_budget).unwrap();
-    let amount_left = amount_map(
-        0,
-        &tributes[..256],
-        &fidelity_left.observations,
-        &fractions,
-        entry_price,
-    )
-    .unwrap();
+    let amount_left =
+        amount_map(0, &tributes[..256], &fidelity_left.observations, &fractions).unwrap();
     let amount_right = amount_map(
         256,
         &tributes[256..],
         &fidelity_right.observations,
         &fractions,
-        entry_price,
     )
     .unwrap();
     let limits = poc_schema_limits();
@@ -2343,14 +2333,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
 
     let mut wrong_fidelity_leaf = fidelity_left.observations;
     wrong_fidelity_leaf[0].tribute_id = tributes[256].tribute.tribute_id;
-    assert!(amount_map(
-        0,
-        &tributes[..256],
-        &wrong_fidelity_leaf,
-        &fractions,
-        entry_price,
-    )
-    .is_err());
+    assert!(amount_map(0, &tributes[..256], &wrong_fidelity_leaf, &fractions,).is_err());
 
     let mut wrong_prefix = left_prefix.clone();
     wrong_prefix.outgoing_remaining += U256::from(1);
@@ -2451,7 +2434,7 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
                     },
                     first_league: ObservationValueV1::Value((ordinal % 3 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 3 + 1) as u16),
-                    conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                    entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                     nod_target_available: true,
                 };
                 fidelity_map(ordinal, &[observed]).unwrap().aggregate
