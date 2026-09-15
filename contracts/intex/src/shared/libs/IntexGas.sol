@@ -12,17 +12,12 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @notice Floor for a CLEARING round: what a chain with no history gets, and what the router clamps a
-    ///         smaller ask up to. A round has to clear the hub's and adapter's frames and the stage flip,
-    ///         hold back `RELAY_REPORT_GAS`, and still pass the relay's gates for one chunk. Driven through
-    ///         that whole path against the canonical Hyperlane mailbox it spends 1.56M and places a chunk
-    ///         with the remainder reported (`ClearingRelayMailboxGas.t.sol`); the rest is room for the
-    ///         drift between fork blocks.
+    /// @dev Floor for a CLEARING round, and what the router clamps a smaller ask up to: driven through the
+    ///      whole inbound path it spends 1.56M and still places a chunk (`ClearingRelayMailboxGas.t.sol`).
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_300_000;
 
-    /// @notice Ceiling for a CLEARING round, under the tightest per-transaction gas cap our target chains
-    ///         enforce (Ethereum's EIP-7825 is 16 777 216). A round asking for more would never be
-    ///         delivered, so the day walks itself there in several rounds instead.
+    /// @dev Ceiling for a CLEARING round, under the tightest per-transaction cap our targets enforce
+    ///      (Ethereum's EIP-7825 is 16 777 216); a heavier day takes several rounds instead.
     uint256 internal constant AUCTION_STAGE_CLEARING_MAX = 14_000_000;
 
     /// @dev 147k.
@@ -39,19 +34,16 @@ library IntexGas {
     ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
     uint256 internal constant MARK_APPLY_CAP = 60_000;
 
-    /// @notice Gas one more BIDS_BATCH needs: a full chunk measures ~754k against the canonical Hyperlane
-    ///         mailbox (`ClearingRelayMailboxGas.t.sol`) - 175k for the send and ~8.7k a bid. A relay round
-    ///         sends chunks while it can still afford this and leaves the rest to the next round, so the
-    ///         number has to cover the widest chunk rather than an average one.
+    /// @dev What a round must have left to send one more BIDS_BATCH: a full 64-bid chunk measures ~714k
+    ///      against the canonical mailbox - ~157k the send, ~8.7k a bid.
     uint256 internal constant RELAY_CHUNK_GAS = 800_000;
 
-    /// @notice Gas the completeness marker needs on top of the last chunk, measured at ~197k. Without it a
-    ///         round that just affords its final chunk runs out on the marker, reverts whole, and - having
-    ///         made no progress to report - leaves the day for a hand-pushed `relayBids`.
+    /// @dev Held back on top of the last chunk for the completeness marker, ~157k measured; without it a
+    ///      round that just affords its final chunk reverts whole and reports nothing.
     uint256 internal constant RELAY_MARKER_GAS = 250_000;
 
-    /// @notice Gas a CLEARING delivery holds back from the relay so it can still report an unfinished day:
-    ///         the 63/64 rule leaves the outer frame far too little to send a message of its own.
+    /// @dev Held back from the relay so an unfinished day can still be reported home: the 63/64 rule
+    ///      leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.

@@ -9,7 +9,6 @@ import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
-import {BidsRelay} from "./BidsRelay.sol";
 import {
     BidsRelayProgress,
     ChunkProgress,
@@ -35,7 +34,12 @@ interface ITargetRouterShims {
 /// @notice Inbound message handlers of {TargetRouter}, linked as an external library so their bodies stay off
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
-    using BidsRelay for BidsRelayProgress;
+    /// @notice Whether a finished round owes the origin a remainder report. A round that sent nothing has
+    ///         nothing to recover from: the origin would answer with the same budget for the same outcome,
+    ///         and that is a loop. A finished day is reported by its completeness marker instead.
+    function advanced(BidsRelayProgress storage relay, uint16 batchBefore) internal view returns (bool) {
+        return !relay.done && relay.nextBatch > batchBefore;
+    }
 
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
     /// @dev An auction the day already has (same terms -> duplicate, other terms -> conflict), a schedule the day
@@ -102,9 +106,8 @@ library TargetInbound {
             return;
         }
 
-        // Carry the relay as far as this delivery's gas allows, holding back enough to report an
-        // unfinished day. The self-call keeps a failed round from taking the stage flip with it, and a
-        // redelivered CLEARING resumes the same generation rather than starting a new one.
+        // Carry the relay as far as this delivery's gas allows, holding back enough to report the rest.
+        // The self-call keeps a failed round from taking the stage flip with it.
         BidsRelayProgress storage relay = $.bidsRelay[worldwideDay];
         if (!relay.done && gasleft() > IntexGas.RELAY_REPORT_GAS) {
             uint16 batchBefore = relay.nextBatch;
@@ -113,10 +116,9 @@ library TargetInbound {
                 worldwideDay
             ) {}
             catch {
-                // The round rolled back whole, so progress reads as it did before it started.
                 emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
             }
-            if (relay.advanced(batchBefore)) {
+            if (advanced(relay, batchBefore)) {
                 // solhint-disable-next-line no-empty-blocks
                 try ITargetRouterShims(address(this)).reportBidsRemaining(worldwideDay) {}
                 catch {

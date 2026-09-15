@@ -1,6 +1,5 @@
-//! Sweeping the origin router's parked work. A send whose fee the relay float could not cover and
-//! proceeds this factory refused both sit in the router waiting for someone to push them; both
-//! entries are permissionless, so the cycle trigger is that someone.
+//! Sweeping the origin router's parked work: a send the relay float could not pay for, and proceeds
+//! this factory refused. Both entries are permissionless, so the cycle trigger is the one who pushes.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -21,15 +20,15 @@ pub fn drain(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Where the next pass starts, and how far the resolved prefix reaches once it ends.
-struct Cursor {
-    at: u64,
-    head: u64,
+pub(crate) struct Cursor {
+    pub(crate) at: u64,
+    pub(crate) head: u64,
     prefix_resolved: bool,
     failures: u32,
 }
 
 impl Cursor {
-    fn new(at: u64) -> Self {
+    pub(crate) fn new(at: u64) -> Self {
         Self {
             at,
             head: at,
@@ -39,20 +38,20 @@ impl Cursor {
     }
 
     /// An entry that needs nothing more from us; the cursor may pass it for good.
-    fn resolved(&mut self) {
+    pub(crate) fn resolved(&mut self) {
         if self.prefix_resolved {
             self.head = self.at.saturating_add(1);
         }
         self.failures = 0;
     }
 
-    /// An entry that stays: the cursor cannot move past it, but the pass walks on.
-    fn stuck(&mut self) {
+    /// An entry that stays: the cursor cannot pass it, but the pass walks on.
+    pub(crate) fn stuck(&mut self) {
         self.prefix_resolved = false;
         self.failures = self.failures.saturating_add(1);
     }
 
-    fn spent(&self) -> bool {
+    pub(crate) fn spent(&self) -> bool {
         self.failures >= MAX_PARKED_FAILURES_PER_FIRING
     }
 }
@@ -192,39 +191,4 @@ fn proceeds_count(storage: &StorageHandle<'_>) -> Result<u64> {
 
 fn to_index(total: U256) -> u64 {
     u64::try_from(total).unwrap_or(u64::MAX)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_cursor_only_passes_a_resolved_prefix() {
-        let mut cursor = Cursor::new(0);
-        cursor.resolved();
-        cursor.at = 1;
-        cursor.stuck();
-        cursor.at = 2;
-        cursor.resolved();
-
-        // Index 1 stayed, so the next pass starts there and walks the rest again.
-        assert_eq!(cursor.head, 1);
-    }
-
-    #[test]
-    fn a_run_of_failures_ends_the_pass() {
-        let mut cursor = Cursor::new(0);
-        for _ in 0..MAX_PARKED_FAILURES_PER_FIRING {
-            assert!(!cursor.spent());
-            cursor.stuck();
-        }
-        assert!(cursor.spent());
-
-        // One success in between is enough to keep going: an empty float is the run we stop on.
-        let mut mixed = Cursor::new(0);
-        mixed.stuck();
-        mixed.resolved();
-        mixed.stuck();
-        assert!(!mixed.spent());
-    }
 }

@@ -569,11 +569,9 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     contract.push_gate_active(worldwide_day)?;
     contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
-    // Addressed per chain: each one's round is sized from its own recent bid counts, and a chain that
-    // cannot finish in the round it gets reports the remainder and is sent another.
+    // Per chain, each in its own checkpoint: a chain whose send fails takes neither the day's arming
+    // nor the other chains' rounds with it, and the fan-in deadline covers the one left behind.
     for chain_id in fetch_targets(storage, worldwide_day)? {
-        // One checkpoint per chain: a chain whose send fails must not take the day's arming, nor the
-        // other chains' rounds, with it. The fan-in deadline is what covers a chain left behind.
         let sent = storage.with_checkpoint(|| {
             let gas = clearing_round_gas(storage, worldwide_day, chain_id)?;
             storage.call(
@@ -904,10 +902,8 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// The day's frozen target snapshot, read from the OriginRouter registry
-/// Gas one CLEARING round asks of `chain_id`, from the busiest of that chain's last
-/// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth. The router clamps
-/// the ask to what a round is worth, so this only has to be close.
+/// Gas one CLEARING round asks of `chain_id`, from the busiest of its last
+/// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth.
 pub(crate) fn clearing_round_gas(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -928,6 +924,7 @@ pub(crate) fn clearing_round_gas(
     Ok(cost.saturating_mul(3) / 2)
 }
 
+/// The day's frozen target snapshot, read from the OriginRouter registry
 /// (deterministic: frozen at STAGE_START).
 fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<Vec<u32>> {
     let ret = storage.staticcall(

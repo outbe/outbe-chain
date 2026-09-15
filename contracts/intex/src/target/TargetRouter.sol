@@ -17,7 +17,6 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
-import {BidsRelay} from "./libs/BidsRelay.sol";
 import {
     ChunkProgress,
     ParkedMark,
@@ -43,7 +42,6 @@ contract TargetRouter is
     UUPSUpgradeable
 {
     using SafeERC20 for IERC20;
-    using BidsRelay for BidsRelayProgress;
 
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
@@ -239,17 +237,16 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Self-call shim around the relay, so an inbound delivery can bound its gas and keep the
-    ///         stage flip even when the relay cannot finish. Only callable by this contract itself.
+    /// @notice Self-call shim around the relay: lets an inbound delivery bound its gas and keep the stage
+    ///         flip even when the relay cannot finish.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
     function relayBidsToOutbe(uint32 worldwideDay) external {
         if (msg.sender != address(this)) revert NotSelf();
         _relayBids(worldwideDay);
     }
 
-    /// @notice Self-call shim that reports an unfinished day home, so the origin can send another round.
-    ///         Only callable by this contract itself; isolated so a failed report cannot take the round
-    ///         that just succeeded with it.
+    /// @notice Self-call shim reporting an unfinished day home, isolated so a failed report cannot take
+    ///         the round that just succeeded with it.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose remainder is reported.
     function reportBidsRemaining(uint32 worldwideDay) external {
         if (msg.sender != address(this)) revert NotSelf();
@@ -260,9 +257,8 @@ contract TargetRouter is
         emit BidsRemainingSent(sendId, worldwideDay, p.nextBatch, p.totalBatches);
     }
 
-    /// @notice Permissionless push for a day whose bids have not all left - the hand for a relay float that
-    ///         ran dry. Only a day the auction has moved past its reveal accepts this: that stage is set by
-    ///         the inbound CLEARING alone, so this can start nothing the origin did not ask for.
+    /// @notice Permissionless push for a day whose bids have not all left, for a relay float that ran dry.
+    ///         Only a day past its reveal accepts it, and that stage is set by the inbound CLEARING alone.
     /// @param worldwideDay Worldwide day (yyyymmdd) to carry on relaying.
     function relayBids(uint32 worldwideDay) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
@@ -271,8 +267,7 @@ contract TargetRouter is
             revert NoBidsToRelay(worldwideDay);
         }
         uint16 batchBefore = $.bidsRelay[worldwideDay].nextBatch;
-        // The relay's sends go to the immutable bridge and the writes after them are the relay's own
-        // progress; the function is `nonReentrant` on top of that.
+        // Sends go to the immutable bridge, the writes after them are the relay's own progress.
         // slither-disable-next-line reentrancy-eth
         _relayBids(worldwideDay);
         _reportIfAdvanced(worldwideDay, batchBefore);
@@ -280,7 +275,7 @@ contract TargetRouter is
 
     function _reportIfAdvanced(uint32 worldwideDay, uint16 batchBefore) internal {
         BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
-        if (!p.advanced(batchBefore)) return;
+        if (!TargetInbound.advanced(p, batchBefore)) return;
         // solhint-disable-next-line no-empty-blocks
         try this.reportBidsRemaining(worldwideDay) {}
         catch {
@@ -288,14 +283,11 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Relay the day's revealed bids to Outbe in chunked BIDS_BATCH sends, resuming where the
-    ///         last round stopped.
-    /// @dev Chunks of `MAX_PAYLOAD_ARRAY_LEN` share the day's `generation` and carry
-    ///      `batchIndex`/`totalBatches`, so the unordered bridge can deliver them in any order and the
-    ///      receiver collects the whole generation before finalizing. The span and the generation are
-    ///      frozen by the first round: reveals are closed by then, so the chunk a bid belongs to never
-    ///      moves. A round sends while it can still afford another chunk and leaves the rest to the next
-    ///      one; the marker goes with the last chunk, never before it. No bids -> one empty batch (0 of 1).
+    /// @notice Relay the day's revealed bids in chunked BIDS_BATCH sends, resuming where the last round
+    ///         stopped.
+    /// @dev The first round freezes the span and the generation - reveals are closed by then, so a bid's
+    ///      chunk never moves - and every chunk carries `batchIndex`/`totalBatches` for the unordered
+    ///      bridge. The marker goes with the last chunk; no bids -> one empty batch (0 of 1).
     function _relayBids(uint32 worldwideDay) internal {
         TargetRouterStorage storage $ = _ts();
         BidsRelayProgress storage progress = $.bidsRelay[worldwideDay];

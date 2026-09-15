@@ -144,6 +144,7 @@ mod entrypoints;
 mod groups;
 mod issuance;
 mod lifecycle;
+mod parked;
 mod scans;
 mod settlement;
 
