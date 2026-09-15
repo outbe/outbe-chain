@@ -193,18 +193,25 @@ contract OriginRouter is
         try this.sendLeg(dstChainId, payload, gasLimit) returns (bytes32 id) {
             sendId = id;
         } catch {
-            OriginRouterStorage storage $ = _os();
-            uint256 idx = $.nextParkedMessageIdx++;
-            ParkedMessage storage p = $.parkedMessages[idx];
-            p.dstChainId = dstChainId;
-            p.gasLimit = SafeCast.toUint64(gasLimit);
-            p.payload = payload;
-            emit MessageParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
+            _park(dstChainId, payload, gasLimit);
         }
     }
 
+    function _park(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private {
+        OriginRouterStorage storage $ = _os();
+        uint256 idx = $.nextParkedMessageIdx++;
+        ParkedMessage storage p = $.parkedMessages[idx];
+        p.dstChainId = dstChainId;
+        p.gasLimit = SafeCast.toUint64(gasLimit);
+        p.payload = payload;
+        emit MessageParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
+    }
+
     /// @inheritdoc IOriginRouter
-    function resendParkedMessage(uint256 idx) external nonReentrant {
+    /// @dev Deliberately not `nonReentrant`: on a chain that is its own target the send is delivered inside
+    ///      this frame and comes back through `receiveMessage`, which the contract-wide guard would reject.
+    ///      The `sent` flag below is set before the send, so a re-entrant call cannot send the entry twice.
+    function resendParkedMessage(uint256 idx) external {
         ParkedMessage storage p = _os().parkedMessages[idx];
         if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
         p.sent = true; // CEI; a revert in `_send` rolls this back, keeping the entry retryable
@@ -490,11 +497,18 @@ contract OriginRouter is
         }
 
         uint64 budget = _os().clearingGas[worldwideDay][srcChainId];
-        bytes32 sendId = _sendOrPark(
-            srcChainId,
-            BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay),
-            budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget
-        );
+        uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget;
+        bytes memory round = BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay);
+
+        // A target on this very chain is delivered inside this frame, where `receiveMessage` still holds its
+        // re-entry guard - so the round's own chunk sends would be rejected coming back in. Park it instead
+        // and let the drain trigger carry it in a transaction of its own.
+        bytes32 sendId;
+        if (srcChainId == block.chainid) {
+            _park(srcChainId, round, gasLimit);
+        } else {
+            sendId = _sendOrPark(srcChainId, round, gasLimit);
+        }
         emit BidsRelayRoundSent(sendId, worldwideDay, srcChainId, nextBatch, totalBatches);
     }
 
