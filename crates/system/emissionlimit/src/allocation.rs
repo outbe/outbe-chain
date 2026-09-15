@@ -5,9 +5,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 ///
 /// (Phase 4) replaced the legacy `(Validator 4 %, AgentReward
 /// 8 %, Metadosis 88 %)` table with a four-pool split that sums to
-/// 16 %, leaving 84 % for the terminal Metadosis sink. CCA is a pure
-/// accumulator on a dedicated system address and only AgentReward owns
-/// WAA / SRA.
+/// 16 %, leaving 84 % for the terminal Metadosis sink. CCA distributes weighted origination rewards through its registry;
+/// AgentReward owns WAA / SRA.
 pub const VALIDATOR_REWARD_PCT: u64 = 4;
 pub const WAA_REWARD_PCT: u64 = 4;
 pub const SRA_REWARD_PCT: u64 = 4;

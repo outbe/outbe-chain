@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-import {ICca} from "@precompiles/ICca.sol";
+import {ICcaRegistry} from "@precompiles/ICcaRegistry.sol";
 import {ISmartAccountFactory} from "./interfaces/ISmartAccountFactory.sol";
 import {IKernelFactory} from "./interfaces/kernel/IKernelFactory.sol";
 import {BundleModulePlugin} from "./BundleModulePlugin.sol";
@@ -51,7 +51,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
 
     /// @notice Thrown when the CCA is not in good standing at the registry.
     /// @param state The state actually recorded; `Unknown` means it never registered.
-    error CcaNotActive(address cca, ICca.State state);
+    error CcaNotActive(address cca, ICcaRegistry.State state);
 
     constructor(
         address kernelFactory_,
@@ -128,8 +128,8 @@ contract SmartAccountFactory is ISmartAccountFactory {
         require(cca != address(0), "cca required");
         // Standing is checked only on the deploying path; `getAccountAddress` stays a pure CREATE2
         // prediction so a client can always compute the address it is about to ask for.
-        ICca.State ccaState = ICca(CCA_REGISTRY).getCcaState(cca);
-        require(ccaState == ICca.State.Active, CcaNotActive(cca, ccaState));
+        ICcaRegistry.State ccaState = ICcaRegistry(CCA_REGISTRY).getCcaState(cca);
+        require(ccaState == ICcaRegistry.State.Active, CcaNotActive(cca, ccaState));
         Install[] memory packages = _packages(owner, cca, bundleTokens, bundleSenders);
         account = _KERNEL_FACTORY.deploy(packages, salt);
     }

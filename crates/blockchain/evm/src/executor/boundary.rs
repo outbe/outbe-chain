@@ -46,7 +46,7 @@ pub mod marker_addresses {
         METADOSIS_ADDRESS,
         PROMIS_LIMIT_ADDRESS,
         CYCLE_ADDRESS,
-        CCA_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
         GEM_ADDRESS,
         GEM_FACTORY_ADDRESS,
         VALIDATOR_SET_ADDRESS,

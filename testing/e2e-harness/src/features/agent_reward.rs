@@ -244,10 +244,9 @@ fn observe_agent_rewards(world: &mut World) {
         balances.escrow, expected_escrow,
         "AgentReward escrow differs from expected rewards"
     );
-    let expected_cca_delta = economic_reference::cca_accrual(
-        economic_reference::emission_day(genesis_rewards_timestamp, before.timestamp),
-        economic_reference::emission_day(genesis_rewards_timestamp, checkpoint.timestamp),
-    );
+    // This WAA/SRA scenario has no registered CCA or originated positions.
+    // Its CCA allocation therefore goes to terminal Metadosis.
+    let expected_cca_delta = U256::ZERO;
     assert_eq!(
         balances.cca,
         cca_before
@@ -506,7 +505,7 @@ fn reward_balances_at(
             waa: claimable(waa),
             sra: claimable(sra),
             escrow: native(addresses::AGENT_REWARD_ADDR),
-            cca: native(outbe_primitives::addresses::CCA_ADDRESS),
+            cca: native(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS),
         };
         assert_eq!(
             world
