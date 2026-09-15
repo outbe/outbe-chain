@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { x25519 } from "@noble/curves/ed25519";
 import {
   type AbiParameter,
   type AbiFunction,
@@ -10,6 +11,7 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
+  bytesToBigInt,
   decodeFunctionData,
   zeroHash,
 } from "viem";
@@ -329,6 +331,67 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
     assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
   }
+});
+
+test("MCP tribute_offer submits the caller's proof, root, signature and circuit selector", async () => {
+  type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+  const handlers: Record<string, ToolHandler> = {};
+  const server = {
+    tool(name: string, ...args: unknown[]) {
+      handlers[name] = args.at(-1) as ToolHandler;
+    },
+  } as unknown as McpServer;
+  const account = privateKeyToAccount(
+    "0x0000000000000000000000000000000000000000000000000000000000000002",
+  );
+  // A real X25519 public key: encryptOffer must accept it as the offer key.
+  const offerKey = bytesToBigInt(x25519.getPublicKey(new Uint8Array(32).fill(7)));
+  const sent: { data: Hex; value: bigint }[] = [];
+  const ctx = {
+    rpcUrl: "http://unused.invalid",
+    chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
+    publicClient: {
+      readContract: async ({ functionName }: { functionName: string }) =>
+        functionName === "isBootstrapped" ? true : offerKey,
+    } as unknown as PublicClient,
+    account,
+    walletClient: {
+      sendTransaction: async (transaction: { data: Hex; value: bigint }) => {
+        sent.push(transaction);
+        return `0x${"11".repeat(32)}` as Hex;
+      },
+    } as WalletClient,
+  } satisfies Ctx;
+  registerSignTools(server, ctx);
+
+  const proof = `0x${"ab".repeat(120)}`;
+  const merkleRoot = `0x${"cd".repeat(32)}`;
+  const signature = `0x${"ef".repeat(48)}`;
+  const callback = handlers.tribute_offer;
+  assert(callback, "tribute_offer was registered");
+  await callback({
+    worldwide_day: 20260818,
+    zk_proof: proof,
+    zk_merkle_root: merkleRoot,
+    signature,
+    l2_chain_id: 57005,
+    circuit_version: "1.1.0",
+    tribute_draft_id: `0x${"12".repeat(32)}`,
+    su_hashes: [`0x${"34".repeat(32)}`],
+    wait: false,
+  });
+
+  const transaction = sent.at(-1);
+  assert(transaction, "tribute_offer submitted a transaction");
+  const { args } = decodeFunctionData({
+    abi: resolveContract("tributefactory").abi,
+    data: transaction.data,
+  });
+  assert.equal(args?.[7], proof, "zkProof");
+  assert.equal(args?.[8], 57005, "chainId");
+  assert.equal(args?.[9], "1.1.0", "version");
+  assert.equal(args?.[11], merkleRoot, "zkMerkleRoot");
+  assert.equal(args?.[12], signature, "signature");
 });
 
 test("external intent amounts retain their existing 18-decimal presentation", () => {

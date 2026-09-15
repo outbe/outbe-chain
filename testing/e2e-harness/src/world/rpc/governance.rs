@@ -291,6 +291,51 @@ impl Rpc {
             .collect()
     }
 
+    /// Proposal id the vote module allocated to `tx_hash`, decoded from the
+    /// `ProposalCreated` event its receipt carries.
+    ///
+    /// Reading the allocated id keeps each caller independent of the ids other
+    /// scenarios have already consumed: no step has to hardcode one.
+    pub fn proposal_id_from_receipt(&self, port: u16, tx_hash: &str) -> Result<u64> {
+        let receipt = eth::receipt_json(&self.url(port), tx_hash)
+            .ok_or_else(|| eyre!("no receipt for proposal transaction {tx_hash} on RPC {port}"))?;
+        let wanted = format!(
+            "{:#x}",
+            keccak256("ProposalCreated(uint256,address,address,string,uint64)".as_bytes())
+        );
+        let logs = receipt
+            .get("logs")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| eyre!("receipt {tx_hash} on RPC {port} has no logs array"))?;
+        for log in logs {
+            let emitted_by = log
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if !emitted_by.eq_ignore_ascii_case(&format!("{:#x}", addresses::VOTE_ADDR)) {
+                continue;
+            }
+            let topics = log
+                .get("topics")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| eyre!("vote log in {tx_hash} has no topics"))?;
+            if topics.first().and_then(serde_json::Value::as_str) != Some(wanted.as_str()) {
+                continue;
+            }
+            let encoded = topics
+                .get(1)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("ProposalCreated in {tx_hash} carries no proposal id"))?;
+            return U256::from_str_radix(encoded.trim_start_matches("0x"), 16)
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+                .ok_or_else(|| eyre!("malformed ProposalCreated id {encoded} in {tx_hash}"));
+        }
+        Err(eyre!(
+            "transaction {tx_hash} receipt carries no ProposalCreated event"
+        ))
+    }
+
     pub fn proposal_approved_event_blocks(&self, port: u16, proposal_id: u64) -> Result<Vec<u64>> {
         self.proposal_event_blocks(
             port,

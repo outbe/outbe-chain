@@ -589,12 +589,11 @@ pub struct FixtureState {
     pub metadosis_inactive_lysis_reject_code: Option<u64>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
-    /// Encoded BLS MinPk private key the harness registered as the L2 network key.
-    pub l2_bls_private_hex: Option<String>,
-    /// L2 chain id registered for the operator under test.
-    pub l2_chain_id: Option<u64>,
     /// Hash of an offer expected to be rejected by the zk signature gate.
     pub l2_rejected_offer_tx_hash: Option<String>,
+    /// First use the declared L2 57005 binding; allocate additional ids only
+    /// when a scenario registers more operators.
+    pub l2_next_governed_chain_id: u64,
 
     // ---- ZeroFee live scenario ----
     pub zerofee_key: Option<String>,
@@ -812,9 +811,8 @@ impl Default for FixtureState {
             ocomp_full_node_local_first_digest: None,
             ocomp_full_node_mismatch_job_id: None,
             ocomp_full_node_mismatch_evidence_files: Vec::new(),
-            l2_bls_private_hex: None,
-            l2_chain_id: None,
             l2_rejected_offer_tx_hash: None,
+            l2_next_governed_chain_id: 57_005,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

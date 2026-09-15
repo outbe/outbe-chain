@@ -35,7 +35,7 @@ pub enum L2RegistryError {
     #[error("caller {caller} is not the owner of L2 network {chain_id}")]
     NotNetworkOwner { caller: Address, chain_id: u64 },
 
-    #[error("zkMerkleRoot must be exactly 32 bytes when ZK verification is enabled")]
+    #[error("zkMerkleRoot must be exactly 32 bytes")]
     ZkMerkleRootRequired,
 
     #[error("invalid BLS signature over zkMerkleRoot")]

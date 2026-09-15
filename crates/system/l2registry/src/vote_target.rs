@@ -25,11 +25,6 @@ enum L2RegistryVotePayloadJsonV1 {
         chain_id: u64,
         l1_address: String,
         public_key: String,
-        zk_enabled: bool,
-    },
-    SetZkEnabled {
-        chain_id: u64,
-        enabled: bool,
     },
 }
 
@@ -40,11 +35,6 @@ pub enum L2RegistryVotePayloadV1 {
         chain_id: u64,
         l1_address: Address,
         public_key: [u8; BLS_PUBLIC_KEY_LEN],
-        zk_enabled: bool,
-    },
-    SetZkEnabled {
-        chain_id: u64,
-        enabled: bool,
     },
 }
 
@@ -57,7 +47,6 @@ impl L2RegistryVotePayloadV1 {
                 chain_id,
                 l1_address,
                 public_key,
-                zk_enabled,
             } => {
                 if chain_id == 0 {
                     return Err(L2RegistryError::InvalidChainId);
@@ -81,14 +70,7 @@ impl L2RegistryVotePayloadV1 {
                     chain_id,
                     l1_address,
                     public_key,
-                    zk_enabled,
                 })
-            }
-            L2RegistryVotePayloadJsonV1::SetZkEnabled { chain_id, enabled } => {
-                if chain_id == 0 {
-                    return Err(L2RegistryError::InvalidChainId);
-                }
-                Ok(Self::SetZkEnabled { chain_id, enabled })
             }
         }
     }
@@ -99,11 +81,7 @@ impl L2RegistryVotePayloadV1 {
                 chain_id,
                 l1_address,
                 public_key,
-                zk_enabled,
-            } => registry.register_network_with_zk(*chain_id, *l1_address, public_key, *zk_enabled),
-            Self::SetZkEnabled { chain_id, enabled } => {
-                registry.set_zk_enabled(*chain_id, *enabled)
-            }
+            } => registry.register_network(*chain_id, *l1_address, public_key),
         }
     }
 }
@@ -159,17 +137,19 @@ mod tests {
 
     use super::*;
 
-    fn valid_public_key_hex() -> String {
+    fn valid_public_key() -> [u8; BLS_PUBLIC_KEY_LEN] {
         let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));
-        format!("0x{}", hex::encode(public.encode()))
+        let mut key = [0u8; BLS_PUBLIC_KEY_LEN];
+        key.copy_from_slice(public.encode().as_ref());
+        key
     }
 
-    fn register_json(extra: &str) -> String {
+    fn register_json(chain_id: u64, extra: &str) -> String {
         format!(
-            r#"{{"operation":"register","chainId":4242,"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"{}","zkEnabled":true{extra}}}"#,
-            valid_public_key_hex()
+            r#"{{"operation":"register","chainId":{chain_id},"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x{}"{extra}}}"#,
+            hex::encode(valid_public_key())
         )
     }
 
@@ -183,28 +163,9 @@ mod tests {
     }
 
     #[test]
-    fn strict_register_json_decodes_to_typed_fields() {
-        let payload = register_json("");
-        let decoded = L2RegistryVotePayloadV1::decode_json(payload.as_bytes()).unwrap();
-        assert!(matches!(
-            decoded,
-            L2RegistryVotePayloadV1::Register {
-                chain_id: 4242,
-                l1_address,
-                zk_enabled: true,
-                ..
-            } if l1_address == Address::repeat_byte(0x11)
-        ));
-    }
-
-    #[test]
     fn unknown_or_operation_specific_fields_are_rejected() {
-        assert!(
-            L2RegistryVotePayloadV1::decode_json(register_json(",\"name\":\"x\"").as_bytes())
-                .is_err()
-        );
         assert!(L2RegistryVotePayloadV1::decode_json(
-            br#"{"operation":"remove","chainId":4242,"enabled":true}"#
+            register_json(4242, ",\"name\":\"x\"").as_bytes()
         )
         .is_err());
         assert!(
@@ -215,7 +176,7 @@ mod tests {
 
     #[test]
     fn malformed_register_identity_and_key_are_rejected() {
-        let zero = register_json("").replace(
+        let zero = register_json(4242, "").replace(
             "0x1111111111111111111111111111111111111111",
             "0x0000000000000000000000000000000000000000",
         );
@@ -225,14 +186,14 @@ mod tests {
         ));
 
         let malformed = String::from(
-            r#"{"operation":"register","chainId":4242,"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x01","zkEnabled":true}"#,
+            r#"{"operation":"register","chainId":4242,"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x01"}"#,
         );
         assert!(L2RegistryVotePayloadV1::decode_json(malformed.as_bytes()).is_err());
     }
 
     #[test]
     fn approved_target_applies_once_and_classifies_a_duplicate_as_proposal_error() {
-        let payload = register_json("");
+        let payload = register_json(4242, "");
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let target = L2RegistryVoteTarget;
@@ -247,12 +208,6 @@ mod tests {
                     .unwrap(),
                 TargetExecutionOutcome::Applied
             );
-            assert!(
-                L2RegistryContract::new(storage.clone())
-                    .load_network(4242)
-                    .unwrap()
-                    .zk_enabled
-            );
             assert!(matches!(
                 target
                     .handle_approved(&ctx, U256::from(2u64), payload.as_bytes(), vote_context(),)
@@ -261,14 +216,12 @@ mod tests {
             ));
             let record = L2RegistryContract::new(storage).load_network(4242).unwrap();
             assert_eq!(record.l1_address, Address::repeat_byte(0x11));
-            assert!(record.zk_enabled);
         });
     }
 
     #[test]
-    fn approved_toggle_uses_the_same_target_path() {
-        let register = register_json("");
-        let disable = br#"{"operation":"setZkEnabled","chainId":4242,"enabled":false}"#;
+    fn zero_chain_id_cannot_be_proposed_or_applied() {
+        let register = register_json(0, "");
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let target = L2RegistryVoteTarget;
@@ -276,21 +229,20 @@ mod tests {
                 BlockContext::empty_for_tests(30, 1_700_000_000, 1),
                 storage.clone(),
             );
-            for (id, payload) in [register.as_bytes(), disable].into_iter().enumerate() {
-                assert_eq!(
-                    target
-                        .handle_approved(
-                            &ctx,
-                            U256::from((id + 1) as u64),
-                            payload,
-                            vote_context(),
-                        )
-                        .unwrap(),
-                    TargetExecutionOutcome::Applied
-                );
-            }
-            let record = L2RegistryContract::new(storage).load_network(4242).unwrap();
-            assert!(!record.zk_enabled);
+            assert!(matches!(
+                L2RegistryVotePayloadV1::decode_json(register.as_bytes()),
+                Err(L2RegistryError::InvalidChainId)
+            ));
+            assert!(target
+                .validate(register.as_bytes(), vote_context())
+                .is_err());
+            assert!(matches!(
+                target
+                    .handle_approved(&ctx, U256::ONE, register.as_bytes(), vote_context())
+                    .unwrap(),
+                TargetExecutionOutcome::Error { .. }
+            ));
+            assert!(!L2RegistryContract::new(storage).networks.exists(0).unwrap());
         });
     }
 }

@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
 use outbe_compressed_entities::{
     decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
@@ -11,6 +11,7 @@ use outbe_compressed_entities::{
 };
 
 use crate::features::common::boot_bounded_tribute_localnet;
+use crate::features::l2_registration;
 use crate::world::World;
 
 #[given(
@@ -32,13 +33,14 @@ fn fresh_bounded_tribute_localnet(world: &mut World, window: u64) {
 #[when("an operator submits one encrypted tribute offer")]
 fn submit_one_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         .tribute_offer(&key, &wwd)
@@ -46,16 +48,80 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("an operator submits one encrypted cross-currency tribute offer")]
-fn submit_one_cross_currency_offer(world: &mut World) {
+#[when("an unregistered operator submits one encrypted tribute offer")]
+fn submit_one_offer_from_unregistered_operator(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    let address = l2_registration::operator_address(world, &key);
+    assert_eq!(
+        world
+            .rpc
+            .l2_chain_by_l1_address(address)
+            .expect("read the offer operator's L2Registry entry"),
+        0,
+        "the unregistered-offer scenario must not register its operator"
+    );
+    wait_for_offering(world, &wwd);
+    // Deliberately no registration: the offer must be rejected by the factory
+    // guard, before the day, pricing or enclave paths are reached. It also
+    // carries no zk material, so the guard - not a proof - is what rejects it.
+    let tx_hash = world
+        .rpc
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            crate::world::rpc::TributeZkOffer {
+                tribute_draft_id_hex: &format!("{:#x}", B256::with_last_byte(0x11)),
+                su_hash_hex: &format!("{:#x}", B256::with_last_byte(0x22)),
+                merkle_root_hex: "0x",
+                proof_hex: "0x",
+                l2_chain_id: 0,
+                circuit_version: "",
+                signature_hex: "0x",
+            },
+        )
+        .expect("product CLI offerTribute returned a transaction hash");
+    world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
+}
+
+#[then("the offer is rejected as an unregistered L2 operator and tribute supply stays zero")]
+fn unregistered_offer_rejected(world: &mut World) {
+    let tx_hash = world
+        .state
+        .l2_rejected_offer_tx_hash
+        .as_deref()
+        .expect("unregistered offer tx");
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    super::tribute_negatives::assert_rejection(
+        world,
+        tx_hash,
+        &key,
+        super::tribute_negatives::Rejection::UnregisteredOperator,
+    );
+    super::tribute_negatives::assert_supply(world, 0);
+}
+
+#[when("an operator submits one encrypted cross-currency tribute offer")]
+fn submit_one_cross_currency_offer(world: &mut World) {
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         .tribute_cross_currency_offer(&key, &wwd, "0", "410000", 949, 978, false)
@@ -100,13 +166,14 @@ pub(super) fn wait_for_offering(world: &World, wwd: &str) {
 #[when("the operator submits a duplicate logical tribute offer with different parameters for the same day")]
 fn submit_duplicate_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         // The first offer uses amount=100 and exclude=false. Change both
