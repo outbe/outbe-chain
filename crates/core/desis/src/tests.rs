@@ -476,7 +476,7 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
 }
 
 #[test]
-fn strict_request_desis_limit_minor_propagates_duplicate_refusal_without_overwrite() {
+fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
     with_storage(|s| {
         crate::ocomp_budget::apply_request_desis_limit(
             s.clone(),
@@ -513,7 +513,7 @@ fn strict_request_desis_limit_minor_propagates_duplicate_refusal_without_overwri
 }
 
 #[test]
-fn strict_request_desis_limit_minor_rejects_oversized_supply_without_state() {
+fn strict_request_desis_limit_rejects_oversized_supply_without_state() {
     with_storage(|s| {
         assert!(crate::ocomp_budget::apply_request_desis_limit(
             s.clone(),
@@ -568,7 +568,7 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
 }
 
 #[test]
-fn strict_request_desis_limit_minor_rolls_back_every_partial_write_boundary() {
+fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let result = StorageHandle::enter(&mut provider, |storage| {
@@ -617,7 +617,7 @@ fn strict_request_desis_limit_minor_rolls_back_every_partial_write_boundary() {
 }
 
 #[test]
-fn strict_request_desis_limit_minor_never_tops_up_a_live_auction() {
+fn strict_request_desis_limit_never_tops_up_a_live_auction() {
     with_storage(|storage| {
         crate::ocomp_budget::apply_request_desis_limit(
             storage.clone(),
