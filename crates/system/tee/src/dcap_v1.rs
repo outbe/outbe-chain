@@ -772,7 +772,7 @@ fn decode_upper_hex<const N: usize>(value: &str) -> Result<[u8; N], DcapRejectCo
         return Err(DcapRejectCodeV1::CollateralNonCanonical);
     }
     let mut decoded = [0; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = upper_hex_nibble(pair[0])?;
         let low = upper_hex_nibble(pair[1])?;
         decoded[index] = (high << 4) | low;

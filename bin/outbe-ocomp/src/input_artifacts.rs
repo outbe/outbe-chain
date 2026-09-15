@@ -1202,8 +1202,10 @@ pub fn decode_fidelity_subject_key(encoded: &[u8]) -> Result<Vec<Address>, Input
     )?;
 
     let owners = encoded[4..]
-        .chunks_exact(20)
-        .map(Address::from_slice)
+        .as_chunks::<20>()
+        .0
+        .iter()
+        .map(|bytes| Address::from(*bytes))
         .collect::<Vec<_>>();
     require(
         owners.windows(2).all(|pair| pair[0] < pair[1]),
@@ -1237,8 +1239,10 @@ pub fn decode_oracle_subject_key(encoded: &[u8]) -> Result<(u32, Vec<u16>), Inpu
         .ok_or(InputArtifactError::ByteCountOverflow)?;
     require(encoded.len() == expected_len, "Oracle subject exact bytes")?;
     let isos = encoded[6..]
-        .chunks_exact(2)
-        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| u16::from_be_bytes(*bytes))
         .collect::<Vec<_>>();
     require(
         isos.windows(2).all(|pair| pair[0] < pair[1]) && isos.contains(&840),

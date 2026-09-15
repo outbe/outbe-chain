@@ -399,7 +399,7 @@ fn canonical_crl(
                 )));
             }
             let mut decoded = Vec::with_capacity(encoded.len() / 2);
-            for pair in encoded.chunks_exact(2) {
+            for pair in encoded.as_chunks::<2>().0 {
                 let text = std::str::from_utf8(pair).map_err(|_| {
                     TransportError::Attestation(format!("{label} is not hexadecimal DER"))
                 })?;
