@@ -928,13 +928,16 @@ fn renewed_deadlines_and_keys_are_exact(world: &mut World) {
         assert_eq!(status.valid_until, original, "missed node deadline changed");
         assert_eq!(status.journal_state, None, "missed node gained a journal");
     }
-    for index in 0..=full_node {
+    for (index, expected_offer_key) in scenario.permanent_offer_keys[..=full_node]
+        .iter()
+        .enumerate()
+    {
         assert_eq!(
             world
                 .localnet
                 .node_offer_public(index)
                 .unwrap_or_else(|error| panic!("read node {index} offer key: {error:#}")),
-            scenario.permanent_offer_keys[index],
+            *expected_offer_key,
             "manual lease transition changed node {index} permanent offer key"
         );
     }

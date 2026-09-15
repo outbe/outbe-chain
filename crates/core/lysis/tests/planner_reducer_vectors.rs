@@ -243,7 +243,9 @@ fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
             }));
             while carriers.len() > 1 {
                 carriers = carriers
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| RawCoverageCarrierV1::merge(&pair[0], &pair[1]).unwrap())
                     .collect();
             }
