@@ -187,8 +187,8 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: DAY_LIMIT,
-        lysis_budget: LYSIS_BUDGET,
-        auction_base: AUCTION_BASE,
+        lysis_limit_minor: LYSIS_BUDGET,
+        desis_limit_minor: AUCTION_BASE,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
@@ -246,8 +246,8 @@ fn intent(
             current_vwap: U256::from(55),
             gratis_demand: LYSIS_BUDGET,
             gratis_supply: DAY_LIMIT,
-            lysis_budget: LYSIS_BUDGET,
-            auction_base: AUCTION_BASE,
+            lysis_limit_minor: LYSIS_BUDGET,
+            desis_limit_minor: AUCTION_BASE,
             auction_entry_prices: entry_prices(),
             request_budget_split_receipt_hash: receipt_hash,
         },
@@ -460,7 +460,7 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
-        let retained_lysis_budget = contract
+        let retained_lysis_limit_minor = contract
             .expire_ocomp_job(
                 &expiry_transition,
                 first_intent_id,
@@ -469,7 +469,7 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
                 &limits,
             )
             .unwrap();
-        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
+        assert_eq!(retained_lysis_limit_minor, LYSIS_BUDGET);
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
@@ -614,7 +614,7 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
-        let retained_lysis_budget = contract
+        let retained_lysis_limit_minor = contract
             .expire_ocomp_job(
                 &expiry_transition,
                 first_intent_id,
@@ -624,7 +624,7 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
             )
             .unwrap();
 
-        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
+        assert_eq!(retained_lysis_limit_minor, LYSIS_BUDGET);
         assert_eq!(
             contract.get_wwd_status(WWD).unwrap(),
             status::OFFCHAIN_PENDING

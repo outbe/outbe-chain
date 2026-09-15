@@ -27,8 +27,8 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
         RequestBudgetSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::ZERO,
-            lysis_budget: U256::ZERO,
-            auction_base: U256::ZERO,
+            lysis_limit_minor: U256::ZERO,
+            desis_limit_minor: U256::ZERO,
             carry_over_credit: U256::ZERO,
         }
     );
@@ -37,8 +37,8 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
         RequestBudgetSplit::derive(U256::MAX, U256::MAX, U256::MAX, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::MAX,
-            lysis_budget: U256::MAX,
-            auction_base: U256::ZERO,
+            lysis_limit_minor: U256::MAX,
+            desis_limit_minor: U256::ZERO,
             carry_over_credit: U256::ZERO,
         }
     );
@@ -72,7 +72,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
         true,
     )
     .unwrap();
-    assert_eq!(weak.auction_base, U256::from(68));
+    assert_eq!(weak.desis_limit_minor, U256::from(68));
     assert_eq!(weak.carry_over_credit, U256::from(968));
 
     // A day that earned past its own emission is bounded by what the accumulator holds.
@@ -84,7 +84,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
         true,
     )
     .unwrap();
-    assert_eq!(strong.auction_base, U256::from(680));
+    assert_eq!(strong.desis_limit_minor, U256::from(680));
 
     // The same day reaches past its own emission once the accumulator has something to give.
     let funded = RequestBudgetSplit::derive(
@@ -95,7 +95,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
         true,
     )
     .unwrap();
-    assert_eq!(funded.auction_base, U256::from(2_680));
+    assert_eq!(funded.desis_limit_minor, U256::from(2_680));
     assert_eq!(funded.day_limit, U256::from(3_680));
 
     // Lysis alone can exhaust the day's emission, and then only the accumulator funds the auction.
@@ -107,13 +107,13 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
         true,
     )
     .unwrap();
-    assert_eq!(exhausted.auction_base, U256::ZERO);
+    assert_eq!(exhausted.desis_limit_minor, U256::ZERO);
 
     // A day with no tributes auctions nothing.
     let empty =
         RequestBudgetSplit::derive(U256::from(1_000), U256::ZERO, U256::ZERO, U256::ZERO, true)
             .unwrap();
-    assert_eq!(empty.auction_base, U256::ZERO);
+    assert_eq!(empty.desis_limit_minor, U256::ZERO);
 
     // A red day draws nothing, however much the accumulator holds.
     let red = RequestBudgetSplit::derive(
@@ -124,12 +124,12 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
         false,
     )
     .unwrap();
-    assert_eq!(red.auction_base, U256::ZERO);
+    assert_eq!(red.desis_limit_minor, U256::ZERO);
     assert_eq!(red.carry_over_credit, U256::from(996));
 }
 
 #[test]
-fn green_request_commits_exact_auction_base_and_canonical_receipt() {
+fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
     with_storage(|storage| {
         let request = RequestBudgetEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -137,7 +137,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -150,8 +150,8 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
 
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(receipt.day_limit, U256::from(160));
-        assert_eq!(receipt.lysis_budget, U256::from(40));
-        assert_eq!(receipt.auction_base, U256::from(60));
+        assert_eq!(receipt.lysis_limit_minor, U256::from(40));
+        assert_eq!(receipt.desis_limit_minor, U256::from(60));
         assert_eq!(receipt.destination, BudgetSplitDestination::DesisAuction);
         assert_eq!(receipt.carry_over_credit, U256::from(60));
         assert_eq!(
@@ -175,7 +175,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
         );
         assert_eq!(
             desis
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(60)
@@ -190,7 +190,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
 }
 
 #[test]
-fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
+fn red_request_briefs_nothing_and_credits_the_exact_desis_limit() {
     with_storage(|storage| {
         let request = RequestBudgetEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -198,7 +198,7 @@ fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -250,7 +250,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -267,7 +267,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
 
         let desis = DesisContract::new(storage.clone());
         assert_eq!(
-            desis.pending_supply_promis.read(&wwd).unwrap(),
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
             U256::from(7)
         );
         assert_eq!(desis.sched_active_count.read().unwrap(), 1);
@@ -294,7 +294,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(20),
-            lysis_budget: U256::from(10),
+            lysis_limit_minor: U256::from(10),
             nominal_total: U256::from(20),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -326,7 +326,7 @@ fn an_unpriced_day_commits_a_canonical_empty_price_table() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: Vec::new(),
             logical_anchor: 1_699_920_005,
@@ -345,7 +345,7 @@ fn an_unpriced_day_commits_a_canonical_empty_price_table() {
                 desis_request_brief_hash(
                     request.protocol_bundle_hash,
                     request.wwd,
-                    receipt.auction_base,
+                    receipt.desis_limit_minor,
                     &[],
                     request.logical_anchor,
                 )
@@ -367,7 +367,7 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(32),
+            lysis_limit_minor: U256::from(32),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -378,16 +378,16 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
-        assert_eq!(receipt.auction_base, U256::from(68));
+        assert_eq!(receipt.desis_limit_minor, U256::from(68));
         assert_eq!(receipt.carry_over_credit, U256::from(968));
         assert_eq!(
-            receipt.lysis_budget + receipt.auction_base + receipt.carry_over_credit,
+            receipt.lysis_limit_minor + receipt.desis_limit_minor + receipt.carry_over_credit,
             receipt.day_limit,
             "the effective ceiling is exhausted by Lysis, the brief and the accumulator"
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(68)
@@ -410,7 +410,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(4),
+            lysis_limit_minor: U256::from(4),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -421,7 +421,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
-        assert_eq!(receipt.auction_base, U256::ZERO);
+        assert_eq!(receipt.desis_limit_minor, U256::ZERO);
         assert_eq!(receipt.carry_over_credit, U256::from(996));
         assert_eq!(
             PromisLimitContract::new(storage)
@@ -447,7 +447,7 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(320),
+            lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -459,12 +459,12 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
         // Demand is the nominal beyond the symbolic share, and the accumulator covers it.
-        assert_eq!(receipt.auction_base, U256::from(4_680));
+        assert_eq!(receipt.desis_limit_minor, U256::from(4_680));
         assert_eq!(receipt.carry_over_credit, U256::from(680));
         assert_eq!(receipt.day_limit, U256::from(5_680));
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(4_680),
@@ -493,7 +493,7 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(320),
+            lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -505,10 +505,10 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
         // Demand is 4_680, but the accumulator only holds 100 plus this day's own 680.
-        assert_eq!(receipt.auction_base, U256::from(780));
+        assert_eq!(receipt.desis_limit_minor, U256::from(780));
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(780)

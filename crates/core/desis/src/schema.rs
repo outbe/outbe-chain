@@ -259,7 +259,7 @@ pub struct DesisContract {
     // --- Auction brief ---
     /// worldwide_day -> auction supply in raw PROMIS minor units.
     #[attribute(order = 30)]
-    pub pending_supply_promis: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
     /// worldwide_day -> 1 for a green day.
     #[attribute(order = 31)]
     pub brief_green: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,

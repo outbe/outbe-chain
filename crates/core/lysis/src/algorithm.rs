@@ -288,7 +288,7 @@ pub fn calc_fraction_distribution_fp(
 
     // normalize f1 so weighted expenditure does not exceed f_fp.
     // Raw algorithm output can have `sum(f1[i] * y_fp[i]) / SCALE > f_fp` because
-    // the per-group distribution doesn't enforce a budget-preserving invariant
+    // the per-group distribution doesn't enforce a limit-preserving invariant
     // on its own. Scale down proportionally (monotone, preserves ratios, never
     // rounds up) so downstream `gratis_load = fraction * nominal / SCALE` in
     // `lysis::runtime` cannot overspend the allocation and silently skip the

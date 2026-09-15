@@ -90,8 +90,8 @@ wire_struct! {
         pub current_vwap: U256,
         pub gratis_demand: U256,
         pub gratis_supply: U256,
-        pub lysis_budget: U256,
-        pub auction_base: U256,
+        pub lysis_limit_minor: U256,
+        pub desis_limit_minor: U256,
         pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub request_budget_split_receipt_hash: B256,
     }
@@ -305,8 +305,8 @@ impl JobIntentV1 {
         )?;
         let split_total = self
             .frozen_metadosis_values
-            .lysis_budget
-            .checked_add(self.frozen_metadosis_values.auction_base)
+            .lysis_limit_minor
+            .checked_add(self.frozen_metadosis_values.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Metadosis budget split",
             })?;

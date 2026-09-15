@@ -311,7 +311,7 @@ fn synthetic_fixture_with_options(
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: manifest.wwd,
-        lysis_budget: U256::from(200),
+        lysis_limit_minor: U256::from(200),
         logical_evaluation_time: 1_784_765_900,
         tribute_count: manifest.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -494,7 +494,7 @@ fn synthetic_fixture_with_options(
                     contributor_count: u32::try_from(contributors.len()).unwrap(),
                     tribute_nominal_total: raw_nominal_total,
                     eligible_nominal_total: raw_nominal_total,
-                    nod_gratis_consumed: U256::from(count),
+                    lysis_allocation_minor: U256::from(count),
                     nod_cost_total,
                     first_error_ordinal: None,
                 };

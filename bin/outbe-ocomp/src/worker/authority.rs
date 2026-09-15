@@ -185,7 +185,7 @@ pub(super) fn planner_from_authority(
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: plan.wwd,
-        lysis_budget: plan.lysis_budget,
+        lysis_limit_minor: plan.lysis_limit_minor,
         logical_evaluation_time: plan.logical_evaluation_time,
         tribute_count: plan.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,

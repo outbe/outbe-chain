@@ -61,7 +61,10 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
             plan.tribute().input_binding(),
             &fixture.intent.activation_preconditions.tribute
         );
-        assert_eq!(plan.carry_over().credited_unused_lysis(), U256::from(15));
+        assert_eq!(
+            plan.carry_over().credited_unused_lysis_limit_minor(),
+            U256::from(15)
+        );
     }
 }
 
@@ -172,10 +175,10 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
     mutation.metadosis_completion_summary.gratis_supply += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
-    mutation.metadosis_completion_summary.lysis_budget += U256::from(1);
+    mutation.metadosis_completion_summary.lysis_limit_minor += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
-    mutation.metadosis_completion_summary.auction_base += U256::from(1);
+    mutation.metadosis_completion_summary.desis_limit_minor += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
     mutation
@@ -283,12 +286,12 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
     let mut anchor_fixture = activation_fixture(DayType::Green);
     anchor_fixture.request_receipt.logical_anchor =
         anchor_fixture.intent.logical_evaluation_time + 1;
-    let briefed_supply = anchor_fixture.request_receipt.auction_base;
+    let desis_limit_minor = anchor_fixture.request_receipt.desis_limit_minor;
     anchor_fixture.request_receipt.desis_brief_hash = Some(
         outbe_ocomp_protocol::receipts::desis_request_brief_hash(
             anchor_fixture.request_receipt.protocol_bundle_hash,
             anchor_fixture.request_receipt.wwd,
-            briefed_supply,
+            desis_limit_minor,
             &anchor_fixture.request_receipt.auction_entry_prices,
             anchor_fixture.request_receipt.logical_anchor,
         )
@@ -412,7 +415,7 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     .is_err());
 
     let mut wrong_carry = receipts.clone();
-    wrong_carry.carry_over.credited_unused_lysis += U256::from(1);
+    wrong_carry.carry_over.credited_unused_lysis_limit_minor += U256::from(1);
     wrong_carry.carry_over.after_value += U256::from(1);
     assert!(verify_receipts(
         &plan,
@@ -475,7 +478,7 @@ fn owner_receipts(
         nod_count: plan.nod().exact_counts().nod_count,
         nod_root: plan.nod().nod_root(),
         nod_amount_total: plan.nod().nod_amount_total(),
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
     let contributor_projection = ContributorStateEventProjectionV1 {
@@ -497,8 +500,8 @@ fn owner_receipts(
     let carry_projection = CarryOverStateEventProjectionV1 {
         source_wwd: plan.carry_over().source_wwd(),
         before_value: U256::from(77),
-        credited_unused_lysis: plan.carry_over().credited_unused_lysis(),
-        after_value: U256::from(77) + plan.carry_over().credited_unused_lysis(),
+        credited_unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
+        after_value: U256::from(77) + plan.carry_over().credited_unused_lysis_limit_minor(),
     };
     LysisOwnerReceiptsV1 {
         nod: NodBatchReceiptV1 {
@@ -507,7 +510,7 @@ fn owner_receipts(
             nod_count: plan.nod().exact_counts().nod_count,
             nod_root: plan.nod().nod_root(),
             nod_amount_total: plan.nod().nod_amount_total(),
-            nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+            lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
             issued_at: plan.nod().issued_at(),
             state_event_digest: nod_state_event_digest(&binding, &nod_projection, limits).unwrap(),
         },
@@ -538,7 +541,7 @@ fn owner_receipts(
             binding,
             source_wwd: carry_projection.source_wwd,
             before_value: carry_projection.before_value,
-            credited_unused_lysis: carry_projection.credited_unused_lysis,
+            credited_unused_lysis_limit_minor: carry_projection.credited_unused_lysis_limit_minor,
             after_value: carry_projection.after_value,
             state_event_digest: carry_over_state_event_digest(
                 plan.binding(),

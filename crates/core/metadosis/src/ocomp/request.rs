@@ -254,7 +254,7 @@ fn build_and_commit_request(
         sealed_tribute_projection.tribute_nominal_amount,
         day_limit,
     )?;
-    let lysis_budget = calculation.gratis_allocation;
+    let lysis_limit_minor = calculation.lysis_limit_minor;
     let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
     let effect = RequestBudgetEffect {
@@ -263,7 +263,7 @@ fn build_and_commit_request(
         pending_nonce,
         day_type: protocol_day_type,
         day_limit,
-        lysis_budget,
+        lysis_limit_minor,
         nominal_total,
         auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
@@ -337,8 +337,8 @@ fn build_and_commit_request(
             current_vwap,
             gratis_demand: calculation.gratis_demand,
             gratis_supply: calculation.gratis_supply,
-            lysis_budget,
-            auction_base: receipt.auction_base,
+            lysis_limit_minor,
+            desis_limit_minor: receipt.desis_limit_minor,
             auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_budget_split_receipt_hash: receipt_hash,
         },

@@ -220,19 +220,19 @@ fn expire_exact(
     let intent_id = before
         .live_intent_id
         .ok_or_else(|| storage_corruption_message("pending OCOMP state has no live IntentId"))?;
-    let retained_lysis_budget = metadosis.expire_ocomp_job(
+    let retained_lysis_limit_minor = metadosis.expire_ocomp_job(
         outer_transition,
         intent_id,
         ctx.block.block_number,
         ctx.block.timestamp,
         &poc_schema_limits(),
     )?;
-    let expected_budget = before.retained_lysis_budget.ok_or_else(|| {
-        storage_corruption_message("terminal OCOMP expiry has no retained budget")
-    })?;
-    if retained_lysis_budget != expected_budget {
+    let expected_budget = before
+        .retained_lysis_limit_minor
+        .ok_or_else(|| storage_corruption_message("terminal OCOMP expiry has no retained limit"))?;
+    if retained_lysis_limit_minor != expected_budget {
         return Err(storage_corruption_message(
-            "terminal OCOMP expiry returned a different retained budget",
+            "terminal OCOMP expiry returned a different retained limit",
         ));
     }
     crate::terminal::fail_expired_ocomp_day(
@@ -241,7 +241,7 @@ fn expire_exact(
         scope,
         before.worldwide_day,
         intent_id,
-        retained_lysis_budget,
+        retained_lysis_limit_minor,
         outer_transition,
     )?;
     if metadosis.get_wwd_status(before.worldwide_day)? != crate::aggregate::WwdStatus::Failed

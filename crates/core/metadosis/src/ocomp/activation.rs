@@ -327,7 +327,7 @@ fn apply_certified_result(
         roots: result.roots.clone(),
         counts: plan.nod().exact_counts().clone(),
         nod_amount_total: plan.nod().nod_amount_total(),
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
     let contributor_input = CertifiedContributorRootV1 {
@@ -344,17 +344,17 @@ fn apply_certified_result(
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
     };
-    let lysis_budget = plan
+    let lysis_limit_minor = plan
         .nod()
-        .nod_gratis_consumed()
-        .checked_add(plan.carry_over().credited_unused_lysis())
-        .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
+        .lysis_allocation_minor()
+        .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
+        .ok_or_else(|| crate::errors::business_failure("Lysis limit overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
-        lysis_budget,
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
-        unused_lysis: plan.carry_over().credited_unused_lysis(),
+        lysis_limit_minor,
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
+        unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
@@ -373,8 +373,8 @@ fn apply_certified_result(
         // known two days later, and the limit bounds it.
         let allocated = plan
             .nod()
-            .nod_gratis_consumed()
-            .checked_add(request_receipt.auction_base)
+            .lysis_allocation_minor()
+            .checked_add(request_receipt.desis_limit_minor)
             .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
         if allocated > plan.tribute().consumed_nominal_total() {
             return Err(crate::errors::business_failure(
@@ -409,8 +409,8 @@ fn apply_certified_result(
             binding.intent_id,
             active_generation,
             result_evidence_hash,
-            plan.nod().nod_gratis_consumed(),
-            plan.carry_over().credited_unused_lysis(),
+            plan.nod().lysis_allocation_minor(),
+            plan.carry_over().credited_unused_lysis_limit_minor(),
             current_height,
             current_time,
             permit,

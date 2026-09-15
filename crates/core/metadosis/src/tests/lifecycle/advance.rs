@@ -344,7 +344,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         );
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.pending_supply_promis.read(&wwd).unwrap(),
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
             U256::from(1_u8)
         );
         assert_eq!(desis.sched_active_count.read().unwrap(), 1);

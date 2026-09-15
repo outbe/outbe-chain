@@ -531,7 +531,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
 
@@ -567,7 +567,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
         assert_eq!(
@@ -606,7 +606,10 @@ fn green_empty_day_briefs_no_supply_however_large_the_limit() {
             outbe_desis::AuctionStage::Briefed
         );
         assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
-        assert_eq!(desis.pending_supply_promis.read(&wwd).unwrap(), U256::ZERO);
+        assert_eq!(
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -661,7 +664,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
 }
 
 #[test]
-fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
+fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
         let nominal = U256::from(1_000);
@@ -695,7 +698,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
         assert_eq!(
@@ -801,7 +804,7 @@ fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
 

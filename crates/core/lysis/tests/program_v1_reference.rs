@@ -28,7 +28,7 @@ struct CorpusCase {
 struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
-    gratis_allocation: String,
+    lysis_limit_minor: String,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -83,7 +83,7 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
     ProgramInputV1 {
         worldwide_day: WorldwideDay::new(input.worldwide_day),
         logical_evaluation_time: input.logical_evaluation_time,
-        gratis_allocation: u256(&input.gratis_allocation),
+        lysis_limit_minor: u256(&input.lysis_limit_minor),
         tributes: input
             .tributes
             .iter()
@@ -217,8 +217,8 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
     json!({
         "status": "SUCCESS",
         "total_nominal": result.total_nominal.to_string(),
-        "gratis_allocation": result.gratis_allocation.to_string(),
-        "remaining_gratis": result.remaining_gratis.to_string(),
+        "lysis_limit_minor": result.lysis_limit_minor.to_string(),
+        "remaining_lysis_limit_minor": result.remaining_lysis_limit_minor.to_string(),
         "group_table": table,
         "nod_actions": nod_actions,
         "contributors": contributors,
@@ -378,7 +378,7 @@ fn boundary_record_counts_keep_raw_id_order() {
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,
-            gratis_allocation: nominal * U256::from(32_u8) / U256::from(100_u8),
+            lysis_limit_minor: nominal * U256::from(32_u8) / U256::from(100_u8),
             tributes,
         })
         .expect("31/32/33 bounded shapes execute");
