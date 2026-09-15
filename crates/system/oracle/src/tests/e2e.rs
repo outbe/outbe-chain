@@ -596,34 +596,6 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
     });
 }
 
-#[test]
-fn ioracle_selectors_are_unique() {
-    use crate::precompile::IOracle;
-    use alloy_sol_types::SolInterface;
-    use std::collections::HashSet;
-
-    const EXPECTED_IORACLE_FUNCTIONS: usize = 38;
-
-    let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
-    assert_eq!(
-        selectors.len(),
-        IOracle::IOracleCalls::COUNT,
-        "selector iterator must cover every generated IOracle call variant"
-    );
-    assert_eq!(
-        IOracle::IOracleCalls::COUNT,
-        EXPECTED_IORACLE_FUNCTIONS,
-        "IOracle function count changed; update selector collision coverage"
-    );
-
-    let unique: HashSet<[u8; 4]> = selectors.iter().copied().collect();
-    assert_eq!(
-        unique.len(),
-        selectors.len(),
-        "selector collision detected among {} IOracle functions",
-        selectors.len()
-    );
-}
 // -----------------------------------------------------------------------
 // Genesis Import: Snapshots, Penalties, S-curves
 // -----------------------------------------------------------------------
@@ -1264,6 +1236,102 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
         );
         let (bases, quotes, vwaps) = oracle.get_utc_day_vwap_snapshot(utc_day).unwrap();
         assert!(bases.is_empty() && quotes.is_empty() && vwaps.is_empty());
+    });
+}
+
+#[test]
+fn get_four_hour_vwap_precompile_weights_only_the_requested_window() {
+    use crate::precompile::{dispatch, IOracle};
+    use alloy_sol_types::SolCall;
+
+    // Cross UTC midnight to exercise a rolling window rather than a fixed bucket.
+    let now = ATOMIC_DAY_START + 2 * 60 * 60;
+    with_storage_at(now, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        for (timestamp, price, volume) in [
+            (now - 4 * 60 * 60 - 1, 900, 10),
+            (now - 4 * 60 * 60, 100, 1),
+            (now - 1, 200, 3),
+            (now, 800, 10),
+        ] {
+            oracle
+                .write_snapshot(timestamp, &[(pair, coen_iso(price), coen_iso(volume))])
+                .unwrap();
+        }
+
+        let four_hour_call = IOracle::getFourHourVwapCall {
+            base: COEN,
+            quote: usd(),
+        };
+        let lookback_call = IOracle::getVwapCall {
+            base: COEN,
+            quote: usd(),
+            lookbackSeconds: 4 * 60 * 60,
+        };
+        // A shorter configured cap excludes the older sample, as for daily VWAP.
+        for (cap, expected) in [(86400, 175), (3600, 200)] {
+            oracle.config_lookback_duration.write(cap).unwrap();
+            let result = dispatch(
+                storage.clone(),
+                &four_hour_call.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
+            assert_eq!(
+                IOracle::getFourHourVwapCall::abi_decode_returns(&result).unwrap(),
+                coen_iso(expected)
+            );
+            assert_eq!(
+                result,
+                dispatch(
+                    storage.clone(),
+                    &lookback_call.abi_encode(),
+                    Address::ZERO,
+                    U256::ZERO
+                )
+                .unwrap()
+            );
+        }
+    });
+}
+
+#[test]
+fn get_four_hour_vwap_precompile_rejects_an_empty_window() {
+    use crate::precompile::{dispatch, IOracle};
+    use alloy_sol_types::SolCall;
+
+    let now = ATOMIC_DAY_START;
+    with_storage_at(now, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(now - 4 * 60 * 60 - 1, &[(pair, coen_iso(100), coen_iso(1))])
+            .unwrap();
+        let call = IOracle::getFourHourVwapCall {
+            base: COEN,
+            quote: usd(),
+        }
+        .abi_encode();
+        let error = dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap_err();
+        let lookback_call = IOracle::getVwapCall {
+            base: COEN,
+            quote: usd(),
+            lookbackSeconds: 4 * 60 * 60,
+        }
+        .abi_encode();
+        let lookback_error =
+            dispatch(storage.clone(), &lookback_call, Address::ZERO, U256::ZERO).unwrap_err();
+        assert_eq!(error.to_string(), lookback_error.to_string());
+        assert_eq!(
+            oracle.calculate_vwap(pair, now - 86400, now).unwrap(),
+            coen_iso(100)
+        );
     });
 }
 

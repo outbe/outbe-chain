@@ -1,8 +1,7 @@
-//! Exact-block Fidelity and Oracle raw opening construction for LYSIS_V1.
+//! Exact-block Fidelity and frozen Nod price openings for LYSIS_V1.
 
-use std::collections::BTreeMap;
-
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::B256;
+use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{job_id_from_intent_id, VerifiedFinalizedIntentV1},
@@ -10,10 +9,8 @@ use outbe_ocomp_protocol::{
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
-use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
 use reth_provider::StateProviderFactory;
-use reth_storage_api::StateProvider;
 
 use super::{
     finality::{
@@ -26,9 +23,8 @@ use super::{
 /// Builds the exact Lysis openings exclusively from standard public
 /// `eth_getProof` data at the authenticated request block.
 ///
-/// Oracle storage has a count-dependent shape, so construction deliberately
-/// uses two proof rounds: first the fixed count slots, then the complete slot
-/// plan derived from those locally verified values.
+/// Both slot plans are derived directly from the subjects. The legacy
+/// `oracle` wire field carries the Nod entry-price snapshot proof.
 pub fn build_public_lysis_openings<S>(
     source: &S,
     finalized: &VerifiedFinalizedIntentV1,
@@ -56,31 +52,15 @@ where
     .map_err(|error| RetentionError::Source(error.to_string()))?;
 
     let day = outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd);
-    let count_slots = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
-        .map_err(|error| RetentionError::Source(error.to_string()))?
-        .slots;
-    let count_proof = source
-        .account_proof(ORACLE_ADDRESS, &count_slots, block_hash)
-        .map_err(|error| {
-            RetentionError::Source(format!("read public Oracle count proof: {error}"))
-        })?;
-    let count_opening = build_verified_raw_contract_opening_from_public_proof(
-        &count_proof,
-        state_root,
-        ORACLE_ADDRESS,
-        &count_slots,
-        limits,
-    )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let oracle_slots =
-        oracle_slots_from_authenticated_opening(&count_opening, finalized.intent.wwd, &subjects)?;
+    let oracle_slots = entry_price_slots(day, &subjects.reference_isos)
+        .map_err(|error| RetentionError::Source(error.to_string()))?;
     let oracle_proof = source
-        .account_proof(ORACLE_ADDRESS, &oracle_slots, block_hash)
-        .map_err(|error| RetentionError::Source(format!("read public Oracle proof: {error}")))?;
+        .account_proof(NOD_ADDRESS, &oracle_slots, block_hash)
+        .map_err(|error| RetentionError::Source(format!("read public Nod price proof: {error}")))?;
     let oracle = build_verified_raw_contract_opening_from_public_proof(
         &oracle_proof,
         state_root,
-        ORACLE_ADDRESS,
+        NOD_ADDRESS,
         &oracle_slots,
         limits,
     )
@@ -120,7 +100,11 @@ where
 
     let fidelity_slots =
         fidelity_league_slots(&subjects, candidate.wwd, limits.max_collection_items)?;
-    let oracle_slots = oracle_slots(state.as_ref(), candidate, &subjects)?;
+    let oracle_slots = entry_price_slots(
+        outbe_primitives::time::WorldwideDay::new(candidate.wwd),
+        &subjects.reference_isos,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
     let fidelity = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
@@ -132,7 +116,7 @@ where
     let oracle = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
-        ORACLE_ADDRESS,
+        NOD_ADDRESS,
         &oracle_slots,
         limits,
     )
@@ -217,83 +201,23 @@ pub fn verify_lysis_openings(
         .collect::<Vec<_>>();
     verify_raw_contract_opening(
         &openings.oracle,
-        ORACLE_ADDRESS,
+        NOD_ADDRESS,
         finalized.request.state_root,
         &supplied_oracle_slots,
         limits,
     )
     .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let expected_oracle_slots = oracle_slots_from_authenticated_opening(
-        &openings.oracle,
-        finalized.intent.wwd,
-        expected_subjects,
-    )?;
+    let expected_oracle_slots = entry_price_slots(
+        outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd),
+        &expected_subjects.reference_isos,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
     if supplied_oracle_slots != expected_oracle_slots {
         return Err(RetentionError::Source(
-            "Oracle opening does not match the canonical count-derived slot plan".to_owned(),
+            "Nod price opening does not match the canonical snapshot slot plan".to_owned(),
         ));
     }
     Ok(())
-}
-
-fn oracle_slots_from_authenticated_opening(
-    opening: &outbe_ocomp_protocol::opening::RawContractOpeningProofV1,
-    wwd: u32,
-    subjects: &OpeningSubjectsV1,
-) -> Result<Vec<B256>, RetentionError> {
-    let values = opening
-        .ordered_slots
-        .iter()
-        .map(|raw| (raw.slot, raw.value))
-        .collect::<BTreeMap<_, _>>();
-    let day = outbe_primitives::time::WorldwideDay::new(wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let reference_currency_count =
-        authenticated_u32(&values, counts.slots[0], "Oracle reference currency count")?;
-    let scurve_count = authenticated_u32(&values, counts.slots[2], "Oracle S-curve count")?;
-    let scurve_oldest = authenticated_u32(&values, counts.slots[3], "Oracle S-curve oldest")?;
-    // The trailing count-plan words are the subject pairs' registry indices,
-    // which address their day-VWAP value slots in round two.
-    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
-        .iter()
-        .map(|slot| authenticated_u32(&values, *slot, "Oracle reference pair index"))
-        .collect::<Result<Vec<_>, _>>()?;
-    oracle_opening_slot_plan_v1(
-        day,
-        &subjects.reference_isos,
-        reference_currency_count,
-        &pair_indices,
-        scurve_count,
-        scurve_oldest,
-    )
-    .map(|plan| plan.slots)
-    .map_err(|error| RetentionError::Source(error.to_string()))
-}
-
-fn authenticated_u32(
-    values: &BTreeMap<B256, U256>,
-    slot: B256,
-    field: &'static str,
-) -> Result<u32, RetentionError> {
-    let word = authenticated_word(values, slot, field)?;
-    if word > U256::from(u32::MAX) {
-        return Err(RetentionError::Source(format!(
-            "{field} does not fit canonical u32"
-        )));
-    }
-    Ok(word.to::<u32>())
-}
-
-fn authenticated_word(
-    values: &BTreeMap<B256, U256>,
-    slot: B256,
-    field: &'static str,
-) -> Result<U256, RetentionError> {
-    values
-        .get(&slot)
-        .copied()
-        .ok_or_else(|| RetentionError::Source(format!("{field} opening is missing")))
 }
 
 fn validate_subjects(subjects: &OpeningSubjectsV1) -> Result<(), RetentionError> {
@@ -332,75 +256,4 @@ fn fidelity_league_slots(
         ));
     }
     Ok(ordered_league_snapshot_slots(wwd, &subjects.owners))
-}
-
-fn oracle_slots(
-    state: &dyn StateProvider,
-    candidate: CandidatePinV1,
-    subjects: &OpeningSubjectsV1,
-) -> Result<Vec<B256>, RetentionError> {
-    let day = outbe_primitives::time::WorldwideDay::new(candidate.wwd);
-    let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
-    let reference_currency_count = read_u32(
-        state,
-        ORACLE_ADDRESS,
-        counts.slots[0],
-        "Oracle reference currency count",
-    )?;
-    let scurve_count = read_u32(
-        state,
-        ORACLE_ADDRESS,
-        counts.slots[2],
-        "Oracle S-curve count",
-    )?;
-    let scurve_oldest = read_u32(
-        state,
-        ORACLE_ADDRESS,
-        counts.slots[3],
-        "Oracle S-curve oldest",
-    )?;
-    // The trailing count-plan words are the subject pairs' registry indices,
-    // which address their day-VWAP value slots in round two.
-    let pair_indices = counts.slots[ORACLE_COUNT_SLOTS_V1..]
-        .iter()
-        .map(|slot| read_u32(state, ORACLE_ADDRESS, *slot, "Oracle reference pair index"))
-        .collect::<Result<Vec<_>, _>>()?;
-    oracle_opening_slot_plan_v1(
-        day,
-        &subjects.reference_isos,
-        reference_currency_count,
-        &pair_indices,
-        scurve_count,
-        scurve_oldest,
-    )
-    .map(|plan| plan.slots)
-    .map_err(|error| RetentionError::Source(error.to_string()))
-}
-
-fn read_u32(
-    state: &dyn StateProvider,
-    address: Address,
-    slot: B256,
-    field: &'static str,
-) -> Result<u32, RetentionError> {
-    let word = read_word(state, address, slot, field)?;
-    if word > U256::from(u32::MAX) {
-        return Err(RetentionError::Source(format!(
-            "{field} does not fit canonical u32"
-        )));
-    }
-    Ok(word.to::<u32>())
-}
-
-fn read_word(
-    state: &dyn StateProvider,
-    address: Address,
-    slot: B256,
-    field: &'static str,
-) -> Result<U256, RetentionError> {
-    state
-        .storage(address, slot)
-        .map(|value| value.unwrap_or_default())
-        .map_err(|error| RetentionError::Source(format!("read {field}: {error}")))
 }

@@ -8,6 +8,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
 };
+use std::collections::BTreeMap;
 
 /// Result of a lysis execution.
 pub struct LysisResult {
@@ -77,28 +78,19 @@ fn lysis_inner(
             exclude_from_intex_issuance: tribute.exclude_from_intex_issuance,
         });
     }
-    let prepared = program_v1::prepare(
-        wwd,
-        tribute_inputs,
-        first_leagues,
-        gratis_allocation,
-        storage.timestamp()?.to::<u64>(),
-    )
-    .map_err(program_error)?;
-    let entry_price_minor_840 = resolve_entry_price_minor(storage.clone(), wwd, 840)?;
-    let mut execution = prepared
-        .start(entry_price_minor_840)
-        .map_err(program_error)?;
+    let now = storage.timestamp()?.to::<u64>();
+    let mut execution =
+        program_v1::prepare(wwd, tribute_inputs, first_leagues, gratis_allocation, now)
+            .map_err(program_error)?;
+    let entry_prices = freeze_entry_price_snapshot(storage.clone(), wwd, now)?;
 
     let mut nod_ids = Vec::with_capacity(tributes.len());
     for loaded in &tributes {
         let tribute = loaded.body();
         let pending = execution.quote_next().map_err(program_error)?;
 
-        let entry_price_minor = match tribute.reference_currency {
-            840 => entry_price_minor_840,
-            currency => resolve_entry_price_minor(storage.clone(), wwd, currency)?,
-        };
+        let entry_price_minor =
+            resolve_entry_price_minor(&entry_prices, tribute.reference_currency)?;
         let league_id = outbe_fidelity::api::league(storage.clone(), tribute.owner)?;
         let action = execution
             .commit_next(pending, entry_price_minor, league_id, true)
@@ -221,27 +213,43 @@ fn program_error(error: ProgramErrorV1) -> PrecompileError {
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-fn resolve_entry_price_minor(
+/// Calculate once for every registered reference currency and retain the
+/// complete map in Nod storage. Certified jobs call this at request time.
+pub fn freeze_entry_price_snapshot(
     storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    iso_code: u16,
-) -> Result<U256> {
-    let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
-    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage, worldwide_day, index)?
-        .unwrap_or(U256::ZERO);
-    if vwap.is_zero() {
-        return Err(PrecompileError::Revert(
-            "Lysis WWD VWAP is missing or zero for this reference currency".into(),
-        ));
+    day: WorldwideDay,
+    now: u64,
+) -> Result<BTreeMap<u16, U256>> {
+    if let Some(prices) = outbe_nod::api::entry_price_snapshot(storage.clone(), day)? {
+        return Ok(prices);
     }
-    Ok(vwap)
+    let mut prices = BTreeMap::new();
+    for iso in outbe_oracle::api::reference_currencies(storage.clone())? {
+        let Some(current) = outbe_oracle::api::coen_rate_for_opt(storage.clone(), iso)? else {
+            continue;
+        };
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+        if let Some(vwap) = outbe_oracle::api::four_hour_vwap(storage.clone(), pair, now)?
+            .filter(|value| !value.is_zero())
+        {
+            prices.insert(iso, vwap.max(current));
+        }
+    }
+    outbe_nod::api::store_entry_price_snapshot(storage, day, &prices)?;
+    Ok(prices)
+}
+
+fn resolve_entry_price_minor(prices: &BTreeMap<u16, U256>, iso_code: u16) -> Result<U256> {
+    prices
+        .get(&iso_code)
+        .copied()
+        .ok_or_else(|| outbe_nod::errors::NodError::MissingEntryPrice(iso_code).into())
 }
 
 #[cfg(test)]
 pub(crate) fn resolve_entry_price_minor_for_test(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
+    prices: &BTreeMap<u16, U256>,
     iso_code: u16,
 ) -> Result<U256> {
-    resolve_entry_price_minor(storage, worldwide_day, iso_code)
+    resolve_entry_price_minor(prices, iso_code)
 }

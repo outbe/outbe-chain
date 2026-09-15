@@ -373,6 +373,11 @@ fn commit_and_emit_request(
         })?;
 
     request.ctx.with_checkpoint(|| {
+        outbe_lysis::api::freeze_entry_price_snapshot(
+            request.ctx.storage.clone(),
+            request.wwd,
+            intent.logical_evaluation_time,
+        )?;
         let mut registry = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone());
         if registry.active_authority(&schema_limits)?.is_some() {
             let pinned_bundle = registry.pin_lineage(intent_id, &schema_limits)?;
