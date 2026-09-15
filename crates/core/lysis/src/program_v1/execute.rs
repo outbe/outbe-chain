@@ -19,17 +19,6 @@ use super::types::{
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
 
-/// Prepared input after the first Fidelity pass and fraction derivation.
-pub(crate) struct PreparedProgramV1 {
-    tributes: Vec<TributeInputV1>,
-    first_leagues: Vec<u16>,
-    fractions: BTreeMap<u16, U256>,
-    total_nominal: U256,
-    gratis_allocation: U256,
-    logical_evaluation_time: u64,
-    observations: Vec<SemanticObservationV1>,
-}
-
 /// One load checked before the conditional Oracle/Fidelity reads at its ordinal.
 pub(crate) struct PendingNodV1 {
     ordinal: usize,
@@ -39,7 +28,12 @@ pub(crate) struct PendingNodV1 {
 
 /// Stateful sequential reducer. It owns no storage and emits no chain effects.
 pub(crate) struct ProgramExecutionV1 {
-    prepared: PreparedProgramV1,
+    tributes: Vec<TributeInputV1>,
+    first_leagues: Vec<u16>,
+    fractions: BTreeMap<u16, U256>,
+    total_nominal: U256,
+    gratis_allocation: U256,
+    logical_evaluation_time: u64,
     next_ordinal: usize,
     remaining: U256,
     nod_actions: Vec<NodActionV1>,
@@ -81,14 +75,13 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
     if observed_total.is_zero() {
         return Err(ProgramErrorV1::ZeroTotalNominal);
     }
-    let prepared = prepare(
+    let mut execution = prepare(
         input.worldwide_day,
         tributes,
         first_leagues,
         input.gratis_allocation,
         input.logical_evaluation_time,
     )?;
-    let mut execution = prepared.start();
 
     for observed in &input.tributes {
         let pending = execution.quote_next()?;
@@ -119,14 +112,14 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
     execution.finish()
 }
 
-/// Validate canonical input and derive the current FI fraction map.
+/// Validate canonical input, derive the FI fraction map, and initialize the reducer.
 pub(crate) fn prepare(
     worldwide_day: WorldwideDay,
     tributes: Vec<TributeInputV1>,
     first_leagues: Vec<u16>,
     gratis_allocation: U256,
     logical_evaluation_time: u64,
-) -> Result<PreparedProgramV1, ProgramErrorV1> {
+) -> Result<ProgramExecutionV1, ProgramErrorV1> {
     if tributes.is_empty() {
         return Err(ProgramErrorV1::EmptyInput);
     }
@@ -160,31 +153,19 @@ pub(crate) fn prepare(
         total_nominal,
         gratis_allocation,
     )?;
-    Ok(PreparedProgramV1 {
+    Ok(ProgramExecutionV1 {
         tributes,
         first_leagues,
         fractions,
         total_nominal,
         gratis_allocation,
         logical_evaluation_time,
+        next_ordinal: 0,
+        remaining: gratis_allocation,
+        nod_actions: Vec::new(),
+        contributors: BTreeMap::new(),
         observations,
     })
-}
-
-impl PreparedProgramV1 {
-    /// Start the reducer before consuming per-Tribute observations.
-    pub(crate) fn start(self) -> ProgramExecutionV1 {
-        let gratis_allocation = self.gratis_allocation;
-        let observations = self.observations.clone();
-        ProgramExecutionV1 {
-            prepared: self,
-            next_ordinal: 0,
-            remaining: gratis_allocation,
-            nod_actions: Vec::new(),
-            contributors: BTreeMap::new(),
-            observations,
-        }
-    }
 }
 
 impl ProgramExecutionV1 {
@@ -192,14 +173,12 @@ impl ProgramExecutionV1 {
     pub(crate) fn quote_next(&self) -> Result<PendingNodV1, ProgramErrorV1> {
         let ordinal = self.next_ordinal;
         let tribute = self
-            .prepared
             .tributes
             .get(ordinal)
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
         let fraction = self
-            .prepared
             .fractions
-            .get(&self.prepared.first_leagues[ordinal])
+            .get(&self.first_leagues[ordinal])
             .copied()
             .unwrap_or(U256::ZERO);
         let gratis_load_minor =
@@ -224,7 +203,7 @@ impl ProgramExecutionV1 {
         if pending.ordinal != ordinal {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
-        let tribute = &self.prepared.tributes[ordinal];
+        let tribute = &self.tributes[ordinal];
         self.observations.push(SemanticObservationV1::Oracle {
             ordinal,
             currency: tribute.reference_currency,
@@ -233,7 +212,7 @@ impl ProgramExecutionV1 {
 
         let floor_price_minor =
             calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
-        let first_league = self.prepared.first_leagues[ordinal];
+        let first_league = self.first_leagues[ordinal];
         self.observations.push(SemanticObservationV1::Fidelity {
             ordinal,
             phase: FidelityPhaseV1::Second,
@@ -276,7 +255,7 @@ impl ProgramExecutionV1 {
             issuance_currency: tribute.issuance_currency,
             reference_currency: tribute.reference_currency,
             bucket_key,
-            issued_at: self.prepared.logical_evaluation_time,
+            issued_at: self.logical_evaluation_time,
         };
 
         if !tribute.exclude_from_intex_issuance {
@@ -294,23 +273,20 @@ impl ProgramExecutionV1 {
 
     /// Finish only after exactly one action per canonical Tribute.
     pub(crate) fn finish(self) -> Result<ProgramResultV1, ProgramErrorV1> {
-        if self.next_ordinal != self.prepared.tributes.len()
-            || self.nod_actions.len() != self.prepared.tributes.len()
+        if self.next_ordinal != self.tributes.len() || self.nod_actions.len() != self.tributes.len()
         {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
         Ok(ProgramResultV1 {
             tribute_ids: self
-                .prepared
                 .tributes
                 .iter()
                 .map(|tribute| tribute.tribute_id)
                 .collect(),
-            total_nominal: self.prepared.total_nominal,
-            gratis_allocation: self.prepared.gratis_allocation,
+            total_nominal: self.total_nominal,
+            gratis_allocation: self.gratis_allocation,
             remaining_gratis: self.remaining,
             league_fractions: self
-                .prepared
                 .fractions
                 .iter()
                 .map(|(league, fraction)| LeagueFractionV1 {
