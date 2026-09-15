@@ -748,12 +748,12 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
             frozen.auction_base
                 <= prepared
                     .nominal
-                    .checked_sub(frozen.lysis_budget)
+                    .checked_sub(frozen.lysis_limit_minor)
                     .expect("Lysis cannot exceed the day's nominal")
         );
         // Lysis took this day's whole emission, so it credited nothing and the auction, with an
         // empty accumulator behind it, had nothing to draw.
-        assert_eq!(frozen.lysis_budget, base_limit);
+        assert_eq!(frozen.lysis_limit_minor, base_limit);
         assert_eq!(frozen.auction_base, U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -762,7 +762,11 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
             U256::ZERO,
             "nothing was credited and nothing was drawn"
         );
-        assert!(!record.intent.frozen_metadosis_values.lysis_budget.is_zero());
+        assert!(!record
+            .intent
+            .frozen_metadosis_values
+            .lysis_limit_minor
+            .is_zero());
         assert_ne!(
             record
                 .intent

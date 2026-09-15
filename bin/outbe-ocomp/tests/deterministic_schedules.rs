@@ -272,7 +272,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: manifest.wwd,
-        lysis_budget: intent.frozen_metadosis_values.lysis_budget,
+        lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
         logical_evaluation_time: intent.logical_evaluation_time,
         tribute_count: manifest.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -684,7 +684,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
             gratis_supply: U256::from(20),
-            lysis_budget: U256::from(1_000_000),
+            lysis_limit_minor: U256::from(1_000_000),
             auction_base: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,

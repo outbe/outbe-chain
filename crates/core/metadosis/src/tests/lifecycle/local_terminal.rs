@@ -661,7 +661,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
 }
 
 #[test]
-fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
+fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
         let nominal = U256::from(1_000);

@@ -27,7 +27,7 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
         RequestBudgetSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::ZERO,
-            lysis_budget: U256::ZERO,
+            lysis_limit_minor: U256::ZERO,
             auction_base: U256::ZERO,
             carry_over_credit: U256::ZERO,
         }
@@ -37,7 +37,7 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
         RequestBudgetSplit::derive(U256::MAX, U256::MAX, U256::MAX, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::MAX,
-            lysis_budget: U256::MAX,
+            lysis_limit_minor: U256::MAX,
             auction_base: U256::ZERO,
             carry_over_credit: U256::ZERO,
         }
@@ -137,7 +137,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -150,7 +150,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
 
         // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(receipt.day_limit, U256::from(160));
-        assert_eq!(receipt.lysis_budget, U256::from(40));
+        assert_eq!(receipt.lysis_limit_minor, U256::from(40));
         assert_eq!(receipt.auction_base, U256::from(60));
         assert_eq!(receipt.destination, BudgetSplitDestination::DesisAuction);
         assert_eq!(receipt.carry_over_credit, U256::from(60));
@@ -198,7 +198,7 @@ fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -250,7 +250,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -294,7 +294,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(20),
-            lysis_budget: U256::from(10),
+            lysis_limit_minor: U256::from(10),
             nominal_total: U256::from(20),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -326,7 +326,7 @@ fn an_unpriced_day_commits_a_canonical_empty_price_table() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
+            lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
             auction_entry_prices: Vec::new(),
             logical_anchor: 1_699_920_005,
@@ -367,7 +367,7 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(32),
+            lysis_limit_minor: U256::from(32),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -381,7 +381,7 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
         assert_eq!(receipt.auction_base, U256::from(68));
         assert_eq!(receipt.carry_over_credit, U256::from(968));
         assert_eq!(
-            receipt.lysis_budget + receipt.auction_base + receipt.carry_over_credit,
+            receipt.lysis_limit_minor + receipt.auction_base + receipt.carry_over_credit,
             receipt.day_limit,
             "the effective ceiling is exhausted by Lysis, the brief and the accumulator"
         );
@@ -410,7 +410,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
             pending_nonce: 1,
             day_type: DayType::Red,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(4),
+            lysis_limit_minor: U256::from(4),
             nominal_total: U256::from(100),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -447,7 +447,7 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(320),
+            lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
@@ -493,7 +493,7 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             pending_nonce: 1,
             day_type: DayType::Green,
             day_limit: U256::from(1_000),
-            lysis_budget: U256::from(320),
+            lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
             auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,

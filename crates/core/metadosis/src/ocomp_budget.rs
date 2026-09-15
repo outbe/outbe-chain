@@ -18,7 +18,7 @@ pub(crate) struct RequestBudgetEffect {
     pub pending_nonce: u64,
     pub day_type: DayType,
     pub day_limit: U256,
-    pub lysis_budget: U256,
+    pub lysis_limit_minor: U256,
     pub nominal_total: U256,
     pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
@@ -28,7 +28,7 @@ pub(crate) struct RequestBudgetEffect {
 pub(crate) struct RequestBudgetSplit {
     /// The day's own emission plus what it drew from the accumulator.
     pub day_limit: U256,
-    pub lysis_budget: U256,
+    pub lysis_limit_minor: U256,
     pub auction_base: U256,
     /// What Lysis left of the day's own emission, credited before the auction draws.
     pub carry_over_credit: U256,
@@ -40,47 +40,54 @@ impl RequestBudgetSplit {
     /// the symbolic share, and no more than the accumulator holds.
     pub(crate) fn derive(
         base_limit: U256,
-        lysis_budget: U256,
+        lysis_limit_minor: U256,
         nominal_total: U256,
         carry_over_before: U256,
         green: bool,
     ) -> Result<Self> {
         let invalid = || MetadosisError::InvalidOcompBudgetSplit {
             day_limit: base_limit,
-            lysis_budget,
+            lysis_limit_minor,
         };
-        let carry_over_credit = base_limit.checked_sub(lysis_budget).ok_or_else(invalid)?;
+        let carry_over_credit = base_limit
+            .checked_sub(lysis_limit_minor)
+            .ok_or_else(invalid)?;
         let available = carry_over_before
             .checked_add(carry_over_credit)
             .ok_or_else(invalid)?;
         let auction_base = if green {
             nominal_total
-                .checked_sub(lysis_budget)
+                .checked_sub(lysis_limit_minor)
                 .ok_or_else(invalid)?
                 .min(available)
         } else {
             U256::ZERO
         };
-        Self::assemble(base_limit, lysis_budget, auction_base, carry_over_credit)
+        Self::assemble(
+            base_limit,
+            lysis_limit_minor,
+            auction_base,
+            carry_over_credit,
+        )
     }
 
     fn assemble(
         base_limit: U256,
-        lysis_budget: U256,
+        lysis_limit_minor: U256,
         auction_base: U256,
         carry_over_credit: U256,
     ) -> Result<Self> {
         let invalid = || MetadosisError::InvalidOcompBudgetSplit {
             day_limit: base_limit,
-            lysis_budget,
+            lysis_limit_minor,
         };
-        if lysis_budget.checked_add(carry_over_credit) != Some(base_limit) {
+        if lysis_limit_minor.checked_add(carry_over_credit) != Some(base_limit) {
             return Err(invalid().into());
         }
         let day_limit = base_limit.checked_add(auction_base).ok_or_else(invalid)?;
         Ok(Self {
             day_limit,
-            lysis_budget,
+            lysis_limit_minor,
             auction_base,
             carry_over_credit,
         })
@@ -100,7 +107,7 @@ pub(crate) fn apply_fresh_request_budget_effect(
     let carry_over_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
     let split = RequestBudgetSplit::derive(
         request.day_limit,
-        request.lysis_budget,
+        request.lysis_limit_minor,
         request.nominal_total,
         carry_over_before,
         green,
@@ -186,7 +193,7 @@ fn expected_receipt(
         pending_nonce: effect_nonce,
         day_type: request.day_type,
         day_limit: split.day_limit,
-        lysis_budget: split.lysis_budget,
+        lysis_limit_minor: split.lysis_limit_minor,
         auction_base: split.auction_base,
         destination,
         desis_brief_hash,

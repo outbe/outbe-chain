@@ -344,7 +344,7 @@ fn apply_certified_result(
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
     };
-    let lysis_budget = plan
+    let lysis_limit_minor = plan
         .nod()
         .nod_gratis_consumed()
         .checked_add(plan.carry_over().credited_unused_lysis())
@@ -352,7 +352,7 @@ fn apply_certified_result(
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
-        lysis_budget,
+        lysis_limit_minor,
         nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
         unused_lysis: plan.carry_over().credited_unused_lysis(),
     };

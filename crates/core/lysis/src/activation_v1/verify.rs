@@ -101,7 +101,7 @@ pub fn verify_result(
             pending_nonce: intent.pending_nonce,
             day_type: intent.frozen_metadosis_values.day_type,
             day_limit: intent.frozen_metadosis_values.day_limit,
-            lysis_budget: intent.frozen_metadosis_values.lysis_budget,
+            lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
             auction_base: intent.frozen_metadosis_values.auction_base,
             auction_entry_prices: intent.frozen_metadosis_values.auction_entry_prices.clone(),
             logical_anchor: intent.logical_evaluation_time,

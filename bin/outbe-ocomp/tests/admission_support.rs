@@ -61,7 +61,7 @@ pub fn publish_admission_authority(
         attempt: spec.attempt,
         input_manifest_hash: manifest_hash,
         wwd: manifest.wwd,
-        lysis_budget: U256::from(90),
+        lysis_limit_minor: U256::from(90),
         logical_evaluation_time: 1_784_765_900,
         tribute_count: manifest.tribute_count,
         max_tributes_per_work_shard: 256,

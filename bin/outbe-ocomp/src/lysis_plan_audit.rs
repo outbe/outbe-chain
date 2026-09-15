@@ -185,7 +185,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             fidelity_opening_root: pinned.input_manifest.fidelity_opening_root,
             oracle_opening_root: pinned.input_manifest.oracle_opening_root,
             wwd: pinned.plan.wwd,
-            lysis_budget: pinned.plan.lysis_budget,
+            lysis_limit_minor: pinned.plan.lysis_limit_minor,
             logical_evaluation_time: pinned.plan.logical_evaluation_time,
             tribute_count: pinned.plan.tribute_count,
             lysis_program_semantics_hash: bundle.bundle().lysis_program_semantics_hash,

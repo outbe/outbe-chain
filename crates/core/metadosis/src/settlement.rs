@@ -23,7 +23,7 @@ use crate::{
 pub(crate) struct MetadosisCalculation {
     pub(crate) gratis_demand: U256,
     pub(crate) gratis_supply: U256,
-    pub(crate) gratis_allocation: U256,
+    pub(crate) lysis_limit_minor: U256,
     pub(crate) auction_base: U256,
 }
 
@@ -85,7 +85,7 @@ impl MetadosisContract<'_> {
         Ok(MetadosisCalculation {
             gratis_demand: demand,
             gratis_supply: supply,
-            gratis_allocation: allocation,
+            lysis_limit_minor: allocation,
             auction_base,
         })
     }
@@ -156,7 +156,7 @@ pub(crate) fn process_ocomp_ready_candidate(
 
     let calculation =
         metadosis.calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?;
-    if calculation.gratis_allocation.is_zero() {
+    if calculation.lysis_limit_minor.is_zero() {
         return process_local_terminal_outcome(
             metadosis,
             ctx,
@@ -246,7 +246,7 @@ fn process_local_terminal_outcome(
             // the warehouse together with whatever the brief did not take.
             let returned = current
                 .metadosis_limit_amount
-                .checked_sub(calculation.gratis_allocation)
+                .checked_sub(calculation.lysis_limit_minor)
                 .and_then(|rest| rest.checked_sub(auction_base))
                 .and_then(|headroom| headroom.checked_add(to_promis))
                 .ok_or_else(|| {

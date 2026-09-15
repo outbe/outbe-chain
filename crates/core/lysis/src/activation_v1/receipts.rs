@@ -195,13 +195,13 @@ pub fn verify_receipts(
         plan.nod()
             .nod_gratis_consumed()
             .checked_add(plan.carry_over().credited_unused_lysis())
-            == Some(request.lysis_budget),
+            == Some(request.lysis_limit_minor),
         "Lysis receipt budget conservation",
     )?;
     // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
     ensure(
         request
-            .lysis_budget
+            .lysis_limit_minor
             .checked_add(request.auction_base)
             .is_some_and(|total| total <= request.day_limit),
         "Lysis receipt day conservation",
@@ -256,7 +256,7 @@ fn verify_request_receipt(
             && receipt.wwd == expected.wwd
             && receipt.day_type == expected.day_type
             && receipt.day_limit == expected.day_limit
-            && receipt.lysis_budget == expected.lysis_budget
+            && receipt.lysis_limit_minor == expected.lysis_limit_minor
             && receipt.auction_base == expected.auction_base
             && receipt.auction_entry_prices == expected.auction_entry_prices,
         "Lysis request receipt fields",

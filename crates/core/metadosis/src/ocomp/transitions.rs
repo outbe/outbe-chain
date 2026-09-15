@@ -103,7 +103,7 @@ impl MetadosisContract<'_> {
                 || receipt.wwd != intent.wwd
                 || receipt.pending_nonce > intent.pending_nonce
                 || receipt.protocol_bundle_hash != intent.protocol_bundle_hash
-                || receipt.lysis_budget != intent.frozen_metadosis_values.lysis_budget
+                || receipt.lysis_limit_minor != intent.frozen_metadosis_values.lysis_limit_minor
             {
                 return Err(storage_corruption_message(
                     "OCOMP intent/request receipt binding mismatch",
@@ -139,7 +139,7 @@ impl MetadosisContract<'_> {
                     at_height: intent.logical_evaluation_height,
                     deadline_height: awaiting_finality_deadline,
                     intent_id,
-                    lysis_budget: intent.frozen_metadosis_values.lysis_budget,
+                    lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
                     request_budget_receipt_hash: receipt_hash,
                 })
                 .map_err(|error| storage_corruption_message(error.to_string()))?;
@@ -407,8 +407,9 @@ impl MetadosisContract<'_> {
                     "OCOMP WorldwideDay already has a terminal job",
                 ));
             }
-            let retained_lysis_budget = terminal.retained_lysis_budget;
-            if retained_lysis_budget != record.intent.frozen_metadosis_values.lysis_budget {
+            let retained_lysis_limit_minor = terminal.retained_lysis_limit_minor;
+            if retained_lysis_limit_minor != record.intent.frozen_metadosis_values.lysis_limit_minor
+            {
                 return Err(storage_corruption_message(
                     "expired OCOMP job retained budget mismatch",
                 ));
@@ -424,7 +425,7 @@ impl MetadosisContract<'_> {
             self.write_ocomp_job_record(live_intent_id, &record, schema_limits)?;
             self.push_terminal_intent(wwd, live_intent_id)?;
             self.release_ocomp_lineage(live_intent_id, at_height, schema_limits)?;
-            Ok(retained_lysis_budget)
+            Ok(retained_lysis_limit_minor)
         })()
     }
 
@@ -515,9 +516,9 @@ impl MetadosisContract<'_> {
                         .intent
                         .frozen_metadosis_values
                         .request_budget_split_receipt_hash
-                || unused_lysis > record.intent.frozen_metadosis_values.lysis_budget
+                || unused_lysis > record.intent.frozen_metadosis_values.lysis_limit_minor
                 || nod_gratis_consumed.checked_add(unused_lysis)
-                    != Some(record.intent.frozen_metadosis_values.lysis_budget)
+                    != Some(record.intent.frozen_metadosis_values.lysis_limit_minor)
             {
                 return Err(storage_corruption_message(
                     "OCOMP terminal permit is not bound to the live job",
@@ -620,7 +621,7 @@ impl MetadosisContract<'_> {
                 tributeTotals: record.intent.authenticated_day_nominal,
                 dayGratisDemand: frozen.gratis_demand,
                 dayGratisLimit: frozen.gratis_supply,
-                dayGratisAllocation: frozen.lysis_budget,
+                dayGratisAllocation: frozen.lysis_limit_minor,
                 dayGratisAllocationRemainder: unused_lysis,
                 netDayGratisAllocation: nod_gratis_consumed,
                 dayMetadosisLimitRemainder: unused_lysis,

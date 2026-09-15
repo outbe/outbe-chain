@@ -202,9 +202,9 @@ impl MetadosisContract<'_> {
         }
 
         let receipt = self.request_budget_receipt(projection.worldwide_day, limits)?;
-        match projection.retained_lysis_budget {
+        match projection.retained_lysis_limit_minor {
             None if receipt.is_none() && projection.pending_nonce == 0 => {}
-            Some(lysis_budget) => {
+            Some(lysis_limit_minor) => {
                 let receipt = receipt.ok_or_else(|| {
                     storage_corruption_message("OCOMP retained budget has no receipt")
                 })?;
@@ -220,7 +220,7 @@ impl MetadosisContract<'_> {
                         storage_corruption_message("OCOMP retained effect snapshot is missing")
                     })?;
                 if receipt.wwd != projection.worldwide_day.value()
-                    || receipt.lysis_budget != lysis_budget
+                    || receipt.lysis_limit_minor != lysis_limit_minor
                     || receipt.pending_nonce != retained.effect_nonce
                     || expected_hash != retained.receipt_hash
                 {

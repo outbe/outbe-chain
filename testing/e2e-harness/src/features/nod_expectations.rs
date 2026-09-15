@@ -265,7 +265,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
     let expected = nod_reference::single_league_actions(
         inputs,
         expected_league.expect("input league"),
-        intent.frozen_metadosis_values.lysis_budget,
+        intent.frozen_metadosis_values.lysis_limit_minor,
         entry_price,
         intent.logical_evaluation_time,
     );
@@ -289,7 +289,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
                 "state_root": checkpoint.state_root,
             },
             "input_count": inputs.len(), "league": expected_league,
-            "budget": intent.frozen_metadosis_values.lysis_budget,
+            "budget": intent.frozen_metadosis_values.lysis_limit_minor,
             "input_vwap": intent.frozen_metadosis_values.current_vwap,
             "logical_evaluation_time": intent.logical_evaluation_time,
             "expected_root": expected_root,

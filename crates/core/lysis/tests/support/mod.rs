@@ -81,7 +81,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
         pending_nonce: 0,
         day_type,
         day_limit: U256::from(100),
-        lysis_budget: U256::from(60),
+        lysis_limit_minor: U256::from(60),
         auction_base,
         destination: if green {
             BudgetSplitDestination::DesisAuction
@@ -127,7 +127,7 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             current_vwap: U256::from(10),
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
-            lysis_budget: U256::from(60),
+            lysis_limit_minor: U256::from(60),
             auction_base: U256::from(40),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
@@ -196,7 +196,7 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
         gratis_supply: U256::from(60),
-        lysis_budget: U256::from(60),
+        lysis_limit_minor: U256::from(60),
         auction_base: U256::from(40),
         nod_gratis_consumed: U256::from(45),
         unused_lysis: U256::from(15),
@@ -238,7 +238,7 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
             day_limit: U256::from(100),
             gratis_demand: U256::from(60),
             gratis_supply: U256::from(60),
-            lysis_budget: U256::from(60),
+            lysis_limit_minor: U256::from(60),
             auction_base: U256::from(40),
             nod_gratis_consumed: U256::from(45),
             unused_lysis: U256::from(15),

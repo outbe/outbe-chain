@@ -100,7 +100,7 @@ wire_struct! {
         pub day_limit: U256,
         pub gratis_demand: U256,
         pub gratis_supply: U256,
-        pub lysis_budget: U256,
+        pub lysis_limit_minor: U256,
         pub auction_base: U256,
         pub nod_gratis_consumed: U256,
         pub unused_lysis: U256,
@@ -157,7 +157,7 @@ wire_struct! {
         pub day_limit: U256,
         pub gratis_demand: U256,
         pub gratis_supply: U256,
-        pub lysis_budget: U256,
+        pub lysis_limit_minor: U256,
         pub auction_base: U256,
         pub nod_gratis_consumed: U256,
         pub unused_lysis: U256,
@@ -473,7 +473,7 @@ impl LysisResultV1 {
         )?;
         let split_sum = self
             .conservation
-            .lysis_budget
+            .lysis_limit_minor
             .checked_add(self.conservation.auction_base)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "day budget conservation",
@@ -491,7 +491,7 @@ impl LysisResultV1 {
                 what: "Lysis budget conservation",
             })?;
         require(
-            lysis_sum == self.conservation.lysis_budget,
+            lysis_sum == self.conservation.lysis_limit_minor,
             "Lysis budget conservation",
         )?;
         require(
@@ -507,7 +507,7 @@ impl LysisResultV1 {
                 && completion.day_limit == self.conservation.day_limit
                 && completion.gratis_demand == self.conservation.gratis_demand
                 && completion.gratis_supply == self.conservation.gratis_supply
-                && completion.lysis_budget == self.conservation.lysis_budget
+                && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
                 && completion.auction_base == self.conservation.auction_base
                 && completion.nod_gratis_consumed == self.conservation.nod_gratis_consumed
                 && completion.unused_lysis == self.conservation.unused_lysis
@@ -578,7 +578,7 @@ impl LysisResultV1 {
                 && completion.day_limit == frozen.day_limit
                 && completion.gratis_demand == frozen.gratis_demand
                 && completion.gratis_supply == frozen.gratis_supply
-                && completion.lysis_budget == frozen.lysis_budget
+                && completion.lysis_limit_minor == frozen.lysis_limit_minor
                 && completion.auction_base == frozen.auction_base
                 && completion.status == CompletionStatus::Completed
                 && completion.logical_evaluation_height == intent.logical_evaluation_height

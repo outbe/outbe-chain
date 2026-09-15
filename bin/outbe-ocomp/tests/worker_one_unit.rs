@@ -352,7 +352,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         attempt: 0,
         input_manifest_hash: published.manifest_hash,
         wwd: day.value(),
-        lysis_budget: U256::from(99_000_000_u64),
+        lysis_limit_minor: U256::from(99_000_000_u64),
         logical_evaluation_time: 1_784_765_900,
         tribute_count: published.tribute_count,
         max_tributes_per_work_shard: 256,
@@ -557,7 +557,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: day.value(),
-        lysis_budget: plan.lysis_budget,
+        lysis_limit_minor: plan.lysis_limit_minor,
         logical_evaluation_time: plan.logical_evaluation_time,
         tribute_count: published.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -1173,10 +1173,10 @@ fn real_worker_processes_execute_through_output_finalize() {
         panic!("expected GratisPrefixDown leaf output");
     };
     assert_eq!(prefix.segment_ordinal, 0);
-    assert_eq!(prefix.incoming_remaining, plan.lysis_budget);
+    assert_eq!(prefix.incoming_remaining, plan.lysis_limit_minor);
     assert_eq!(
         prefix.outgoing_remaining,
-        plan.lysis_budget - amount.checked_segment_gratis_total
+        plan.lysis_limit_minor - amount.checked_segment_gratis_total
     );
 
     let mut amount_finalize_ref = cas
@@ -1640,12 +1640,12 @@ fn real_worker_processes_execute_through_output_finalize() {
         source_availability_policy_id: B256::repeat_byte(0x44),
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
             day_type: DayType::Green,
-            day_limit: plan.lysis_budget + U256::from(1_000),
+            day_limit: plan.lysis_limit_minor + U256::from(1_000),
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
             gratis_supply: U256::from(20),
-            lysis_budget: plan.lysis_budget,
+            lysis_limit_minor: plan.lysis_limit_minor,
             auction_base: U256::from(1_000),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
@@ -1813,7 +1813,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     );
 
     let mut changed_intent = intent.clone();
-    changed_intent.frozen_metadosis_values.lysis_budget += U256::from(1);
+    changed_intent.frozen_metadosis_values.lysis_limit_minor += U256::from(1);
     changed_intent.frozen_metadosis_values.day_limit += U256::from(1);
     assert!(run_finalizer(
         &changed_intent,
@@ -1920,7 +1920,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         attempt,
         input_manifest_hash: manifest_hash,
         wwd: day.value(),
-        lysis_budget: U256::from(10_000),
+        lysis_limit_minor: U256::from(10_000),
         logical_evaluation_time: 2_026_072_500,
         tribute_count,
         max_tributes_per_work_shard: 256,
@@ -1947,7 +1947,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: day.value(),
-        lysis_budget: plan.lysis_budget,
+        lysis_limit_minor: plan.lysis_limit_minor,
         logical_evaluation_time: plan.logical_evaluation_time,
         tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,

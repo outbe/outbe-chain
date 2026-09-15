@@ -43,7 +43,7 @@ fn pending_record() -> OcompJobRecordV1 {
                 current_vwap: U256::ZERO,
                 gratis_demand: U256::ZERO,
                 gratis_supply: U256::ZERO,
-                lysis_budget: U256::ZERO,
+                lysis_limit_minor: U256::ZERO,
                 auction_base: U256::ZERO,
                 auction_entry_prices: vec![],
                 request_budget_split_receipt_hash: hash(113),

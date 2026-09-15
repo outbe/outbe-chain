@@ -200,7 +200,7 @@ fn intent() -> JobIntentV1 {
             current_vwap: U256::ZERO,
             gratis_demand: U256::ZERO,
             gratis_supply: U256::ZERO,
-            lysis_budget: U256::ZERO,
+            lysis_limit_minor: U256::ZERO,
             auction_base: U256::ZERO,
             auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
                 reference_currency: 840,
@@ -289,7 +289,7 @@ fn result() -> LysisResultV1 {
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
         gratis_supply: U256::ZERO,
-        lysis_budget: U256::ZERO,
+        lysis_limit_minor: U256::ZERO,
         auction_base: U256::ZERO,
         nod_gratis_consumed: U256::ZERO,
         unused_lysis: U256::ZERO,
@@ -317,7 +317,7 @@ fn result() -> LysisResultV1 {
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
         gratis_supply: U256::ZERO,
-        lysis_budget: U256::ZERO,
+        lysis_limit_minor: U256::ZERO,
         auction_base: U256::ZERO,
         nod_gratis_consumed: U256::ZERO,
         unused_lysis: U256::ZERO,
@@ -1047,7 +1047,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::ZERO,
-        lysis_budget: U256::ZERO,
+        lysis_limit_minor: U256::ZERO,
         auction_base: U256::ZERO,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
@@ -1583,7 +1583,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
             attempt: 0,
             input_manifest_hash: hash(3),
             wwd: 20_260_724,
-            lysis_budget: U256::from(99_000_000_u64),
+            lysis_limit_minor: U256::from(99_000_000_u64),
             logical_evaluation_time: 1_784_765_900,
             tribute_count,
             max_tributes_per_work_shard: 256,
@@ -1603,7 +1603,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
         let mut changed_wwd = plan.clone();
         changed_wwd.wwd += 1;
         let mut changed_budget = plan.clone();
-        changed_budget.lysis_budget += U256::from(1);
+        changed_budget.lysis_limit_minor += U256::from(1);
         let mut changed_time = plan.clone();
         changed_time.logical_evaluation_time += 1;
         for changed in [changed_wwd, changed_budget, changed_time] {
@@ -1636,7 +1636,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
 fn a_split_short_of_the_day_limit_is_accepted() {
     let mut short_intent = intent();
     short_intent.frozen_metadosis_values.day_limit = U256::from(10);
-    short_intent.frozen_metadosis_values.lysis_budget = U256::from(3);
+    short_intent.frozen_metadosis_values.lysis_limit_minor = U256::from(3);
     short_intent.frozen_metadosis_values.auction_base = U256::from(2);
     short_intent.encode_canonical(&LIMITS).unwrap();
 }
@@ -1649,7 +1649,7 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(10),
-        lysis_budget: U256::from(4),
+        lysis_limit_minor: U256::from(4),
         auction_base: U256::from(5),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
@@ -1695,7 +1695,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(10),
-        lysis_budget: U256::from(4),
+        lysis_limit_minor: U256::from(4),
         auction_base: U256::from(6),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
@@ -1749,7 +1749,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
 
     let mut invalid_lysis_conservation = result();
     invalid_lysis_conservation.conservation.day_limit = U256::from(1);
-    invalid_lysis_conservation.conservation.lysis_budget = U256::from(1);
+    invalid_lysis_conservation.conservation.lysis_limit_minor = U256::from(1);
     assert!(matches!(
         invalid_lysis_conservation.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("Lysis budget conservation"))

@@ -172,7 +172,7 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
     mutation.metadosis_completion_summary.gratis_supply += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
-    mutation.metadosis_completion_summary.lysis_budget += U256::from(1);
+    mutation.metadosis_completion_summary.lysis_limit_minor += U256::from(1);
     completion_mutations.push(mutation);
     let mut mutation = fixture.result.clone();
     mutation.metadosis_completion_summary.auction_base += U256::from(1);

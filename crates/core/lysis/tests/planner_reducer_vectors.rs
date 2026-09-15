@@ -105,7 +105,7 @@ fn planner_bindings(tribute_count: u32) -> LysisPlannerBindingsV1 {
         fidelity_opening_root: B256::repeat_byte(6),
         oracle_opening_root: B256::repeat_byte(7),
         wwd: 20_260_724,
-        lysis_budget: U256::from(99_000_000_u64),
+        lysis_limit_minor: U256::from(99_000_000_u64),
         logical_evaluation_time: 1_784_765_900,
         tribute_count,
         lysis_program_semantics_hash: B256::repeat_byte(8),
@@ -892,7 +892,7 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     assert_eq!(plan.primary_work_unit_count, 2);
     assert_eq!(plan.tribute_count, 257);
     assert_eq!(plan.wwd, 20_260_724);
-    assert_eq!(plan.lysis_budget, U256::from(99_000_000_u64));
+    assert_eq!(plan.lysis_limit_minor, U256::from(99_000_000_u64));
     assert_eq!(plan.logical_evaluation_time, 1_784_765_900);
     assert_eq!(
         plan.plan_hash(&limits).unwrap(),
@@ -928,7 +928,7 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         .is_err());
 
     let mut changed_budget = plan.clone();
-    changed_budget.lysis_budget += U256::from(1);
+    changed_budget.lysis_limit_minor += U256::from(1);
     assert_ne!(
         changed_budget.plan_hash(&limits).unwrap(),
         plan.plan_hash(&limits).unwrap()
@@ -1956,11 +1956,11 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
         .iter()
         .map(|observed| observed.tribute.nominal_amount_minor)
         .sum::<U256>();
-    let gratis_allocation = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let lysis_limit_minor = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let expected = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: 1_784_765_900,
-        gratis_allocation,
+        lysis_limit_minor,
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -1970,7 +1970,7 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
     assert_eq!(first.observations.len(), 256);
     assert_eq!(second.observations.len(), 1);
     let aggregate = fidelity_reduce(&first.aggregate, &second.aggregate).unwrap();
-    let actual = finalize_fi_fraction_table(&aggregate, gratis_allocation).unwrap();
+    let actual = finalize_fi_fraction_table(&aggregate, lysis_limit_minor).unwrap();
 
     assert_eq!(aggregate.tribute_count, 257);
     assert_eq!(aggregate.checked_total_nominal, expected.total_nominal);
@@ -2039,12 +2039,12 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .iter()
         .map(|observed| observed.tribute.nominal_amount_minor)
         .sum::<U256>();
-    let lysis_budget = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let lysis_limit_minor = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let logical_time = 1_784_765_900;
     let sequential = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: logical_time,
-        gratis_allocation: lysis_budget,
+        lysis_limit_minor,
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -2053,7 +2053,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let fidelity_right = fidelity_map(256, &tributes[256..]).unwrap();
     let fidelity_root =
         fidelity_reduce(&fidelity_left.aggregate, &fidelity_right.aggregate).unwrap();
-    let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_budget).unwrap();
+    let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_limit_minor).unwrap();
     let amount_left =
         amount_map(0, &tributes[..256], &fidelity_left.observations, &fractions).unwrap();
     let amount_right = amount_map(
@@ -2092,7 +2092,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     )
     .unwrap();
     let prefixes = gratis_prefix_down(
-        Some(lysis_budget),
+        Some(lysis_limit_minor),
         GratisSummaryValueV1::Summary(left_summary),
         GratisSummaryValueV1::Summary(right_summary),
     )

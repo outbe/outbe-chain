@@ -1545,7 +1545,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .unwrap()
             .unwrap();
         assert_eq!(receipt.day_limit, day_limit + U256::from(68));
-        assert_eq!(receipt.lysis_budget, U256::from(32));
+        assert_eq!(receipt.lysis_limit_minor, U256::from(32));
         assert_eq!(receipt.auction_base, U256::from(68));
         assert_eq!(receipt.carry_over_credit, U256::from(968));
 

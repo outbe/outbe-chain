@@ -156,7 +156,7 @@ pub(crate) fn fail_worldwide_day(
     let unused_limit = metadosis
         .request_budget_receipt(worldwide_day, &limits)?
         .map_or(current.metadosis_limit_amount, |receipt| {
-            receipt.lysis_budget
+            receipt.lysis_limit_minor
         });
 
     if current.status == WwdStatus::Failed {
@@ -240,7 +240,7 @@ pub(crate) fn fail_expired_ocomp_day(
         .ocomp_job_record(intent_id, &limits)?
         .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing".into()))?;
     if record.intent.wwd != worldwide_day.value()
-        || record.intent.frozen_metadosis_values.lysis_budget != unused_limit
+        || record.intent.frozen_metadosis_values.lysis_limit_minor != unused_limit
         || metadosis.terminal_intent_count(worldwide_day)? != 1
         || metadosis
             .ocomp_fsm_states

@@ -240,7 +240,7 @@ where
 
     let frozen = &inputs.intent.frozen_metadosis_values;
     let unused_lysis = frozen
-        .lysis_budget
+        .lysis_limit_minor
         .checked_sub(streamed.nod_gratis_consumed)
         .ok_or(LysisFinalizationErrorV1::Authority(
             "Lysis consumption within frozen budget",
@@ -258,7 +258,7 @@ where
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         gratis_supply: frozen.gratis_supply,
-        lysis_budget: frozen.lysis_budget,
+        lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
         nod_gratis_consumed: streamed.nod_gratis_consumed,
         unused_lysis,
@@ -284,7 +284,7 @@ where
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         gratis_supply: frozen.gratis_supply,
-        lysis_budget: frozen.lysis_budget,
+        lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
         nod_gratis_consumed: streamed.nod_gratis_consumed,
         unused_lysis,
@@ -341,7 +341,7 @@ fn validate_authority<U, C, B>(
         || inputs.plan.input_manifest_hash != manifest_hash
         || inputs.plan.wwd != inputs.intent.wwd
         || inputs.plan.wwd != inputs.input_manifest.wwd
-        || inputs.plan.lysis_budget != inputs.intent.frozen_metadosis_values.lysis_budget
+        || inputs.plan.lysis_limit_minor != inputs.intent.frozen_metadosis_values.lysis_limit_minor
         || inputs.plan.logical_evaluation_time != inputs.intent.logical_evaluation_time
         || inputs.plan.tribute_count != inputs.intent.authenticated_day_count
         || inputs.plan.tribute_count != inputs.input_manifest.tribute_count

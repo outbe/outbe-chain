@@ -373,7 +373,7 @@ fn validate_terminal_state(
                 let expected_value_routed = contract
                     .request_budget_receipt(wwd, &poc_schema_limits())?
                     .map_or(record.metadosis_limit_amount, |receipt| {
-                        receipt.lysis_budget
+                        receipt.lysis_limit_minor
                     });
                 validate_terminal_receipt_state(
                     &receipt,

@@ -326,7 +326,7 @@ pub fn fidelity_reduce_pair(
 
 pub fn finalize_fi_fraction_table(
     aggregate: &FidelityAggregateV1,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<Vec<LeagueFractionV1>, ProgramErrorV1> {
     if aggregate.tribute_count == 0 || aggregate.checked_total_nominal.is_zero() {
         return Err(ProgramErrorV1::ZeroTotalNominal);
@@ -345,7 +345,7 @@ pub fn finalize_fi_fraction_table(
         &groups,
         aggregate.tribute_count,
         aggregate.checked_total_nominal,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .map(|fractions| {
         fractions
