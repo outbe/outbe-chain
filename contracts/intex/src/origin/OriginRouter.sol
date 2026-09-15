@@ -476,6 +476,19 @@ contract OriginRouter is
             BridgeMsgCodec.decodeBidsRemaining(payload);
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
 
+        // A day whose intake has closed - cleared on the fan-in timeout, or cancelled - would have every
+        // chunk of the next round ignored on arrival, so the round is not worth paying for.
+        IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(worldwideDay);
+        if (stage != IDesis.AuctionStage.Revealing && stage != IDesis.AuctionStage.Clearing) {
+            emit InboundMessageIgnored(
+                srcChainId,
+                BridgeMsgCodec.MSG_BIDS_REMAINING,
+                bytes32((uint256(worldwideDay) << 32) | srcChainId),
+                InboundReason.OBSOLETE
+            );
+            return;
+        }
+
         uint64 budget = _os().clearingGas[worldwideDay][srcChainId];
         bytes32 sendId = _sendOrPark(
             srcChainId,

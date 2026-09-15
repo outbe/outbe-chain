@@ -13,6 +13,7 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
 /// @dev Multi-target OriginRouter behavior: registry, broadcast fan-out over the frozen day snapshot, addressed-send
 ///      membership, per-leg parking + flush, and inbound BIDS_DONE. Delivery is off (sends only record).
@@ -218,6 +219,21 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
             keccak256(_interop(TARGET_A, peerA)),
             "and it goes only to the chain that asked"
         );
+    }
+
+    /// @dev Once the day's intake has closed - cleared on the fan-in timeout, cancelled - another round
+    ///      would have every chunk it produces ignored on arrival, so the report is acknowledged instead.
+    function test_inbound_bidsRemaining_ignoreClosedDay() public {
+        _fireStart(DAY);
+        MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Cleared);
+        bytes32 key = bytes32((uint256(DAY) << 32) | TARGET_A);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit IOriginRouter.InboundMessageIgnored(
+            TARGET_A, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.OBSOLETE
+        );
+        _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
     function test_inbound_bidsRemaining_ignoreNonSnapshotSource() public {
