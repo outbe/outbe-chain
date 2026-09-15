@@ -13,10 +13,11 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
     /// @notice Floor for a CLEARING round: what a chain with no history gets, and what the router clamps a
-    ///         smaller ask up to. A round has to clear the delivery's own preamble and stage flip (~88k and
-    ///         ~452k measured), hold back `RELAY_REPORT_GAS`, and still pass the relay's gates for one
-    ///         chunk and the marker - about 1.9M all told, quoted here with room for the uncertainty in
-    ///         the hub's share of a send.
+    ///         smaller ask up to. A round has to clear the hub's and adapter's frames and the stage flip,
+    ///         hold back `RELAY_REPORT_GAS`, and still pass the relay's gates for one chunk. Driven through
+    ///         that whole path against the canonical Hyperlane mailbox it spends 1.56M and places a chunk
+    ///         with the remainder reported (`ClearingRelayMailboxGas.t.sol`); the rest is room for the
+    ///         drift between fork blocks.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_300_000;
 
     /// @notice Ceiling for a CLEARING round, under the tightest per-transaction gas cap our target chains
