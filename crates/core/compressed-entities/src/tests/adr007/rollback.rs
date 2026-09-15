@@ -191,6 +191,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
     nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x8c),
         worldwide_day: WorldwideDay::new(14),
         floor_price_minor: U256::from(10),

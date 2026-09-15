@@ -39,6 +39,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
 fn item(owner: Address, floor: U256, reference_currency: u16) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
     NodItemState {
+        is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
         owner,
         gratis_load_minor: U256::from(11),
@@ -343,5 +344,73 @@ fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
             "unexpected error: {error}"
         );
         assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
+    });
+}
+
+#[test]
+fn settled_state_is_exposed_in_nod_data_and_metadata() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+    use base64::Engine;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let item = item(Address::repeat_byte(0x86), U256::from(13), USD);
+        api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+        NodContract::new(storage.clone())
+            .qualify_bucket(&scope, &parent, item.bucket_key)
+            .unwrap();
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        api::settle_nod(
+            &storage,
+            &scope,
+            api::load_item(&storage, &scope, &parent, item.nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let data = dispatch(
+            storage.clone(),
+            &scope,
+            &parent,
+            &INod::nodDataCall {
+                nodId: item.nod_id.to_u256(),
+            }
+            .abi_encode(),
+            item.owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert!(
+            INod::nodDataCall::abi_decode_returns(&data)
+                .unwrap()
+                .isSettled
+        );
+        let data = dispatch(
+            storage,
+            &scope,
+            &parent,
+            &INod::tokenURICall {
+                nodId: item.nod_id.to_u256(),
+            }
+            .abi_encode(),
+            item.owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        let uri = INod::tokenURICall::abi_decode_returns(&data).unwrap();
+        let json = base64::engine::general_purpose::STANDARD
+            .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+            .unwrap();
+        assert!(String::from_utf8(json)
+            .unwrap()
+            .contains("\"trait_type\":\"isSettled\",\"value\":true"));
     });
 }

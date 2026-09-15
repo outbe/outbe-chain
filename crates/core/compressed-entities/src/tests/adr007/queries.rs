@@ -66,6 +66,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     let stale_nod = nod_item(entity(8, 28), owner);
     let stale_bucket_id = entity(8, 29);
     let stale_bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: bucket_key_for(stale_bucket_id),
         worldwide_day: stale_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(4),
@@ -75,6 +76,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     };
     let missing_bucket_id = entity(8, 30);
     let missing_bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: bucket_key_for(missing_bucket_id),
         worldwide_day: missing_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(6),

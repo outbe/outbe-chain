@@ -105,7 +105,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     let cost_amount_minor =
         api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?;
     let json = format!(
-        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
+        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
         nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
         crate::constants::TOKEN_IMAGE_BASE,
@@ -118,6 +118,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
         bucket.entry_price_minor,
         cost_amount_minor,
         if bucket.is_qualified { "true" } else { "false" },
+        item.is_settled,
         item.issued_at,
         item.reference_currency,
         item.issuance_currency,
@@ -145,6 +146,7 @@ fn to_abi_data(
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
         calledAt: called_at,
+        isSettled: item.is_settled,
     })
 }
 
