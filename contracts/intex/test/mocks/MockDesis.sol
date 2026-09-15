@@ -25,9 +25,7 @@ contract MockDesis {
         uint16, /* batchIndex */
         uint16, /* totalBatches */
         address[] calldata, /* bidderAddresses */
-        uint16[] calldata, /* intexQuantities */
-        uint32[] calldata, /* intexBidRates */
-        uint32[] calldata /* timestamps */
+        uint256[] calldata /* packedBids */
     ) external {}
 
     /// @dev Accepts every BIDS_DONE completeness marker and discards it, mirroring `processBidsBatch`.
