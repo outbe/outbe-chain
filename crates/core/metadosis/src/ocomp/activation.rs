@@ -348,7 +348,7 @@ fn apply_certified_result(
         .nod()
         .lysis_allocation_minor()
         .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
-        .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
+        .ok_or_else(|| crate::errors::business_failure("Lysis limit overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),

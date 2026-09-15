@@ -411,7 +411,7 @@ impl MetadosisContract<'_> {
             if retained_lysis_limit_minor != record.intent.frozen_metadosis_values.lysis_limit_minor
             {
                 return Err(storage_corruption_message(
-                    "expired OCOMP job retained budget mismatch",
+                    "expired OCOMP job retained limit mismatch",
                 ));
             }
 

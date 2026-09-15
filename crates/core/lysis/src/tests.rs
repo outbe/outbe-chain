@@ -153,7 +153,7 @@ fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
 }
 
 #[test]
-fn zero_or_over_budget_gratis_load_is_a_hard_failure_without_consumption() {
+fn zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption() {
     let mut remaining = U256::from(10);
     assert!(crate::runtime::consume_required_gratis(&mut remaining, U256::ZERO).is_err());
     assert_eq!(remaining, U256::from(10));
@@ -663,7 +663,7 @@ fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
 }
 
 #[test]
-fn test_normalized_f1_respects_budget_skewed_population() {
+fn test_normalized_f1_respects_limit_skewed_population() {
     // Skewed population + imbalanced interest tends to push raw f1 over the
     // target. After normalization the post-condition must hold.
     let q = SCALE / U256::from(4u64);
@@ -677,7 +677,7 @@ fn test_normalized_f1_respects_budget_skewed_population() {
 }
 
 #[test]
-fn test_normalized_f1_respects_budget_many_groups() {
+fn test_normalized_f1_respects_limit_many_groups() {
     let n = 10usize;
     let y_fp: Vec<U256> = (0..n).map(|_| SCALE / U256::from(n as u64)).collect();
     let p: Vec<u64> = (1..=n as u64).collect();
@@ -1081,7 +1081,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         );
     }
 
-    // 3. Algorithm-level budget invariant. Reconstruct the y_fp vector exactly
+    // 3. Algorithm-level limit invariant. Reconstruct the y_fp vector exactly
     //    as the runtime does (BTreeMap-ordered group share with the truncation
     //    delta absorbed into the last entry) and assert the normalized
     //    `sum(f_g * y_fp_g)/SCALE <= f_fp` post-condition. This is the
@@ -1111,7 +1111,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^6
     assert!(
         weighted <= f_fp,
-        "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
+        "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% limit violated)"
     );
 
     println!("100-tribute / 15-FI fraction map: {:?}", map);

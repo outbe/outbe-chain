@@ -169,7 +169,7 @@ pub(crate) fn prepare(
 }
 
 impl ProgramExecutionV1 {
-    /// Compute and budget-check the next Gratis load before external observations.
+    /// Compute and limit-check the next Gratis load before external observations.
     pub(crate) fn quote_next(&self) -> Result<PendingNodV1, ProgramErrorV1> {
         let ordinal = self.next_ordinal;
         let tribute = self

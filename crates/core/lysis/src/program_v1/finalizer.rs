@@ -243,7 +243,7 @@ where
         .lysis_limit_minor
         .checked_sub(streamed.lysis_allocation_minor)
         .ok_or(LysisFinalizationErrorV1::Authority(
-            "Lysis consumption within frozen budget",
+            "Lysis consumption within the frozen limit",
         ))?;
     let counts = ExactCountsV1 {
         tribute_count: streamed.tribute_count,

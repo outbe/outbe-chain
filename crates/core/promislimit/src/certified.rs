@@ -98,7 +98,7 @@ fn validate_input(
         .checked_add(input.unused_lysis_limit_minor)
         != Some(input.lysis_limit_minor)
     {
-        return Err(revert("invalid certified carry-over budget conservation"));
+        return Err(revert("invalid certified carry-over limit conservation"));
     }
     Ok(())
 }
@@ -401,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn wrong_binding_or_budget_conservation_is_side_effect_free() {
+    fn wrong_binding_or_limit_conservation_is_side_effect_free() {
         let expected = input(33, 8, 2);
 
         let mut wrong_binding = ActivationTestProvider::new();
@@ -410,13 +410,13 @@ mod tests {
         assert_eq!(current(&mut wrong_binding), U256::from(9));
         assert!(wrong_binding.inner.get_ordered_events().is_empty());
 
-        let mut wrong_budget_input = expected.clone();
-        wrong_budget_input.lysis_limit_minor += U256::from(1);
-        let mut wrong_budget = ActivationTestProvider::new();
-        seed(&mut wrong_budget, U256::from(9));
-        assert!(run(&mut wrong_budget, &wrong_budget_input).is_err());
-        assert_eq!(current(&mut wrong_budget), U256::from(9));
-        assert!(wrong_budget.inner.get_ordered_events().is_empty());
+        let mut wrong_limit_input = expected.clone();
+        wrong_limit_input.lysis_limit_minor += U256::from(1);
+        let mut wrong_limit = ActivationTestProvider::new();
+        seed(&mut wrong_limit, U256::from(9));
+        assert!(run(&mut wrong_limit, &wrong_limit_input).is_err());
+        assert_eq!(current(&mut wrong_limit), U256::from(9));
+        assert!(wrong_limit.inner.get_ordered_events().is_empty());
 
         let mut overflowing_split_input = expected;
         overflowing_split_input.lysis_allocation_minor = U256::MAX;

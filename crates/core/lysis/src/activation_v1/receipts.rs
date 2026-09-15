@@ -196,7 +196,7 @@ pub fn verify_receipts(
             .lysis_allocation_minor()
             .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
             == Some(request.lysis_limit_minor),
-        "Lysis receipt budget conservation",
+        "Lysis receipt limit conservation",
     )?;
     // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
     ensure(

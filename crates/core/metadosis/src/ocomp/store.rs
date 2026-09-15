@@ -206,7 +206,7 @@ impl MetadosisContract<'_> {
             None if receipt.is_none() && projection.pending_nonce == 0 => {}
             Some(lysis_limit_minor) => {
                 let receipt = receipt.ok_or_else(|| {
-                    storage_corruption_message("OCOMP retained budget has no receipt")
+                    storage_corruption_message("OCOMP retained limit has no receipt")
                 })?;
                 let expected_hash = receipt.receipt_hash(limits).map_err(|error| {
                     storage_corruption_message(format!("hash stored request receipt: {error}"))

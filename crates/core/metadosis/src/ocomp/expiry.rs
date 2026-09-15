@@ -227,12 +227,12 @@ fn expire_exact(
         ctx.block.timestamp,
         &poc_schema_limits(),
     )?;
-    let expected_budget = before.retained_lysis_limit_minor.ok_or_else(|| {
-        storage_corruption_message("terminal OCOMP expiry has no retained budget")
-    })?;
+    let expected_budget = before
+        .retained_lysis_limit_minor
+        .ok_or_else(|| storage_corruption_message("terminal OCOMP expiry has no retained limit"))?;
     if retained_lysis_limit_minor != expected_budget {
         return Err(storage_corruption_message(
-            "terminal OCOMP expiry returned a different retained budget",
+            "terminal OCOMP expiry returned a different retained limit",
         ));
     }
     crate::terminal::fail_expired_ocomp_day(
