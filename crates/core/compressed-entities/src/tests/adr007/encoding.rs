@@ -67,6 +67,7 @@ fn body_codecs_cover_all_three_closed_variants() {
     let owner = address!("a00000000000000000000000000000000000000a");
     let item = nod_item(entity(16, 10), owner);
     let bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(11),
         worldwide_day: WorldwideDay::new(16),
         floor_price_minor: U256::from(12),

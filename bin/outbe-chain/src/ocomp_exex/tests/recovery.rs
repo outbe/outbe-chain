@@ -143,7 +143,7 @@ async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce()
 fn deterministic_retention_conflicts_are_not_retried_as_storage_outages() {
     for error in [
         outbe_node::ocomp::retention::RetentionError::ConflictingCandidate,
-        outbe_node::ocomp::retention::RetentionError::OrphanedCandidate,
+        outbe_node::ocomp::retention::RetentionError::Source("event/state mismatch".to_owned()),
         outbe_node::ocomp::retention::RetentionError::Poisoned,
     ] {
         assert!(matches!(

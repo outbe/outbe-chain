@@ -385,7 +385,7 @@ const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis 
 // ============================================================================
 // IntexFactory Grant Roles
 // Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory so it can call
-// `intex.settle(...)` and burn Issued / mint Settled tokens.
+// `intex.settleIntex(...)` and burn Issued / mint Settled tokens.
 // ============================================================================
 
 interface SettlementGrantRolesArgs {
@@ -507,7 +507,7 @@ const promisWire = task(
 
 // ============================================================================
 // Gem-parking Wire (grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile)
-// GemFactory.setup_factory calls intex.parkIntex, which is gated by GEM_ROLE.
+// GemFactory.setup_factory calls intex.sendToGemFactory, which is gated by GEM_ROLE.
 // ============================================================================
 
 interface GemWireArgs {
@@ -549,7 +549,7 @@ const gemWireAction = async (args: GemWireArgs, hre: unknown) => {
 
 const gemWire = task(
   "gem-wire",
-  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables parkIntex burn path)"
+  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables sendToGemFactory burn path)"
 )
   .addOption({
     name: "gemFactory",

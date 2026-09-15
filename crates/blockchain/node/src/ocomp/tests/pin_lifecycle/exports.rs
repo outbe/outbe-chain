@@ -7,18 +7,23 @@ struct ProofReturningSource {
 }
 
 impl FinalizedInputProofSource for ProofReturningSource {
-    fn candidate_for_block(
+    fn candidate_for_finalized_observation(
         &self,
-        block: &ConsensusBlock,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        self.inner.candidate_for_block(block)
+        frame: &FinalizedFrame,
+        observation: FinalizedRequestObservationV1,
+    ) -> Result<CandidatePinV1, RetentionError> {
+        self.inner
+            .candidate_for_finalized_observation(frame, observation)
     }
 
-    fn resolve_finality(
+    fn terminal_height_at_finalized_frame(
         &self,
+        frame: &FinalizedFrame,
         candidate: CandidatePinV1,
-    ) -> Result<CandidateFinalityV1, RetentionError> {
-        self.inner.resolve_finality(candidate)
+        job_id: B256,
+    ) -> Result<Option<u64>, RetentionError> {
+        self.inner
+            .terminal_height_at_finalized_frame(frame, candidate, job_id)
     }
 
     fn build_finalized_intent_proof(
@@ -86,29 +91,26 @@ fn shared_retention_selector_fails_closed_then_delegates_without_rebinding() {
     );
 
     let request = block(100, B256::repeat_byte(0x31), 0x32);
-    let candidate = candidate(&request, B256::repeat_byte(0x33));
+    let candidate = candidate(&request);
     let job_id = job_id_from_intent_id(
         candidate.intent_id,
         candidate.block_hash,
         candidate.state_root,
     )
-    .expect("fixture tentative JobId");
+    .expect("fixture JobId");
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("first journal root");
     let storage = Arc::new(MemoryStorage::default());
     let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
         root.path(),
-        source,
+        source.clone(),
         Arc::new(RetainedTributeWriter::new(storage.clone(), storage)),
     ));
     selector
         .install(coordinator.clone())
         .expect("first coordinator installs");
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
-        VoteOutcome::Positive
-    );
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), coordinator.as_ref(), &request).is_ok());
     let selected_day = WorldwideDay::new(candidate.wwd);
     assert_eq!(
         TributeRetentionSelector::active_pin_for(&selector, selected_day).unwrap(),
@@ -145,7 +147,7 @@ fn shared_retention_selector_fails_closed_then_delegates_without_rebinding() {
 fn discovery_generation_replay_and_export_ack_survive_terminal_and_release() {
     let selector = SharedOcompRetentionSelector::new();
     let request = block(100, B256::repeat_byte(0x41), 0x42);
-    let candidate = candidate(&request, B256::repeat_byte(0x43));
+    let candidate = candidate(&request);
     let job_id = job_id_from_intent_id(
         candidate.intent_id,
         candidate.block_hash,
@@ -159,11 +161,8 @@ fn discovery_generation_replay_and_export_ack_survive_terminal_and_release() {
         .install(Arc::clone(&coordinator))
         .expect("coordinator installs");
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), coordinator.as_ref(), &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), coordinator.as_ref(), &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), coordinator.as_ref(), &request);
     let finalized = selector
         .discovery_job_records(job_id)
         .expect("finalized discovery generation");
@@ -221,8 +220,8 @@ fn discovery_generation_replay_and_export_ack_survive_terminal_and_release() {
 fn export_authority_survives_interleaved_global_registry_generations() {
     let first_request = block(100, B256::repeat_byte(0x51), 0x52);
     let second_request = block(101, B256::repeat_byte(0x53), 0x54);
-    let first_candidate = candidate(&first_request, B256::repeat_byte(0x55));
-    let second_candidate = candidate(&second_request, B256::repeat_byte(0x56));
+    let first_candidate = candidate(&first_request);
+    let second_candidate = candidate(&second_request);
     let first_job = job_id_from_intent_id(
         first_candidate.intent_id,
         first_candidate.block_hash,
@@ -242,18 +241,12 @@ fn export_authority_survives_interleaved_global_registry_generations() {
     let root = tempfile::tempdir().unwrap();
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &first_request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &first_request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &first_request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &first_request);
     let first_source_generation = coordinator.finalized_job_record(first_job).unwrap().0;
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &second_request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &second_request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &second_request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &second_request);
     let exported = coordinator
         .record_exported(
             first_job,
@@ -292,7 +285,7 @@ fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
     let intended = production_intent(request.number());
     let limits = poc_schema_limits();
     let intent_id = intended.intent_id(&limits).expect("fixture IntentId");
-    let candidate = candidate(&request, intent_id);
+    let candidate = candidate_for_intent(&request, &intended);
     let job_id = job_id_from_intent_id(intent_id, candidate.block_hash, candidate.state_root)
         .expect("fixture JobId");
 
@@ -309,10 +302,9 @@ fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
     let root = tempfile::tempdir().expect("validator journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source);
 
-    coordinator
-        .prepare_candidate(&request)
+    FinalizedFrameDriver::admit(&inner, &coordinator, &request)
         .expect("candidate pin must become durable");
-    DeterministicConsensusDriver::finalize(&inner, &coordinator, &request);
+    FinalizedFrameDriver::bind(&inner, &coordinator, &request);
 
     assert!(
         coordinator.build_finalized_intent_proof(job_id).is_err(),
@@ -323,8 +315,8 @@ fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
 #[test]
 fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     let request = block(100, B256::repeat_byte(0x36), 6);
-    let candidate = candidate(&request, B256::repeat_byte(0x45));
-    let job_id = B256::repeat_byte(0x55);
+    let candidate = candidate(&request);
+    let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("journal root");
     let storage = Arc::new(MemoryStorage::default());
@@ -364,11 +356,8 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         retained_writer,
     );
 
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
+    FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
     assert_eq!(
         TributeRetentionSelector::active_pin_for(&coordinator, day).unwrap(),
         Some(pin)
@@ -438,8 +427,8 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     assert!(matches!(
         ready_record(&restarted).state,
         PinStateV1::Released {
-            job_id: Some(current),
-            reason: PinReleaseReason::RetentionSatisfied,
+            job_id: current,
+
             ..
         } if current == job_id
     ));
@@ -449,10 +438,10 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
 fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
     let first_request = block(151, B256::repeat_byte(0x31), 1);
     let second_request = block(221, B256::repeat_byte(0x32), 2);
-    let first_candidate = candidate(&first_request, B256::repeat_byte(0x41));
-    let second_candidate = candidate(&second_request, B256::repeat_byte(0x42));
-    let first_job_id = B256::repeat_byte(0x51);
-    let second_job_id = B256::repeat_byte(0x52);
+    let first_candidate = candidate(&first_request);
+    let second_candidate = candidate(&second_request);
+    let first_job_id = fixture_job_id(first_candidate);
+    let second_job_id = fixture_job_id(second_candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (first_candidate, first_job_id),
         (second_candidate, second_job_id),
@@ -464,11 +453,8 @@ fn ocm_pin_001_each_exported_job_remains_addressable_after_a_newer_export() {
         (&first_request, first_job_id, 0x61),
         (&second_request, second_job_id, 0x62),
     ] {
-        assert_eq!(
-            DeterministicConsensusDriver::vote(&coordinator, request),
-            VoteOutcome::Positive
-        );
-        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, request).is_ok());
+        FinalizedFrameDriver::bind(source.as_ref(), &coordinator, request);
         let (generation, _) = coordinator
             .finalized_job_record(job_id)
             .expect("job reaches finalized state");
@@ -555,10 +541,9 @@ fn ocm_pin_001_exported_record_reloads_every_live_export_by_job_id() {
         (&first_request, first_job_id, 0x61),
         (&second_request, second_job_id, 0x62),
     ] {
-        coordinator
-            .prepare_candidate(request)
+        FinalizedFrameDriver::admit(&inner, &coordinator, request)
             .expect("candidate pin must become durable");
-        DeterministicConsensusDriver::finalize(&inner, &coordinator, request);
+        FinalizedFrameDriver::bind(&inner, &coordinator, request);
         let (generation, _) = coordinator
             .finalized_job_record(job_id)
             .expect("job reaches finalized state");

@@ -41,7 +41,7 @@ const GOOD_JSON: &str = r#"{
     "worldwide_day": 20250115,
     "currency": 840,
     "amount_base": "100",
-    "amount_atto": "0",
+    "amount_micro": "0",
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
 }"#;
 

@@ -20,7 +20,7 @@ Feature: Gem from a parked Intex to Promis
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When the settlement currency is registered on the committee chain
-    Then holders may settle in that currency
+    Then owners may settle in that currency
     And the controlled COEN USD quote is finalized through the real price feeder
     When a test Intex series is issued to a funded merchant
     And the merchant parks part of their units into a gem position

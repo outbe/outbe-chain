@@ -224,7 +224,7 @@ fn test_bootstrap_dkg_recovers_dropped_finalized_log_with_retry() {
 
 /// 4 validators, 1 offline. Threshold = 3 (N3f1: f=1, quorum=3).
 /// Interactive bootstrap must wait instead of finalizing from a threshold
-/// P2P subset that could diverge across validators.
+/// P2P subset that could diverge across validators or mismatch their boundary artifacts.
 #[test]
 fn test_bootstrap_dkg_waits_for_all_genesis_nodes_one_offline() {
     use commonware_runtime::{Clock as _, Runner as _};
@@ -283,21 +283,4 @@ fn test_dkg_fails_below_threshold() {
                 _ = context.sleep(std::time::Duration::from_secs(5)) => {},
             }
         });
-}
-
-/// 4 nodes, 1 offline - verify bootstrap does not return a threshold
-/// output that could later mismatch another validator's boundary artifact.
-#[test]
-fn test_bootstrap_dkg_does_not_return_threshold_subset_output() {
-    use commonware_runtime::{Clock as _, Runner as _};
-    commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(60)).start(
-        |context| async move {
-            commonware_macros::select! {
-                _ = run_partial_dkg(&context, 4, 3) => {
-                    panic!("bootstrap DKG must wait for the complete genesis dealer-log set");
-                },
-                _ = context.sleep(std::time::Duration::from_secs(5)) => {},
-            }
-        },
-    );
 }

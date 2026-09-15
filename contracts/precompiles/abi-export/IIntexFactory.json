@@ -92,7 +92,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -207,7 +207,58 @@
   },
   {
     "type": "function",
-    "name": "settle",
+    "name": "seriesUnitCounts",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexFactory.UnitCounts",
+        "components": [
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "activeUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "exercisedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gemFactoryUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "forfeitedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "settleIntex",
     "inputs": [
       {
         "name": "seriesId",
@@ -215,7 +266,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
+        "name": "intexOwner",
         "type": "address",
         "internalType": "address"
       },
@@ -457,7 +508,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -551,7 +602,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "issuedIntexCount",
+        "name": "issuedUnits",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
@@ -589,7 +640,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
+        "name": "intexOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"

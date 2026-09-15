@@ -1,13 +1,16 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, BodyInput, EntityRef, ExecutionScope,
-    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
+    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
+    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
+    MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
     reference_price,
     tree_math::{self, BinTreeStorage},
 };
+use outbe_primitives::time::WorldwideDay;
+use std::collections::BTreeMap;
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
@@ -17,6 +20,59 @@ use crate::{
 };
 
 impl NodContract<'_> {
+    pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
+        if !self.entry_prices_frozen.read(&day)? {
+            return Ok(None);
+        }
+        let count = self.entry_price_currency_count.read(&day)?;
+        if count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES {
+            return Err(NodError::InvalidEntryPriceSnapshot.into());
+        }
+        let currencies = self.entry_price_currency.get_nested(&day);
+        let values = self.entry_price_value.get_nested(&day);
+        let mut prices = BTreeMap::new();
+        let mut previous = 0;
+        for index in 0..count {
+            let iso = currencies.read(&index)?;
+            let price = values.read(&iso)?;
+            if iso <= previous || price.is_zero() {
+                return Err(NodError::InvalidEntryPriceSnapshot.into());
+            }
+            prices.insert(iso, price);
+            previous = iso;
+        }
+        Ok(Some(prices))
+    }
+
+    pub fn store_entry_price_snapshot(
+        &self,
+        day: WorldwideDay,
+        prices: &BTreeMap<u16, U256>,
+    ) -> Result<()> {
+        let count = u32::try_from(prices.len()).map_err(|_| NodError::InvalidEntryPriceSnapshot)?;
+        if !day.is_valid()
+            || count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES
+            || prices
+                .iter()
+                .any(|(iso, price)| *iso == 0 || price.is_zero())
+        {
+            return Err(NodError::InvalidEntryPriceSnapshot.into());
+        }
+        self.storage_handle().with_checkpoint(|| {
+            if self.entry_prices_frozen.read(&day)? {
+                return Err(NodError::EntryPricesAlreadyFrozen.into());
+            }
+            let currencies = self.entry_price_currency.get_nested(&day);
+            let values = self.entry_price_value.get_nested(&day);
+            for (index, (iso, price)) in (0..count).zip(prices) {
+                currencies.write(&index, *iso)?;
+                values.write(iso, *price)?;
+            }
+            self.entry_price_currency_count.write(&day, count)?;
+            self.entry_prices_frozen.write(&day, true)
+        })
+    }
+
     // --- ID helpers ---
 
     pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
@@ -114,6 +170,11 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
+        if item.is_settled {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "cannot issue a settled Nod".into(),
+            ));
+        }
         // ISO 0 is not a currency, and its bin namespace aliases the
         // un-namespaced key while never appearing in the oracle's
         // reference-currency registry — a bucket parked there would be
@@ -145,7 +206,12 @@ impl NodContract<'_> {
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
         let member_count = self.bucket_nod_count.read(&item.bucket_key)?;
-        if current_bucket.is_some() != (member_count > 0) {
+        let settled_count = current_bucket
+            .as_ref()
+            .map(nod_bucket_from_verified)
+            .transpose()?
+            .map_or(0, |bucket| bucket.settled_nods);
+        if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
@@ -156,6 +222,7 @@ impl NodContract<'_> {
             Some(_) => None,
             None => {
                 let bucket = NodBucketState {
+                    settled_nods: 0,
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
@@ -207,32 +274,90 @@ impl NodContract<'_> {
         bucket: LoadedNodBucket,
     ) -> Result<()> {
         let (item, current_item) = item.into_parts();
-        let (_, current_bucket) = bucket.into_parts();
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-        if current_bucket.entity_id() != bucket_id {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "loaded Nod bucket {} does not match item bucket {bucket_id}",
-                    current_bucket.entity_id()
-                )),
-            );
-        }
+        let (mut bucket, current_bucket) = bucket.into_parts();
+        self.check_loaded_bucket(&item, &current_bucket)?;
+        let bucket_id = current_bucket.entity_id();
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
                 "Nod total supply underflow during removal".into(),
             )
         })?;
         self.total_supply.write(supply)?;
-        let remaining = self.remove_bucket_member(item.bucket_key, item.nod_id)?;
+        let remaining = if item.is_settled {
+            bucket.settled_nods = bucket.settled_nods.checked_sub(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_id} settled count underflow"
+                ))
+            })?;
+            self.bucket_nod_count.read(&item.bucket_key)?
+        } else {
+            self.remove_bucket_member(item.bucket_key, item.nod_id)?
+        };
         delete(self.storage_handle(), scope, current_item)?;
-        if remaining == 0 {
+        if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage_handle(), scope, current_bucket)
+        } else if item.is_settled {
+            update(
+                self.storage_handle(),
+                scope,
+                current_bucket,
+                BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
+            )
         } else {
             Ok(())
         }
+    }
+
+    /// Moves one unpaid member into the live paid count, preserving ownership and supply.
+    pub(crate) fn record_nod_settled(
+        &mut self,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+        bucket: LoadedNodBucket,
+    ) -> Result<()> {
+        let (mut item, current_item) = item.into_parts();
+        let (mut bucket, current_bucket) = bucket.into_parts();
+        self.check_loaded_bucket(&item, &current_bucket)?;
+        if item.is_settled || !bucket.is_qualified {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "Nod settlement requires an unpaid qualified item".into(),
+            ));
+        }
+        bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                "Nod settled count overflow".into(),
+            )
+        })?;
+        self.remove_bucket_member(item.bucket_key, item.nod_id)?;
+        item.is_settled = true;
+        update(
+            self.storage_handle(),
+            scope,
+            current_item,
+            BodyInput::NodItem(&crate::repository::canonical_item(&item)),
+        )?;
+        update(
+            self.storage_handle(),
+            scope,
+            current_bucket,
+            BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
+        )
+    }
+
+    fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
+        let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
+        if current.entity_id() != expected {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "loaded Nod bucket {} does not match item bucket {expected}",
+                    current.entity_id()
+                )),
+            );
+        }
+        Ok(())
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
@@ -319,7 +444,7 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Appends `nod_id` and increments the bucket's authoritative member count.
+    /// Appends `nod_id` and increments the bucket's authoritative unpaid count.
     pub(crate) fn insert_bucket_member(
         &mut self,
         bucket_key: B256,
@@ -354,6 +479,18 @@ impl NodContract<'_> {
                     "Nod bucket {bucket_key} member count underflow during removal"
                 ))
             })?;
+        if index > last
+            || self
+                .bucket_nods
+                .read(&Self::bucket_nod_key(bucket_key, index))?
+                != nod_id
+        {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod {nod_id} is not indexed in bucket {bucket_key}"
+                )),
+            );
+        }
         let last_key = Self::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;

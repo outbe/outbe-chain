@@ -92,6 +92,8 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

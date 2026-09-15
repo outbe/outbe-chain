@@ -54,7 +54,7 @@
       "name": "burnSettled",
       "inputs": [
         {
-          "name": "holder",
+          "name": "owner",
           "type": "address",
           "internalType": "address"
         },
@@ -120,7 +120,7 @@
               "internalType": "uint16"
             },
             {
-              "name": "issuedIntexCount",
+              "name": "issuedUnits",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -267,42 +267,6 @@
     },
     {
       "type": "function",
-      "name": "holderBalances",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
-          "name": "holder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "tuple",
-          "internalType": "struct IIntexNFT1155.HolderBalances",
-          "components": [
-            {
-              "name": "issued",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "settled",
-              "type": "uint32",
-              "internalType": "uint32"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "isApprovedForAll",
       "inputs": [
         {
@@ -400,32 +364,39 @@
     },
     {
       "type": "function",
-      "name": "parkIntex",
+      "name": "ownerBalances",
       "inputs": [
-        {
-          "name": "holder",
-          "type": "address",
-          "internalType": "address"
-        },
         {
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
         },
         {
-          "name": "amount",
-          "type": "uint256",
-          "internalType": "uint256"
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "outputs": [
         {
           "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
+          "type": "tuple",
+          "internalType": "struct IIntexNFT1155.OwnerBalances",
+          "components": [
+            {
+              "name": "issued",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "settled",
+              "type": "uint32",
+              "internalType": "uint32"
+            }
+          ]
         }
       ],
-      "stateMutability": "nonpayable"
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -454,7 +425,7 @@
               "internalType": "uint16"
             },
             {
-              "name": "issuedIntexCount",
+              "name": "issuedUnits",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -608,6 +579,35 @@
     },
     {
       "type": "function",
+      "name": "sendToGemFactory",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "seriesExists",
       "inputs": [
         {
@@ -664,7 +664,7 @@
     },
     {
       "type": "function",
-      "name": "settle",
+      "name": "settleIntex",
       "inputs": [
         {
           "name": "seriesId",
@@ -868,7 +868,7 @@
     },
     {
       "type": "event",
-      "name": "IntexCompleted",
+      "name": "IntexExercised",
       "inputs": [
         {
           "name": "seriesId",
@@ -877,7 +877,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "holder",
+          "name": "owner",
           "type": "address",
           "indexed": true,
           "internalType": "address"
@@ -924,7 +924,7 @@
     },
     {
       "type": "event",
-      "name": "IntexParked",
+      "name": "IntexSentToGemFactory",
       "inputs": [
         {
           "name": "seriesId",
@@ -933,32 +933,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "holder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IntexSettled",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "to",
+          "name": "owner",
           "type": "address",
           "indexed": true,
           "internalType": "address"
@@ -1333,7 +1308,7 @@
     },
     {
       "type": "error",
-      "name": "ZeroIssuedIntexCount",
+      "name": "ZeroIssuedUnits",
       "inputs": []
     }
   ]

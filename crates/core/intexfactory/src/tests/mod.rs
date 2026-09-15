@@ -28,7 +28,7 @@ use crate::state::Group;
 const REFERENCE_ISO: u16 = 840;
 const DAY: u64 = 24 * 60 * 60;
 
-fn holder() -> Address {
+fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
@@ -126,7 +126,7 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
         worldwide_day: worldwide_day.into(),
-        issued_intex_count: 100,
+        issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
         issuance_currency: 840,

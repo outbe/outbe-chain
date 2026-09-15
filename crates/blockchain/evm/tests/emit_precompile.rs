@@ -383,7 +383,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     // this window).
     let burn_gas = gas_used(&outcome.result);
     assert!(
-        burn_gas > 530_000 && burn_gas < 3_517_500,
+        burn_gas > 530_000 && burn_gas < 817_500,
         "routed burn gas {burn_gas} must reflect the 530k base"
     );
 
@@ -437,7 +437,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     assert_eq!(change_note.noteAmount, 0);
     assert_eq!(change_note.rootAfter, b256(tree.root()));
     // The mint selector's fixed base gas dominates the routed charge.
-    assert!(gas_used(&outcome.result) >= 3_517_500);
+    assert!(gas_used(&outcome.result) >= 817_500);
     let db = chained_db(db, outcome);
 
     // Bob's successor proof mints the remaining 60 to Dave — NoteUsed only.
@@ -927,7 +927,7 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
 
     // Zero-value selector-only mint: the route charges the mint base gas
-    // before dispatch fails ABI decoding — pinning that the 3,517,500
+    // before dispatch fails ABI decoding — pinning that the 817,500
     // selector-sensitive charge is actually routed.
     let outcome = run(
         base_db(),
@@ -943,8 +943,8 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
         outcome.result
     );
     assert!(
-        gas_used(&outcome.result) >= 3_517_500,
-        "mint selector must route the 3,517,500 base gas, got {}",
+        gas_used(&outcome.result) >= 817_500,
+        "mint selector must route the 817,500 base gas, got {}",
         gas_used(&outcome.result)
     );
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
@@ -967,7 +967,7 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
         BOB,
         EMIT_ADDRESS,
         0,
-        3_517_500 + 30_000,
+        817_500 + 30_000,
         mint_head,
     );
     assert!(

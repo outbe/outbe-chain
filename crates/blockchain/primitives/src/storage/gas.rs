@@ -22,7 +22,12 @@ use crate::error::{PrecompileError, Result};
 pub const PRECOMPILE_BASE_GAS: u64 = 200;
 
 /// Flat gas cost for one UltraHonkKeccak verification.
-pub const ZK_VERIFY_GAS: u64 = 3_000_000;
+///
+/// Reduced from 3,000,000 to 300,000 following the release EVM test
+/// `measure_settle_gem_gas_with_real_paynote`: five isolated executions with a
+/// real PayNote proof took 2.21–3.29 ms, excluding proof generation. This is the
+/// protocol charge for verification; calldata and storage gas are additional.
+pub const ZK_VERIFY_GAS: u64 = 300_000;
 
 /// Deterministic gas meter used by [`EvmStorageProvider`](super::evm::EvmStorageProvider).
 ///

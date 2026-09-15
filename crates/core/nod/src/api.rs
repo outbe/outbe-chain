@@ -1,12 +1,32 @@
 //! Cross-module API for the Nod entity store.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{NodBucketState, NodContract, NodItemState};
+
+/// Frozen entry prices, or `None` before the snapshot has been captured.
+pub fn entry_price_snapshot(
+    storage: StorageHandle,
+    day: WorldwideDay,
+) -> Result<Option<BTreeMap<u16, U256>>> {
+    NodContract::new(storage).entry_price_snapshot(day)
+}
+
+/// Stores the complete map atomically. A frozen day cannot be overwritten.
+pub fn store_entry_price_snapshot(
+    storage: StorageHandle,
+    day: WorldwideDay,
+    prices: &BTreeMap<u16, U256>,
+) -> Result<()> {
+    NodContract::new(storage).store_entry_price_snapshot(day, prices)
+}
 
 /// The Nod's cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
 ///
@@ -17,7 +37,7 @@ pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Re
     checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
 }
 
-/// Timestamp by which a called bucket must be mined, or `0` while it is not
+/// Timestamp by which a called bucket must be settled, or `0` while it is not
 /// called at all.
 ///
 /// Reads the notice period the bucket sealed when it qualified, so retuning the
@@ -181,4 +201,17 @@ pub fn list_by_owner(
     owner: Address,
 ) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone()).read_all(scope, parent, Some(owner))
+}
+
+/// Records payment without consuming the entitlement or changing live supply.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    item: LoadedNodItem,
+    bucket: LoadedNodBucket,
+) -> Result<()> {
+    let mut nod = NodContract::new(storage.clone());
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_settled(scope, item, bucket))
 }

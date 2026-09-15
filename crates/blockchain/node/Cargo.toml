@@ -17,6 +17,7 @@ outbe-consensus.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
+outbe-nod.workspace = true
 outbe-tribute.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry.workspace = true

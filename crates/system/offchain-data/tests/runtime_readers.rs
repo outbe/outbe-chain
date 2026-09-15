@@ -77,6 +77,7 @@ fn supervised_bundle_reports_read_failures_to_its_lifecycle_owner() {
 
 fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
     NodItemState {
+        is_settled: false,
         nod_id,
         owner: Address::repeat_byte(0x22),
         gratis_load_minor: U256::from(55),
@@ -92,6 +93,7 @@ fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
 
 fn bucket(bucket_key: B256) -> NodBucketState {
     NodBucketState {
+        settled_nods: 0,
         bucket_key,
         worldwide_day: WorldwideDay::new(20_260_715),
         floor_price_minor: U256::from(8),

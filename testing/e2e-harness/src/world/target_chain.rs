@@ -258,12 +258,20 @@ impl TargetChain {
         let url = self
             .rpc_url()
             .ok_or_else(|| eyre!("syncing the clock needs a running target chain"))?;
-        crate::internal::eth::raw_json_with_params(
+        let current = eth::latest_block_timestamp(&url)
+            .ok_or_else(|| eyre!("read target timestamp before clock synchronization"))?;
+        let timestamp = timestamp.max(current);
+        eth::raw_json_result(
             &url,
             "anvil_setTime",
             serde_json::json!([format!("0x{timestamp:x}")]),
-        );
-        crate::internal::eth::raw_json_with_params(&url, "evm_mine", serde_json::json!([]));
+        )?;
+        eth::raw_json_result(&url, "evm_mine", serde_json::json!([]))?;
+        let mined = eth::latest_block_timestamp(&url)
+            .ok_or_else(|| eyre!("read target timestamp after clock synchronization"))?;
+        if mined < timestamp {
+            bail!("target clock did not advance to {timestamp}: mined timestamp is {mined}");
+        }
         Ok(())
     }
 
@@ -294,7 +302,7 @@ impl TargetChain {
 
         // The router is what an inbound message becomes, so it is the account
         // allowed to create series and mint. The bridge needs the same right on the
-        // collection to burn a holder's units here and mint them at home.
+        // collection to burn an owner's units here and mint them at home.
         // A router pays the bridge fee out of its own native float and reverts
         // `NotEnoughNative` when it holds none; production tops it up, and so
         // must a chain that is expected to send anything home.
@@ -314,13 +322,13 @@ impl TargetChain {
             },
         )?;
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
-        for (holder, role, account) in [
+        for (owner, role, account) in [
             (contracts.intex_nft, relayer, contracts.target_router),
             (contracts.auction, relayer, contracts.target_router),
             (contracts.escrow, relayer, contracts.target_router),
             (contracts.intex_nft, relayer, contracts.nft_bridge),
         ] {
-            self.send(&url, holder, &IVenueRoles::grantRoleCall { role, account })?;
+            self.send(&url, owner, &IVenueRoles::grantRoleCall { role, account })?;
         }
         Ok(())
     }
@@ -334,35 +342,35 @@ impl TargetChain {
         eth::send_call(url, to, DEPLOYER_KEY, call, None)
     }
 
-    /// Whether `account` holds `role` on `holder`.
-    pub fn holds_role(&self, holder: Address, role_id: B256, account: Address) -> Result<bool> {
+    /// Whether `account` holds `role` on `owner`.
+    pub fn holds_role(&self, owner: Address, role_id: B256, account: Address) -> Result<bool> {
         let url = self
             .rpc_url()
             .ok_or_else(|| eyre!("role check needs a running target chain"))?;
         eth::read_call(
             &url,
-            holder,
+            owner,
             &IVenueRoles::hasRoleCall {
                 role: role_id,
                 account,
             },
         )
-        .ok_or_else(|| eyre!("read hasRole from {holder}"))
+        .ok_or_else(|| eyre!("read hasRole from {owner}"))
     }
 
-    /// The relayer role id as `holder` defines it.
-    pub fn relayer_role(&self, holder: Address) -> Result<B256> {
+    /// The relayer role id as `owner` defines it.
+    pub fn relayer_role(&self, owner: Address) -> Result<B256> {
         let url = self
             .rpc_url()
             .ok_or_else(|| eyre!("role read needs a running target chain"))?;
-        self.role(&url, holder, Role::Relayer)
+        self.role(&url, owner, Role::Relayer)
     }
 
-    fn role(&self, url: &str, holder: Address, role: Role) -> Result<B256> {
+    fn role(&self, url: &str, owner: Address, role: Role) -> Result<B256> {
         let read = match role {
-            Role::Relayer => eth::read_call(url, holder, &IVenueRoles::RELAYER_ROLECall {}),
+            Role::Relayer => eth::read_call(url, owner, &IVenueRoles::RELAYER_ROLECall {}),
         };
-        read.ok_or_else(|| eyre!("read the role id from {holder}"))
+        read.ok_or_else(|| eyre!("read the role id from {owner}"))
     }
 }
 

@@ -1,4 +1,4 @@
-//! OCM-PIN-001: production retention notifications and journal on a real filesystem.
+//! OCM-PIN-001: finalized-event retention and journal on a real filesystem.
 // OCOMP-TEST-ID: OCM-PIN-001
 
 use std::{
@@ -19,7 +19,6 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
-    ocomp_retention::OcompRetentionHook,
 };
 use outbe_metadosis::{
     config::poc_schema_limits, precompile::IMetadosis, proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT,
@@ -46,7 +45,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, types::StorageKey as _, StorageHandle},
-    OutbeExecutionData, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
+    OutbeHeader, OutbePrimitives,
 };
 use outbe_tribute::{
     RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData,
@@ -66,19 +65,19 @@ use crate::ocomp::retention::{
     inspect_retention_journal, journal_recovery_backoff, observe_finalized_request,
     ocomp_snapshot_contains_key_at, retained_gc_next_wake_delay,
     retention_pressure_watermark_for_test, retention_terminal_height_for_status,
-    seed_retention_journal_for_test, CandidateFinalityV1, CandidatePinV1, ExportAuthorityV1,
-    FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability,
-    OcompRetentionCoordinator, OcompRetentionService, OcompSnapshotEligibilityV1, PinRecordV1,
-    PinReleaseReason, PinStateV1, RetainedGcRetrySchedule, RetentionError, RetentionStatus,
-    RethFinalizedInputProofSource, SharedOcompRetentionSelector,
+    seed_retention_journal_for_test, CandidatePinV1, ExportAuthorityV1, FinalizedInputProofSource,
+    FinalizedJobPinV1, FinalizedRequestObservationV1, JournalDurability, OcompRetentionCoordinator,
+    OcompSnapshotEligibilityV1, PinRecordV1, PinStateV1, RetainedGcRetrySchedule, RetentionError,
+    RetentionStatus, RethFinalizedInputProofSource, SharedOcompRetentionSelector,
 };
 
 mod fixtures;
 use fixtures::{
-    block, block_extending, candidate, canonical_terminal_fixture, production_candidate_source,
-    production_intent, ready_record, CandidateProvider, ProductionCandidateFixture,
+    block, block_extending, candidate, candidate_for_intent, canonical_terminal_fixture,
+    fixture_job_id, frame_for_block, production_candidate_source, production_intent, ready_record,
+    CandidateProvider, ProductionCandidateFixture,
 };
-use fixtures::{DeterministicConsensusDriver, DeterministicProofSource, VoteOutcome};
+use fixtures::{DeterministicProofSource, FinalizedFrameDriver};
 use fixtures::{FailOnceDurability, FailSync};
 
 mod canonical_replay;

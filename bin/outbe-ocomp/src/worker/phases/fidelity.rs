@@ -198,7 +198,7 @@ pub(in super::super) fn execute_fidelity_map_unit(
             tribute: record.tribute.clone(),
             first_league: ObservationValueV1::Value(league),
             second_league: ObservationValueV1::Value(league),
-            conditional_entry_price_minor: ObservationValueV1::Unavailable,
+            entry_price_minor: ObservationValueV1::Unavailable,
             nod_target_available: true,
         });
     }

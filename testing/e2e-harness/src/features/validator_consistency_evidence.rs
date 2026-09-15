@@ -5,13 +5,15 @@
 //! this module are enforced by the main suite.
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use cucumber::{given, then, when};
 
 use crate::features::common::boot_localnet;
-use crate::features::negative_assertions::assert_mined_revert_reason;
+use crate::features::negative_assertions::{
+    assert_mined_revert_reason, assert_mined_revert_reason_on,
+};
 use crate::internal::{
     addresses::{SLASH_ADDR, STK_ADDR},
     eth::{ISlashIndicator, IStaking},
@@ -63,13 +65,6 @@ fn evidence_for(world: &World, victim_index: usize, epoch: u64) -> ConflictingNo
     .unwrap_or_else(|error| panic!("construct canonical conflicting-notarize evidence: {error}"))
 }
 
-fn wait_finalized_outcome(world: &World, outcome: &TxOutcome) {
-    world
-        .rpc
-        .finalize_outcome(outcome, &[primary(world)], 30)
-        .expect("evidence transaction must have a canonical finalized outcome");
-}
-
 fn parse_evidence_event(outcome: &TxOutcome) -> Option<EvidenceEvent> {
     let signature = format!(
         "{:#x}",
@@ -104,6 +99,99 @@ fn indexed_address(topic: &str) -> Option<Address> {
     (bytes.len() == 32).then(|| Address::from_slice(&bytes[12..]))
 }
 
+pub(super) fn capture_felony_processes(world: &mut World) -> Vec<(u32, u32)> {
+    assert_eq!(world.validators.size(), 4, "four evidence participants");
+    (0..4)
+        .map(|index| {
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("capture live evidence participant and enclave")
+        })
+        .collect()
+}
+
+fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)], victim: usize) {
+    assert_eq!(owned.len(), 4, "four captured evidence participants");
+    assert!(victim < owned.len(), "captured felony victim");
+    for (index, expected) in owned
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != victim)
+    {
+        assert_eq!(
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("every designated felony observer must remain live"),
+            *expected,
+            "felony observer or enclave was replaced"
+        );
+    }
+    assert_eq!(
+        world
+            .localnet
+            .live_enclave_pid(victim)
+            .expect("victim enclave stays live"),
+        owned[victim].1,
+        "victim enclave was replaced"
+    );
+}
+
+fn felony_guard_shutdown_count(log: &str) -> usize {
+    let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    log.lines()
+        .filter(|line| line.trim_end().ends_with(guard))
+        .count()
+}
+
+/// Call only after proving the canonical jail on the designated survivors.
+pub(super) fn expect_felony_guard_shutdown(
+    world: &mut World,
+    owned: &[(u32, u32)],
+    outcome: &TxOutcome,
+    phase: &str,
+    victim: usize,
+) {
+    let exit_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        assert_felony_survivors_live(world, owned, victim);
+        let (pid, status) = world
+            .localnet
+            .owned_validator_process(victim)
+            .expect("observe the exact owned jailed validator without signalling it");
+        assert_eq!(pid, owned[victim].0, "jailed validator was replaced");
+        if let Some(status) = status {
+            assert!(status.success(), "jailed guard must stop cleanly: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "jailed validator did not stop"
+        );
+        sleep(Duration::from_millis(100));
+    }
+    let log = world
+        .localnet
+        .node_launch_log(victim, owned[victim].0)
+        .expect("read the jailed validator's exact incarnation log");
+    assert_eq!(
+        felony_guard_shutdown_count(&log),
+        1,
+        "owned victim must stop for exactly the canonical jail reason"
+    );
+    world.state.expected_tee_lease_guard_shutdown_validator = Some(victim);
+    let ports = (0..4)
+        .filter(|index| *index != victim)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": phase, "victim": victim, "owned_pids": owned, "ports": ports,
+        "jail_height": outcome.block_number().expect("felony receipt height"),
+        "jail_transaction": outcome.transaction_hash, "natural_exit_code": 0,
+    }));
+}
+
 fn submit_initial_felony(world: &mut World) {
     // A compact but valid rotation schedule lets the continuation of D-10
     // observe exclusion/recovery without changing any protocol invariant.
@@ -118,6 +206,10 @@ fn submit_initial_felony(world: &mut World) {
         ],
     );
 
+    let owned = capture_felony_processes(world);
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
     let port = primary(world);
     let (_, victim) = validator_key_and_address(world, 3);
     let (reporter_key, reporter) = validator_key_and_address(world, 0);
@@ -151,11 +243,15 @@ fn submit_initial_felony(world: &mut World) {
         "valid conflicting-notarize evidence must be accepted: {}",
         outcome.transaction_hash
     );
-    wait_finalized_outcome(world, &outcome);
+    world
+        .rpc
+        .finalize_outcome(&outcome, &survivor_ports, 40)
+        .expect("initial felony finalized on every designated observer");
+    let jail_height = outcome.block_number().expect("felony receipt height");
 
     let after = world
         .rpc
-        .validator_record(port, &victim)
+        .validator_record_at(port, &victim, jail_height)
         .expect("read jailed victim after evidence");
     assert_eq!(
         after.status, STATUS_JAILED,
@@ -174,6 +270,16 @@ fn submit_initial_felony(world: &mut World) {
         after.stake < before.stake,
         "the setup felony must slash bonded stake"
     );
+    for &observer in &survivor_ports {
+        assert_eq!(
+            world
+                .rpc
+                .validator_record_at(observer, &victim, jail_height),
+            Some(after.clone()),
+            "canonical initial punishment differs between observers"
+        );
+    }
+    expect_felony_guard_shutdown(world, &owned, &outcome, "initial_felony_guard_shutdown", 3);
 
     world.state.joiner_addr = Some(victim);
     world.state.wwd = Some(reporter);
@@ -252,6 +358,14 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     let reporter_address: Address = reporter.parse().expect("parse reporter address");
     let victim_address: Address = victim.parse().expect("parse victim address");
 
+    // The accepted felony intentionally stops validator 3's node through its
+    // production TEE guard. Pin all owners before the transaction; never choose
+    // the replay observers by which RPC endpoints happen to remain responsive.
+    let owned = capture_felony_processes(world);
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
+
     let first = world
         .rpc
         .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block1, &evidence.block2)
@@ -283,7 +397,35 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         !event.submitter_reward.is_zero(),
         "the first evidence must reward its reporter"
     );
-    wait_finalized_outcome(world, &first);
+    world
+        .rpc
+        .finalize_outcome(&first, &survivor_ports, 40)
+        .expect("first felony finalized on every designated replay observer");
+    let jail_height = first.block_number().expect("felony receipt height");
+    let jailed = world
+        .rpc
+        .validator_record_at(port, &victim, jail_height)
+        .expect("canonical jailed victim record");
+    assert_eq!(jailed.status, STATUS_JAILED);
+    assert_eq!(
+        jailed.stake,
+        world.state.slash_stake_before.expect("stake before") - event.slashed_amount
+    );
+    assert_eq!(
+        jailed.slash_count,
+        world.state.slash_count_before.expect("slash count before") + 1
+    );
+    for &observer in &survivor_ports {
+        assert_eq!(
+            world
+                .rpc
+                .validator_record_at(observer, &victim, jail_height),
+            Some(jailed.clone()),
+            "canonical punishment differs between replay observers"
+        );
+    }
+
+    expect_felony_guard_shutdown(world, &owned, &first, "felony_replay_observers", 3);
 
     let reporter_before = world
         .state
@@ -300,8 +442,9 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "reporter balance must change only by its emitted reward minus exact gas"
     );
 
-    let exact_replay = assert_mined_revert_reason(
+    let exact_replay = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         SLASH_ADDR,
         &reporter_key,
         &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
@@ -325,8 +468,10 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "an exact replay may charge gas but must not mint another reward"
     );
 
-    let reverse_replay = assert_mined_revert_reason(
+    assert_felony_survivors_live(world, &owned, 3);
+    let reverse_replay = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         SLASH_ADDR,
         &reporter_key,
         &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
@@ -344,6 +489,7 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         .rpc
         .balance_on(port, &reporter)
         .expect("reporter balance after reverse replay");
+    assert_felony_survivors_live(world, &owned, 3);
     assert_eq!(
         reporter_after_reverse + reverse_fee,
         reporter_after_exact,
@@ -511,11 +657,20 @@ fn partial_jailed_unstake_does_not_exit(world: &mut World) {
 #[when("it requests unjail before an exclusion boundary")]
 fn requests_early_unjail(world: &mut World) {
     let victim_key = world.validators.get(3).evm_key().expect("victim key");
+    assert_eq!(
+        world.state.expected_tee_lease_guard_shutdown_validator,
+        Some(3),
+        "initial felony must prove the owned victim's shutdown"
+    );
+    let survivor_ports = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
     // This exact guard is reached only after Staking verifies the minimum.
     // Exclusion during the observation window must fail this retained-member
     // scenario, rather than accepting a different cooldown/status rejection.
-    let outcome = assert_mined_revert_reason(
+    let outcome = assert_mined_revert_reason_on(
         world,
+        &survivor_ports,
         STK_ADDR,
         &victim_key,
         &IStaking::unjailValidatorCall {},
@@ -550,6 +705,118 @@ fn early_unjail_is_rejected_while_retained(world: &mut World) {
             .expect("observe consensus participation"),
         "retained jailed committee member disappeared before exclusion boundary"
     );
+}
+
+fn recover_unjailed_process(world: &mut World) -> Vec<(u32, u32)> {
+    let port = world.validators.http_port(3);
+    let enclave = world
+        .localnet
+        .live_enclave_pid(3)
+        .expect("preserved enclave");
+    let lease = world
+        .localnet
+        .node_renewal_status(3)
+        .expect("preserved finalized enclave lease");
+    assert!(
+        lease.valid_until > lease.finalized_timestamp,
+        "this recovery fixture requires a live lease"
+    );
+    // Jail stops the node without expiring its binding. Certified follower
+    // startup authenticates the existing identity at a fresh upstream anchor;
+    // it can replay the historical jail before arming the local lease guard.
+    let follower = world
+        .localnet
+        .launch_validator_recovery_follower(3, 0)
+        .expect("recover the preserved validator datadir through certified sync");
+    let follower_pid = world
+        .localnet
+        .live_follower_pid(&follower)
+        .expect("owned recovery follower");
+    let target = world
+        .rpc
+        .finalized_result(primary(world))
+        .expect("recovery target");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(primary(world), target)
+        .expect("canonical recovery checkpoint");
+    wait_until(
+        || {
+            assert_eq!(
+                world
+                    .localnet
+                    .live_follower_pid(&follower)
+                    .expect("live recovery follower"),
+                follower_pid
+            );
+            assert_eq!(
+                world
+                    .localnet
+                    .live_enclave_pid(3)
+                    .expect("live preserved enclave"),
+                enclave
+            );
+            world
+                .rpc
+                .finalized(port)
+                .is_some_and(|height| height >= target)
+                && world
+                    .rpc
+                    .checkpoint_at(port, target)
+                    .is_ok_and(|observed| observed == checkpoint)
+                && world
+                    .localnet
+                    .node_launch_log(3, follower_pid)
+                    .expect("owned recovery log")
+                    .contains("local TEE lease guard armed at authenticated catch-up anchor")
+        },
+        180,
+        "certified recovery checkpoint and authenticated admission",
+    );
+    world
+        .localnet
+        .stop_follower(&follower)
+        .expect("stop recovery database owner");
+    world
+        .localnet
+        .restart_validator(3)
+        .expect("restore the original validator role");
+    let owned = capture_felony_processes(world);
+    assert_eq!(owned[3].1, enclave, "recovery replaced the enclave");
+    wait_until(
+        || {
+            assert_felony_survivors_live(world, &owned, 3);
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(3)
+                    .expect("live recovered validator"),
+                owned[3]
+            );
+            world
+                .rpc
+                .finalized(port)
+                .is_some_and(|height| height >= target)
+                && world
+                    .rpc
+                    .checkpoint_at(port, target)
+                    .is_ok_and(|observed| observed == checkpoint)
+                && crate::internal::eth::raw_json_result(
+                    &world.rpc.url(port),
+                    "outbe_consensusStatus",
+                    serde_json::json!([]),
+                )
+                .is_ok_and(|status| status["hasThresholdShares"].as_bool() == Some(false))
+        },
+        180,
+        "live shareless validator caught up before readiness",
+    );
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "early_unjail_recovered_before_readiness", "owned_pids": owned,
+        "follower_pid": follower_pid, "height": checkpoint.height,
+        "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
+    }));
+    owned
 }
 
 #[then(
@@ -605,6 +872,41 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         "unconfirmed PENDING validator must stay excluded"
     );
 
+    // Readiness must describe a running recovered player, not an offline
+    // identity whose share would be disclosed by the next ceremony.
+    let owned = recover_unjailed_process(world);
+    let ports = world.validators.committee_ports();
+    let local_port = world.validators.http_port(3);
+    let before_ready = world
+        .rpc
+        .wait_finalized_checkpoint(
+            &ports,
+            world
+                .rpc
+                .finalized_result(port)
+                .expect("pre-readiness height"),
+            60,
+        )
+        .expect("all four nodes caught up before readiness");
+    for &observer in &ports {
+        let record = world
+            .rpc
+            .validator_record_at(observer, &victim, before_ready.height)
+            .expect("recovered PENDING record");
+        assert_eq!(record.status, STATUS_PENDING);
+        assert!(!record.has_bls_share, "recovery bypassed readiness");
+    }
+    let material = |rpc_port| {
+        crate::internal::eth::raw_json_result(
+            &format!("http://127.0.0.1:{rpc_port}"),
+            "outbe_consensusStatus",
+            serde_json::json!([]),
+        )
+        .expect("local consensus material")
+    };
+    let before_material = material(local_port);
+    assert_eq!(before_material["hasThresholdShares"].as_bool(), Some(false));
+    assert!(!before_material["vrfMaterialVersion"].is_null());
     let confirmation = world
         .rpc
         .confirm_ready_outcome(&victim_key, 3)
@@ -613,12 +915,32 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         confirmation.success,
         "readiness reconfirmation must succeed"
     );
+    world
+        .rpc
+        .finalize_outcome(&confirmation, &ports, 60)
+        .expect("canonical readiness on all recovered nodes");
     wait_until(
         || {
-            world
-                .rpc
-                .is_participant(port, &victim)
-                .expect("observe consensus participation")
+            assert_felony_survivors_live(world, &owned, 3);
+            assert_eq!(
+                world
+                    .localnet
+                    .live_validator_and_enclave_pids(3)
+                    .expect("recovered DKG player remains live"),
+                owned[3]
+            );
+            let local = material(local_port);
+            let healthy = material(port);
+            local["hasThresholdShares"].as_bool() == Some(true)
+                && local["vrfMaterialVersion"] != before_material["vrfMaterialVersion"]
+                && !local["vrfMaterialVersion"].is_null()
+                && local["vrfMaterialVersion"] == healthy["vrfMaterialVersion"]
+                && !local["lastDkgActivationHeight"].is_null()
+                && local["lastDkgActivationHeight"] == healthy["lastDkgActivationHeight"]
+                && world
+                    .rpc
+                    .is_participant(port, &victim)
+                    .expect("observe consensus participation")
         },
         180,
         "fresh reshare after readiness reconfirmation",
@@ -629,6 +951,36 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         .expect("validator after recovery reshare");
     assert_eq!(recovered.status, STATUS_ACTIVE, "recovered status");
     assert!(recovered.has_bls_share, "recovered validator share");
+    let target = world
+        .rpc
+        .finalized_result(port)
+        .expect("post-recovery height")
+        + 3;
+    let final_checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("all recovered nodes continue canonical finalization");
+    for &observer in &ports {
+        let record = world
+            .rpc
+            .validator_record_at(observer, &victim, final_checkpoint.height)
+            .expect("canonical recovered validator");
+        assert_eq!(record.status, STATUS_ACTIVE);
+        assert!(record.has_bls_share);
+    }
+    assert_felony_survivors_live(world, &owned, 3);
+    assert_eq!(
+        world
+            .localnet
+            .live_validator_and_enclave_pids(3)
+            .expect("recovered validator remains live"),
+        owned[3]
+    );
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "early_unjail_live_recovery_complete", "owned_pids": owned,
+        "height": final_checkpoint.height, "block_hash": final_checkpoint.block_hash,
+        "state_root": final_checkpoint.state_root, "local_material": material(local_port),
+    }));
 }
 
 #[given("valid conflicting-notarize evidence is retained for the current epoch")]
@@ -818,6 +1170,26 @@ fn wait_until(mut condition: impl FnMut() -> bool, attempts: usize, label: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn felony_guard_matches_current_owned_shutdown_record_exactly_once() {
+        let record = "2026-09-13T21:01:55.310776Z ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+        assert_eq!(felony_guard_shutdown_count(record), 1);
+        assert_eq!(felony_guard_shutdown_count(""), 0);
+        assert_eq!(
+            felony_guard_shutdown_count(&format!("{record}\n{record}")),
+            2
+        );
+        for changed in [
+            record.replace("outbe_chain::launch::node:", "outbe_chain:"),
+            record.replace("outbe_chain::launch::node:", "another_module:"),
+            record.replace("ERROR", "INFO"),
+            record.replace("validator is jailed", "finalized TEE lease expired"),
+            format!("{record} unexpected suffix"),
+        ] {
+            assert_eq!(felony_guard_shutdown_count(&changed), 0, "{changed}");
+        }
+    }
 
     #[test]
     fn jailed_partial_unstake_remainder_is_positive_and_below_the_minimum() {

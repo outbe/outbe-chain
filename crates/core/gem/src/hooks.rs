@@ -312,7 +312,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let currencies = get_all_reference_currencies(ctx)?;
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
-    let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window;
+    let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window_seconds;
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
@@ -528,7 +528,11 @@ fn window_for(
     if pair_index != 0 {
         // Widest of the live profile and anything ever issued: a gem keeps the window
         // it was issued with, so a narrowed profile must not shorten the span.
-        let window_days = gem.max_call_window.read(&iso_code)?.max(live_window) / 86_400;
+        let window_days = gem
+            .max_call_window_seconds
+            .read(&iso_code)?
+            .max(live_window)
+            / 86_400;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

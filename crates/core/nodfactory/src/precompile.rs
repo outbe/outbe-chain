@@ -24,7 +24,7 @@ pub use abi::INodFactory;
 
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&INodFactory::mineGratisCall::SELECTOR) => {
+        Some(&INodFactory::settleNodCall::SELECTOR) => {
             outbe_primitives::storage::gas::ZK_VERIFY_GAS
         }
         _ => PRECOMPILE_BASE_GAS,
@@ -49,6 +49,17 @@ pub fn dispatch(
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
+            settleNod(c) => mutate(c, caller, |sender, c| {
+                runtime::settle_nod(
+                    &storage,
+                    scope,
+                    parent,
+                    sender,
+                    WwdEntityId::from(c.nodId),
+                    &c.payNoteProof,
+                )?;
+                Ok(INodFactory::settleNodReturn {})
+            }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,
@@ -63,7 +74,6 @@ pub fn dispatch(
                         nod_id: WwdEntityId::from(c.nodId),
                         nonce: c.nonce,
                         auth,
-                        paynote_proof: &c.payNoteProof,
                     },
                 )
             }),

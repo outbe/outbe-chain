@@ -2,9 +2,9 @@ use crate::ocomp::retention::*;
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPIN1";
 
-const JOURNAL_VERSION: u16 = 5;
+const JOURNAL_VERSION: u16 = 6;
 
-const PIN_RECORD_VERSION: u16 = 5;
+const PIN_RECORD_VERSION: u16 = 6;
 
 const PIN_RECORD_MAX_BYTES: usize = 512;
 
@@ -147,7 +147,7 @@ pub(in crate::ocomp::retention) fn encode_record(record: PinRecordV1) -> Vec<u8>
     encoded.extend_from_slice(&PIN_RECORD_VERSION.to_be_bytes());
     encoded.extend_from_slice(&record.generation.to_be_bytes());
     match record.state {
-        PinStateV1::Tentative { candidate } => {
+        PinStateV1::AwaitingJobFinalization { candidate } => {
             encoded.push(1);
             encode_candidate(&mut encoded, candidate);
         }
@@ -249,38 +249,17 @@ pub(in crate::ocomp::retention) fn encode_record(record: PinRecordV1) -> Vec<u8>
             encoded.extend_from_slice(&terminal_height.to_be_bytes());
             encoded.extend_from_slice(&release_height.to_be_bytes());
         }
-        PinStateV1::OrphanGcPending {
-            candidate,
-            observed_height,
-        } => {
-            encoded.push(7);
-            encode_candidate(&mut encoded, candidate);
-            encoded.extend_from_slice(&observed_height.to_be_bytes());
-        }
         PinStateV1::Released {
             candidate,
             job_id,
             source_generation,
-            reason,
             observed_height,
             export,
         } => {
             encoded.push(5);
             encode_candidate(&mut encoded, candidate);
-            match job_id {
-                Some(job_id) => {
-                    encoded.push(1);
-                    encoded.extend_from_slice(job_id.as_slice());
-                }
-                None => encoded.push(0),
-            }
-            match source_generation {
-                Some(source_generation) => {
-                    encoded.push(1);
-                    encoded.extend_from_slice(&source_generation.to_be_bytes());
-                }
-                None => encoded.push(0),
-            }
+            encoded.extend_from_slice(job_id.as_slice());
+            encoded.extend_from_slice(&source_generation.to_be_bytes());
             match export {
                 Some(export) => {
                     encoded.push(1);
@@ -288,10 +267,6 @@ pub(in crate::ocomp::retention) fn encode_record(record: PinRecordV1) -> Vec<u8>
                 }
                 None => encoded.push(0),
             }
-            encoded.push(match reason {
-                PinReleaseReason::Orphaned => 1,
-                PinReleaseReason::RetentionSatisfied => 2,
-            });
             encoded.extend_from_slice(&observed_height.to_be_bytes());
         }
     }
@@ -370,7 +345,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
     let tag = reader.take::<1>()?[0];
     let candidate = decode_candidate(&mut reader)?;
     let state = match tag {
-        1 => PinStateV1::Tentative { candidate },
+        1 => PinStateV1::AwaitingJobFinalization { candidate },
         2 => {
             let job_id = B256::new(reader.take::<32>()?);
             let (finality_recorded_height, open_height, deadline_height) =
@@ -442,28 +417,13 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
             }
         }
         5 => {
-            let job_id = match reader.take::<1>()?[0] {
-                0 => None,
-                1 => Some(B256::new(reader.take::<32>()?)),
-                _ => return Err(RetentionError::MalformedJournal("invalid job-id flag")),
-            };
-            let source_generation = match reader.take::<1>()?[0] {
-                0 => None,
-                1 => {
-                    let generation = u64::from_be_bytes(reader.take::<8>()?);
-                    if generation == 0 {
-                        return Err(RetentionError::MalformedJournal(
-                            "zero released source generation",
-                        ));
-                    }
-                    Some(generation)
-                }
-                _ => {
-                    return Err(RetentionError::MalformedJournal(
-                        "invalid released source-generation flag",
-                    ));
-                }
-            };
+            let job_id = B256::new(reader.take::<32>()?);
+            let source_generation = u64::from_be_bytes(reader.take::<8>()?);
+            if source_generation == 0 {
+                return Err(RetentionError::MalformedJournal(
+                    "zero released source generation",
+                ));
+            }
             let export = match reader.take::<1>()?[0] {
                 0 => None,
                 1 => Some(decode_export_authority(&mut reader)?),
@@ -473,23 +433,8 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                     ));
                 }
             };
-            let reason = match reader.take::<1>()?[0] {
-                1 => PinReleaseReason::Orphaned,
-                2 => PinReleaseReason::RetentionSatisfied,
-                _ => return Err(RetentionError::MalformedJournal("invalid release reason")),
-            };
-            let valid_authority = match reason {
-                PinReleaseReason::Orphaned => {
-                    job_id.is_none() && source_generation.is_none() && export.is_none()
-                }
-                PinReleaseReason::RetentionSatisfied => {
-                    job_id.is_some()
-                        && source_generation.is_some()
-                        && export.is_none_or(|authority| {
-                            Some(authority.source_generation) == source_generation
-                        })
-                }
-            };
+            let valid_authority =
+                export.is_none_or(|authority| authority.source_generation == source_generation);
             if !valid_authority {
                 return Err(RetentionError::MalformedJournal(
                     "released record carries inconsistent authority",
@@ -499,7 +444,6 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 candidate,
                 job_id,
                 source_generation,
-                reason,
                 observed_height: u64::from_be_bytes(reader.take::<8>()?),
                 export,
             }
@@ -548,10 +492,6 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 release_height,
             }
         }
-        7 => PinStateV1::OrphanGcPending {
-            candidate,
-            observed_height: u64::from_be_bytes(reader.take::<8>()?),
-        },
         _ => return Err(RetentionError::MalformedJournal("unknown state tag")),
     };
     reader.finish()?;

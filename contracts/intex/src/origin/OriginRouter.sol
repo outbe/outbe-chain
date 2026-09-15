@@ -296,17 +296,17 @@ contract OriginRouter is
     function sendAuctionResult(
         uint32 dstChainId,
         uint32 worldwideDay,
-        uint32 issuedIntexCount,
+        uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         _requireSeriesTarget(worldwideDay, dstChainId);
         sendId = _sendOrPark(
             dstChainId,
-            BridgeMsgCodec.encodeAuctionResult(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount),
+            BridgeMsgCodec.encodeAuctionResult(worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount),
             IntexGas.AUCTION_RESULT
         );
-        emit AuctionResultSent(sendId, worldwideDay, issuedIntexCount, auctionClearingRate);
+        emit AuctionResultSent(sendId, worldwideDay, issuedUnits, auctionClearingRate);
     }
 
     /// @inheritdoc IOriginRouter
@@ -572,7 +572,7 @@ contract OriginRouter is
         payload.seriesId = p.seriesId;
         payload.worldwideDay = p.worldwideDay;
         payload.issuedAt = p.issuedAt;
-        payload.issuedIntexCount = p.issuedIntexCount;
+        payload.issuedUnits = p.issuedUnits;
         payload.promisLoadMinor = p.promisLoadMinor;
         payload.entryPriceMinor = p.entryPriceMinor;
         payload.floorPriceMinor = p.floorPriceMinor;

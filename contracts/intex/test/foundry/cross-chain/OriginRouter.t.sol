@@ -118,7 +118,7 @@ contract OriginRouterTest is CrossChainTest {
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: 10_000,
+            issuedUnits: 10_000,
             promisLoadMinor: 1000,
             entryPriceMinor: 100e6,
             floorPriceMinor: 50e6,

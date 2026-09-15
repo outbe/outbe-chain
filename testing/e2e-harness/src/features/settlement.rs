@@ -392,6 +392,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
+        350_000,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
             payNoteProof: paynote_proof.into(),
@@ -399,6 +400,10 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
+    eprintln!(
+        "settlement_evidence kind=sponsored_settle_gem tx={} gas_limit=350000 gas_used={}",
+        settle.transaction_hash, settle.receipt["gasUsed"]
+    );
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
 
     let promis_before = promis_balance(&url, owner, &keys.view);
@@ -422,6 +427,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
+        500_000,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
@@ -456,6 +462,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::PROMIS_FACTORY_ADDR,
+        500_000,
         &eth::IPromisFactory::mineCoenCall {
             amount: gem.promisLoad,
             mac: B256::from(burn_mac),
@@ -659,7 +666,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     assert_receipt_event(
         &mint.receipt,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::GemMined {
+        &eth::IGemFactory::GemExercised {
             gemId: gem_id,
             owner,
             promisLoad: gem.promisLoad,
@@ -933,6 +940,19 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         "reserve vault did not receive exact Nod cost at deposit time"
     );
 
+    let settlement = eth::send_call_outcome(
+        &url,
+        addresses::NOD_FACTORY_ADDR,
+        &key,
+        &eth::INodFactory::settleNodCall {
+            nodId: U256::from_be_slice(&nod_id),
+            payNoteProof: paynote_proof.into(),
+        },
+        None,
+    )
+    .expect("settle Nod with deposited PayNote");
+    assert_mined_success(&settlement, "settle Nod with deposited PayNote");
+
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
     let gratis_before = gratis_balance(&url, owner, &keys.view);
@@ -961,15 +981,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
-            payNoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis by spending the deposited PayNote");
-    assert_mined_success(
-        &mine_gratis,
-        "mine Gratis by spending the deposited PayNote",
-    );
+    .expect("exercise the paid Nod");
+    assert_mined_success(&mine_gratis, "exercise the paid Nod");
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + body.gratisLoadMinor,

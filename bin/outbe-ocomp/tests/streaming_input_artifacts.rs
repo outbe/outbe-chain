@@ -54,6 +54,7 @@ fn input_reference_commitment_streams_past_the_old_4096_list_limit() {
 }
 
 #[test]
+#[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
     const COUNT: u32 = 1_000_000;
     const RECORDS_PER_CHUNK: u32 = 256;

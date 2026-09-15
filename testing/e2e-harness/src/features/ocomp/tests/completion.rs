@@ -33,7 +33,7 @@ fn replay_receipt_rejects_reverts_and_missing_or_malformed_evidence() {
 fn case_one_dispatch_marker_requires_exact_job_and_production_event() {
     let job = B256::repeat_byte(0x31);
     let valid = format!(
-            "2026-09-05T19:46:15.099744Z  INFO exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex: embedded OCOMP computation started job_id={job:#x}"
+            "2026-09-05T19:46:15.099744Z  INFO exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::compute: embedded OCOMP computation started job_id={job:#x}"
         );
     assert_eq!(
         super::case_one_compute_started_line(&valid, job),
@@ -42,7 +42,15 @@ fn case_one_dispatch_marker_requires_exact_job_and_production_event() {
     assert!(super::case_one_compute_started_line(&valid, B256::repeat_byte(0x32)).is_none());
     for invalid in [
         valid.replace(" INFO ", " WARN "),
-        valid.replace("outbe_chain::ocomp_exex: ", "other_module: "),
+        valid.replace("outbe_chain::ocomp_exex::compute: ", "other_module: "),
+        valid.replace(
+            "outbe_chain::ocomp_exex::compute: ",
+            "outbe_chain::ocomp_exex: ",
+        ),
+        valid.replace(
+            "outbe_chain::ocomp_exex::compute: ",
+            "outbe_chain::ocomp_exex::compute_other: ",
+        ),
         valid.replace("computation started", "local result arrived"),
         format!("{valid}0"),
         format!("{valid} reason=\"checkpoint_pruned\""),
@@ -115,4 +123,52 @@ fn dynamic_pre_restart_baseline_waits_for_all_three_job_b_votes() {
 #[test]
 fn capacity_population_submits_two_tributes_per_round() {
     assert_eq!(OCOMP_CAPACITY_SUBMISSION_CONCURRENCY, 2);
+}
+
+#[test]
+fn late_result_accountability_covers_timely_vote_and_pruned_result_at_close() {
+    let baseline = completed_accountability();
+    for (vote, timely, missing) in [(None, 0x07, 0x08), (Some((94, vec![0xa3])), 0x0f, 0x00)] {
+        let open = super::super::expiry::late_result_expected_accountability(
+            &baseline,
+            vote.clone(),
+            95,
+            100,
+        )
+        .unwrap();
+        assert!(completed_accountability_is_preserved(&baseline, &open));
+        assert_eq!(open.closed_height, None);
+        assert_eq!(
+            open.slot_validator_indexes.len(),
+            if vote.is_some() { 4 } else { 3 }
+        );
+        let closed =
+            super::super::expiry::late_result_expected_accountability(&baseline, vote, 100, 100)
+                .unwrap();
+        assert!(completed_accountability_is_preserved(&baseline, &closed));
+        assert_eq!(closed.slot_first_signatures, open.slot_first_signatures);
+        assert_eq!(closed.closed_height, Some(100));
+        assert_eq!(closed.timely_bitmap, Some(vec![timely]));
+        assert_eq!(closed.matching_bitmap, Some(vec![timely]));
+        assert_eq!(closed.missing_bitmap, Some(vec![missing]));
+        assert_eq!(closed.divergent_bitmap, Some(vec![0]));
+        assert_eq!(closed.equivocation_bitmap, Some(vec![0]));
+    }
+}
+
+#[test]
+fn late_result_accountability_rejects_unfinalized_and_out_of_window_votes() {
+    let baseline = completed_accountability();
+    for inclusion in [91, 92, 96, 100, 101] {
+        assert!(
+            super::super::expiry::late_result_expected_accountability(
+                &baseline,
+                Some((inclusion, vec![0xa3])),
+                95,
+                100,
+            )
+            .is_err(),
+            "unexpected acceptance at {inclusion}"
+        );
+    }
 }

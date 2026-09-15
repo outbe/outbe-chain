@@ -59,8 +59,8 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     }
 }
 
-/// Units the stubbed `parkIntex` reports as burned (its `uint256` return).
-const PARK_UNITS: u64 = 100;
+/// Units the stubbed `sendToGemFactory` reports as burned (its `uint256` return).
+const SENT_UNITS: u64 = 100;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
     alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
@@ -89,10 +89,10 @@ fn stub_stablecoin(
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    // Stub IntexNFT1155: `parkIntex` returns PARK_UNITS (32-byte uint256).
+    // Stub IntexNFT1155: `sendToGemFactory` returns SENT_UNITS (32-byte uint256).
     storage.stub_sub_call_at(
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
+        alloy_primitives::Bytes::from(U256::from(SENT_UNITS).to_be_bytes::<32>().to_vec()),
     );
     // Answered per selector, so the settlement path can tell USD from EUR.
     stub_stablecoin(&mut storage, STABLE, 840, 6);
@@ -724,7 +724,7 @@ fn issue_rejects_an_issuance_code_outside_the_three_digit_range() {
 }
 
 #[test]
-fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
+fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         outbe_intex::api::create_series(
@@ -732,7 +732,7 @@ fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
             outbe_intex::CreateSeriesParams {
                 series_id: source_intex_id(),
                 worldwide_day: WorldwideDay::new(0),
-                issued_intex_count: PARK_UNITS as u32,
+                issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
                 entry_price_minor: six_decimal_unit(),
                 floor_price_minor: six_decimal_unit(),
@@ -746,7 +746,7 @@ fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
         )
         .unwrap();
         let res =
-            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
+            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
         assert!(err_msg(res).contains("reference currency"));
     });
 }
@@ -785,20 +785,20 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
 }
 
 #[test]
-fn two_merchants_parking_one_series_in_a_block_get_separate_positions() {
+fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
     let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
     let block = 1u64;
     assert_ne!(
         GemFactoryContract::generate_position_id(ALICE, series, block),
         GemFactoryContract::generate_position_id(BOB, series, block),
-        "a series has many holders and any of them may park it"
+        "a series has many owners and any of them may send units to the Gem Factory"
     );
 }
 
 #[test]
 fn a_position_reports_its_full_terms() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
@@ -810,9 +810,9 @@ fn a_position_reports_its_full_terms() {
         assert_eq!(data.sourceFloorPrice, six_decimal_unit());
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
-        assert_eq!(data.parkedAt, T_NOW);
+        assert_eq!(data.issuedAt, T_NOW);
         assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(data.remainingCapacity, parked_capacity(six_decimal_u128()));
+        assert_eq!(data.remainingCapacity, sent_capacity(six_decimal_u128()));
     });
 }
 
@@ -1045,20 +1045,20 @@ fn six_decimal_u128() -> u128 {
 }
 
 /// Whole-position capacity for a series with `promis_load` per unit: the stubbed
-/// `parkIntex` burns `PARK_UNITS`, so capacity = `promis_load x PARK_UNITS`.
-fn parked_capacity(promis_load: u128) -> U256 {
-    U256::from(promis_load) * U256::from(PARK_UNITS)
+/// `sendToGemFactory` burns `SENT_UNITS`, so capacity = `promis_load x SENT_UNITS`.
+fn sent_capacity(promis_load: u128) -> U256 {
+    U256::from(promis_load) * U256::from(SENT_UNITS)
 }
 
-/// Seed an Intex series and park the merchant's whole holding into a GemPosition
+/// Seed an Intex series and send the merchant's whole holding into a GemPosition
 /// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
-fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
-            issued_intex_count: PARK_UNITS as u32,
+            issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,
             floor_price_minor: floor,
@@ -1070,19 +1070,19 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         },
     )
     .unwrap();
-    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS)).unwrap()
+    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS)).unwrap()
 }
 
 #[test]
-fn issue_gem_position_burns_parks_and_issues_nft() {
+fn issue_gem_position_burns_sends_and_issues_nft() {
     with_storage(None, |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let capacity = parked_capacity(six_decimal_u128());
+        let capacity = sent_capacity(six_decimal_u128());
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
@@ -1090,7 +1090,7 @@ fn issue_gem_position_burns_parks_and_issues_nft() {
         assert_eq!(rec.source_intex_id, source_intex_id());
         assert_eq!(rec.remaining_capacity, capacity);
         assert_eq!(rec.source_entry_price, six_decimal_unit());
-        assert_eq!(factory.total_intex_parked.read().unwrap(), capacity);
+        assert_eq!(factory.total_gem_factory_units.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
@@ -1100,9 +1100,9 @@ fn issue_gem_position_burns_parks_and_issues_nft() {
 }
 
 #[test]
-fn parking_marks_the_units_realized_on_the_source_series() {
+fn sending_marks_the_units_realized_on_the_source_series() {
     with_storage(None, |storage| {
-        seed_and_park(
+        seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
@@ -1111,8 +1111,8 @@ fn parking_marks_the_units_realized_on_the_source_series() {
         // Their load lives in the position now, so the source series can no
         // longer forfeit them.
         assert_eq!(
-            outbe_intex::api::parked_units(storage, source_intex_id()).unwrap(),
-            PARK_UNITS as u32
+            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
+            SENT_UNITS as u32
         );
     });
 }
@@ -1121,13 +1121,13 @@ fn parking_marks_the_units_realized_on_the_source_series() {
 #[test]
 fn an_expired_position_returns_its_remainder() {
     with_storage(None, |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let capacity = parked_capacity(six_decimal_u128());
+        let capacity = sent_capacity(six_decimal_u128());
 
         let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
         assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
@@ -1148,13 +1148,13 @@ fn an_expired_position_returns_its_remainder() {
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        runtime::issue_merchant_gem(storage, ALICE, id, BOB, parked_capacity(six_decimal_u128()))
+        runtime::issue_merchant_gem(storage, ALICE, id, BOB, sent_capacity(six_decimal_u128()))
             .unwrap();
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -1180,7 +1180,7 @@ fn unallocated(storage: &StorageHandle) -> U256 {
 fn issue_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
         let r =
-            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
+            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
         assert!(err_msg(r).contains("source intex"));
     });
 }
@@ -1190,13 +1190,13 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         // source entry below coen -> entry follows coen.
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let capacity = parked_capacity(six_decimal_u128());
+        let capacity = sent_capacity(six_decimal_u128());
 
         let load = U256::from(10u64) * six_decimal_unit();
         let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
@@ -1233,7 +1233,7 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
         // source entry above coen, source floor above 1.08 * entry -> both dominate.
         let source_entry = U256::from(3u64) * six_decimal_unit();
         let source_floor = U256::from(5u64) * six_decimal_unit();
-        let id = seed_and_park(storage, source_entry, source_floor, six_decimal_u128());
+        let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
 
         let gem_id =
             runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
@@ -1247,7 +1247,7 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
 fn issue_merchant_gem_rejects_non_merchant() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
@@ -1263,13 +1263,13 @@ fn issue_merchant_gem_rejects_non_merchant() {
 fn issue_merchant_gem_over_capacity_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let id = seed_and_park(
+        let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let over = parked_capacity(six_decimal_u128()) + U256::from(1u64);
+        let over = sent_capacity(six_decimal_u128()) + U256::from(1u64);
         let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, over);
         assert!(err_msg(r).contains("capacity"));
     });
@@ -1279,7 +1279,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
 fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        // Craft a position whose parked_at is already past the validity window.
+        // Craft a position whose issued_at is already past the validity window.
         let position_id = U256::from(1u64);
         let mut factory = GemFactoryContract::new(storage.clone());
         factory
@@ -1292,7 +1292,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 source_floor_price: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
-                parked_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
+                issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
                 expires_at: T_NOW - 1,
             })
             .unwrap();

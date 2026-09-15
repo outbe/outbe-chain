@@ -45,7 +45,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     uint32 internal constant SERIES_ID_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
     uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
-    address internal holder = address(0xCAFE);
+    address internal owner = address(0xCAFE);
 
     function setUp() public {
         _setUpBridge();
@@ -72,21 +72,21 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        // Series + holder balance so markCalled/holder enumeration and the entry-path bridge sends have tokens.
+        // Series + owner balance so markCalled/owner enumeration and the entry-path bridge sends have tokens.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.markQualified(SERIES_ID);
-        intex.issue(holder, 5, SERIES_ID);
+        intex.issue(owner, 5, SERIES_ID);
     }
 
-    /// @dev A 1-token bridge-out to Outbe; the entry path (payable `send`) burns it from `holder`.
+    /// @dev A 1-token bridge-out to Outbe; the entry path (payable `send`) burns it from `owner`.
     function _sendParam() internal view returns (SendParam memory) {
         return
-            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(holder))), tokenId: TOKEN_ID, amount: 1});
+            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), tokenId: TOKEN_ID, amount: 1});
     }
 
-    function _holderArrays() internal view returns (address[] memory holders, uint256[] memory amounts) {
-        holders = new address[](1);
-        holders[0] = holder;
+    function _holderArrays() internal view returns (address[] memory owners, uint256[] memory amounts) {
+        owners = new address[](1);
+        owners[0] = owner;
         amounts = new uint256[](1);
         amounts[0] = 1;
     }
@@ -100,15 +100,15 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 fee = nftBridge.quoteSend(params);
         assertEq(fee, BRIDGE_FEE, "fee mirrors the positive bridge fee");
 
-        vm.deal(holder, fee);
+        vm.deal(owner, fee);
         uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(holder);
+        vm.prank(owner);
         nftBridge.send{value: fee}(params);
 
         // `msg.value` flowed through to the bridge exactly; nothing seeded the relay float.
         assertEq(address(nftBridge).balance, floatBefore, "no leakage on exact-fee entry");
-        assertEq(holder.balance, 0, "caller paid the full fee");
+        assertEq(owner.balance, 0, "caller paid the full fee");
     }
 
     function test_Entry_ExcessIsRefundedToCaller() public {
@@ -116,15 +116,15 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 fee = nftBridge.quoteSend(params);
 
         uint256 buffer = 0.5 ether;
-        vm.deal(holder, fee + buffer);
+        vm.deal(owner, fee + buffer);
         uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(holder);
+        vm.prank(owner);
         nftBridge.send{value: fee + buffer}(params);
 
         // Excess refunded out of `_send`, not retained for future relay sends.
         assertEq(address(nftBridge).balance, floatBefore, "excess must not seed the relay float");
-        assertEq(holder.balance, buffer, "caller refunded the excess");
+        assertEq(owner.balance, buffer, "caller refunded the excess");
     }
 
     function test_Entry_BelowFeeRevertsMsgValueBelowFee() public {
@@ -132,9 +132,9 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 fee = nftBridge.quoteSend(params);
 
         uint256 short = fee - 1;
-        vm.deal(holder, fee);
+        vm.deal(owner, fee);
 
-        vm.prank(holder);
+        vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, short, fee));
         nftBridge.send{value: short}(params);
     }
@@ -146,17 +146,17 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 fee = nftBridge.quoteSend(params);
 
         uint256 buffer = 1 ether;
-        vm.deal(holder, (fee + buffer) * 2);
+        vm.deal(owner, (fee + buffer) * 2);
         uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(holder);
+        vm.prank(owner);
         nftBridge.send{value: fee + buffer}(params);
         assertEq(address(nftBridge).balance, floatBefore, "first entry: no leakage");
 
-        vm.prank(holder);
+        vm.prank(owner);
         nftBridge.send{value: fee + buffer}(params);
         assertEq(address(nftBridge).balance, floatBefore, "second entry: no leakage");
-        assertEq(holder.balance, 2 * buffer, "both excess values refunded");
+        assertEq(owner.balance, 2 * buffer, "both excess values refunded");
     }
 
     function test_Entry_RefundFailsRevertsRefundFailed() public {

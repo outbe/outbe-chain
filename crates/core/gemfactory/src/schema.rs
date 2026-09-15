@@ -17,7 +17,7 @@ pub enum GemTypes {
     Merchant = 5,
 }
 
-/// A merchant's parked-Intex position: the pool of Promis capacity from which
+/// A merchant's Gem Factory position: the pool of Promis capacity from which
 /// Merchant gems are issued. Modeled as a single-owner, non-transferable NFT
 /// (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
 /// position".
@@ -36,7 +36,7 @@ pub struct GemPosition {
     #[attribute(order = 2)]
     pub remaining_capacity: U256,
 
-    /// Snapshot of the parked Intex entry/floor, used as issuance lower bounds.
+    /// Snapshot of the source Intex entry/floor, used as issuance lower bounds.
     #[attribute(order = 3)]
     pub source_entry_price: U256,
 
@@ -49,10 +49,11 @@ pub struct GemPosition {
     #[attribute(order = 6)]
     pub reference_currency: u16,
 
+    /// When the position was issued.
     #[attribute(order = 7)]
-    pub parked_at: u64,
+    pub issued_at: u64,
 
-    /// Deadline snapshotted from the profile at parking, so a later profile
+    /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue.
     #[attribute(order = 8)]
     pub expires_at: u64,
@@ -65,7 +66,7 @@ pub struct GemFactoryContract {
     pub total_gems_issued: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 1)]
-    pub total_intex_parked: outbe_primitives::storage::dsl::Value<U256>,
+    pub total_gem_factory_units: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,
@@ -77,7 +78,7 @@ pub struct GemFactoryContract {
     #[attribute(order = 4)]
     pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Live positions, in parking order: nothing else enumerates them, the
+    // --- Live positions, in the order they opened: nothing else enumerates them, the
     // owner index answers "whose", not "which are alive".
     #[attribute(order = 5)]
     pub live_head: outbe_primitives::storage::dsl::Value<u32>,
@@ -127,7 +128,7 @@ impl GemFactoryContract<'_> {
     }
 
     /// `position_id = keccak256("gemposition" || merchant || source_intex_id_be || block_number_be)`.
-    /// A series is held by many winners and any may park it, so the merchant is
+    /// A series is held by many owners and any may send units, so the merchant is
     /// what tells two positions on the same series in one block apart.
     pub fn generate_position_id(
         merchant: Address,

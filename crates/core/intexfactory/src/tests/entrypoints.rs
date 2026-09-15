@@ -3,14 +3,14 @@ use super::*;
 #[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let data = IIntexFactory::settleCall {
+        let data = IIntexFactory::settleIntexCall {
             seriesId: sid(7).into(),
-            intexHolder: holder(),
+            intexOwner: owner(),
             amount: U256::from(1),
             payNoteProof: Default::default(),
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::from(1)).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::from(1)).is_err());
     });
 }
 
@@ -20,14 +20,14 @@ fn dispatch_mine_promis_routes_to_runtime() {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
-            holder: holder(),
+            owner: owner(),
             amount: U256::from(1),
             nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
             opNonce: 0,
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::ZERO).is_err());
     });
 }
 
@@ -75,7 +75,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(r.call_notice_period, dev.call_notice_period);
+        assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
             r.floor_price_minor,
             U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
@@ -87,9 +87,9 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: dev.call_window,
-                call_threshold: dev.call_threshold,
-                call_notice_period: dev.call_notice_period,
+                call_window_seconds: dev.call_window_seconds,
+                call_threshold_seconds: dev.call_threshold_seconds,
+                call_notice_period_seconds: dev.call_notice_period_seconds,
             }
         );
 

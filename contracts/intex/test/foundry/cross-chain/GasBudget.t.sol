@@ -179,7 +179,7 @@ contract GasBudgetTest is CrossChainTest {
                     seriesId: SERIES_PREFIX,
                     worldwideDay: WORLDWIDE_DAY,
                     issuedAt: uint32(block.timestamp),
-                    issuedIntexCount: 10_000,
+                    issuedUnits: 10_000,
                     promisLoadMinor: 1e6,
                     entryPriceMinor: 100e6,
                     floorPriceMinor: 40e6,
@@ -223,7 +223,7 @@ contract GasBudgetTest is CrossChainTest {
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 worldwideDay: WORLDWIDE_DAY,
                 issuedAt: uint32(block.timestamp),
-                issuedIntexCount: 10_000,
+                issuedUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
                 floorPriceMinor: 40e6,
@@ -412,7 +412,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20250101;
-    uint32 internal constant ISSUED_INTEX_COUNT = 10_000;
+    uint32 internal constant ISSUED_UNITS = 10_000;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
     TargetRouter internal router;
@@ -528,7 +528,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         vm.prank(address(router));
         auction.startClearingStage(WORLDWIDE_DAY);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, ENTRY_PRICE, 0));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_UNITS, ENTRY_PRICE, 0));
 
         emit log_named_uint("auction_result", spent);
         assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");

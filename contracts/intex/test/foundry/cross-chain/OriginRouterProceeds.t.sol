@@ -77,7 +77,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         _seedDaySnapshot(WORLDWIDE_DAY);
     }
 
-    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so `seriesTargets[day]` is populated.
+    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE owner) so `seriesTargets[day]` is populated.
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);

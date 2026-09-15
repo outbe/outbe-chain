@@ -35,7 +35,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd - the auction day (root)
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
-    uint32 internal constant ISSUED_INTEX_COUNT = 100;
+    uint32 internal constant ISSUED_UNITS = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
@@ -96,11 +96,11 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         auction.startClearingStage(WORLDWIDE_DAY);
 
         uint64 clearingPrice = 100e6;
-        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, clearingPrice, 0);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_UNITS, clearingPrice, 0);
         _deliver(packet);
 
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(WORLDWIDE_DAY).result;
-        assertEq(result.issuedIntexCount, ISSUED_INTEX_COUNT, "issuedIntexCount persisted");
+        assertEq(result.issuedUnits, ISSUED_UNITS, "issuedUnits persisted");
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
@@ -174,7 +174,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: ISSUED_INTEX_COUNT,
+            issuedUnits: ISSUED_UNITS,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
@@ -210,7 +210,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     seriesId: SERIES_ID,
                     worldwideDay: WORLDWIDE_DAY,
                     issuedAt: uint32(block.timestamp),
-                    issuedIntexCount: ISSUED_INTEX_COUNT,
+                    issuedUnits: ISSUED_UNITS,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
                     entryPriceMinor: ENTRY_PRICE,
                     floorPriceMinor: FLOOR_PRICE_MINOR,
@@ -332,7 +332,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, 0));
+        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, ISSUED_UNITS, 0));
     }
 
     function _deliver(bytes memory packet) internal {

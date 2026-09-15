@@ -192,6 +192,11 @@
             "name": "calledAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "isSettled",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

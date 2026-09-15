@@ -1717,6 +1717,7 @@ fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
             let issue = |owner, floor| {
                 let worldwide_day = WorldwideDay::from_timestamp(GENESIS_TS);
                 let body = NodItemState {
+                    is_settled: false,
                     nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
                     owner,
                     gratis_load_minor: U256::from(11),

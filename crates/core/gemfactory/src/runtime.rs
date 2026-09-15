@@ -15,7 +15,7 @@ use outbe_common::settlement::floor_to_asset_units;
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
+use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
@@ -42,7 +42,7 @@ pub fn issue_gem(
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
 
-    // The holder's own label: only its range is checked, as the auction checks a bid's.
+    // The owner's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
@@ -97,8 +97,8 @@ pub fn issue_gem(
     Ok(gem_id)
 }
 
-/// Park a merchant's whole Intex series and issue a GemPosition NFT. Burns the
-/// merchant's entire Issued holding on IntexNFT1155 (`parkIntex`, GEM_ROLE)
+/// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
+/// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
 /// and records the position with a snapshot of the source entry/floor and the
 /// resulting Promis capacity. Returns the issued `position_id`.
 pub fn issue_gem_position(
@@ -120,19 +120,24 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `amount` of the merchant's Intex units; `parkIntex` returns the
-    // burned count (and reverts on a non-parkable state or a zero amount).
-    let units = burn_parked_intex(storage, caller, source_intex_id, amount)?;
+    // Burn `amount` of the merchant's Intex units; `sendToGemFactory` returns the
+    // burned count (and reverts on a state that may not be sent, or a zero amount).
+    let units = burn_intex_into_gem_factory(storage, caller, source_intex_id, amount)?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
         .ok_or(GemFactoryError::Overflow)?;
 
     // Their load moved into the position, so the source series cannot forfeit them.
-    let parked_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
-    outbe_intex::api::record_parked_units(storage, source_intex_id, parked_units)?;
+    let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
+    outbe_intex::api::record_gem_factory_units(
+        storage,
+        source_intex_id,
+        caller,
+        gem_factory_units,
+    )?;
 
-    let parked_at = storage.timestamp()?.to::<u64>();
+    let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =
         GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
@@ -146,43 +151,43 @@ pub fn issue_gem_position(
         source_floor_price: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
-        parked_at,
-        expires_at: parked_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
+        issued_at,
+        expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
     })?;
 
     factory.push_live_position(position_id)?;
 
-    let prev_parked = factory.total_intex_parked.read()?;
-    let new_parked = prev_parked
+    let prev_sent = factory.total_gem_factory_units.read()?;
+    let new_sent = prev_sent
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
-    factory.total_intex_parked.write(new_parked)?;
+    factory.total_gem_factory_units.write(new_sent)?;
 
     Ok(position_id)
 }
 
-/// Burn `amount` of the merchant's Issued Intex units via `parkIntex`
+/// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-parkable (non-Issued/Qualified) state or `amount` is zero.
-fn burn_parked_intex(
+/// non-sendable (non-Issued/Qualified) state or `amount` is zero.
+fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
-    holder: Address,
+    owner: Address,
     series_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     let ret = storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
-        IIntexNFT1155::parkIntexCall {
-            holder,
+        IIntexNFT1155::sendToGemFactoryCall {
+            owner,
             seriesId: series_id.into(),
             amount,
         }
         .abi_encode()
         .into(),
     )?;
-    IIntexNFT1155::parkIntexCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("parkIntex return undecodable".into()))
+    IIntexNFT1155::sendToGemFactoryCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("sendToGemFactory return undecodable".into()))
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.
@@ -290,7 +295,7 @@ pub fn settle_gem(
         s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline = item.called_at + u64::from(item.call_notice_period);
+            let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
             if now > deadline {
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
@@ -477,7 +482,7 @@ pub fn quote_settlement(
     ))
 }
 
-/// The full terms of a parked position.
+/// The full terms of a Gem Factory position.
 pub fn position_data(
     storage: &StorageHandle<'_>,
     position_id: U256,
@@ -495,7 +500,7 @@ pub fn position_data(
         sourceFloorPrice: record.source_floor_price,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
-        parkedAt: record.parked_at,
+        issuedAt: record.issued_at,
         expiresAt: record.expires_at,
     })
 }
@@ -523,7 +528,7 @@ pub fn mine_promis(
 
     emit_event(
         storage,
-        GemMined {
+        GemExercised {
             gemId: gem_id,
             owner: item.owner,
             promisLoad: item.promis_load_minor,

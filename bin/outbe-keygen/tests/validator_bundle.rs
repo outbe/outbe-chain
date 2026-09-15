@@ -67,6 +67,26 @@ fn validator_command_generates_every_runtime_key_and_delegation_command() {
     assert!(stdout.contains(&format!(
         "outbe-cli --private-key <validator-evm-key> validator delegate ocomp {ocomp_address}"
     )));
+
+    for name in ["evm-key.hex", "ocomp-evm-key.hex"] {
+        let path = output_dir.path().join(name);
+        let encoded = read_canonical_secret(&path);
+        let key = signing_key(&encoded);
+        let point = key.verifying_key().to_encoded_point(false);
+        let expected = Address::from_raw_public_key(&point.as_bytes()[1..]);
+        let address_output = Command::new(env!("CARGO_BIN_EXE_outbe-keygen"))
+            .args(["show-address", "--private-key"])
+            .arg(std::str::from_utf8(&encoded).unwrap())
+            .output()
+            .expect("run outbe-keygen show-address");
+        assert!(address_output.status.success());
+        assert_eq!(
+            String::from_utf8(address_output.stdout).unwrap(),
+            format!("{expected}\n")
+        );
+        assert!(address_output.stderr.is_empty());
+        assert_eq!(read_canonical_secret(&path), encoded);
+    }
 }
 
 #[cfg(unix)]

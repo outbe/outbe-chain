@@ -1354,6 +1354,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                     &scope,
                     &empty_reader,
                     &NodItemState {
+                        is_settled: false,
                         nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
                         owner: proposer,
                         gratis_load_minor: U256::from(1_000_000u64),
@@ -1418,6 +1419,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         let writer: StorageWriterHandle = adapter;
         NodRepositoryWriter::new(reader.clone(), writer)
             .put_bucket(&NodBucketState {
+                settled_nods: 0,
                 bucket_key,
                 worldwide_day,
                 floor_price_minor,
@@ -1483,6 +1485,16 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 .expect("begin-zone transaction must execute");
         }
         let receipts = executor.receipts().to_vec();
+        assert!(
+            receipts
+                .iter()
+                .any(|receipt| receipt.logs.iter().any(|log| {
+                    log.address == NOD_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                })),
+            "fixture must mutate a Nod bucket before testing CE cleanup"
+        );
         let cleanup_hook_observation = Arc::new(Mutex::new(None));
         let cleanup_hook_capture = cleanup_hook_observation.clone();
         executor.evm_mut().db_mut().set_state_hook(Some(Box::new(
@@ -1677,6 +1689,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     &scope,
                     &nod_reader,
                     &NodItemState {
+                        is_settled: false,
                         nod_id,
                         owner: nod_owner,
                         gratis_load_minor: U256::from(1),
@@ -1766,6 +1779,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
             &scope,
             &nod_reader,
             &NodItemState {
+                is_settled: false,
                 nod_id,
                 owner: nod_owner,
                 gratis_load_minor: U256::from(1),

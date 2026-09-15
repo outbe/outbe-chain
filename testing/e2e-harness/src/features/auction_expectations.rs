@@ -298,7 +298,7 @@ pub(super) fn assert_clearing(
             )
             .expect("final venue result");
             assert_eq!(auction.result.auctionClearingRate, u64::from(expected.rate));
-            assert_eq!(auction.result.issuedIntexCount, expected.units);
+            assert_eq!(auction.result.issuedUnits, expected.units);
             assert_eq!(
                 auction.result.issuedIntexLoadedPromis,
                 u128::from(expected.units) * params.promisLoadMinor

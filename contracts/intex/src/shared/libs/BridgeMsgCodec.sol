@@ -359,26 +359,26 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
     /// @param _worldwideDay The worldwide day (yyyymmdd).
-    /// @param _issuedIntexCount The number of intex issued by the cleared auction.
+    /// @param _issuedUnits The number of intex issued by the cleared auction.
     /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @param _wonBidsCount The number of winning bids.
     /// @return The wire-encoded AUCTION_RESULT message.
     function encodeAuctionResult(
         uint32 _worldwideDay,
-        uint32 _issuedIntexCount,
+        uint32 _issuedUnits,
         uint64 _auctionClearingRate,
         uint32 _wonBidsCount
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_AUCTION_RESULT, _worldwideDay, _issuedIntexCount, _auctionClearingRate, _wonBidsCount
+            BODY_VERSION_V1, MSG_AUCTION_RESULT, _worldwideDay, _issuedUnits, _auctionClearingRate, _wonBidsCount
         );
     }
 
     /// @notice Issuance instructions payload - grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
-    /// @dev `issuedIntexCount` mirrors the auction-cleared count; the destination chain
+    /// @dev `issuedUnits` mirrors the auction-cleared count; the destination chain
     ///      pins it on `SeriesData` and `IntexNFT1155.issue` rejects any issue
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
@@ -387,7 +387,7 @@ library BridgeMsgCodec {
         uint32 worldwideDay;
         /// @notice When the origin created the series, so every chain dates it from the same moment.
         uint32 issuedAt;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -739,22 +739,22 @@ library BridgeMsgCodec {
 
     /// @notice Decodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedIntexCount(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
-    /// @return issuedIntexCount The number of intex issued by the cleared auction.
+    /// @return issuedUnits The number of intex issued by the cleared auction.
     /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @return wonBidsCount The number of winning bids.
     function decodeAuctionResult(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount)
+        returns (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount)
     {
         _assertExactLength(_msg, MSG_AUCTION_RESULT, MIN_LEN_AUCTION_RESULT);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
-        issuedIntexCount = uint32(bytes4(_msg[6:10]));
+        issuedUnits = uint32(bytes4(_msg[6:10]));
         auctionClearingRate = uint64(bytes8(_msg[10:18]));
         wonBidsCount = uint32(bytes4(_msg[18:22]));
     }

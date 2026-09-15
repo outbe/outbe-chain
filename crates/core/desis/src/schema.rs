@@ -128,7 +128,7 @@ pub struct BidData {
 /// Auction clearing result.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClearingResult {
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     pub clearing_rate: u32,
     pub winners: Vec<Address>,
     pub winner_quantities: Vec<U256>,
@@ -186,7 +186,7 @@ pub struct DesisContract {
     /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
     #[attribute(order = 8)]
     pub last_cleared_worldwide_day: outbe_primitives::storage::dsl::Value<WorldwideDay>,
-    /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
+    /// issuedUnits from the most recent clearing (for minBidQty 4% derivation).
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 

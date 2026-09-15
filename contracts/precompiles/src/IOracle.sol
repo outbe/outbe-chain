@@ -192,6 +192,10 @@ interface IOracle {
     /// @notice Returns VWAP over the last 24 hours for a pair.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
+    /// @notice Returns VWAP over the last four hours in the pair's registered scale.
+    /// @dev Like getDayVwap, the lookback is capped by the configured lookback duration.
+    function getFourHourVwap(address base, address quote) external view returns (uint256 vwap);
+
     /// @notice Returns the finalized VWAP for a full UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
     ///        is not yet finalized or had no oracle data for the pair. For the

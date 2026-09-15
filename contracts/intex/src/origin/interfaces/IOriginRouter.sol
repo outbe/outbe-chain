@@ -64,10 +64,10 @@ interface IOriginRouter {
     /// @notice Emitted when an auction result is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param issuedIntexCount Number of Intex units issued.
+    /// @param issuedUnits Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultSent(
-        bytes32 indexed sendId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
+        bytes32 indexed sendId, uint32 indexed worldwideDay, uint32 issuedUnits, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are sent to a target chain.
@@ -177,7 +177,7 @@ interface IOriginRouter {
     }
 
     /// @notice Issuance instructions parameters grouped to keep the calldata layout resilient against stack limits.
-    /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint` on the destination NFT
+    /// @dev `issuedUnits` is the auction-cleared cap that pins `mint` on the destination NFT
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
         bytes14 seriesId;
@@ -185,7 +185,7 @@ interface IOriginRouter {
         uint32 worldwideDay;
         /// @notice When the origin created the series; every chain dates it from this.
         uint32 issuedAt;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -278,7 +278,7 @@ interface IOriginRouter {
     function sendAuctionResult(
         uint32 dstChainId,
         uint32 worldwideDay,
-        uint32 issuedIntexCount,
+        uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);

@@ -667,7 +667,7 @@ pub struct FixtureState {
     pub lifecycle_day: Option<u32>,
     /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
     pub unallocated_before_expiry: Option<alloy_primitives::U256>,
-    /// The stablecoin holders settle Intex in, and its reserve vault.
+    /// The stablecoin owners settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,

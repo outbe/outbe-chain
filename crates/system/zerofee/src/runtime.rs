@@ -672,29 +672,11 @@ mod tests {
     }
 
     #[test]
-    fn authorize_accepts_zero_balance_signer() {
+    fn authorize_accepts_non_paymaster_signer() {
         with_storage(|storage| {
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day, BLOCK_DAY);
             assert_eq!(auth.next_count, 1);
-        });
-    }
-
-    #[test]
-    fn authorize_accepts_existing_account_with_balance_only() {
-        with_storage(|storage| {
-            let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
-            assert_eq!(auth.current_day, BLOCK_DAY);
-            assert_eq!(auth.next_count, 1);
-        });
-    }
-
-    #[test]
-    fn authorize_is_independent_of_native_balance() {
-        with_storage(|storage| {
-            let zero = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
-            let funded = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
-            assert_eq!(zero, funded);
         });
     }
 
@@ -854,21 +836,9 @@ mod tests {
     }
 
     #[test]
-    fn precheck_accepts_zero_balance_non_paymaster_signer() {
-        assert!(precheck_sponsorship(SIGNER).is_ok());
-    }
-
-    #[test]
-    fn precheck_accepts_funded_non_paymaster_signer() {
-        assert!(precheck_sponsorship(SIGNER).is_ok());
-    }
-
-    #[test]
-    fn precheck_does_not_perform_quota_check() {
-        // The pool MUST admit a sponsored tx even if the signer has
-        // already burned all 8 slots for today - the executor produces
-        // the soft-failure receipt code 110. `precheck` deliberately
-        // does no quota check; this test pins that contract.
+    fn precheck_accepts_non_paymaster_signer() {
+        // This address-only policy has no account balance or quota input.
+        // Account-state coverage belongs to the pool/executor integration tests.
         assert!(precheck_sponsorship(SIGNER).is_ok());
     }
 

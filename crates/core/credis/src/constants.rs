@@ -34,11 +34,11 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 pub const CALL_BREACH_DAYS: u32 = 21;
 
 /// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `Position::call_window`
-/// seals at opening, matching `GemData::call_window`.
+/// seals at opening, matching `GemData::call_window_seconds`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
 /// [`CALL_BREACH_DAYS`] in seconds - the encoding `Position::call_threshold`
-/// seals at opening, matching `GemData::call_threshold`.
+/// seals at opening, matching `GemData::call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
 
 /// Settlement window opened by the call, in seconds. Named for what it is, and

@@ -227,6 +227,13 @@ pub fn dispatch(
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_vwap_lookback(pair, now, 86400)
             }),
+            getFourHourVwap(c) => view(c, |c| {
+                let pair = oracle.require_pair_from(c.base, c.quote)?;
+                let now = oracle.storage.timestamp()?.to::<u64>();
+                oracle
+                    .four_hour_vwap(pair, now)?
+                    .ok_or_else(|| OracleError::NoVwapData.into())
+            }),
             getWorldwideDayVwap(c) => view(c, |c| {
                 let (pairs, vwaps, lookbacks) = oracle.calculate_vwaps(c.startTime, c.endTime)?;
                 let (bases, quotes) = split_pairs(&pairs);

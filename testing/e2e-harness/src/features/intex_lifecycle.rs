@@ -29,13 +29,13 @@ sol! {
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
-/// Units each series mints to the holder; settled in two goes, so keep it even.
+/// Units each series mints to the owner; settled in two goes, so keep it even.
 /// Units each series mints per chain. The holding is split so bringing units home
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
 const TARGET_UNITS: u32 = 6;
 /// Brought home while the series are still tradable; the rest travels under Called,
-/// where the bridge admits a move only to the holder's own address.
+/// where the bridge admits a move only to the owner's own address.
 const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// USD (840) as the reference for every series, spelled `U` in the series id.
@@ -106,7 +106,7 @@ fn register_settlement_currency(world: &mut World) {
     assert_vault_payment(world, 0);
 }
 
-#[then("holders may settle in that currency")]
+#[then("owners may settle in that currency")]
 fn settlement_currency_is_acceptable(world: &mut World) {
     let SettlementCurrency { asset, vault } = world
         .state
@@ -126,7 +126,7 @@ fn settlement_currency_is_acceptable(world: &mut World) {
     );
 }
 
-#[when("four test Intex series sharing a reference currency are issued to a funded holder")]
+#[when("four test Intex series sharing a reference currency are issued to a funded owner")]
 fn issue_two_series(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
@@ -136,11 +136,11 @@ fn issue_two_series(world: &mut World) {
         .settlement_currency
         .expect("settlement currency was registered")
         .asset;
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     // Enough to settle every unit of every series at any price the sweeps derive.
     test_issuance::fund_settler(&url, asset, DEPLOYER_KEY, U256::from(u64::MAX))
-        .expect("fund the settling holder");
+        .expect("fund the settling owner");
 
     let origin_router = world
         .state
@@ -192,7 +192,7 @@ fn issue_two_series(world: &mut World) {
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
-        holder,
+        owner,
         &[COMMITTEE_UNITS, TARGET_UNITS],
         &[
             u32::try_from(chain_id).expect("committee chain id fits a uint32"),
@@ -261,13 +261,13 @@ fn issue_two_series(world: &mut World) {
     world.state.lifecycle_day = Some(day);
 }
 
-#[then("the holder holds issued units of every series on each chain")]
-fn holder_holds_issued_units(world: &mut World) {
+#[then("the owner holds issued units of every series on each chain")]
+fn owner_holds_issued_units(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
     let target_nft = target_intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     assert_eq!(
         world.state.lifecycle_series.len(),
@@ -283,12 +283,12 @@ fn holder_holds_issued_units(world: &mut World) {
             "the committee collection does not know series {series}"
         );
         assert_eq!(
-            venue_probes::series_balances(&url, nft, series, holder),
+            venue_probes::series_balances(&url, nft, series, owner),
             Some((u64::from(COMMITTEE_UNITS), 0)),
-            "series {series} did not mint its committee units to the holder"
+            "series {series} did not mint its committee units to the owner"
         );
         loop {
-            if venue_probes::series_balances(&target_url, target_nft, series, holder)
+            if venue_probes::series_balances(&target_url, target_nft, series, owner)
                 == Some((u64::from(TARGET_UNITS), 0))
             {
                 break;
@@ -414,7 +414,7 @@ fn target_rpc_url(world: &World) -> String {
         .expect("target chain is running")
 }
 
-#[when("the holder settles part of their units")]
+#[when("the owner settles part of their units")]
 fn settle_part(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
@@ -422,13 +422,13 @@ fn settle_part(world: &mut World) {
         .state
         .settlement_currency
         .expect("settlement currency was registered");
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     // Settle what is already home. The rest is on the target chain and cannot be
-    // settled until the holder brings it back, which is a later step.
+    // settled until the owner brings it back, which is a later step.
     world.state.settled_units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
     for series in world.state.lifecycle_series.clone() {
-        let issued = venue_probes::series_balances(&url, nft, series, holder)
+        let issued = venue_probes::series_balances(&url, nft, series, owner)
             .expect("series balances")
             .0;
         assert_eq!(
@@ -450,12 +450,12 @@ fn settle_part(world: &mut World) {
 
         let proof = settlement_note(
             world,
-            holder,
+            owner,
             currency.asset,
             expected_settlement_cost(),
             units,
         );
-        test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
+        test_issuance::settle(&url, DEPLOYER_KEY, series, owner, units, &proof)
             .expect("settle the units at home");
     }
 }
@@ -463,7 +463,7 @@ fn settle_part(world: &mut World) {
 /// One note per settle: a nullifier is booked once, so notes never carry over.
 fn settlement_note(
     world: &World,
-    holder: alloy_primitives::Address,
+    owner: alloy_primitives::Address,
     asset: alloy_primitives::Address,
     per_unit: U256,
     units: u32,
@@ -475,7 +475,7 @@ fn settlement_note(
         world,
         world.validators.primary_port(),
         DEPLOYER_KEY,
-        holder,
+        owner,
         asset,
         total,
     )
@@ -485,11 +485,11 @@ fn settlement_note(
 fn units_moved_to_settled(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     for series in &world.state.lifecycle_series {
         assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, holder),
+            venue_probes::series_balances(&url, nft, *series, owner),
             Some((0, u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS))),
             "series {series} left issued units at home after settling"
         );
@@ -562,21 +562,21 @@ fn assert_vault_payment(world: &World, settled_per_series: u32) {
 }
 
 fn promis_on_all_validators(world: &World, view_key: &[u8; 32]) -> U256 {
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let checkpoint = lifecycle_checkpoint(world);
     let mut common = None;
     for port in world.validators.committee_ports() {
         let blob = eth::read_call_at(
             &world.rpc.url(port),
             addresses::PROMIS_ADDR,
-            &eth::IPromis::balanceOfCall { account: holder },
+            &eth::IPromis::balanceOfCall { account: owner },
             checkpoint.height,
         )
         .expect("finalized lifecycle Promis ciphertext");
         let amount = if blob.is_empty() {
             U256::ZERO
         } else {
-            outbe_tee_enclave::promis::decrypt_balance(view_key, holder, blob.as_ref())
+            outbe_tee_enclave::promis::decrypt_balance(view_key, owner, blob.as_ref())
                 .expect("decrypt finalized lifecycle Promis balance")
         };
         if let Some(common) = common {
@@ -597,20 +597,20 @@ fn promis_on_all_validators(world: &World, view_key: &[u8; 32]) -> U256 {
     balance
 }
 
-#[when("the holder mines Promis against their settled units")]
+#[when("the owner mines Promis against their settled units")]
 fn mine_promis(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let nft = intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let chain_id = world.rpc.chain_id(port).expect("committee chain id");
 
     let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
-        .expect("derive the holder's Promis modify key");
+        .expect("derive the owner's Promis modify key");
     world.state.promis_before_mining = Some(promis_on_all_validators(world, &keys.view));
 
     for series in world.state.lifecycle_series.clone() {
-        let settled = venue_probes::series_balances(&url, nft, series, holder)
+        let settled = venue_probes::series_balances(&url, nft, series, owner)
             .expect("series balances")
             .1;
         assert_eq!(
@@ -631,14 +631,14 @@ fn mine_promis(world: &mut World) {
         let op_nonce = eth::read_call(
             &url,
             addresses::PROMIS_ADDR,
-            &IPromisNonce::opNonceOfCall { account: holder },
+            &IPromisNonce::opNonceOfCall { account: owner },
         )
-        .expect("read the holder's Promis op nonce");
-        let nonce = test_issuance::mine_nonce(holder, amount, series, 0)
+        .expect("read the owner's Promis op nonce");
+        let nonce = test_issuance::mine_nonce(owner, amount, series, 0)
             .expect("a nonce clearing one leading zero byte");
         let mac = outbe_tee_enclave::promis::modify_mac(
             &keys.modify,
-            holder,
+            owner,
             PromisOp::Mint,
             amount,
             op_nonce,
@@ -662,17 +662,32 @@ fn mine_promis(world: &mut World) {
 fn settled_burned_into_promis(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     for series in &world.state.lifecycle_series {
         assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, holder).map(|(_, settled)| settled),
+            venue_probes::series_balances(&url, nft, *series, owner).map(|(_, settled)| settled),
             Some(0),
             "series {series} still holds settled units after mining"
         );
+        // The engine counts what it burned, so the series' classes stay disjoint.
+        let counts = eth::read_call(
+            &url,
+            test_issuance::INTEX_FACTORY,
+            &IIntexFactoryCounts::seriesUnitCountsCall { seriesId: *series },
+        )
+        .expect("series unit counts");
+        assert_eq!(
+            counts.exercisedUnits, UNITS,
+            "series {series} did not count its exercised units"
+        );
+        assert_eq!(
+            counts.settledUnits, 0,
+            "series {series} left units counted as settled"
+        );
     }
     let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
-        .expect("derive holder Promis view key");
+        .expect("derive owner Promis view key");
     let expected_mint = U256::from(PROMIS_LOAD_MINOR)
         * U256::from(UNITS)
         * U256::from(world.state.lifecycle_series.len());
@@ -697,6 +712,21 @@ fn chain_b256(chain_id: u64) -> alloy_primitives::B256 {
 sol! {
     interface IPromisNonce {
         function opNonceOf(address account) external view returns (uint64);
+    }
+}
+
+sol! {
+    interface IIntexFactoryCounts {
+        struct UnitCounts {
+            uint32 issuedUnits;
+            uint32 activeUnits;
+            uint32 settledUnits;
+            uint32 exercisedUnits;
+            uint32 gemFactoryUnits;
+            uint32 forfeitedUnits;
+        }
+
+        function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
     }
 }
 
@@ -746,7 +776,7 @@ fn both_series_called(world: &mut World) {
     }
 }
 
-#[when("the holder settles the remaining units inside the notice period")]
+#[when("the owner settles the remaining units inside the notice period")]
 fn settle_remainder(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
@@ -754,10 +784,10 @@ fn settle_remainder(world: &mut World) {
         .state
         .settlement_currency
         .expect("settlement currency was registered");
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     for series in world.state.lifecycle_series.clone() {
-        let issued = venue_probes::series_balances(&url, nft, series, holder)
+        let issued = venue_probes::series_balances(&url, nft, series, owner)
             .expect("series balances")
             .0;
         assert_eq!(
@@ -775,12 +805,12 @@ fn settle_remainder(world: &mut World) {
         );
         let proof = settlement_note(
             world,
-            holder,
+            owner,
             currency.asset,
             expected_settlement_cost(),
             units,
         );
-        test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
+        test_issuance::settle(&url, DEPLOYER_KEY, series, owner, units, &proof)
             .expect("settle the remainder under Called");
     }
 }
@@ -789,11 +819,11 @@ fn settle_remainder(world: &mut World) {
 fn everything_settled(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
 
     for series in &world.state.lifecycle_series {
         assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, holder),
+            venue_probes::series_balances(&url, nft, *series, owner),
             Some((0, u64::from(UNITS))),
             "series {series} did not end with every unit settled"
         );
@@ -875,12 +905,12 @@ fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32
     )
 }
 
-#[when("the holder brings part of the target-chain units home")]
+#[when("the owner brings part of the target-chain units home")]
 fn bridge_part_home(world: &mut World) {
     bring_home(world, TRADABLE_HOP_UNITS);
 }
 
-#[when("the holder brings the remaining units home to their own address in one batch")]
+#[when("the owner brings the remaining units home to their own address in one batch")]
 fn bridge_rest_home(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
@@ -895,12 +925,12 @@ fn bridge_rest_home(world: &mut World) {
         .as_ref()
         .expect("intex venue was deployed on the target chain")
         .nft_bridge;
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
         .expect("fits a uint32");
     let amount = TARGET_UNITS - TRADABLE_HOP_UNITS;
 
-    // A holder with more than one series moves them together, so this hop takes the
+    // A owner with more than one series moves them together, so this hop takes the
     // batch route the first one did not: one burn set here, one mint set at home.
     let tokens: Vec<(alloy_primitives::U256, u32)> = world
         .state
@@ -918,7 +948,7 @@ fn bridge_rest_home(world: &mut World) {
         .lifecycle_series
         .iter()
         .map(|series| {
-            venue_probes::series_balances(&url, nft, *series, holder)
+            venue_probes::series_balances(&url, nft, *series, owner)
                 .expect("series balances at home")
                 .0
         })
@@ -929,7 +959,7 @@ fn bridge_rest_home(world: &mut World) {
         DEPLOYER_KEY,
         bridge,
         home_chain,
-        holder,
+        owner,
         &tokens,
     )
     .expect("send the remaining units home in one batch");
@@ -938,7 +968,7 @@ fn bridge_rest_home(world: &mut World) {
     for (series, before) in world.state.lifecycle_series.clone().into_iter().zip(before) {
         let want = before + u64::from(amount);
         loop {
-            if venue_probes::series_balances(&url, nft, series, holder)
+            if venue_probes::series_balances(&url, nft, series, owner)
                 .is_some_and(|(issued, _)| issued >= want)
             {
                 break;
@@ -952,7 +982,7 @@ fn bridge_rest_home(world: &mut World) {
     }
 }
 
-/// Drive the holder's own bridge hop for every series and wait for the units to land.
+/// Drive the owner's own bridge hop for every series and wait for the units to land.
 fn bring_home(world: &mut World, amount: u32) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
@@ -967,12 +997,12 @@ fn bring_home(world: &mut World, amount: u32) {
         .as_ref()
         .expect("intex venue was deployed on the target chain")
         .nft_bridge;
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
         .expect("fits a uint32");
 
     for series in world.state.lifecycle_series.clone() {
-        let before = venue_probes::series_balances(&url, nft, series, holder)
+        let before = venue_probes::series_balances(&url, nft, series, owner)
             .expect("series balances at home")
             .0;
         let token_id = venue_probes::issued_token_id(&url, nft, series).expect("issued token id");
@@ -983,7 +1013,7 @@ fn bring_home(world: &mut World, amount: u32) {
             bridge,
             home_chain,
             token_id,
-            holder,
+            owner,
             amount,
         )
         .expect("send the units home");
@@ -991,7 +1021,7 @@ fn bring_home(world: &mut World, amount: u32) {
         let want = before + u64::from(amount);
         let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
         loop {
-            if venue_probes::series_balances(&url, nft, series, holder)
+            if venue_probes::series_balances(&url, nft, series, owner)
                 .is_some_and(|(issued, _)| issued >= want)
             {
                 break;
@@ -1021,7 +1051,7 @@ fn expiring_series(world: &World) -> [alloy_primitives::FixedBytes<14>; 2] {
 
 /// Part settled and part not, so the sweep has to return the load of the unrealized
 /// units alone rather than the tirage the series was issued with.
-#[when("the holder settles part of one series they let run out")]
+#[when("the owner settles part of one series they let run out")]
 fn settle_part_of_expiring(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
@@ -1029,7 +1059,7 @@ fn settle_part_of_expiring(world: &mut World) {
         .state
         .settlement_currency
         .expect("settlement currency was registered");
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let series = world
         .state
         .expiring_series
@@ -1037,8 +1067,8 @@ fn settle_part_of_expiring(world: &mut World) {
 
     // Only the units that stayed on the committee can be settled: nothing brings this
     // series home, and the rest expire where they are.
-    let issued = venue_probes::series_balances(&url, nft, series, holder)
-        .expect("read what the holder holds of the expiring series")
+    let issued = venue_probes::series_balances(&url, nft, series, owner)
+        .expect("read what the owner holds of the expiring series")
         .0;
     assert!(
         issued > u64::from(EXPIRING_SETTLED_UNITS),
@@ -1047,7 +1077,7 @@ fn settle_part_of_expiring(world: &mut World) {
     );
     let proof = settlement_note(
         world,
-        holder,
+        owner,
         currency.asset,
         expected_settlement_cost(),
         EXPIRING_SETTLED_UNITS,
@@ -1056,7 +1086,7 @@ fn settle_part_of_expiring(world: &mut World) {
         &url,
         DEPLOYER_KEY,
         series,
-        holder,
+        owner,
         EXPIRING_SETTLED_UNITS,
         &proof,
     )
@@ -1136,6 +1166,14 @@ fn unsettled_series_expired(world: &mut World) {
         .expect("intex venue was deployed on the target chain")
         .target_router;
 
+    // Anvil does not mine while this step only reads. Advance its clock even when
+    // the Called mark was already applied and there is nothing left to retry.
+    let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
+    world
+        .target_chain
+        .sync_clock_to(now)
+        .expect("carry the elapsed call notice to the target chain");
+
     for series in expiring_series(world) {
         // A mark whose calledAt sits ahead of this chain's clock is parked, not
         // applied, and nothing in a localnet plays the operator who retries it.
@@ -1145,11 +1183,6 @@ fn unsettled_series_expired(world: &mut World) {
             &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
         );
         if parked.is_some_and(|mark| mark != 0) {
-            let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
-            world
-                .target_chain
-                .sync_clock_to(now)
-                .expect("carry the committee clock to the target chain");
             eth::send_call(
                 &target_url,
                 target_router,
@@ -1183,6 +1216,24 @@ fn unsettled_series_expired(world: &mut World) {
                 sleep(Duration::from_secs(2));
             }
         }
+        let committee_deadline = venue_probes::series_call_deadline(&url, nft, series)
+            .expect("committee expiry deadline");
+        let target_deadline = venue_probes::series_call_deadline(&target_url, target_nft, series)
+            .expect("target expiry deadline");
+        let target_timestamp =
+            eth::latest_block_timestamp(&target_url).expect("target expiry observation timestamp");
+        assert_eq!(
+            target_deadline, committee_deadline,
+            "series {series} expiry deadline parity"
+        );
+        assert!(
+            target_timestamp > target_deadline,
+            "series {series} target clock did not pass expiry"
+        );
+        eprintln!(
+            "INTEX_EXPIRY_CLOCK series={series} committee_timestamp={now} \
+             target_timestamp={target_timestamp} deadline={target_deadline} pending_mark={parked:?}"
+        );
     }
 }
 
@@ -1191,7 +1242,7 @@ fn forfeited_load_returns(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let nft = intex_nft(world);
-    let holder = crate::world::origin_venue::deployer_address();
+    let owner = crate::world::origin_venue::deployer_address();
     let before = world
         .state
         .unallocated_before_expiry
@@ -1217,11 +1268,11 @@ fn forfeited_load_returns(world: &mut World) {
             .checked_sub(settled_units)
             .expect("the expiring series was issued with more units than it settled");
         let (committee_issued, committee_settled) =
-            venue_probes::series_balances(&url, nft, series, holder)
-                .expect("read what the holder still holds of the expiring series");
+            venue_probes::series_balances(&url, nft, series, owner)
+                .expect("read what the owner still holds of the expiring series");
         let (target_issued, target_settled) =
-            venue_probes::series_balances(&target_url, target_nft, series, holder)
-                .expect("read what the holder still holds on the target chain");
+            venue_probes::series_balances(&target_url, target_nft, series, owner)
+                .expect("read what the owner still holds on the target chain");
         assert_eq!(
             committee_settled + target_settled,
             u64::from(settled_units),
@@ -1230,7 +1281,7 @@ fn forfeited_load_returns(world: &mut World) {
         assert_eq!(
             committee_issued + target_issued,
             u64::from(unrealized),
-            "the holder carries {} unrealized units of {series}, not {unrealized}: the \
+            "the owner carries {} unrealized units of {series}, not {unrealized}: the \
              rest was settled or parked, and the forfeit is not what this asserts",
             committee_issued + target_issued
         );
