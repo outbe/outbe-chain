@@ -59,6 +59,10 @@ pub struct NodItemState {
 
     #[attribute(order = 8)]
     pub issued_at: u64,
+
+    #[attribute(order = 9)]
+    #[serde(default)]
+    pub is_settled: bool,
 }
 
 /// Call terms a bucket is armed with when it qualifies, and the only terms every
@@ -80,12 +84,12 @@ pub struct CallTerms {
     pub call_window: u32,
     /// Breach seconds within that span which arm the call.
     pub call_threshold: u32,
-    /// Seconds after `called_at` in which the owner must settle and mine.
+    /// Seconds after `called_at` in which the owner must settle.
     pub call_notice_period: u32,
 }
 
-/// Shared bucket body. Membership is tracked separately by `bucket_nod_count`;
-/// the body is deleted when the last member is removed.
+/// Shared bucket body. Unpaid membership is tracked by `bucket_nod_count`;
+/// the body is deleted when both unpaid and settled counts reach zero.
 #[derive(Serialize, Deserialize)]
 pub struct NodBucketState {
     pub bucket_key: B256,
@@ -98,6 +102,10 @@ pub struct NodBucketState {
     /// bucket. The qualifier compares the floor against the COEN rate for this
     /// currency only, and the bin index is namespaced by it.
     pub reference_currency: u16,
+
+    /// Live paid entitlements; decreases when exercised.
+    #[serde(default)]
+    pub settled_nods: u64,
 }
 
 /// Immutable owner projection frozen into one OCOMP activation precondition.
@@ -290,8 +298,7 @@ pub struct NodContract {
     // --- Bucket member index: lets the forfeit sweep enumerate a bucket's Nods,
     // which the compressed-entity store cannot do on its own. `WwdEntityId` is a
     // single storage word, so ids are stored whole and need no rebuilding.
-    /// Authoritative member count, stored outside the shared bucket body so
-    /// issuing or removing a member does not change its commitment.
+    /// Authoritative unpaid member count, stored outside the shared bucket body.
     #[attribute(order = 35)]
     pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
 
@@ -339,7 +346,7 @@ pub struct NodContract {
     pub ocomp_materialization_protocol_bundle_hash:
         outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
-    // --- Call terms sealed at qualification. The daily scan and the mine-time
+    // --- Call terms sealed at qualification. The daily scan and the settlement-time
     // deadline check read a bucket's own copy, so retuning a constant leaves
     // every already-armed bucket on the terms it was armed with.
     /// Markup percent [`Self::callable_bucket_call_price`] was derived at.
@@ -354,7 +361,7 @@ pub struct NodContract {
     #[attribute(order = 47)]
     pub callable_bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Seconds after `bucket_called_at` in which the owner must settle and mine.
+    /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
     pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
 

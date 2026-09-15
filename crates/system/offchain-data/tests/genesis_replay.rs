@@ -334,6 +334,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(14), 978);
     let mut nod = NodItemState {
+        is_settled: false,
         nod_id,
         owner: nod_owner,
         gratis_load_minor: U256::from(13),
@@ -416,6 +417,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let projected_nod = nod_reader.get(nod_id).unwrap().unwrap();
     let projected_bucket = nod_reader.get_bucket(bucket_id).unwrap().unwrap();
     let expected_bucket = NodBucketState {
+        settled_nods: 0,
         bucket_key,
         worldwide_day: day,
         floor_price_minor: nod.floor_price_minor,

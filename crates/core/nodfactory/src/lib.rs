@@ -1,7 +1,7 @@
 //! NodFactory precompile crate.
 //!
 //! Owns Nod issuance (called from Lysis through [`api::issue_nod`]) and
-//! the user-triggered `mineGratis` ABI method. Persistent Nod entity state
+//! the user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod entity state
 //! lives in the Nod entity store at [`outbe_primitives::addresses::NOD_ADDRESS`];
 //! NodFactory carries no storage of its own.
 

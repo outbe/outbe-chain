@@ -201,6 +201,7 @@ pub(super) fn tribute(id: WwdEntityId, owner: Address, price: u64) -> TributeBod
 
 pub(super) fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
     NodItemBodyV1 {
+        is_settled: false,
         nod_id: id,
         owner,
         gratis_load_minor: U256::from(1),

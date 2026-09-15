@@ -251,6 +251,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
     let owner = address!("2100000000000000000000000000000000000002");
     let mut item = nod_item(entity(8, 21), owner);
     let mut bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(22),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
@@ -347,6 +348,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
     nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),

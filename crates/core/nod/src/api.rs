@@ -17,7 +17,7 @@ pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Re
     checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
 }
 
-/// Timestamp by which a called bucket must be mined, or `0` while it is not
+/// Timestamp by which a called bucket must be settled, or `0` while it is not
 /// called at all.
 ///
 /// Reads the notice period the bucket sealed when it qualified, so retuning the
@@ -181,4 +181,17 @@ pub fn list_by_owner(
     owner: Address,
 ) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone()).read_all(scope, parent, Some(owner))
+}
+
+/// Records payment without consuming the entitlement or changing live supply.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    item: LoadedNodItem,
+    bucket: LoadedNodBucket,
+) -> Result<()> {
+    let mut nod = NodContract::new(storage.clone());
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_settled(scope, item, bucket))
 }

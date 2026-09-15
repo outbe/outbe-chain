@@ -39,6 +39,7 @@ use crate::{
 fn item(owner: Address) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
     NodItemState {
+        is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
         owner,
         gratis_load_minor: U256::from(11),
