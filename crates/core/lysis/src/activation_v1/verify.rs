@@ -128,7 +128,7 @@ pub fn verify_result(
             result.conservation.tribute_nominal_total,
             RETIRED_TRIBUTE_GENERATION_V1,
         ),
-        carry_over: carry_over_apply(intent.wwd, result.conservation.unused_lysis),
+        carry_over: carry_over_apply(intent.wwd, result.conservation.unused_lysis_limit_minor),
     }
     .into())
 }

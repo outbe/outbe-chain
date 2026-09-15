@@ -121,7 +121,7 @@ pub(crate) fn inject_receipt_fault(
         }
         Some(ActivationReceiptFault::Tribute) => receipts.tribute.retired_generation += 1,
         Some(ActivationReceiptFault::CarryOver) => {
-            receipts.carry_over.credited_unused_lysis += U256::from(1);
+            receipts.carry_over.credited_unused_lysis_limit_minor += U256::from(1);
             receipts.carry_over.after_value += U256::from(1);
         }
         Some(ActivationReceiptFault::RequestSplit) => {
@@ -847,7 +847,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
         lysis_limit_minor: U256::from(60),
         auction_base: U256::from(40),
         lysis_allocation_minor: U256::from(45),
-        unused_lysis: U256::from(15),
+        unused_lysis_limit_minor: U256::from(15),
         carry_over_credit: U256::from(15),
         nod_cost_total: U256::from(300),
     };
@@ -889,7 +889,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
             lysis_limit_minor: U256::from(60),
             auction_base: U256::from(40),
             lysis_allocation_minor: U256::from(45),
-            unused_lysis: U256::from(15),
+            unused_lysis_limit_minor: U256::from(15),
             carry_over_credit: U256::from(15),
             status: CompletionStatus::Completed,
             logical_evaluation_height: TEST_REQUEST_HEIGHT,
@@ -897,7 +897,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
         },
         tribute_count: 2,
         tribute_nominal_total: U256::from(1_000),
-        unused_lysis: U256::from(15),
+        unused_lysis_limit_minor: U256::from(15),
         roots,
         counts,
         conservation,
@@ -942,7 +942,7 @@ pub fn lysis_result_for_intent(
         lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
         lysis_allocation_minor: U256::ZERO,
-        unused_lysis: frozen.lysis_limit_minor,
+        unused_lysis_limit_minor: frozen.lysis_limit_minor,
         carry_over_credit: frozen.lysis_limit_minor,
         nod_cost_total: U256::ZERO,
     };
@@ -984,7 +984,7 @@ pub fn lysis_result_for_intent(
             lysis_limit_minor: frozen.lysis_limit_minor,
             auction_base: frozen.auction_base,
             lysis_allocation_minor: U256::ZERO,
-            unused_lysis: frozen.lysis_limit_minor,
+            unused_lysis_limit_minor: frozen.lysis_limit_minor,
             carry_over_credit: frozen.lysis_limit_minor,
             status: CompletionStatus::Completed,
             logical_evaluation_height: intent.logical_evaluation_height,
@@ -992,7 +992,7 @@ pub fn lysis_result_for_intent(
         },
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
-        unused_lysis: frozen.lysis_limit_minor,
+        unused_lysis_limit_minor: frozen.lysis_limit_minor,
         roots,
         counts,
         conservation,

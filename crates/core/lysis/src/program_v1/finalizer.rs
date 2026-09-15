@@ -239,7 +239,7 @@ where
     )?;
 
     let frozen = &inputs.intent.frozen_metadosis_values;
-    let unused_lysis = frozen
+    let unused_lysis_limit_minor = frozen
         .lysis_limit_minor
         .checked_sub(streamed.lysis_allocation_minor)
         .ok_or(LysisFinalizationErrorV1::Authority(
@@ -261,8 +261,8 @@ where
         lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
         lysis_allocation_minor: streamed.lysis_allocation_minor,
-        unused_lysis,
-        carry_over_credit: unused_lysis,
+        unused_lysis_limit_minor,
+        carry_over_credit: unused_lysis_limit_minor,
         nod_cost_total: streamed.nod_cost_total,
     };
     let roots = ResultRootsV1 {
@@ -274,7 +274,7 @@ where
     let carry_over_credit = CarryOverCreditActionV1 {
         source_wwd: inputs.intent.wwd,
         reason: CarryOverReason::UnusedLysis,
-        amount: unused_lysis,
+        amount: unused_lysis_limit_minor,
     };
     let metadosis_completion_summary = MetadosisCompletionSummaryV1 {
         wwd: inputs.intent.wwd,
@@ -287,8 +287,8 @@ where
         lysis_limit_minor: frozen.lysis_limit_minor,
         auction_base: frozen.auction_base,
         lysis_allocation_minor: streamed.lysis_allocation_minor,
-        unused_lysis,
-        carry_over_credit: unused_lysis,
+        unused_lysis_limit_minor,
+        carry_over_credit: unused_lysis_limit_minor,
         status: CompletionStatus::Completed,
         logical_evaluation_height: inputs.intent.logical_evaluation_height,
         logical_evaluation_time: inputs.intent.logical_evaluation_time,
@@ -308,7 +308,7 @@ where
         metadosis_completion_summary,
         tribute_count: streamed.tribute_count,
         tribute_nominal_total: streamed.tribute_nominal_total,
-        unused_lysis,
+        unused_lysis_limit_minor,
         roots,
         counts,
         conservation,

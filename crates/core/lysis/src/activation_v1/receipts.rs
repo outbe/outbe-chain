@@ -194,7 +194,7 @@ pub fn verify_receipts(
     ensure(
         plan.nod()
             .lysis_allocation_minor()
-            .checked_add(plan.carry_over().credited_unused_lysis())
+            .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
             == Some(request.lysis_limit_minor),
         "Lysis receipt budget conservation",
     )?;
@@ -393,17 +393,18 @@ fn verify_carry_over_receipt(
     let expected = plan.carry_over();
     ensure(
         receipt.source_wwd == expected.source_wwd()
-            && receipt.credited_unused_lysis == expected.credited_unused_lysis()
+            && receipt.credited_unused_lysis_limit_minor
+                == expected.credited_unused_lysis_limit_minor()
             && receipt
                 .before_value
-                .checked_add(receipt.credited_unused_lysis)
+                .checked_add(receipt.credited_unused_lysis_limit_minor)
                 == Some(receipt.after_value),
         "Lysis carry-over receipt",
     )?;
     let projection = CarryOverStateEventProjectionV1 {
         source_wwd: receipt.source_wwd,
         before_value: receipt.before_value,
-        credited_unused_lysis: receipt.credited_unused_lysis,
+        credited_unused_lysis_limit_minor: receipt.credited_unused_lysis_limit_minor,
         after_value: receipt.after_value,
     };
     receipt.validate_projection(&projection, limits)?;

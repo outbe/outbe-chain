@@ -218,7 +218,7 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
         "status": "SUCCESS",
         "total_nominal": result.total_nominal.to_string(),
         "lysis_limit_minor": result.lysis_limit_minor.to_string(),
-        "remaining_gratis": result.remaining_gratis.to_string(),
+        "remaining_lysis_limit_minor": result.remaining_lysis_limit_minor.to_string(),
         "group_table": table,
         "nod_actions": nod_actions,
         "contributors": contributors,

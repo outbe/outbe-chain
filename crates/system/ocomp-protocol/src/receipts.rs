@@ -113,7 +113,7 @@ wire_struct! {
         pub binding: EffectBindingV1,
         pub source_wwd: u32,
         pub before_value: U256,
-        pub credited_unused_lysis: U256,
+        pub credited_unused_lysis_limit_minor: U256,
         pub after_value: U256,
         pub state_event_digest: B256,
     }
@@ -160,7 +160,7 @@ wire_struct! {
     pub struct CarryOverStateEventProjectionV1 {
         pub source_wwd: u32,
         pub before_value: U256,
-        pub credited_unused_lysis: U256,
+        pub credited_unused_lysis_limit_minor: U256,
         pub after_value: U256,
     }
 }
@@ -458,7 +458,7 @@ fn validate_carry_over_receipt(
 ) -> Result<(), ProtocolError> {
     let expected = receipt
         .before_value
-        .checked_add(receipt.credited_unused_lysis)
+        .checked_add(receipt.credited_unused_lysis_limit_minor)
         .ok_or(ProtocolError::IntegerOverflow {
             what: "carry-over receipt",
         })?;

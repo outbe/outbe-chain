@@ -103,7 +103,7 @@ wire_struct! {
         pub lysis_limit_minor: U256,
         pub auction_base: U256,
         pub lysis_allocation_minor: U256,
-        pub unused_lysis: U256,
+        pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
         pub status: CompletionStatus,
         pub logical_evaluation_height: u64,
@@ -160,7 +160,7 @@ wire_struct! {
         pub lysis_limit_minor: U256,
         pub auction_base: U256,
         pub lysis_allocation_minor: U256,
-        pub unused_lysis: U256,
+        pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
         pub nod_cost_total: U256,
     }
@@ -206,7 +206,7 @@ wire_struct! {
         pub metadosis_completion_summary: MetadosisCompletionSummaryV1,
         pub tribute_count: u32,
         pub tribute_nominal_total: U256,
-        pub unused_lysis: U256,
+        pub unused_lysis_limit_minor: U256,
         pub roots: ResultRootsV1,
         pub counts: ExactCountsV1,
         pub conservation: ConservationTotalsV1,
@@ -468,7 +468,7 @@ impl LysisResultV1 {
         validate_lysis_v1_event_commitment(&self.counts, self.event_summary_hash)?;
         require(
             self.tribute_nominal_total == self.conservation.tribute_nominal_total
-                && self.unused_lysis == self.conservation.unused_lysis,
+                && self.unused_lysis_limit_minor == self.conservation.unused_lysis_limit_minor,
             "result scalar conservation binding",
         )?;
         let split_sum = self
@@ -486,7 +486,7 @@ impl LysisResultV1 {
         let lysis_sum = self
             .conservation
             .lysis_allocation_minor
-            .checked_add(self.conservation.unused_lysis)
+            .checked_add(self.conservation.unused_lysis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Lysis budget conservation",
             })?;
@@ -495,9 +495,9 @@ impl LysisResultV1 {
             "Lysis budget conservation",
         )?;
         require(
-            self.conservation.carry_over_credit == self.unused_lysis
+            self.conservation.carry_over_credit == self.unused_lysis_limit_minor
                 && self.carry_over_credit.reason == CarryOverReason::UnusedLysis
-                && self.carry_over_credit.amount == self.unused_lysis
+                && self.carry_over_credit.amount == self.unused_lysis_limit_minor
                 && self.carry_over_credit.source_wwd == self.metadosis_completion_summary.wwd,
             "carry-over conservation",
         )?;
@@ -510,7 +510,8 @@ impl LysisResultV1 {
                 && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
                 && completion.auction_base == self.conservation.auction_base
                 && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
-                && completion.unused_lysis == self.conservation.unused_lysis
+                && completion.unused_lysis_limit_minor
+                    == self.conservation.unused_lysis_limit_minor
                 && completion.carry_over_credit == self.conservation.carry_over_credit,
             "Metadosis completion conservation binding",
         )?;

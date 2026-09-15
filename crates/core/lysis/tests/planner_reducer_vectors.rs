@@ -2180,7 +2180,10 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
             .map(|action| (action.owner, action.nominal_amount_minor))
             .collect::<Vec<_>>()
     );
-    assert_eq!(right_prefix.outgoing_remaining, sequential.remaining_gratis);
+    assert_eq!(
+        right_prefix.outgoing_remaining,
+        sequential.remaining_lysis_limit_minor
+    );
 
     let owner_left = shuffle_owners(&finalized_left).unwrap();
     let owner_right = shuffle_owners(&finalized_right).unwrap();

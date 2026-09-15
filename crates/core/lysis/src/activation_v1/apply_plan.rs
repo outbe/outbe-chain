@@ -139,7 +139,7 @@ impl TributeRetirementApplyV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CarryOverApplyV1 {
     source_wwd: u32,
-    credited_unused_lysis: U256,
+    credited_unused_lysis_limit_minor: U256,
 }
 
 impl CarryOverApplyV1 {
@@ -149,8 +149,8 @@ impl CarryOverApplyV1 {
     }
 
     #[must_use]
-    pub const fn credited_unused_lysis(&self) -> U256 {
-        self.credited_unused_lysis
+    pub const fn credited_unused_lysis_limit_minor(&self) -> U256 {
+        self.credited_unused_lysis_limit_minor
     }
 }
 
@@ -287,10 +287,10 @@ pub(super) fn tribute_apply(
 
 pub(super) const fn carry_over_apply(
     source_wwd: u32,
-    credited_unused_lysis: U256,
+    credited_unused_lysis_limit_minor: U256,
 ) -> CarryOverApplyV1 {
     CarryOverApplyV1 {
         source_wwd,
-        credited_unused_lysis,
+        credited_unused_lysis_limit_minor,
     }
 }

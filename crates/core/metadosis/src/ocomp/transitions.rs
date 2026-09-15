@@ -442,7 +442,7 @@ impl MetadosisContract<'_> {
         active_generation: ActiveGenerationV1,
         result_evidence_hash: B256,
         lysis_allocation_minor: U256,
-        unused_lysis: U256,
+        unused_lysis_limit_minor: U256,
         activated_at_height: u64,
         activated_at_time: u64,
         permit: LysisTerminalPermitV1<'_, '_>,
@@ -516,8 +516,9 @@ impl MetadosisContract<'_> {
                         .intent
                         .frozen_metadosis_values
                         .request_budget_split_receipt_hash
-                || unused_lysis > record.intent.frozen_metadosis_values.lysis_limit_minor
-                || lysis_allocation_minor.checked_add(unused_lysis)
+                || unused_lysis_limit_minor
+                    > record.intent.frozen_metadosis_values.lysis_limit_minor
+                || lysis_allocation_minor.checked_add(unused_lysis_limit_minor)
                     != Some(record.intent.frozen_metadosis_values.lysis_limit_minor)
             {
                 return Err(storage_corruption_message(
@@ -622,9 +623,9 @@ impl MetadosisContract<'_> {
                 dayGratisDemand: frozen.gratis_demand,
                 dayGratisLimit: frozen.gratis_supply,
                 dayGratisAllocation: frozen.lysis_limit_minor,
-                dayGratisAllocationRemainder: unused_lysis,
+                dayGratisAllocationRemainder: unused_lysis_limit_minor,
                 netDayGratisAllocation: lysis_allocation_minor,
-                dayMetadosisLimitRemainder: unused_lysis,
+                dayMetadosisLimitRemainder: unused_lysis_limit_minor,
                 status: "COMPLETED".into(),
                 blockNumber: activated_at_height,
             })?;

@@ -25,7 +25,7 @@ pub struct CertifiedCarryOverCreditV1 {
     pub source_wwd: u32,
     pub lysis_limit_minor: U256,
     pub lysis_allocation_minor: U256,
-    pub unused_lysis: U256,
+    pub unused_lysis_limit_minor: U256,
 }
 
 /// Adds the exact certified unused-Lysis amount to the live carry-over
@@ -44,11 +44,11 @@ pub fn credit_certified_carry_over(
 
     storage.with_checkpoint(|| {
         let mut promis_limit = PromisLimitContract::new(storage.clone());
-        let credit = promis_limit.checked_add_carry_over(input.unused_lysis)?;
+        let credit = promis_limit.checked_add_carry_over(input.unused_lysis_limit_minor)?;
         let state_projection = CarryOverStateEventProjectionV1 {
             source_wwd: input.source_wwd,
             before_value: credit.before,
-            credited_unused_lysis: credit.credited,
+            credited_unused_lysis_limit_minor: credit.credited,
             after_value: credit.after,
         };
         let state_event_digest =
@@ -58,7 +58,7 @@ pub fn credit_certified_carry_over(
             binding: input.binding.clone(),
             source_wwd: input.source_wwd,
             before_value: credit.before,
-            credited_unused_lysis: credit.credited,
+            credited_unused_lysis_limit_minor: credit.credited,
             after_value: credit.after,
             state_event_digest,
         };
@@ -93,7 +93,10 @@ fn validate_input(
     if capability.activation_call_id() != input.binding.activation_call_id {
         return Err(revert("certified carry-over activation binding mismatch"));
     }
-    if input.lysis_allocation_minor.checked_add(input.unused_lysis) != Some(input.lysis_limit_minor)
+    if input
+        .lysis_allocation_minor
+        .checked_add(input.unused_lysis_limit_minor)
+        != Some(input.lysis_limit_minor)
     {
         return Err(revert("invalid certified carry-over budget conservation"));
     }
@@ -290,7 +293,7 @@ mod tests {
             source_wwd: 20_260_725,
             lysis_limit_minor: U256::from(consumed + unused),
             lysis_allocation_minor: U256::from(consumed),
-            unused_lysis: U256::from(unused),
+            unused_lysis_limit_minor: U256::from(unused),
         }
     }
 
@@ -336,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn certified_credit_adds_unused_lysis_to_actual_current_value() {
+    fn certified_credit_adds_the_unused_lysis_limit_to_actual_current_value() {
         let input = input(31, 8, 2);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(40));
@@ -344,13 +347,13 @@ mod tests {
 
         assert_eq!(receipt.source_wwd, input.source_wwd);
         assert_eq!(receipt.before_value, U256::from(40));
-        assert_eq!(receipt.credited_unused_lysis, U256::from(2));
+        assert_eq!(receipt.credited_unused_lysis_limit_minor, U256::from(2));
         assert_eq!(receipt.after_value, U256::from(42));
         assert_eq!(current(&mut provider), U256::from(42));
         let expected_projection = CarryOverStateEventProjectionV1 {
             source_wwd: input.source_wwd,
             before_value: U256::from(40),
-            credited_unused_lysis: U256::from(2),
+            credited_unused_lysis_limit_minor: U256::from(2),
             after_value: U256::from(42),
         };
         assert_eq!(
@@ -383,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_unused_lysis_preserves_the_accumulator_and_returns_exact_receipt() {
+    fn zero_unused_lysis_limit_preserves_the_accumulator_and_returns_exact_receipt() {
         let input = input(32, 10, 0);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(17));
@@ -391,7 +394,7 @@ mod tests {
         let receipt = run(&mut provider, &input).unwrap();
 
         assert_eq!(receipt.before_value, U256::from(17));
-        assert_eq!(receipt.credited_unused_lysis, U256::ZERO);
+        assert_eq!(receipt.credited_unused_lysis_limit_minor, U256::ZERO);
         assert_eq!(receipt.after_value, U256::from(17));
         assert_eq!(current(&mut provider), U256::from(17));
         assert_eq!(provider.inner.get_ordered_events().len(), 1);
@@ -417,7 +420,7 @@ mod tests {
 
         let mut overflowing_split_input = expected;
         overflowing_split_input.lysis_allocation_minor = U256::MAX;
-        overflowing_split_input.unused_lysis = U256::from(1);
+        overflowing_split_input.unused_lysis_limit_minor = U256::from(1);
         overflowing_split_input.lysis_limit_minor = U256::ZERO;
         let mut overflowing_split = ActivationTestProvider::new();
         seed(&mut overflowing_split, U256::from(9));

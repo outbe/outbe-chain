@@ -347,14 +347,14 @@ fn apply_certified_result(
     let lysis_limit_minor = plan
         .nod()
         .lysis_allocation_minor()
-        .checked_add(plan.carry_over().credited_unused_lysis())
+        .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
         .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
         lysis_limit_minor,
         lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
-        unused_lysis: plan.carry_over().credited_unused_lysis(),
+        unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
@@ -410,7 +410,7 @@ fn apply_certified_result(
             active_generation,
             result_evidence_hash,
             plan.nod().lysis_allocation_minor(),
-            plan.carry_over().credited_unused_lysis(),
+            plan.carry_over().credited_unused_lysis_limit_minor(),
             current_height,
             current_time,
             permit,

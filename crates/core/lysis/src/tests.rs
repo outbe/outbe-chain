@@ -501,7 +501,10 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         assert!(!item.gratis_load_minor.is_zero());
         issued_gratis += item.gratis_load_minor;
     }
-    assert_eq!(issued_gratis + result.remaining_gratis, lysis_limit_minor);
+    assert_eq!(
+        issued_gratis + result.remaining_lysis_limit_minor,
+        lysis_limit_minor
+    );
 }
 
 #[test]
@@ -1183,7 +1186,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
 
         assert!(
-            result.remaining_gratis.is_zero(),
+            result.remaining_lysis_limit_minor.is_zero(),
             "the full scarce allocation must be consumed"
         );
         end_block(s, &scope).unwrap();

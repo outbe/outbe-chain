@@ -61,7 +61,10 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
             plan.tribute().input_binding(),
             &fixture.intent.activation_preconditions.tribute
         );
-        assert_eq!(plan.carry_over().credited_unused_lysis(), U256::from(15));
+        assert_eq!(
+            plan.carry_over().credited_unused_lysis_limit_minor(),
+            U256::from(15)
+        );
     }
 }
 
@@ -412,7 +415,7 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     .is_err());
 
     let mut wrong_carry = receipts.clone();
-    wrong_carry.carry_over.credited_unused_lysis += U256::from(1);
+    wrong_carry.carry_over.credited_unused_lysis_limit_minor += U256::from(1);
     wrong_carry.carry_over.after_value += U256::from(1);
     assert!(verify_receipts(
         &plan,
@@ -497,8 +500,8 @@ fn owner_receipts(
     let carry_projection = CarryOverStateEventProjectionV1 {
         source_wwd: plan.carry_over().source_wwd(),
         before_value: U256::from(77),
-        credited_unused_lysis: plan.carry_over().credited_unused_lysis(),
-        after_value: U256::from(77) + plan.carry_over().credited_unused_lysis(),
+        credited_unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
+        after_value: U256::from(77) + plan.carry_over().credited_unused_lysis_limit_minor(),
     };
     LysisOwnerReceiptsV1 {
         nod: NodBatchReceiptV1 {
@@ -538,7 +541,7 @@ fn owner_receipts(
             binding,
             source_wwd: carry_projection.source_wwd,
             before_value: carry_projection.before_value,
-            credited_unused_lysis: carry_projection.credited_unused_lysis,
+            credited_unused_lysis_limit_minor: carry_projection.credited_unused_lysis_limit_minor,
             after_value: carry_projection.after_value,
             state_event_digest: carry_over_state_event_digest(
                 plan.binding(),
