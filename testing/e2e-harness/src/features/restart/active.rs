@@ -27,6 +27,7 @@ fn joiner_active_persisted_share(world: &mut World) {
     let idx = world.validators.joiner_index();
     let wwd = world.state.wwd.clone().expect("wwd");
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &v0);
     world.state.tribute_tx_hash = Some(
         world
             .rpc

@@ -47,9 +47,7 @@ fn execute() -> Result<(), String> {
         warmups: 3,
     };
     let mut reports = Vec::new();
-    for scenario in [TributeScenario::non_zk(), TributeScenario::zk()] {
-        run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;
-    }
+    run_if_selected(&TributeScenario, &arguments.filter, config, &mut reports)?;
     for scenario in [
         NodScenario::direct(Profile::Single),
         NodScenario::direct(Profile::Typical),

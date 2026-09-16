@@ -1247,6 +1247,7 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
         .expect("validator-0 next-day Tribute owner")
         .evm_key()
         .expect("validator-0 next-day Tribute key");
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &offerer);
     let tribute_tx = world
         .rpc
         .tribute_offer(&offerer, &followup_wwd.to_string())

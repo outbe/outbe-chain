@@ -248,6 +248,13 @@ impl OcompTopology {
         let chain_id = genesis_chain_id(&genesis)?;
         let capacity_accounts_changed =
             fund_capacity_tribute_accounts(&mut genesis, capacity_tribute_private_keys)?;
+        // Register bulk offer owners before launch rather than spending the
+        // fixture's OFFERING window on governance setup.
+        let capacity_registrations_changed = seed_capacity_operator_l2_registrations(
+            &mut genesis,
+            chain_id,
+            capacity_tribute_private_keys,
+        )?;
         let (public_day_changed, public_worldwide_day) =
             if let Some(offering_after_genesis_secs) = public_offering_after_genesis_secs {
                 let (changed, worldwide_day) = schedule_public_measurement_day(
@@ -285,6 +292,7 @@ impl OcompTopology {
         };
         let gas_envelope_changed = apply_measurement_gas_envelope(&mut genesis)?;
         if capacity_accounts_changed
+            || capacity_registrations_changed
             || public_day_changed
             || recovery_day_changed
             || seeded_metadosis_changed

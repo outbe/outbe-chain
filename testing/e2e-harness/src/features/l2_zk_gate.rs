@@ -1,73 +1,22 @@
-//! L2Registry zk signature gate on `offerTribute` (PFS-001-10 / PFS-001-11).
+//! L2Registry zk gate on `offerTribute` (PFS-001-10 / PFS-001-11).
 //!
-//! The harness plays the L2 network: it generates a BLS MinSig keypair,
-//! registers the operator's EOA through validator governance, and governs the
-//! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real FullProof under the pinned circuit whose root is signed with the registered key
-//! must pass the full gate and issue the canonical Tribute through the normal
-//! enclave path.
+//! The harness plays the L2 network: it registers the operator's EOA through
+//! validator governance under a deterministic fixture key, and every offer must
+//! carry a real FullProof under the circuit version enabled for the registered
+//! L2 chain whose root is signed with exactly that registered key.
 
 use alloy_primitives::{Address, B256};
-use ark_bn254::Fr;
-use ark_ff::UniformRand;
-use bytes::Bytes as CodecBytes;
-use commonware_codec::{DecodeExt, Encode};
-use commonware_cryptography::bls12381::primitives::{
-    group::{Private, G2},
-    ops::{self, sign_message},
-    variant::MinSig,
-};
 use cucumber::{then, when};
-use outbe_protocol::primitive::signature::SignatureScheme;
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::protocol::key::{NftSecret, Signer};
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::{Codec, OutbeV1, Suite};
-use outbe_protocol_derive::Entity;
-use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
-use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
-use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
-use rand::{rngs::StdRng, SeedableRng};
-use std::thread::sleep;
-use std::time::Duration;
 
-use crate::internal::addresses::L2_REGISTRY_ADDR;
+use crate::internal::l2_fixture::{self, TributeOfferStatement, TributeOfferZk};
 use crate::world::rpc::TributeZkOffer;
 use crate::world::World;
 
-/// Namespace must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`.
-/// Kept as a literal so the harness exercises the external signing contract
-/// rather than importing the runtime crate.
-const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
+/// The existing canonical test-chain binding used by this basic scenario.
+const L2_CHAIN_ID: u64 = 0xdead;
 
-const L2_CHAIN_ID: u64 = 4242;
-
-#[derive(Entity)]
-struct TributeDraftFixture {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
-}
-
-struct ZkOfferFixture {
-    tribute_draft_id_hex: String,
-    su_hash_hex: String,
-    merkle_root: [u8; 32],
-    proof_hex: String,
-}
+/// The same chain id as the `uint32` circuit selector argument of `offerTribute`.
+const L2_CHAIN_ID_SELECTOR: u32 = 0xdead;
 
 fn low_b256(last_byte: u8) -> B256 {
     let mut value = [0u8; 32];
@@ -75,84 +24,48 @@ fn low_b256(last_byte: u8) -> B256 {
     B256::from(value)
 }
 
-fn field_bytes(field: &Fr) -> [u8; 32] {
-    OutbeV1::field_to_be_bytes(field)
-        .try_into()
-        .expect("BN254 field encoding is 32 bytes")
+/// The governed L2 network this scenario registered, read back from the chain.
+fn registered_network(world: &World) -> (Address, Vec<u8>) {
+    world
+        .rpc
+        .l2_network(L2_CHAIN_ID)
+        .expect("registered L2 network")
 }
 
-fn generate_zk_offer_fixture(
+/// A real offer proof for one statement of this scenario's L2 network.
+fn offer_proof(
+    world: &World,
     l1_owner: Address,
-    chain_id: u64,
+    draft_id: B256,
+    su_hash: B256,
     worldwide_day: u64,
-) -> ZkOfferFixture {
-    // CRS setup uses a blocking download/read path. Generate on a plain thread
-    // rather than inside cucumber's Tokio runtime.
-    std::thread::spawn(move || {
-        init_crs().expect("pinned CRS initializes for e2e proof generation");
-
-        let tribute_draft_id = low_b256(0x11);
-        let su_hash = low_b256(0x22);
-        let mut rng = StdRng::from_seed([9; 32]);
-        let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut rng);
-        let nonce = Fr::rand(&mut rng);
-        let derived_owner = OutbeV1::derive_owner(&public_key, nonce).unwrap();
-        let draft = TributeDraftFixture {
-            id: tribute_draft_id,
-            derived_owner: B256::from(field_bytes(&derived_owner)),
-            worldwide_day,
-            currency: 840,
-            base: 100,
-            atto: 0,
-            su_ids: vec![su_hash],
-        };
-        let binding =
-            OutbeV1::binding(&l1_owner.into_array(), tribute_draft_id.as_ref(), chain_id).unwrap();
-        let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
-            .unwrap()
-            .empty_inclusion_path(0);
-        let (witness, public) = draft
-            .derive_full_witness(&mut rng, &signer, binding, &path)
-            .unwrap();
-        let proof = ProofGenerator::<OutbeV1, FullProof>::generate(
-            &Barretenberg::default(),
-            &witness,
-            &public,
-        )
-        .unwrap();
-
-        let public_inputs = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
-        assert_eq!(public_inputs.len(), 4);
-        let merkle_root = field_bytes(&public_inputs[3]);
-        let mut combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
-        combined.extend_from_slice(&(public_inputs.len() as u32).to_be_bytes());
-        for value in public_inputs {
-            combined.extend_from_slice(&field_bytes(&value));
-        }
-        for field in proof.proof {
-            combined.extend_from_slice(&field);
-        }
-        assert_eq!(combined.len(), FULL_PROOF_COMBINED_LEN);
-
-        ZkOfferFixture {
-            tribute_draft_id_hex: format!("0x{}", hex::encode(tribute_draft_id)),
-            su_hash_hex: format!("0x{}", hex::encode(su_hash)),
-            merkle_root,
-            proof_hex: format!("0x{}", hex::encode(combined)),
-        }
+) -> TributeOfferZk {
+    l2_fixture::prove_tribute_offer(TributeOfferStatement {
+        host_chain_id: world
+            .rpc
+            .chain_id(world.validators.primary_port())
+            .expect("chain id the offer executes on"),
+        caller: l1_owner,
+        l2_chain_id: L2_CHAIN_ID,
+        worldwide_day,
+        tribute_currency: 840,
+        amount_base: "100",
+        amount_micro: "0",
+        draft_id,
+        su_hash,
     })
-    .join()
-    .expect("e2e proof generation thread")
 }
 
-fn proof_from_other_statement(original: &ZkOfferFixture, donor: &ZkOfferFixture) -> String {
-    let original =
-        hex::decode(original.proof_hex.trim_start_matches("0x")).expect("original proof");
-    let donor = hex::decode(donor.proof_hex.trim_start_matches("0x")).expect("donor proof");
+/// Mix one statement's public inputs with another statement's proof words, so
+/// the result is well formed but cryptographically invalid for its statement.
+fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk) -> Vec<u8> {
+    use outbe_zk_backend::barretenberg::verify_circuit;
+    use outbe_zk_canonical::full_proof::{decode_public_inputs, PUBLIC_INPUT_COUNT};
+    use outbe_zk_canonical::noir::full_proof::FullProof;
+
+    let original = original.proof.clone();
+    let donor = donor.proof.clone();
     std::thread::spawn(move || {
-        use outbe_zk_backend::barretenberg::verify_circuit;
-        use outbe_zk_canonical::full_proof::{decode_public_inputs, PUBLIC_INPUT_COUNT};
         let public = decode_public_inputs(&original).expect("original public inputs");
         let other = decode_public_inputs(&donor).expect("donor public inputs");
         assert_ne!(
@@ -162,9 +75,9 @@ fn proof_from_other_statement(original: &ZkOfferFixture, donor: &ZkOfferFixture)
         assert!(verify_circuit::<FullProof>(&original).expect("original proof verification"));
         assert!(verify_circuit::<FullProof>(&donor).expect("donor proof verification"));
         let prefix = 4 + PUBLIC_INPUT_COUNT * 32;
-        let mut tampered = original.clone();
+        let mut tampered = original;
         tampered[prefix..].copy_from_slice(&donor[prefix..]);
-        assert_ne!(tampered, original);
+        assert_ne!(tampered, donor, "mixed proof must differ from its donor");
         assert_eq!(
             decode_public_inputs(&tampered).expect("tampered public inputs"),
             public
@@ -173,7 +86,7 @@ fn proof_from_other_statement(original: &ZkOfferFixture, donor: &ZkOfferFixture)
             !verify_circuit::<FullProof>(&tampered).expect("well-formed mixed proof verification"),
             "mixed proof must fail cryptographic verification"
         );
-        format!("0x{}", hex::encode(tampered))
+        tampered
     })
     .join()
     .expect("proof control verifier thread")
@@ -188,136 +101,28 @@ fn operator_key(world: &World) -> String {
         .expect("validator-0 key")
 }
 
-fn operator_address(world: &World, key: &str) -> Address {
-    world
-        .rpc
-        .address_of(key)
-        .expect("operator address")
-        .parse()
-        .expect("operator address hex")
-}
-
-fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: String) {
-    let operator = world
-        .validators
-        .operator("validator-0")
-        .expect("validator-0 operator");
-    let tx = world
-        .rpc
-        .send_propose(&operator, &format!("{L2_REGISTRY_ADDR:#x}"), &payload)
-        .expect("submit L2 registry proposal");
-    assert!(world.rpc.wait_tx(&tx, 40), "proposal tx not mined: {tx}");
-
-    let mut proposal = world
-        .rpc
-        .vote_status(proposal_id)
-        .expect("observe L2 registry proposal");
-    for _ in 0..10 {
-        if proposal.visible {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-        proposal = world
-            .rpc
-            .vote_status(proposal_id)
-            .expect("observe L2 registry proposal");
-    }
-    assert!(proposal.visible, "proposal #{proposal_id} is not visible");
-    assert_eq!(proposal.status, "pending");
-    assert!(
-        proposal
-            .target
-            .eq_ignore_ascii_case(&format!("{L2_REGISTRY_ADDR:#x}")),
-        "proposal target {} is not L2Registry",
-        proposal.target
-    );
-
-    for name in ["validator-0", "validator-1", "validator-2"] {
-        let validator = world.validators.by_name(name).expect("validator");
-        world
-            .rpc
-            .cast_vote(&validator, proposal_id, true)
-            .expect("cast L2 registry vote");
-    }
-    let mut proposal = world
-        .rpc
-        .vote_status(proposal_id)
-        .expect("observe L2 registry proposal votes");
-    for _ in 0..10 {
-        if proposal.yes == 3 {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-        proposal = world
-            .rpc
-            .vote_status(proposal_id)
-            .expect("observe L2 registry proposal votes");
-    }
-    assert_eq!(proposal.status, "pending");
-    assert_eq!(proposal.yes, 3);
-    let deadline = proposal.deadline.expect("proposal deadline");
-    let height = world
-        .rpc
-        .wait_block_gt(world.validators.primary_port(), deadline, 80)
-        .expect("chain progress past L2 registry proposal deadline");
-    assert!(
-        height > deadline,
-        "did not pass proposal deadline {deadline}"
-    );
-    assert!(
-        world
-            .rpc
-            .wait_vote_status(proposal_id, "approved", 60)
-            .expect("observe L2 registry proposal approval"),
-        "L2 registry proposal #{proposal_id} was not approved"
-    );
-}
-
-#[when("an L2 network is registered for the operator with zk enabled")]
-fn register_l2_network_with_zk(world: &mut World) {
+#[when("an L2 network is registered for the operator")]
+fn register_l2_network(world: &mut World) {
     let key = operator_key(world);
-    let l1_address = operator_address(world, &key);
+    let l1_address = super::l2_registration::operator_address(world, &key);
+    let public = l2_fixture::root_signing_public_key(L2_CHAIN_ID);
 
-    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
-        rand_commonware::rngs::SysRng,
-    ));
-    let public = public.encode().to_vec();
-    world.state.l2_bls_private_hex = Some(hex::encode(private.encode()));
-    world.state.l2_chain_id = Some(L2_CHAIN_ID);
-
-    let payload = serde_json::json!({
-        "operation": "register",
-        "chainId": L2_CHAIN_ID,
-        "l1Address": format!("{l1_address:#x}"),
-        "publicKey": format!("0x{}", hex::encode(&public)),
-        "zkEnabled": true,
-    })
-    .to_string();
-    approve_l2_registry_proposal(world, 1, payload);
-
-    let registered = world.rpc.l2_network(L2_CHAIN_ID).expect("registered L2");
-    assert_eq!(registered, (l1_address, public, true));
+    super::l2_registration::ensure_tribute_offer_operator(world, &key);
+    assert_eq!(registered_network(world), (l1_address, public));
 }
 
-#[when("zk verification is disabled for the registered L2 network")]
-fn disable_l2_zk(world: &mut World) {
-    let chain_id = world.state.l2_chain_id.expect("registered L2 chain id");
-    let payload = serde_json::json!({
-        "operation": "setZkEnabled",
-        "chainId": chain_id,
-        "enabled": false,
-    })
-    .to_string();
-    approve_l2_registry_proposal(world, 2, payload);
-    let (_, _, enabled) = world.rpc.l2_network(chain_id).expect("registered L2");
-    assert!(!enabled, "governed L2 ZK disable did not apply");
-}
-
-#[then("the governed L2 network is registered with zk enabled")]
+#[then("the governed L2 network is registered")]
 fn governed_l2_is_registered(world: &mut World) {
-    let (_, public_key, enabled) = world.rpc.l2_network(L2_CHAIN_ID).expect("registered L2");
-    assert_eq!(public_key.len(), 96);
-    assert!(enabled);
+    let (owner, public_key) = registered_network(world);
+    assert_eq!(
+        owner,
+        super::l2_registration::operator_address(world, &operator_key(world))
+    );
+    assert_eq!(
+        public_key,
+        l2_fixture::root_signing_public_key(L2_CHAIN_ID),
+        "the registered key must be the fixture key that signs offer roots"
+    );
 }
 
 #[when("the operator submits an encrypted tribute offer without an L2 signature")]
@@ -335,6 +140,8 @@ fn offer_without_signature(world: &mut World) {
                 su_hash_hex: &format!("{:#x}", low_b256(0x22)),
                 merkle_root_hex: &format!("{:#x}", low_b256(0x33)),
                 proof_hex: "0x",
+                l2_chain_id: L2_CHAIN_ID_SELECTOR,
+                circuit_version: l2_fixture::FIXTURE_CIRCUIT_VERSION,
                 signature_hex: "0x",
             },
         )
@@ -342,53 +149,74 @@ fn offer_without_signature(world: &mut World) {
     world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
 }
 
+/// Submit one offer carrying a real proof for the operator's own draft, signed
+/// by the registered network key. Expected to be admitted.
+fn submit_proven_offer(world: &mut World, tag: &str) {
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let worldwide_day = wwd.parse::<u64>().expect("worldwide-day number");
+    let key = operator_key(world);
+    let l1_owner = super::l2_registration::operator_address(world, &key);
+    let (draft_id, su_hash) = l2_fixture::offer_identifiers(tag, l1_owner, worldwide_day as u32);
+    let zk = offer_proof(world, l1_owner, draft_id, su_hash, worldwide_day);
+
+    super::tribute_projection::wait_for_offering(world, &wwd);
+    let tx_hash = world
+        .rpc
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            TributeZkOffer {
+                tribute_draft_id_hex: &zk.tribute_draft_id_hex,
+                su_hash_hex: &zk.su_hash_hex,
+                merkle_root_hex: &zk.merkle_root_hex(),
+                proof_hex: &zk.proof_hex(),
+                l2_chain_id: zk.l2_chain_id,
+                circuit_version: zk.circuit_version,
+                signature_hex: &zk.signature_hex(),
+            },
+        )
+        .expect("outbe-cli returned the proven offerTribute transaction hash");
+    world.state.tribute_tx_hash = Some(tx_hash);
+}
+
+#[when("the operator submits a valid FullProof offer for one encrypted tribute")]
+fn offer_with_valid_full_proof(world: &mut World) {
+    submit_proven_offer(world, "zk-gate-valid");
+}
+
 #[when("the operator proves a signed tampered proof is rejected then submits the valid FullProof")]
 fn offer_with_valid_zk_proof(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let worldwide_day = wwd.parse::<u64>().expect("worldwide-day number");
     let key = operator_key(world);
-    let l1_owner = operator_address(world, &key);
-    let chain_id = world
-        .rpc
-        .chain_id(world.validators.primary_port())
-        .expect("chain id");
-    let fixture = generate_zk_offer_fixture(
+    let l1_owner = super::l2_registration::operator_address(world, &key);
+    let (draft_id, su_hash) =
+        l2_fixture::offer_identifiers("zk-gate-tampered", l1_owner, worldwide_day as u32);
+    let fixture = offer_proof(world, l1_owner, draft_id, su_hash, worldwide_day);
+    let (donor_draft_id, donor_su_hash) =
+        l2_fixture::offer_identifiers("zk-gate-donor", l1_owner, worldwide_day as u32);
+    let donor = offer_proof(
+        world,
         l1_owner,
-        chain_id,
-        wwd.parse().expect("worldwide-day number"),
-    );
-    let donor = generate_zk_offer_fixture(
-        l1_owner,
-        chain_id.checked_add(1).expect("donor chain id"),
-        wwd.parse().unwrap(),
+        donor_draft_id,
+        donor_su_hash,
+        worldwide_day,
     );
     let tampered = proof_from_other_statement(&fixture, &donor);
-    let private_hex = world
-        .state
-        .l2_bls_private_hex
-        .as_deref()
-        .expect("registered L2 BLS key");
-    let private = <Private as DecodeExt<()>>::decode(CodecBytes::from(
-        hex::decode(private_hex).expect("stored key hex"),
-    ))
-    .expect("decode stored BLS key");
-    let signature =
-        sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &fixture.merkle_root);
-    let (registered_owner, public, enabled) = world
-        .rpc
-        .l2_network(L2_CHAIN_ID)
-        .expect("registered signing key");
+
+    let (registered_owner, public_key) = registered_network(world);
     assert_eq!(registered_owner, l1_owner);
-    assert!(enabled);
-    let public =
-        <G2 as DecodeExt<()>>::decode(CodecBytes::from(public)).expect("registered BLS key");
-    ops::verify_message::<MinSig>(
-        &public,
-        ZK_MERKLE_ROOT_NAMESPACE,
-        &fixture.merkle_root,
-        &signature,
-    )
-    .expect("positive control: signature verifies against the registered key");
-    let signature = signature.encode().to_vec();
+    assert!(
+        l2_fixture::verify_merkle_root(&public_key, &fixture.merkle_root, &fixture.signature),
+        "positive control: the fixture signature must verify against the registered key"
+    );
+    assert_eq!(
+        world
+            .rpc
+            .l2_chain_by_l1_address(l1_owner)
+            .expect("read the operator's L2Registry mapping"),
+        L2_CHAIN_ID
+    );
 
     super::tribute_projection::wait_for_offering(world, &wwd);
     let rejected = world
@@ -399,9 +227,11 @@ fn offer_with_valid_zk_proof(world: &mut World) {
             TributeZkOffer {
                 tribute_draft_id_hex: &fixture.tribute_draft_id_hex,
                 su_hash_hex: &fixture.su_hash_hex,
-                merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
-                proof_hex: &tampered,
-                signature_hex: &format!("0x{}", hex::encode(&signature)),
+                merkle_root_hex: &fixture.merkle_root_hex(),
+                proof_hex: &format!("0x{}", hex::encode(&tampered)),
+                l2_chain_id: fixture.l2_chain_id,
+                circuit_version: fixture.circuit_version,
+                signature_hex: &fixture.signature_hex(),
             },
         )
         .expect("submit well-formed tampered proof with a valid signature");
@@ -414,21 +244,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     super::tribute_negatives::assert_supply(world, 0);
     super::tribute_projection::wait_for_offering(world, &wwd);
 
-    let tx_hash = world
-        .rpc
-        .tribute_offer_with_zk(
-            &key,
-            &wwd,
-            TributeZkOffer {
-                tribute_draft_id_hex: &fixture.tribute_draft_id_hex,
-                su_hash_hex: &fixture.su_hash_hex,
-                merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
-                proof_hex: &fixture.proof_hex,
-                signature_hex: &format!("0x{}", hex::encode(signature)),
-            },
-        )
-        .expect("outbe-cli returned signed offerTribute transaction hash");
-    world.state.tribute_tx_hash = Some(tx_hash);
+    submit_proven_offer(world, "zk-gate-tampered-valid");
 }
 
 #[then("the offer is rejected and tribute supply stays zero")]
@@ -450,31 +266,21 @@ fn offer_rejected_desis_limit_minor_zero(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::full_proof::{
-        alloy::PublicInputs, decode_public_inputs as decode_full_proof_public_inputs,
-    };
+    use outbe_l2registry::api as l2_api;
 
     #[test]
-    #[ignore = "generates and verifies a real Barretenberg FullProof"]
-    fn generated_zk_offer_fixture_contains_a_valid_full_proof() {
-        let fixture = generate_zk_offer_fixture(Address::repeat_byte(0x44), 19_280_501, 20_260_729);
-        let proof = hex::decode(
-            fixture
-                .proof_hex
-                .strip_prefix("0x")
-                .expect("fixture proof has 0x prefix"),
-        )
-        .expect("fixture proof is hex");
-
-        let public: PublicInputs = decode_full_proof_public_inputs(&proof)
-            .expect("public inputs decode")
-            .try_into()
-            .expect("Alloy public inputs");
-        assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
-        assert_eq!(public.merkle_root, fixture.merkle_root);
-        let donor = generate_zk_offer_fixture(Address::repeat_byte(0x44), 19_280_502, 20_260_729);
-        let tampered = proof_from_other_statement(&fixture, &donor);
-        assert_ne!(tampered, fixture.proof_hex);
+    fn scenario_uses_the_preexisting_circuit_binding() {
+        assert_eq!(L2_CHAIN_ID_SELECTOR, L2_CHAIN_ID as u32);
+        let bound = outbe_zk_canonical::l2_circuits(L2_CHAIN_ID);
+        assert!(
+            bound
+                .iter()
+                .any(|entry| entry.version == l2_fixture::FIXTURE_CIRCUIT_VERSION),
+            "the gate scenario's chain must be bound to the fixture circuit version"
+        );
+        assert_eq!(
+            l2_api::ZK_MERKLE_ROOT_NAMESPACE,
+            l2_fixture::ZK_MERKLE_ROOT_NAMESPACE
+        );
     }
 }

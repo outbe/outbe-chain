@@ -155,7 +155,7 @@ use fixtures::genesis::{
     apply_measurement_gas_envelope, capacity_tribute_private_keys, clear_seeded_metadosis_days,
     find_alloc_address_key, fund_capacity_tribute_accounts, genesis_chain_id, parse_hex_word,
     parse_outbe_chain_spec, parse_storage_word, schedule_public_measurement_day,
-    seed_fresh_metadosis_oracle_input,
+    seed_capacity_operator_l2_registrations, seed_fresh_metadosis_oracle_input,
 };
 
 #[cfg(feature = "ocomp-integration")]

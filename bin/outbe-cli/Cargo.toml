@@ -18,6 +18,7 @@ alloy-sol-types.workspace = true
 alloy-eips.workspace = true
 outbe-consensus.workspace = true
 outbe-primitives.workspace = true
+outbe-l2registry.workspace = true
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true
 outbe-paynote.workspace = true

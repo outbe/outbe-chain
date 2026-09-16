@@ -983,6 +983,7 @@ fn submit_dynamic_membership_tributes(world: &mut World) {
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 EVM key");
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
     let mut transaction_hashes = Vec::with_capacity(worldwide_days.len());
 
     for worldwide_day in &worldwide_days {

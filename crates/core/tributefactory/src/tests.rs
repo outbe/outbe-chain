@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_compressed_entities::{
-    begin_block, derive_poseidon_digest, EntityRef, ExecutionScope, IdPage, IdPageRequest,
-    ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
+    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
+    ParentBodySourceError, QueryRef, StoredBody,
 };
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -19,13 +19,12 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 use outbe_tribute::TributeContract;
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
 
-const CHAIN_ID: u64 = 1;
+const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 
 struct NoParentBodies;
 
@@ -62,7 +61,7 @@ mod l2_zk_gate {
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
 
-    const L2_CHAIN_ID: u64 = 4242;
+    const L2_CHAIN_ID: u64 = 0xdead;
 
     fn caller() -> Address {
         Address::repeat_byte(0x77)
@@ -83,6 +82,8 @@ mod l2_zk_gate {
             reference_currency: 840,
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
+            l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+            circuit_version: "1.1.0".to_owned(),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
@@ -106,8 +107,33 @@ mod l2_zk_gate {
         }
     }
 
+    // A signed, well-framed proof envelope lets these tests reach business
+    // validation; its dummy proof must never reach the crypto backend.
+    fn signed_gate_offer(storage: StorageHandle<'_>) -> OfferTributeInput {
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{
+            ops, ops::sign_message, variant::MinSig,
+        };
+        let mut rng =
+            <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rng);
+        L2RegistryContract::new(storage)
+            .register_network(L2_CHAIN_ID, caller(), &public.encode())
+            .unwrap();
+        let root = [0x04; 32];
+        let signature = sign_message::<MinSig>(
+            &private,
+            outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+            &root,
+        )
+        .encode();
+        let mut input = offer(&root, &signature);
+        input.zk_proof = dummy_full_proof(root);
+        input
+    }
+
     #[test]
-    fn offer_rejects_invalid_l2_signature_when_zk_enabled() {
+    fn offer_rejects_invalid_l2_signature() {
         use commonware_codec::Encode;
         use commonware_cryptography::bls12381::primitives::{
             ops::{self, sign_message},
@@ -126,20 +152,17 @@ mod l2_zk_gate {
             registry
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
-            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
 
             let scope = ExecutionScope::new();
             let mut factory = TributeFactoryContract::new(storage.clone());
 
-            // Enabled + missing signature: the gate rejects before any
-            // oracle/metadosis/enclave work.
+            // A missing signature is rejected before oracle/metadosis/enclave work.
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, offer(&root, &[]))
                 .unwrap_err();
             assert!(revert_message(err).contains("invalid BLS signature"));
 
-            // Enabled + valid signature: the gate passes and the offer
-            // proceeds to the next stage (no OFFERING day in this fixture).
+            // A valid signature passes this gate (no OFFERING day in this fixture).
             let good_sig = sign_message::<MinSig>(
                 &private,
                 outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
@@ -147,6 +170,21 @@ mod l2_zk_gate {
             )
             .encode()
             .to_vec();
+            // A signed root does not select a missing version or implicitly
+            // adopt the global registry's newer FullProof version.
+            for version in ["", "1.2.0"] {
+                let mut wrong_version = offer(&root, &good_sig);
+                wrong_version.zk_proof = dummy_full_proof(root);
+                wrong_version.circuit_version = version.to_owned();
+                let error = factory
+                    .offer_tribute(&scope, &NoParentBodies, wrong_version)
+                    .unwrap_err();
+                let expected = crate::errors::TributeFactoryError::UnknownCircuitVersion {
+                    chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+                    version: version.to_owned(),
+                };
+                assert_eq!(revert_message(error), expected.to_string());
+            }
             let mut valid_gate = offer(&root, &good_sig);
             valid_gate.zk_proof = dummy_full_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
@@ -154,11 +192,26 @@ mod l2_zk_gate {
                 .offer_tribute(&scope, &NoParentBodies, valid_gate)
                 .unwrap_err();
             assert!(revert_message(err).contains("is not in OFFERING status"));
+
+            // The otherwise valid selector cannot be borrowed by an operator
+            // registered on another L2, even with that L2's valid signature.
+            registry.remove_network(caller(), L2_CHAIN_ID).unwrap();
+            registry.register_network(4242, caller(), &public).unwrap();
+            let mut wrong_chain = offer(&root, &good_sig);
+            wrong_chain.zk_proof = dummy_full_proof(root);
+            let error = factory
+                .offer_tribute(&scope, &NoParentBodies, wrong_chain)
+                .unwrap_err();
+            let expected = crate::errors::TributeFactoryError::CircuitChainMismatch {
+                provided: u32::try_from(L2_CHAIN_ID).unwrap(),
+                registered: 4242,
+            };
+            assert_eq!(revert_message(error), expected.to_string());
         });
     }
 
     #[test]
-    fn enabled_network_requires_proof_and_matching_public_root() {
+    fn registered_network_requires_proof_and_matching_public_root() {
         use commonware_codec::Encode;
         use commonware_cryptography::bls12381::primitives::{
             ops::{self, sign_message},
@@ -184,7 +237,6 @@ mod l2_zk_gate {
             registry
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
-            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
             let scope = ExecutionScope::new();
 
             let mut factory = TributeFactoryContract::new(storage.clone());
@@ -204,39 +256,19 @@ mod l2_zk_gate {
     }
 
     #[test]
-    fn offer_skips_signature_check_for_unregistered_and_disabled() {
-        use commonware_codec::Encode;
-        use commonware_cryptography::bls12381::primitives::{
-            ops::{self},
-            variant::MinSig,
-        };
-
-        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
-            rand_commonware::rngs::SysRng,
-        ));
-        let public = public.encode().to_vec();
-
+    fn unregistered_operators_cannot_offer() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
             let scope = ExecutionScope::new();
 
-            // Unregistered caller with empty zk fields sails past the gate.
+            // An unregistered caller must fail before any enclave work.
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
+                .offer_tribute_with_processor(&scope, &NoParentBodies, offer(&[], &[]), |_| {
+                    panic!("unregistered caller reached the enclave")
+                })
                 .unwrap_err();
-            assert!(revert_message(err).contains("is not in OFFERING status"));
-
-            // Registered but zk disabled: still no signature requirement.
-            let mut registry = L2RegistryContract::new(storage.clone());
-            registry
-                .register_network(L2_CHAIN_ID, caller(), &public)
-                .unwrap();
-            let mut factory = TributeFactoryContract::new(storage.clone());
-            let err = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
-                .unwrap_err();
-            assert!(revert_message(err).contains("is not in OFFERING status"));
+            assert!(revert_message(err).contains("not a registered L2 operator"));
         });
     }
 
@@ -250,7 +282,7 @@ mod l2_zk_gate {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
             let scope = ExecutionScope::new();
-            let mut bad_day = offer(&[], &[]);
+            let mut bad_day = signed_gate_offer(storage.clone());
             bad_day.worldwide_day = 20250230u32.into(); // February 30th
 
             let mut factory = TributeFactoryContract::new(storage);
@@ -275,7 +307,7 @@ mod l2_zk_gate {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
             let scope = ExecutionScope::new();
-            let mut unpriced = offer(&[], &[]);
+            let mut unpriced = signed_gate_offer(storage.clone());
             unpriced.tribute_currency = 999; // never registered
 
             let mut factory = TributeFactoryContract::new(storage);
@@ -323,7 +355,6 @@ fn test_validate_agent_reward_invalid_address() {
 }
 
 const TARGET_WWD_A: WorldwideDay = WorldwideDay::new(20_260_802);
-const TARGET_WWD_B: WorldwideDay = WorldwideDay::new(20_260_803);
 const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
 
@@ -381,232 +412,139 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
     }
 }
 
-fn offer_input(caller: Address, worldwide_day: WorldwideDay) -> OfferTributeInput {
-    OfferTributeInput {
-        caller,
-        cipher_text: Bytes::new(),
-        nonce: Bytes::new(),
-        ephemeral_pubkey: U256::ZERO,
-        worldwide_day,
+#[test]
+#[ignore = "requires the pinned Barretenberg CRS"]
+fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{
+        ops::{self, sign_message},
+        variant::MinSig,
+    };
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
+    use outbe_zk_canonical::full_proof::{alloy::PublicInputs, decode_public_inputs};
+    use x25519_dalek::{PublicKey, StaticSecret};
+
+    const PROOF: &[u8] = include_bytes!(
+        "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
+    );
+    const CALLER: Address = Address::repeat_byte(0x77);
+    const REWARD_DAY: u32 = 20_260_803;
+    const PRIVATE_KEY: [u8; 32] = [0x33; 32];
+    outbe_zk_backend::barretenberg::init_crs().unwrap();
+    let public: PublicInputs = decode_public_inputs(PROOF).unwrap().try_into().unwrap();
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "creator": format!("{CALLER:#x}"),
+        "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
+        "amount_base": "100",
+        "amount_micro": "0",
+        "su_hashes": [format!("{:#x}", B256::with_last_byte(0x22))],
+        "wallet_addresses": [format!("{REWARD_WALLET:#x}")],
+        "sra_addresses": [format!("{REWARD_SRA:#x}")],
+    }))
+    .unwrap();
+    let offer_public_key = PublicKey::from(&StaticSecret::from(PRIVATE_KEY)).to_bytes();
+    let (cipher, nonce, ephemeral) =
+        outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
+    let key = TributeOfferKeyMaterial {
+        tribute_offer_private_key: &PRIVATE_KEY,
+        salt: &outbe_tee::OFFER_HKDF_SALT,
+    };
+    let mut rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+    let (private, group_key) = ops::keypair::<_, MinSig>(&mut rng);
+    let signature = sign_message::<MinSig>(
+        &private,
+        outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+        public.merkle_root.as_slice(),
+    )
+    .encode();
+    let make_offer = || OfferTributeInput {
+        caller: CALLER,
+        cipher_text: Bytes::copy_from_slice(&cipher),
+        nonce: Bytes::copy_from_slice(&nonce),
+        ephemeral_pubkey: U256::from_be_bytes(ephemeral),
+        worldwide_day: TARGET_WWD_A,
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        zk_proof: Bytes::new(),
-        zk_merkle_root: Bytes::new(),
-        signature: Bytes::new(),
-    }
-}
-
-fn successful_offer_processor(
-    offers: &[EncryptedTributeOffer],
-) -> core::result::Result<Vec<TributeOfferResult>, PrecompileError> {
-    Ok(offers
-        .iter()
-        .map(|offer| TributeOfferResult {
-            token_id: derive_poseidon_digest(offer.owner, offer.worldwide_day).unwrap(),
-            owner: offer.owner,
-            issuance_amount_minor: U256::ONE,
-            nominal_amount_minor: U256::ONE,
-            effective_reference_price_minor: offer
-                .reference_wwd_vwap_minor
-                .max(offer.reference_scurve_minor),
-            su_hashes: Vec::new(),
-            wallet_addresses: vec![REWARD_WALLET.to_string()],
-            sra_addresses: vec![REWARD_SRA.to_string()],
-            zk_expected_hashes: None,
-            status: TributeOfferStatus::Created,
-        })
-        .collect())
-}
-
-fn execute_successful_offer(
-    storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
-    caller: Address,
-    worldwide_day: WorldwideDay,
-) -> outbe_primitives::error::Result<()> {
-    TributeFactoryContract::new(storage)
-        .offer_tribute_with_processor(
-            scope,
-            &NoParentBodies,
-            offer_input(caller, worldwide_day),
-            successful_offer_processor,
-        )
-        .map(|_| ())
-}
-
-fn active_scope(storage: StorageHandle<'_>) -> ExecutionScope {
+        zk_proof: Bytes::from_static(PROOF),
+        l2_chain_id: 0xdead,
+        circuit_version: "1.1.0".to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(public.merkle_root.as_slice()),
+        signature: Bytes::copy_from_slice(&signature),
+    };
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
     let scope = ExecutionScope::new();
-    begin_block(storage, &scope).unwrap();
-    scope
-}
-
-#[test]
-fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_utc_day() {
-    const REWARD_UTC_DAY: u32 = 20_260_825;
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_offer_world(storage.clone(), &[TARGET_WWD_A, TARGET_WWD_B]);
-        storage
-            .set_block_timestamp(U256::from(
-                date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
-            ))
-            .unwrap();
-        let scope = active_scope(storage.clone());
-
-        for index in 0..100u8 {
-            let target = if index % 2 == 0 {
-                TARGET_WWD_A
-            } else {
-                TARGET_WWD_B
-            };
-            execute_successful_offer(
-                storage.clone(),
-                &scope,
-                Address::repeat_byte(index + 1),
-                target,
-            )
-            .unwrap();
-        }
-
-        let rewards = AgentRewardContract::new(storage);
-        assert_eq!(
-            rewards.get_all_waa_counts(REWARD_UTC_DAY.into()).unwrap(),
-            vec![(REWARD_WALLET, 100)]
-        );
-        assert_eq!(
-            rewards.get_all_sra_counts(REWARD_UTC_DAY.into()).unwrap(),
-            vec![(REWARD_SRA, 100)]
-        );
-        for target in [TARGET_WWD_A, TARGET_WWD_B] {
-            assert!(rewards.get_all_waa_counts(target).unwrap().is_empty());
-            assert!(rewards.get_all_sra_counts(target).unwrap().is_empty());
-        }
-    });
-}
-
-#[test]
-fn real_offer_writer_uses_utc_calendar_boundaries() {
-    const OLD_DAY: u32 = 20_261_231;
-    const NEW_DAY: u32 = 20_270_101;
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
-        let scope = active_scope(storage.clone());
-        storage
-            .set_block_timestamp(U256::from(
-                date_key_to_utc_timestamp(NEW_DAY).saturating_sub(1),
-            ))
+        let mut registry = L2RegistryContract::new(storage.clone());
+        registry
+            .register_network(0xdead, CALLER, &group_key.encode())
             .unwrap();
-        execute_successful_offer(
-            storage.clone(),
-            &scope,
-            Address::repeat_byte(0x31),
-            TARGET_WWD_A,
-        )
-        .unwrap();
-
-        storage
-            .set_block_timestamp(U256::from(date_key_to_utc_timestamp(NEW_DAY)))
-            .unwrap();
-        execute_successful_offer(
-            storage.clone(),
-            &scope,
-            Address::repeat_byte(0x32),
-            TARGET_WWD_A,
-        )
-        .unwrap();
-
-        let rewards = AgentRewardContract::new(storage);
-        for day in [OLD_DAY, NEW_DAY] {
-            assert_eq!(
-                rewards.get_all_waa_counts(day.into()).unwrap(),
-                vec![(REWARD_WALLET, 1)]
-            );
-            assert_eq!(
-                rewards.get_all_sra_counts(day.into()).unwrap(),
-                vec![(REWARD_SRA, 1)]
-            );
-        }
+        begin_block(storage.clone(), &scope).unwrap();
     });
-}
-
-#[test]
-fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
-    const REWARD_UTC_DAY: u32 = 20_260_825;
-
-    let mutation_count = {
-        let mut probe = HashMapStorageProvider::new(CHAIN_ID);
-        StorageHandle::enter(&mut probe, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
-            storage
-                .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
-                .unwrap();
-        });
-        probe.clear_mutation_failure();
-        probe.fail_after_mutation_at(usize::MAX);
-        StorageHandle::enter(&mut probe, |storage| {
-            let scope = active_scope(storage.clone());
-            storage
-                .with_checkpoint(|| {
-                    execute_successful_offer(
-                        storage.clone(),
-                        &scope,
-                        Address::repeat_byte(0x41),
-                        TARGET_WWD_A,
-                    )
-                })
-                .unwrap();
-        });
-        probe.clear_mutation_failure()
-    };
-    assert!(mutation_count > 2);
-
-    for operation in 0..mutation_count {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        StorageHandle::enter(&mut provider, |storage| {
-            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
-            storage
-                .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
-                .unwrap();
-        });
-        provider.clear_mutation_failure();
-        let before = provider.storage.clone();
-        provider.fail_after_mutation_at(operation);
-
-        StorageHandle::enter(&mut provider, |storage| {
-            let scope = active_scope(storage.clone());
-            assert!(storage
-                .with_checkpoint(|| {
-                    execute_successful_offer(
-                        storage.clone(),
-                        &scope,
-                        Address::repeat_byte(0x41),
-                        TARGET_WWD_A,
-                    )
-                })
-                .is_err());
-        });
-        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+    let before_offer = provider.storage.clone();
+    provider.fail_after_mutation_at(usize::MAX);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut factory = TributeFactoryContract::new(storage.clone());
+        let id = factory
+            .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
+                Ok(process_tribute_offer_batch(&key, offers).0)
+            })
+            .unwrap();
+        let stored = TributeContract::new(storage.clone())
+            .get_tribute(&scope, &NoParentBodies, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.owner, CALLER);
+        assert_eq!(stored.worldwide_day, TARGET_WWD_A);
+    });
+    let mutations = provider.clear_mutation_failure();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut factory = TributeFactoryContract::new(storage.clone());
+        let replay = factory
+            .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
+                Ok(process_tribute_offer_batch(&key, offers).0)
+            })
+            .unwrap_err();
+        assert!(matches!(replay, PrecompileError::Revert(_)));
+        let rewards = AgentRewardContract::new(storage);
         assert_eq!(
-            provider.storage, before,
-            "operation {operation} leaked state"
+            rewards.get_all_waa_counts(REWARD_DAY.into()).unwrap(),
+            vec![(REWARD_WALLET, 1)]
         );
+        assert_eq!(
+            rewards.get_all_sra_counts(REWARD_DAY.into()).unwrap(),
+            vec![(REWARD_SRA, 1)]
+        );
+        assert!(rewards.get_all_waa_counts(TARGET_WWD_A).unwrap().is_empty());
+    });
 
-        StorageHandle::enter(&mut provider, |storage| {
-            let rewards = AgentRewardContract::new(storage);
-            assert!(rewards
-                .get_all_waa_counts(REWARD_UTC_DAY.into())
-                .unwrap()
-                .is_empty());
-            assert!(rewards
-                .get_all_sra_counts(REWARD_UTC_DAY.into())
-                .unwrap()
-                .is_empty());
-        });
-    }
+    // Fail the final mutation of the real offer, after Tribute issuance and
+    // reward writes have begun, inside the enclosing VM transaction checkpoint.
+    provider.storage = before_offer.clone();
+    provider.fail_after_mutation_at(mutations - 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let scope = ExecutionScope::new();
+        begin_block(storage.clone(), &scope).unwrap();
+        storage
+            .with_checkpoint(|| {
+                TributeFactoryContract::new(storage.clone()).offer_tribute_with_processor(
+                    &scope,
+                    &NoParentBodies,
+                    make_offer(),
+                    |offers| Ok(process_tribute_offer_batch(&key, offers).0),
+                )
+            })
+            .unwrap_err();
+    });
+    assert_eq!(provider.clear_mutation_failure(), mutations);
+    assert_eq!(
+        provider.storage, before_offer,
+        "failed offer leaked issued or reward state"
+    );
 }
 
 #[test]
