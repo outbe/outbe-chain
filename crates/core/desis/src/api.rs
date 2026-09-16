@@ -56,7 +56,7 @@ pub enum AuctionBriefReceipt {
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
-    supply_promis: U256,
+    desis_limit_minor: U256,
     reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
@@ -64,7 +64,7 @@ pub fn dispatch_auction_brief(
 ) -> Result<AuctionBriefReceipt> {
     storage.clone().with_checkpoint(|| {
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
-        let Ok(supply_u128) = u128::try_from(supply_promis) else {
+        let Ok(supply_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
             if matches!(overflow, BriefOverflowPolicy::Reject) {
@@ -75,13 +75,13 @@ pub fn dispatch_auction_brief(
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
-                supply: supply_promis,
+                supply: desis_limit_minor,
                 maxAccepted: max_accepted,
                 reasonCode: reason.code(),
             })?;
             return Ok(AuctionBriefReceipt::RejectedToCarryOver {
                 reason,
-                supply: supply_promis,
+                supply: desis_limit_minor,
                 max_accepted,
             });
         };

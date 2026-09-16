@@ -251,7 +251,7 @@ pub struct NodContract {
     #[attribute(order = 24)]
     pub ocomp_nod_amount_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
-    /// Exact certified Gratis consumed by the Nod generation.
+    /// Exact certified Lysis Allocation carried by the Nod generation.
     #[attribute(order = 25)]
     pub ocomp_lysis_allocation_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 

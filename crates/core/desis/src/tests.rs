@@ -229,15 +229,15 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     with_targets(&[SRC_CHAIN], f)
 }
 
-fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128, green: bool) {
-    brief_at_rate(s, worldwide_day, supply_promis, ENTRY_PRICE, green)
+fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, desis_limit_minor: u128, green: bool) {
+    brief_at_rate(s, worldwide_day, desis_limit_minor, ENTRY_PRICE, green)
 }
 
 /// Brief a day quoted at `rate`, which is what the PROMIS load is picked from.
 fn brief_at_rate(
     s: &StorageHandle,
     worldwide_day: WorldwideDay,
-    supply_promis: u128,
+    desis_limit_minor: u128,
     rate: u128,
     green: bool,
 ) {
@@ -245,7 +245,7 @@ fn brief_at_rate(
         crate::api::dispatch_auction_brief(
             s.clone(),
             worldwide_day,
-            U256::from(supply_promis),
+            U256::from(desis_limit_minor),
             vec![crate::schema::ReferenceCurrencyPrice {
                 iso_code: REFERENCE_ISO,
                 entry_price_minor: U256::from(rate),
