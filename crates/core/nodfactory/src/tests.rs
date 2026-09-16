@@ -163,7 +163,7 @@ impl World {
         proof: &[u8],
     ) -> Result<(), PrecompileError> {
         self.enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, caller, nod_id, proof)
+            api::settle_nod_with_paynote(&storage, scope, parent, caller, nod_id, proof)
         })
     }
 
@@ -810,7 +810,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PayNoteAssetMismatch {
+            if reason == &NodFactoryError::SettlementAssetMismatch {
                 asset: other_asset,
                 reference_currency: input.reference_currency,
             }
@@ -926,7 +926,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
 #[test]
 fn settlement_charges_zk_verification_base_gas() {
     assert_eq!(
-        crate::precompile::base_gas(&INodFactory::settleNodCall::SELECTOR),
+        crate::precompile::base_gas(&INodFactory::settleNodWithPayNoteCall::SELECTOR),
         outbe_primitives::storage::gas::ZK_VERIFY_GAS
     );
     assert_eq!(
@@ -1272,4 +1272,115 @@ fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
         )
         .unwrap();
     });
+}
+
+#[test]
+fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() {
+    let mut world = World::new();
+    let mut input = params(Address::repeat_byte(0x91));
+    input.entry_price_minor = U256::ZERO;
+    let nod_id = world.issue(&input);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let settle = |world: &mut World, caller, asset| {
+        world.enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, caller, nod_id, asset)
+        })
+    };
+    for (caller, expected) in [
+        (Address::repeat_byte(0x92), NodFactoryError::NotOwner),
+        (input.owner, NodFactoryError::NodNotQualified),
+    ] {
+        assert_eq!(
+            settle(&mut world, caller, NOTE_ASSET)
+                .unwrap_err()
+                .to_string(),
+            PrecompileError::from(expected).to_string()
+        );
+    }
+    world.qualify(nod_id);
+    let error = settle(&mut world, input.owner, Address::ZERO).unwrap_err();
+    assert!(error.to_string().contains("settlement asset"));
+    assert!(
+        !world
+            .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+            .unwrap()
+            .unwrap()
+            .is_settled
+    );
+
+    // No token transfer stubs: zero cost must require neither funds nor approvals.
+    settle(&mut world, input.owner, NOTE_ASSET).unwrap();
+    assert_eq!(
+        settle(&mut world, input.owner, NOTE_ASSET)
+            .unwrap_err()
+            .to_string(),
+        PrecompileError::from(NodFactoryError::NodAlreadySettled).to_string()
+    );
+    let paid = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .last()
+        .unwrap();
+    assert_eq!(paid.nullifier, B256::ZERO);
+    assert_eq!(paid.amountCovered, U256::ZERO);
+}
+
+#[test]
+fn erc20_selector_has_no_zk_surcharge_and_old_paynote_selector_is_rejected() {
+    assert_eq!(
+        crate::precompile::base_gas(&INodFactory::settleNodCall::SELECTOR),
+        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
+    );
+    alloy_sol_types::sol! { function settleNod(uint256 nodId, bytes payNoteProof) external; }
+    let data = settleNodCall {
+        nodId: U256::ONE,
+        payNoteProof: Bytes::new(),
+    }
+    .abi_encode();
+    let mut world = World::new();
+    assert!(world
+        .enter(|storage, scope, parent| crate::precompile::dispatch(
+            storage,
+            scope,
+            parent,
+            &data,
+            Address::repeat_byte(1),
+            U256::ZERO,
+        ))
+        .is_err());
+}
+
+#[test]
+fn erc20_settlement_uses_the_existing_inclusive_deadline() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x93));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    let deadline = called_at + u64::from(CALL_NOTICE_PERIOD);
+    for (timestamp, expected) in [
+        (deadline + 1, NodFactoryError::CallDeadlineExpired),
+        (
+            deadline,
+            NodFactoryError::SettlementAssetMismatch {
+                asset: Address::ZERO,
+                reference_currency: 840,
+            },
+        ),
+    ] {
+        world.set_timestamp(timestamp);
+        let error = world
+            .enter(|storage, scope, parent| {
+                api::settle_nod(&storage, scope, parent, input.owner, nod_id, Address::ZERO)
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(expected).to_string()
+        );
+    }
 }
