@@ -29,9 +29,8 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
-    /// Names the spent nullifier instead of a payer address: the note is what
-    /// pays, and it is deliberately not linkable to a payer.
+    /// @notice Emitted when a Nod is paid. ERC20 payments use a zero nullifier;
+    /// PayNote payments identify the spent note by its nullifier.
     event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
@@ -53,9 +52,15 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
+    /// @notice Pay the caller-owned qualified Nod's costAmountMinor in ERC20 base units.
+    /// The asset must be registered for the Nod's reference currency.
+    /// Approve NodFactory before calling. Payment is deposited through VaultRouter.
+    /// Preserves the paid Nod for later mining; the settlement deadline still applies.
+    function settleNod(uint256 nodId, address asset) external;
+
     /// @notice Pay the caller-owned qualified Nod at or before its settlement deadline.
     /// Preserves the Nod as a paid entitlement. No PoW or mint authorization is needed.
-    function settleNod(uint256 nodId, bytes calldata payNoteProof) external;
+    function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
     /// @notice Exercise a caller-owned paid Nod and mint its Gratis load.
     /// Requires valid PoW and the owner's current Gratis mint authorization.

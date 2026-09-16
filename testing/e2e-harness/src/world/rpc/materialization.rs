@@ -182,14 +182,16 @@ impl Rpc {
             &self.url(port),
             addresses::NOD_FACTORY_ADDR,
             private_key,
-            &INodFactory::settleNodCall {
+            &INodFactory::settleNodWithPayNoteCall {
                 nodId: U256::from_be_slice(&nod_id),
                 payNoteProof: Bytes::copy_from_slice(pay_note_proof),
             },
             None,
         )?;
         if eth::receipt_success(&self.url(port), &settlement_hash) != Some(true) {
-            return Err(eyre!("post-completion settleNod transaction failed"));
+            return Err(eyre!(
+                "post-completion settleNodWithPayNote transaction failed"
+            ));
         }
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
