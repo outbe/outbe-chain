@@ -373,6 +373,9 @@ pub(crate) fn compute_fraction_map_from_groups(
         .ok_or_else(|| ProgramErrorV1::Arithmetic {
             message: "maximum Gratis fraction overflow".to_owned(),
         })?;
+    // The distribution prioritizes its first group: highest league first.
+    shares.reverse();
+    populations.reverse();
     let mut fractions = calc_fraction_distribution_fp(
         &shares,
         &populations,
@@ -383,6 +386,8 @@ pub(crate) fn compute_fraction_map_from_groups(
     .map_err(|error| ProgramErrorV1::Arithmetic {
         message: error.to_string(),
     })?;
+    // Match the ascending league IDs and nominals for projection and output.
+    fractions.reverse();
 
     // Six-decimal share rounding can make the real group projection exceed the
     // allocation even when the normalized share-space projection does not. Own
@@ -519,4 +524,50 @@ pub(crate) fn compute_fraction_hash_map(
         gratis_allocation,
     )
     .map(|fractions| fractions.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn higher_leagues_receive_higher_fractions_within_budget() {
+        for (populations, nominals, allocation) in [
+            ([1_u32, 1, 1], [1_000_000_u64; 3], 960_000_u64),
+            ([1000, 50, 1], [999_998, 1, 1], 320_000),
+            ([1, 50, 1000], [1, 1, 999_998], 320_000),
+            ([1, 1, 1], [1, 1, 1], 1),
+            ([1, 1, 1], [1_000_000; 3], 3),
+        ] {
+            let leagues = [1, 2048, 4096];
+            let groups = leagues
+                .into_iter()
+                .zip(populations.into_iter().zip(nominals.map(U256::from)))
+                .collect();
+            let total = nominals.into_iter().map(U256::from).sum();
+            let allocation = U256::from(allocation);
+            let fractions = compute_fraction_map_from_groups(
+                &groups,
+                populations.into_iter().sum(),
+                total,
+                allocation,
+            )
+            .unwrap();
+            assert!(fractions[&1] <= fractions[&2048]);
+            assert!(fractions[&2048] <= fractions[&4096]);
+            let spent = leagues
+                .into_iter()
+                .zip(nominals)
+                .map(|(league, nominal)| U256::from(nominal) * fractions[&league] / SCALE)
+                .sum::<U256>();
+            assert!(spent <= allocation);
+            if nominals == [1_000_000; 3] && allocation == U256::from(960_000) {
+                assert!(fractions[&1] < fractions[&2048]);
+                assert!(fractions[&2048] < fractions[&4096]);
+            }
+            if allocation == U256::from(3) {
+                assert!(fractions[&1] == fractions[&2048] || fractions[&2048] == fractions[&4096]);
+            }
+        }
+    }
 }
