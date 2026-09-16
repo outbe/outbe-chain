@@ -991,16 +991,17 @@ fn clear_inner(
         })?;
     }
 
-    // Return the unsold Promis (unsold whole units + conversion dust) to PromisLimit.
-    let issued_promis =
+    // Return the Unused Desis Limit (unsold whole units + conversion dust) to PromisLimit.
+    let desis_allocation_minor =
         U256::from(result.issued_units as u128) * U256::from(config.promis_load_minor);
-    let unused_promis = desis_limit_minor.saturating_sub(issued_promis);
-    if !unused_promis.is_zero() {
+    let unused_desis_limit_minor = desis_limit_minor.saturating_sub(desis_allocation_minor);
+    if !unused_desis_limit_minor.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
             worldwideDay: worldwide_day.into(),
-            unusedPromis: unused_promis,
+            unusedPromis: unused_desis_limit_minor,
         })?;
-        PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
+        PromisLimitContract::new(storage.clone())
+            .add_to_total_unallocated(unused_desis_limit_minor)?;
     }
 
     if result.issued_units == 0 {
