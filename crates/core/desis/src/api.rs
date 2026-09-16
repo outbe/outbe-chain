@@ -29,7 +29,7 @@ impl AuctionBriefRejectionReason {
     }
 }
 
-/// What an oversized supply means for the caller: the settlement paths carry it
+/// What an oversized limit means for the caller: the settlement paths carry it
 /// to the unallocated pool, the OCOMP request path cannot because its receipt
 /// commits a brief hash that a rejection would have nothing to fill.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,8 +49,8 @@ pub enum AuctionBriefReceipt {
     },
 }
 
-/// Record the day's auction brief (supply in raw PROMIS, entry price, day
-/// type). Only a supply outside Desis' `u128` auction domain is a committed
+/// Record the day's auction brief (limit in raw PROMIS, entry price, day
+/// type). Only a limit outside Desis' `u128` auction domain is a committed
 /// rejection. Invalid state, timestamp overflow, storage/index/event faults and
 /// corruption propagate as `Err`.
 pub fn dispatch_auction_brief(

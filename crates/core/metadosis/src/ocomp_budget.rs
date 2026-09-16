@@ -130,7 +130,7 @@ pub(crate) fn apply_fresh_request_budget_effect(
     Ok(receipt)
 }
 
-/// Draw the day's auction base from the accumulator and brief Desis with it.
+/// Draw the day's Desis Limit from the accumulator and brief Desis with it.
 ///
 /// Called once Lysis has closed, so the accumulator already holds what Lysis returned and a day
 /// whose Lysis never completed never opens an auction.

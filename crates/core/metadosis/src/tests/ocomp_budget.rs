@@ -428,7 +428,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
                 .get_total_unallocated()
                 .unwrap(),
             U256::from(996),
-            "a RED day opens no auction, so its base returns with the headroom"
+            "a RED day opens no auction, so its limit returns with the headroom"
         );
     });
 }

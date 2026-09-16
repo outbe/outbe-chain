@@ -922,7 +922,7 @@ fn partition_chains(
 }
 
 /// Run the clearing algorithm over the included chains' bids, transition to
-/// `Cleared`, hand issuance to IntexFactory, return unused supply to PromisLimit
+/// `Cleared`, hand issuance to IntexFactory, return the unused limit to PromisLimit
 /// and send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
 fn clear_inner(
     storage: StorageHandle<'_>,
@@ -941,7 +941,7 @@ fn clear_inner(
 
     let config = contract.read_auction_config(worldwide_day)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&worldwide_day)? as u16;
-    // Zero bids are valid here: `calculate_clearing` yields 0 issued, the full supply returns
+    // Zero bids are valid here: `calculate_clearing` yields 0 issued, the full limit returns
     // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
     let bids = contract.read_chains_bids(worldwide_day, included)?;
 

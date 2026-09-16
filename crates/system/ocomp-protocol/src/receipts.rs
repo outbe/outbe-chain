@@ -423,7 +423,7 @@ impl RequestBudgetSplitReceiptV1 {
             && self.destination == BudgetSplitDestination::CarryOver
             && self.desis_brief_hash.is_some();
         require(green || red, "request budget split destination")?;
-        // The base a red day never opens is still a share of its limit.
+        // The Desis Limit a red day never opens is still a share of the day limit.
         let split_total = self
             .lysis_limit_minor
             .checked_add(self.desis_limit_minor)
@@ -432,7 +432,7 @@ impl RequestBudgetSplitReceiptV1 {
             })?;
         require(split_total <= self.day_limit, "request budget split")?;
         // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
-        // the warehouse; a red day briefs nothing, so its base returns with the headroom.
+        // the warehouse; a red day briefs nothing, so its limit returns with the headroom.
         let briefed = if green {
             self.desis_limit_minor
         } else {

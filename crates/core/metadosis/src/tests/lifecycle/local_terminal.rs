@@ -521,7 +521,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a supply-less brief; a day with no tributes issues nothing,
+        // A red day is recorded as a brief with no limit; a day with no tributes issues nothing,
         // so its whole limit goes back to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -668,8 +668,8 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
         let nominal = U256::from(1_000);
-        // A red day divides supply by RED_DAY_REDUCTION_COEF. This non-zero
-        // day limit therefore produces an exact zero Lysis allocation.
+        // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
+        // non-zero day limit therefore produces an exact zero Lysis Limit.
         let day_limit = U256::from(2);
         let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -875,7 +875,7 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
 
         // A cold oracle prices nothing, and the empty table is load-bearing: it
         // is how Desis is told the day is unpriced, so it cancels the auction and
-        // refunds the supply instead of opening one at a zero entry price.
+        // refunds the limit instead of opening one at a zero entry price.
         assert!(
             crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
                 .unwrap()

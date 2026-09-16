@@ -2213,7 +2213,7 @@ fn test_iface_id_matches_selector_xor() {
 
 // --- Clearing: one series per currency pair ---
 
-/// Brief `units` of supply against several priced reference currencies and drive
+/// Brief `units` of Desis Limit against several priced reference currencies and drive
 /// the schedule until the clearing gate is armed.
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
     let rows = references
@@ -2451,13 +2451,13 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             "and leaves the schedule"
         );
         // It was briefed green, so it holds the day's PROMIS - unlike a red day, which
-        // is briefed with none. Cancelling it must give that supply back.
+        // is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .get_total_unallocated()
                 .unwrap(),
             U256::from(4 * LOAD_MINOR),
-            "an unpriced day returns its supply"
+            "an unpriced day returns its limit"
         );
     });
 }
