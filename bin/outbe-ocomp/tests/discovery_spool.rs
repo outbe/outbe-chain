@@ -63,7 +63,7 @@ fn verified_receipt_with(
     byte: u8,
     mutate_manifest: impl FnOnce(&mut InputManifestV1),
 ) -> VerifiedExportReceipt {
-    let directory = TempDir::new().expect("receipt tempdir");
+    let directory = support::tempdir().expect("receipt tempdir");
     let limits = exporter_schema_limits();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
@@ -224,7 +224,7 @@ fn observation_locator_excludes_substitutable_authority_fields() {
 
 #[test]
 fn offer_restart_duplicate_and_scalar_pending_are_exact() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let job = spec(0x71, 1);
     let first = spool(&temp);
     let (offer, outcome) = first.put_offer(3, &job).expect("first offer");
@@ -249,7 +249,7 @@ fn offer_restart_duplicate_and_scalar_pending_are_exact() {
 
 #[test]
 fn pending_cursor_streams_without_collecting_the_spool() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     for cursor in 1..=257 {
         spool
@@ -268,7 +268,7 @@ fn pending_cursor_streams_without_collecting_the_spool() {
 
 #[test]
 fn pending_cursor_releases_the_spool_lock_between_records() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x61, 1);
     let (offer, _) = spool.put_offer(6, &job).expect("offer");
@@ -285,7 +285,7 @@ fn pending_cursor_releases_the_spool_lock_between_records() {
 
 #[test]
 fn acknowledged_history_is_absent_from_the_durable_pending_index() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     for (seed, cursor) in [(0x41, 1), (0x42, 2), (0x43, 3)] {
         let job = spec(seed, cursor);
@@ -316,7 +316,7 @@ fn acknowledged_history_is_absent_from_the_durable_pending_index() {
 
 #[test]
 fn retirement_waits_for_the_durable_closure_checkpoint_then_removes_history() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x45, 7);
     let (offer, _) = spool.put_offer(7, &job).expect("offer");
@@ -367,7 +367,7 @@ fn retirement_waits_for_the_durable_closure_checkpoint_then_removes_history() {
 
 #[test]
 fn prepared_retirement_survives_restart_and_fences_late_ack() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let job = spec(0x46, 8);
     let first = spool(&temp);
     let (offer, _) = first.put_offer(8, &job).expect("offer");
@@ -413,7 +413,7 @@ fn prepared_retirement_survives_restart_and_fences_late_ack() {
 #[test]
 fn retirement_recovers_after_each_unlink_crash_cut() {
     for cut in ["after_ack", "after_offer"] {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = support::tempdir().expect("tempdir");
         let first = spool(&temp);
         let job = spec(0x47, 9);
         let (offer, _) = first.put_offer(9, &job).expect("offer");
@@ -458,7 +458,7 @@ fn retirement_recovers_after_each_unlink_crash_cut() {
 
 #[test]
 fn closed_unacknowledged_offer_and_pending_marker_are_retired_together() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x48, 10);
     let (offer, _) = spool.put_offer(10, &job).expect("offer");
@@ -475,7 +475,7 @@ fn closed_unacknowledged_offer_and_pending_marker_are_retired_together() {
 
 #[test]
 fn unacknowledged_retirement_recovers_after_pending_unlink() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let first = spool(&temp);
     let job = spec(0x49, 11);
     let (offer, _) = first.put_offer(11, &job).expect("offer");
@@ -508,7 +508,7 @@ fn unacknowledged_retirement_recovers_after_pending_unlink() {
 #[test]
 fn substituted_spec_generation_and_identity_latch_quarantine() {
     for conflict in ["spec", "generation", "identity"] {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = support::tempdir().expect("tempdir");
         let spool = spool(&temp);
         let original = spec(0x51, 1);
         let (reference, _) = spool.put_offer(4, &original).expect("offer");
@@ -541,7 +541,7 @@ fn substituted_spec_generation_and_identity_latch_quarantine() {
 
 #[test]
 fn ack_before_restart_and_ack_after_restart_are_durable() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let first_job = spec(0x31, 1);
     let first = spool(&temp);
     let (first_offer, _) = first.put_offer(8, &first_job).expect("offer");
@@ -585,7 +585,7 @@ fn ack_before_restart_and_ack_after_restart_are_durable() {
 
 #[test]
 fn duplicate_ack_is_idempotent_and_conflicting_ack_latches() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x44, 1);
     let (offer, _) = spool.put_offer(11, &job).expect("offer");
@@ -632,7 +632,7 @@ fn duplicate_ack_is_idempotent_and_conflicting_ack_latches() {
 
 #[test]
 fn ack_rejects_a_self_consistent_receipt_for_substituted_finalized_authority() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x46, 1);
     let (offer, _) = spool.put_offer(12, &job).expect("offer");
@@ -651,7 +651,7 @@ fn ack_rejects_a_self_consistent_receipt_for_substituted_finalized_authority() {
 
 #[test]
 fn malformed_or_foreign_ack_never_suppresses_a_pending_offer() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let first_job = spec(0x61, 1);
     let second_job = spec(0x62, 2);
@@ -686,7 +686,7 @@ fn malformed_or_foreign_ack_never_suppresses_a_pending_offer() {
 
 #[test]
 fn ack_requires_exact_next_pin_generation_and_generation_overflow_latches() {
-    let wrong_temp = TempDir::new().expect("tempdir");
+    let wrong_temp = support::tempdir().expect("tempdir");
     let wrong_spool = spool(&wrong_temp);
     let job = spec(0x45, 1);
     let (offer, _) = wrong_spool.put_offer(11, &job).expect("offer");
@@ -696,7 +696,7 @@ fn ack_requires_exact_next_pin_generation_and_generation_overflow_latches() {
         Err(DiscoverySpoolError::ConflictLatched { .. })
     ));
 
-    let overflow_temp = TempDir::new().expect("tempdir");
+    let overflow_temp = support::tempdir().expect("tempdir");
     let overflow_spool = spool(&overflow_temp);
     let (overflow_offer, _) = overflow_spool
         .put_offer(u64::MAX, &job)
@@ -717,7 +717,7 @@ fn ack_requires_exact_next_pin_generation_and_generation_overflow_latches() {
 
 #[test]
 fn malformed_corrupt_symlink_and_permissive_modes_are_rejected() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let spool = spool(&temp);
     let job = spec(0x21, 1);
     let (offer, _) = spool.put_offer(3, &job).expect("offer");
@@ -729,7 +729,7 @@ fn malformed_corrupt_symlink_and_permissive_modes_are_rejected() {
             | Err(DiscoverySpoolError::CorruptRecord { .. })
     ));
 
-    let symlink_temp = TempDir::new().expect("tempdir");
+    let symlink_temp = support::tempdir().expect("tempdir");
     let root = symlink_temp.path().join("link-root");
     symlink(symlink_temp.path().join("missing"), &root).expect("symlink root");
     assert!(matches!(
@@ -737,7 +737,7 @@ fn malformed_corrupt_symlink_and_permissive_modes_are_rejected() {
         Err(DiscoverySpoolError::UnsafePath(_))
     ));
 
-    let mode_temp = TempDir::new().expect("tempdir");
+    let mode_temp = support::tempdir().expect("tempdir");
     let mode_root = mode_temp.path().join("mode-root");
     fs::create_dir(&mode_root).expect("mode root");
     fs::set_permissions(&mode_root, fs::Permissions::from_mode(0o755)).expect("mode");
@@ -749,7 +749,7 @@ fn malformed_corrupt_symlink_and_permissive_modes_are_rejected() {
 
 #[test]
 fn regular_crash_temps_are_removed_but_symlink_temps_are_rejected() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let first = spool(&temp);
     let crash_temp = first.offers_root().join("crashed.offer.tmp");
     fs::write(&crash_temp, b"partial").expect("crash temp");
@@ -781,7 +781,7 @@ fn checkpoint(number: u64, byte: u8) -> ProjectionCheckpoint {
 
 #[test]
 fn checkpoint_store_initializes_restarts_and_advances_contiguously() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let root = temp.path().join("checkpoint");
     let baseline = checkpoint(100, 0x10);
     let next = checkpoint(101, 0x11);
@@ -802,7 +802,7 @@ fn checkpoint_store_initializes_restarts_and_advances_contiguously() {
 
 #[test]
 fn checkpoint_store_persists_a_sparse_advance_without_per_block_ram_state() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let root = temp.path().join("sparse-checkpoint");
     let baseline = checkpoint(100, 0x10);
     let sparse = checkpoint(10_000, 0x20);
@@ -830,7 +830,7 @@ fn checkpoint_store_persists_a_sparse_advance_without_per_block_ram_state() {
 
 #[test]
 fn checkpoint_store_rejects_wrong_baseline_stale_conflict_and_non_contiguous() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = support::tempdir().expect("tempdir");
     let root = temp.path().join("checkpoint");
     let baseline = checkpoint(10, 0x10);
     let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("store");
