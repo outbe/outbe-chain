@@ -440,7 +440,7 @@ fn measure_gate(fixture: &Fixture) -> GateMeasurement {
     let gas_used = StorageHandle::enter(&mut provider, |storage| {
         let outcome = outbe_l2registry::api::check_zk_merkle_root_signature(
             storage.clone(),
-            CALLER,
+            u64::from(L2_CHAIN_ID),
             root,
             signature,
         )

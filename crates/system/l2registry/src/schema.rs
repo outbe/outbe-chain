@@ -14,8 +14,8 @@ pub struct L2NetworkRecord {
     #[key]
     pub chain_id: u64,
 
-    /// L1 account submitting on behalf of the network. Non-zero for every
-    /// registered network (validated at registration; doubles as existence).
+    /// L1 operator account managing the network, not a required Tribute submitter.
+    /// Non-zero for every registered network; doubles as the existence marker.
     #[attribute(order = 0)]
     pub l1_address: Address,
 
