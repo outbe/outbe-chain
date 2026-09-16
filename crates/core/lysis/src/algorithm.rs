@@ -207,7 +207,8 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// Computes lysis fractions for each FI group using fixed-point integer math.
 ///
 /// # Parameters
-/// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE, sorted ascending FI).
+/// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE), ordered
+///   by allocation priority, highest first. Population counts use the same order.
 ///   Caller is responsible for normalization - integer-division truncation must
 ///   be absorbed before this call.
 /// - `p`: population counts per FI group

@@ -13,6 +13,12 @@ use outbe_ocomp_protocol::{
     registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
 };
 
+/// Keep system temp-directory symlinks outside storage path validation.
+#[allow(dead_code)]
+pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)
+}
+
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(if byte == 0 { 0xff } else { byte })
 }

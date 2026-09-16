@@ -74,6 +74,24 @@
         "internalType": "uint256"
       },
       {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleNodWithPayNote",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "payNoteProof",
         "type": "bytes",
         "internalType": "bytes"

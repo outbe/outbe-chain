@@ -1046,15 +1046,16 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
 # values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
 # (see contracts/precompiles/src/IVaultRouter.sol).
 #   StablesSource: Unknown=0 IntexCostAmount=1 CredisCostAmount=2
-#                  GemCostAmount=3 PayNoteDeposit=4
+#                  GemCostAmount=3 PayNoteDeposit=4 NodCostAmount=5
 #   StablesTarget: Unknown=0 Credis=1
 #
-# NodFactory, IntexFactory and GemFactory are deliberately absent: their costs
+# IntexFactory and GemFactory are deliberately absent: their costs
 # are discharged by spending a PayNote, and the underlying assets reached the
 # vault through PAYNOTE_ADDRESS when the note was deposited.
 VAULT_ROUTER_LIQUIDITY_SOURCES = [
     (CREDIS_FACTORY_ADDRESS, 2),  # CredisCostAmount
     (PAYNOTE_ADDRESS, 4),         # PayNoteDeposit
+    (NOD_FACTORY_ADDRESS, 5),     # NodCostAmount
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis

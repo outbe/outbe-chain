@@ -2349,18 +2349,16 @@ fn copy_immutable_artifact(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .wrap_err("system clock precedes Unix epoch")?
-        .as_millis();
-    // Keep the task root compact: the E2E harness adds run/scenario/validator
-    // components before creating reth.ipc, whose Linux sun_path is limited to
-    // 107 pathname bytes plus the terminating NUL.
-    let path = std::env::temp_dir().join(format!("{task}-{}-{timestamp}", std::process::id()));
-    if path.exists() {
-        bail!("fresh task output already exists: {}", path.display());
-    }
-    Ok(path)
+    // Unix socket paths need a short root even when TMPDIR is deeply nested.
+    let root = Path::new("/tmp")
+        .canonicalize()
+        .wrap_err("resolve short task temporary root")?;
+    let directory = tempfile::Builder::new()
+        .prefix(task)
+        .tempdir_in(root)
+        .wrap_err("allocate fresh task output parent")?;
+    // Retain evidence while leaving the output itself absent for freshness checks.
+    Ok(directory.keep().join("out"))
 }
 
 fn require_matching_final_consensus_artifacts(generated: &Path, checked: &Path) -> Result<()> {
@@ -2631,8 +2629,11 @@ mod tests {
     #[test]
     fn ocm26_output_root_leaves_room_for_the_reth_ipc_socket() {
         let output = fresh_task_output_dir("ocm26").expect("fresh OCM-26 output root");
-        let ipc =
-            output.join("run-01/data/run-1786339127-4194304/scenario-1/validator-0/data/reth.ipc");
+        assert!(!output.exists());
+        let root = output.parent().expect("allocated output parent");
+        assert_eq!(root, root.canonicalize().expect("canonical output parent"));
+        let ipc = output
+            .join("run-01/data/run-1786339127-4294967295/scenario-1/validator-0/data/reth.ipc");
 
         assert!(
             ipc.as_os_str().len() <= 107,
@@ -2640,6 +2641,11 @@ mod tests {
             ipc.as_os_str().len(),
             ipc.display()
         );
+        fs::create_dir_all(ipc.parent().expect("IPC parent")).expect("create IPC parent");
+        let listener = std::os::unix::net::UnixListener::bind(&ipc)
+            .expect("IPC path fits the current platform's socket capacity");
+        drop(listener);
+        fs::remove_dir_all(root).expect("remove allocated task directory");
     }
 
     #[test]

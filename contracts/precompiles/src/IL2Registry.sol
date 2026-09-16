@@ -3,8 +3,8 @@ pragma solidity ^0.8.30;
 
 /// Registry of L2 networks. Registration is governance-only; chain id 0 is invalid.
 ///
-/// Every registered operator must provide a valid root signature and ZK proof
-/// when offering a Tribute.
+/// Any caller may offer a Tribute with a valid root signature and ZK proof for
+/// the selected chain. The caller need not match the registered `l1Address`.
 interface IL2Registry {
     event L2NetworkRegistered(uint64 indexed chainId, address indexed l1Address, bytes publicKey);
     event L2NetworkRemoved(uint64 indexed chainId);

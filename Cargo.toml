@@ -174,7 +174,6 @@ outbe-governance = { path = "crates/core/governance" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
-outbe-e2e = { path = "testing/e2e" }
 outbe-common = { path = "crates/core/common" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
@@ -195,7 +194,6 @@ alloy-provider = { version = "=2.3.0" }
 alloy-signer = { version = "=2.3.0" }
 alloy-signer-local = { version = "=2.3.0" }
 alloy-network = { version = "=2.3.0" }
-alloy-transport-http = { version = "=2.3.0" }
 alloy-rpc-types = { version = "=2.3.0" }
 
 # Alloy-EVM (pinned to match reth v2.5.2)
@@ -206,8 +204,6 @@ revm = { version = "=42.0.1", default-features = false, features = ["std"] }
 
 # Reth v2.5.2 (revm 42, alloy 2.3, alloy-evm 0.38)
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
-reth-ethereum-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
-reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
@@ -235,7 +231,6 @@ reth-trie = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
-reth-payload-validator = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.5.2" }
 reth-primitives-traits = { version = "0.6.0", default-features = false }
 reth-codecs = { version = "0.6.0", default-features = false, features = [
     "alloy",
@@ -269,7 +264,6 @@ ring = "0.17"
 zeroize = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
-either = "1"
 num-bigint = "0.4"
 num-traits = "0.2"
 
@@ -308,7 +302,6 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 bytes = "1"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
-modular-bitfield = "0.13"
 
 # TEE node <-> enclave transport (Noise-IK over UDS)
 snow = "0.9"
@@ -319,8 +312,6 @@ toml = "0.8"
 # Testing
 tempfile = "3"
 proptest = "1"
-proptest-state-machine = "0.3"
-arbitrary = { version = "1", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 # Proc-macro
