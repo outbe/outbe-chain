@@ -281,7 +281,8 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
         .and_then(|left| left.checked_sub(exercised))
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
-    let expired = record.lifecycle_state()? == IntexState::Expired;
+    let now = storage.timestamp()?.to::<u64>();
+    let expired = record.effective_state(now)? == IntexState::Expired;
     Ok(UnitCounts {
         issued: record.issued_units,
         active: if expired { 0 } else { unpaid },

@@ -1159,6 +1159,8 @@ fn the_view_carries_the_whole_split() {
         assert_eq!(data.settledUnits, 25);
         assert_eq!(data.exercisedUnits, 5);
         assert_eq!(data.gemFactoryUnits, 25);
+        // Retired by the sweep: the stored state passes through.
+        assert_eq!(data.state, IntexState::Expired as u8);
     });
 }
 
@@ -1196,6 +1198,58 @@ fn expired_is_terminal() {
         assert!(api::expire_series(&s, id).is_err());
         assert!(api::mark_qualified(&s, id).is_err());
         assert!(api::mark_called(&s, id, ISSUED_AT).is_err());
+    });
+}
+
+/// The registry with its clock at `now`; series still carry `ISSUED_AT`.
+fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(now));
+    StorageHandle::enter(&mut storage, f)
+}
+
+const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
+
+#[test]
+fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
+    // Strictly after: on the deadline itself the notice has not run out.
+    with_registry_at(NOTICE_END, |s| {
+        let id = called_series(&s, 60);
+        assert_eq!(dispatch_series_data(&s, id).state, IntexState::Called as u8);
+    });
+
+    with_registry_at(NOTICE_END + 1, |s| {
+        let id = called_series(&s, 61);
+        assert_eq!(
+            dispatch_series_data(&s, id).state,
+            IntexState::Expired as u8
+        );
+        // Derived, not written: the sweep has not run.
+        assert_eq!(
+            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
+            IntexState::Called
+        );
+    });
+}
+
+#[test]
+fn the_unpaid_remainder_is_forfeited_from_the_deadline_not_from_the_sweep() {
+    with_registry_at(NOTICE_END + 1, |s| {
+        let id = called_series(&s, 62);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.forfeited, 45);
+        assert_eq!(
+            counts.active
+                + counts.settled
+                + counts.exercised
+                + counts.gem_factory
+                + counts.forfeited,
+            counts.issued
+        );
     });
 }
 
