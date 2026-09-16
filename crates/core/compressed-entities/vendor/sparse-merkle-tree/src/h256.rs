@@ -50,7 +50,7 @@ impl H256 {
     /// Treat H256 as a path in a tree
     /// fork height is the number of common bits(from heigher to lower: 255..=0) of two H256
     pub fn fork_height(&self, key: &H256) -> u8 {
-        for h in (0..=core::u8::MAX).rev() {
+        for h in (0..=u8::MAX).rev() {
             if self.get_bit(h) != key.get_bit(h) {
                 return h;
             }
@@ -61,7 +61,7 @@ impl H256 {
     /// Treat H256 as a path in a tree
     /// return parent_path of self
     pub fn parent_path(&self, height: u8) -> Self {
-        if height == core::u8::MAX {
+        if height == u8::MAX {
             H256::zero()
         } else {
             self.copy_bits(height + 1)
