@@ -44,9 +44,14 @@
         "internalType": "bytes"
       },
       {
-        "name": "zkVerificationKey",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
       },
       {
         "name": "zkPublicKey",

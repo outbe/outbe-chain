@@ -7,16 +7,13 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
+use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
 use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
 };
 use outbe_tribute::{TributeContract, TributeData};
-use outbe_zk_backend::barretenberg::verify_circuit;
-use outbe_zk_canonical::full_proof::{
-    alloy::PublicInputs as FullProofPublicInputs,
-    decode_public_inputs as decode_full_proof_public_inputs,
-};
-use outbe_zk_canonical::noir::full_proof::FullProof;
+use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
+use outbe_zk_canonical::full_proof::alloy::PublicInputs as FullProofPublicInputs;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -31,6 +28,8 @@ pub(crate) struct OfferTributeInput {
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
+    pub l2_chain_id: u32,
+    pub circuit_version: String,
     pub zk_merkle_root: Bytes,
     pub signature: Bytes,
 }
@@ -92,6 +91,8 @@ impl TributeFactoryContract<'_> {
             reference_currency,
             exclude_from_intex_issuance,
             zk_proof,
+            l2_chain_id,
+            circuit_version,
             zk_merkle_root,
             signature,
         } = input;
@@ -99,34 +100,43 @@ impl TributeFactoryContract<'_> {
         validate_currency_code(tribute_currency)?;
         validate_currency_code(reference_currency)?;
 
-        // When the caller is a registered L2 operator with ZK verification
-        // enabled, the offer must carry a valid BLS MinSig signature over
-        // `zkMerkleRoot` from the network's registered key. Unregistered
-        // callers and zk-disabled networks pass through unchanged.
+        // Every offer requires a registered L2 operator, a valid
+        // root signature, and a proof under that L2's selected circuit.
         let zk_check = outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
             &zk_merkle_root,
             &signature,
         )?;
-        let zk_public_inputs = match zk_check {
-            outbe_l2registry::api::ZkOfferCheck::Verified { .. } => {
+        let host_chain_id = self.storage.chain_id()?;
+        let (public, verification_key) = match zk_check {
+            outbe_l2registry::api::ZkOfferCheck::Verified {
+                chain_id: registered_chain_id,
+            } => {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
                 }
-                let public: FullProofPublicInputs = decode_full_proof_public_inputs(&zk_proof)
-                    .and_then(TryInto::try_into)
-                    .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+                if u64::from(l2_chain_id) != registered_chain_id {
+                    return Err(TributeFactoryError::CircuitChainMismatch {
+                        provided: l2_chain_id,
+                        registered: registered_chain_id,
+                    }
+                    .into());
+                }
+                let verification_key =
+                    resolve_verification_key(host_chain_id, l2_chain_id, &circuit_version)?;
+                let public = decode_zk_public_inputs(&zk_proof, verification_key)?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
                         field: "merkle_root",
                     }
                     .into());
                 }
-                Some(public)
+                (public, verification_key)
             }
-            outbe_l2registry::api::ZkOfferCheck::NotRegistered
-            | outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
+            outbe_l2registry::api::ZkOfferCheck::NotRegistered => {
+                return Err(TributeFactoryError::UnregisteredL2Operator { caller }.into());
+            }
         };
 
         // Everything below is settled from chain state before the enclave is
@@ -166,13 +176,10 @@ impl TributeFactoryContract<'_> {
             return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
 
-        let zk_context = match zk_public_inputs {
-            Some(public) => Some(TributeZkContext {
-                derived_owner: B256::from(public.derived_owner),
-                chain_id: self.storage.chain_id()?,
-            }),
-            None => None,
-        };
+        let zk_context = Some(TributeZkContext {
+            derived_owner: public.derived_owner,
+            chain_id: host_chain_id,
+        });
 
         // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
         // decrypts, computes economics (U256) + Poseidon token_id, and returns
@@ -203,9 +210,12 @@ impl TributeFactoryContract<'_> {
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
-        if let Some(public) = zk_public_inputs {
-            validate_zk_result(&zk_proof, public, result.zk_expected_hashes.as_ref())?;
-        }
+        validate_zk_result(
+            &zk_proof,
+            verification_key,
+            public,
+            result.zk_expected_hashes.as_ref(),
+        )?;
 
         // Recomputed from this call's own inputs, so it checks the enclave's
         // Poseidon rather than the enclave's own consistency with itself.
@@ -281,8 +291,64 @@ impl TributeFactoryContract<'_> {
     }
 }
 
+fn resolve_verification_key(
+    host_chain_id: u64,
+    l2_chain_id: u32,
+    version: &str,
+) -> Result<&'static [u8]> {
+    let binding = outbe_l2registry::api::l2_circuits(host_chain_id, u64::from(l2_chain_id))
+        .iter()
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| TributeFactoryError::UnknownCircuitVersion {
+            chain_id: l2_chain_id,
+            version: version.to_owned(),
+        })?;
+    let circuit = outbe_zk_canonical::noir::CIRCUIT_REGISTRY
+        .iter()
+        .find(|entry| {
+            entry.circuit_hash == binding.circuit_hash && entry.version == binding.version
+        })
+        .ok_or_else(|| {
+            PrecompileError::Fatal(
+                "L2 circuit binding has no canonical verification metadata".into(),
+            )
+        })?;
+    if circuit.proof_system != "bb-keccak-v1" {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
+    }
+    Ok(circuit.vk_bytes)
+}
+
+fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<FullProofPublicInputs> {
+    // bb-keccak-v1 VK: log circuit size, public count (including eight
+    // pairing-accumulator words), offset, then 28 two-word commitments.
+    // The key comes from the exact registered L2 circuit version. Retain
+    // bb-keccak-v1 layout checks before calling the backend.
+    if verification_key.len() != 59 * 32 {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
+    }
+    let log_n = read_u64_be_padded(&verification_key[..32])
+        .filter(|size| (1..=28).contains(size))
+        .ok_or(TributeFactoryError::UnsupportedZkCircuit)?;
+    if read_u64_be_padded(&verification_key[32..64]) != Some(4 + 8) {
+        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
+    }
+    // UltraKeccakZK: DefaultIO + Oink + Sumcheck + Shplemini.
+    let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
+    let [derived_owner, nft_hash, binding_hash, merkle_root] =
+        decode_public_words::<4>(proof, combined_len)
+            .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+    Ok(FullProofPublicInputs {
+        derived_owner: B256::from(derived_owner),
+        nft_hash: B256::from(nft_hash),
+        binding_hash: B256::from(binding_hash),
+        merkle_root: B256::from(merkle_root),
+    })
+}
+
 fn validate_zk_result(
     zk_proof: &[u8],
+    verification_key: &[u8],
     public: FullProofPublicInputs,
     expected: Option<&outbe_tee::protocol::TributeZkExpectedHashes>,
 ) -> Result<()> {
@@ -298,11 +364,13 @@ fn validate_zk_result(
         }
         .into());
     }
-    let verified = verify_circuit::<FullProof>(zk_proof).map_err(|error| {
-        PrecompileError::Fatal(format!(
-            "ZK verifier unavailable: zk verification backend failed: {error}"
-        ))
-    })?;
+    let verified = Barretenberg::default()
+        .verify_combined(verification_key, zk_proof)
+        .map_err(|error| {
+            PrecompileError::Fatal(format!(
+                "ZK verifier unavailable: zk verification backend failed: {error}"
+            ))
+        })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
     }
@@ -384,6 +452,10 @@ mod zk_result_tests {
     use outbe_tee::protocol::TributeZkExpectedHashes;
     use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
+    fn verification_key() -> &'static [u8] {
+        resolve_verification_key(outbe_primitives::chain::DEVNET_CHAIN_ID, 0xdead, "1.1.0").unwrap()
+    }
+
     fn public_inputs() -> FullProofPublicInputs {
         FullProofPublicInputs {
             derived_owner: B256::repeat_byte(1),
@@ -416,7 +488,13 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("nft_hash"));
     }
 
@@ -428,7 +506,13 @@ mod zk_result_tests {
             binding_hash: B256::from([9; 32]),
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("binding_hash"));
     }
 
@@ -440,10 +524,151 @@ mod zk_result_tests {
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        let error = validate_zk_result(
+            &dummy_proof(public),
+            verification_key(),
+            public,
+            Some(&expected),
+        )
+        .unwrap_err();
         assert!(
-            error.to_string().contains("ZK verifier unavailable"),
+            matches!(error, PrecompileError::Fatal(_)),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn circuit_selection_requires_exact_versions_and_development_host_for_stub() {
+        use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+        for host_chain_id in [
+            DEVNET_CHAIN_ID,
+            TESTNET_CHAIN_ID,
+            MAINNET_CHAIN_ID,
+            19_280_501,
+        ] {
+            assert_eq!(
+                resolve_verification_key(host_chain_id, 57_005, "1.1.0").unwrap(),
+                verification_key(),
+            );
+        }
+        assert_eq!(
+            resolve_verification_key(DEVNET_CHAIN_ID, 0xE2E1_0000, "1.1.0").unwrap(),
+            verification_key(),
+        );
+        for (host_chain_id, l2_chain_id, version) in [
+            (DEVNET_CHAIN_ID, 0, "1.1.0"),
+            (MAINNET_CHAIN_ID, 4242, "1.1.0"),
+            (TESTNET_CHAIN_ID, 0xE2E1_0000, "1.1.0"),
+            (19_280_501, 0xE2E1_0000, "1.1.0"),
+            (DEVNET_CHAIN_ID, 0xdead, ""),
+            (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
+        ] {
+            assert!(matches!(
+                resolve_verification_key(host_chain_id, l2_chain_id, version),
+                Err(PrecompileError::Revert(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn registered_proof_rejects_malformed_public_inputs_before_backend() {
+        let proof = dummy_proof(public_inputs());
+        let mut wrong_count = proof.clone();
+        wrong_count[..4].copy_from_slice(&3u32.to_be_bytes());
+        let mut noncanonical = proof.clone();
+        noncanonical[4..36].fill(0xff);
+        let mut truncated = proof.clone();
+        truncated.pop();
+        let mut trailing = proof;
+        trailing.extend_from_slice(&[0; 32]);
+        for malformed in [wrong_count, noncanonical, truncated, trailing] {
+            assert!(matches!(
+                decode_zk_public_inputs(&malformed, verification_key()),
+                Err(PrecompileError::Revert(_))
+            ));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the pinned Barretenberg CRS"]
+    fn registered_circuit_verifies_real_proof_and_rejects_changed_statement() {
+        outbe_zk_backend::barretenberg::init_crs().unwrap();
+        let proof = include_bytes!(
+            "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
+        );
+        let public = decode_zk_public_inputs(proof, verification_key()).unwrap();
+        let expected = TributeZkExpectedHashes {
+            nft_hash: public.nft_hash,
+            binding_hash: public.binding_hash,
+        };
+        validate_zk_result(proof, verification_key(), public, Some(&expected)).unwrap();
+
+        // Keep the encrypted-draft hashes unchanged but claim a different
+        // Merkle root. The real proof, not just the TEE hash checks, must fail.
+        let mut tampered = proof.to_vec();
+        tampered[100..132].fill(0);
+        let public = decode_zk_public_inputs(&tampered, verification_key()).unwrap();
+        let error =
+            validate_zk_result(&tampered, verification_key(), public, Some(&expected)).unwrap_err();
+        assert!(matches!(error, PrecompileError::Revert(_)));
+    }
+}
+
+#[cfg(test)]
+mod reward_activity_tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::time::date_key_to_utc_timestamp;
+
+    const WALLET: Address = Address::repeat_byte(0x71);
+    const SRA: Address = Address::repeat_byte(0x72);
+
+    fn record(storage: StorageHandle<'_>) -> Result<()> {
+        TributeFactoryContract::new(storage).record_agent_reward_activity(&[WALLET], &[SRA])
+    }
+
+    #[test]
+    fn reward_updates_accumulate_on_the_execution_day() {
+        let day = 20_260_803;
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day) + 43_200));
+        StorageHandle::enter(&mut provider, |storage| {
+            record(storage.clone()).unwrap();
+            record(storage.clone()).unwrap();
+            let rewards = AgentRewardContract::new(storage);
+            assert_eq!(
+                rewards.get_all_waa_counts(day.into()).unwrap(),
+                vec![(WALLET, 2)]
+            );
+            assert_eq!(
+                rewards.get_all_sra_counts(day.into()).unwrap(),
+                vec![(SRA, 2)]
+            );
+        });
+    }
+
+    #[test]
+    fn reward_updates_follow_utc_midnight() {
+        let old_day = 20_261_231;
+        let new_day = 20_270_101;
+        let midnight = date_key_to_utc_timestamp(new_day);
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(midnight - 1));
+        StorageHandle::enter(&mut provider, |storage| {
+            record(storage.clone()).unwrap();
+            storage.set_block_timestamp(U256::from(midnight)).unwrap();
+            record(storage.clone()).unwrap();
+            let rewards = AgentRewardContract::new(storage);
+            for day in [old_day, new_day] {
+                assert_eq!(
+                    rewards.get_all_waa_counts(day.into()).unwrap(),
+                    vec![(WALLET, 1)]
+                );
+                assert_eq!(
+                    rewards.get_all_sra_counts(day.into()).unwrap(),
+                    vec![(SRA, 1)]
+                );
+            }
+        });
     }
 }

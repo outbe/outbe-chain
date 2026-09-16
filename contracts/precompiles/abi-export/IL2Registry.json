@@ -38,11 +38,6 @@
         "name": "publicKey",
         "type": "bytes",
         "internalType": "bytes"
-      },
-      {
-        "name": "zkEnabled",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -94,25 +89,6 @@
         "type": "uint64",
         "indexed": true,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "L2NetworkZkSet",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint64",
-        "indexed": true,
-        "internalType": "uint64"
-      },
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
       }
     ],
     "anonymous": false

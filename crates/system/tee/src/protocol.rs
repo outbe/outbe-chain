@@ -40,8 +40,11 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 ///     `reference_scurve_minor` - resolved by the node from committed Oracle
 ///     state; not ABI fields.
 ///
-/// The ZK fields (`zkProof`/`zkVerificationKey`/`zkPublicKey`/`zkMerkleRoot`)
-/// are verified BEFORE the enclave call and are NOT forwarded.
+/// Before the enclave call, the host requires a registered L2
+/// operator, validates the root signature, resolves the exact circuit version,
+/// and checks proof framing. After decryption it compares the enclave's expected
+/// hashes and verifies with the selected key. Raw proof/signature bytes and
+/// circuit selectors are not forwarded to the enclave.
 ///
 /// Every field here is public and host-supplied, so the enclave never echoes any
 /// of them back - [`TributeOfferResult`] carries only what the enclave itself
@@ -83,9 +86,9 @@ pub struct EncryptedTributeOffer {
     /// Continuous reference-currency S-curve value, scale 1e6. Zero means no
     /// active curve and is valid.
     pub reference_scurve_minor: U256,
-    /// Public ZK claim context supplied only for registered L2 networks with
-    /// ZK verification enabled. The owner is the first public input embedded
-    /// in `zkProof`; the chain id is read from the local execution context.
+    /// Public ZK claim context supplied for every admitted offer. The owner is
+    /// the first public input in `zkProof`; the chain id comes from the local
+    /// execution context.
     #[serde(default)]
     pub zk_context: Option<TributeZkContext>,
 }

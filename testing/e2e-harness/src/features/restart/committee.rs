@@ -163,6 +163,9 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
     let expected_supply = supply_before
         .checked_add(alloy_primitives::U256::from(1))
         .expect("Tribute supply overflow");
+    // The offer is admitted only from an operator L2Registry knows, so the
+    // registration is established before the before-offer capture below.
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
     // Retain an exact prefix of the existing launch capture. The suffix must
     // come from these same processes after this checkpoint, not earlier replay.
     let offer_prefixes: Vec<_> = world

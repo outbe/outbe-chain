@@ -8,9 +8,9 @@ Feature: Governance proposals and protocol updates
   Scenario: Validator quorum registers an L2 network through JSON governance
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height
-    When an L2 network is registered for the operator with zk enabled
+    When an L2 network is registered for the operator
     Then proposal 1 is approved
-    And the governed L2 network is registered with zk enabled
+    And the governed L2 network is registered
     And the committee nodes agree on the state root
 
   Scenario: OIP and GIP are approved and materialized

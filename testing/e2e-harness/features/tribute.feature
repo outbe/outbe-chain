@@ -1,8 +1,8 @@
 @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Tribute admission, projection, and proofs
   One canonical Tribute flow owns successful ingress, projection, presence and
-  absence proofs, and duplicate protection. ZK policy branches stay separate
-  because they exercise different admissibility rules.
+  absence proofs, and duplicate protection. Rejected ingress stays separate to
+  prove that registration and ZK verification are mandatory.
 
   @pfs-001-01 @pfs-001-02 @pfs-001-03 @pfs-001-05 @ocomp
   Scenario: One public Tribute has complete projection and duplicate protection
@@ -19,18 +19,23 @@ Feature: Tribute admission, projection, and proofs
     Then the duplicate is rejected without changing tribute state or projections
 
   @pfs-001-10
-  Scenario: An unsigned ZK-gated offer is rejected and disabling the gate restores ingress
+  Scenario: An unsigned offer is rejected and a valid FullProof is admitted
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
-    When an L2 network is registered for the operator with zk enabled
+    When an L2 network is registered for the operator
     And the operator submits an encrypted tribute offer without an L2 signature
     Then the offer is rejected and tribute supply stays zero
-    When zk verification is disabled for the registered L2 network
-    And an operator submits one encrypted tribute offer
+    When the operator submits a valid FullProof offer for one encrypted tribute
     Then the tribute transaction succeeds and supply becomes one
+
+  @tribute-unregistered-operator
+  Scenario: An unregistered operator cannot submit a Tribute offer
+    Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
+    When an unregistered operator submits one encrypted tribute offer
+    Then the offer is rejected as an unregistered L2 operator and tribute supply stays zero
 
   @pfs-001-11
   Scenario: A registered L2 network rejects a signed tampered proof and admits the valid FullProof
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
-    When an L2 network is registered for the operator with zk enabled
+    When an L2 network is registered for the operator
     And the operator proves a signed tampered proof is rejected then submits the valid FullProof
     Then the tribute transaction succeeds and supply becomes one

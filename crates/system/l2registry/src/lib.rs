@@ -1,15 +1,16 @@
 //! `L2Registry` - storage-backed registry of L2 networks (`0x...EE0E`).
 //!
-//! Records registered L2 networks keyed by `chain_id`: the L1 operator address
-//! that submits on behalf of the network, its BLS MinSig committee group key
-//! (compressed G2, 96 bytes), and a
-//! per-network `zk_enabled` flag. Registration and ZK policy changes are
-//! applied only by the module's validator [`vote_target::L2RegistryVoteTarget`].
-//! The public precompile exposes registry views plus owner-authorized removal.
+//! Records each network's L1 operator address and BLS MinSig committee group
+//! key (compressed G2, 96 bytes), keyed by non-zero `chain_id`. Registration is
+//! applied by the validator [`vote_target::L2RegistryVoteTarget`]; the public
+//! precompile exposes registry views and owner-authorized removal.
 //!
-//! The cross-module surface ([`api`]) verifies the BLS signature carried in
-//! `TributeFactory.offerTribute` over `zkMerkleRoot` against the caller's
-//! registered network key when that network has ZK verification enabled.
+//! The cross-module surface ([`api`]) verifies every registered operator's BLS
+//! signature over `zkMerkleRoot` for `TributeFactory.offerTribute`.
+//!
+//! [`api::l2_circuits`] uses explicit deployment bindings outside Devnet.
+//! Devnet may use a frozen development binding for unbound L2s without
+//! changing signature or proof verification.
 
 pub mod api;
 pub mod errors;

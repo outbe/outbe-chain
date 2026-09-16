@@ -18,6 +18,7 @@ outbe-agentreward.workspace = true
 outbe-oracle.workspace = true
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true
+outbe-protocol.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 alloy-primitives.workspace = true
@@ -30,6 +31,9 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-lysis.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
+outbe-tee-enclave.workspace = true
+x25519-dalek.workspace = true
+serde_json.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-math.workspace = true

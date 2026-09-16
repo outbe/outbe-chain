@@ -34,6 +34,11 @@ require_stack() {
 
 case "$ACTION" in
   offer)
+    shift
+    worldwide_day=${1:?"usage: $0 offer WORLDWIDE_DAY --zk-proof ... --zk-merkle-root ... --signature ..."}
+    shift
+    # validator-0 must already be a registered L2 operator. Forward the proof
+    # and its matching draft/SU inputs instead of fabricating a proofless offer.
     require_stack
     tee_ready=0
     for _ in $(seq 1 60); do
@@ -47,12 +52,11 @@ case "$ACTION" in
     [[ $tee_ready -eq 1 ]] || { echo "TEE registry did not bootstrap" >&2; exit 1; }
 
     key=$(tr -d '[:space:]' < "$STACK_DIR/validator-0/evm-key.hex")
-    worldwide_day=$(date -u -d "@$(($(date +%s) + 50400))" +%Y%m%d)
     before=$(cast call 0x0000000000000000000000000000000000001101 \
       'totalSupply()(uint256)' --rpc-url "$RPC_URL" | tr -d '[:space:]')
 
     output=$(./target/release/outbe-cli --private-key "$key" --rpc-url "$RPC_URL" \
-      tribute offer "$worldwide_day" --amount 100 --currency 840 2>&1)
+      tribute offer "$worldwide_day" "$@" 2>&1)
     printf '%s\n' "$output"
     tx_hash=$(printf '%s\n' "$output" | sed -n \
       's/^offerTribute tx: \(0x[0-9a-fA-F]\{64\}\).*/\1/p' | head -n1)
@@ -129,7 +133,7 @@ case "$ACTION" in
     "
     ;;
   *)
-    echo "usage: $0 {offer|show-mongo}" >&2
+    echo "usage: $0 {offer WORLDWIDE_DAY [tribute CLI arguments]|show-mongo}" >&2
     exit 2
     ;;
 esac

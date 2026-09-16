@@ -15874,770 +15874,6 @@
         "visible.gas_limit": "3725817"
       }
     },
-    "tribute/create/non-zk/cold": {
-      "metadata": {
-        "id": "tribute/create/non-zk/cold",
-        "display_name": "Tribute creation (non-ZK, cold)",
-        "execution_class": "user_transaction",
-        "profile": "single",
-        "crypto_mode": "portable_in_process",
-        "execution_layer": "marginal",
-        "fidelity": "full"
-      },
-      "calldata": {
-        "bytes": 996,
-        "zero_bytes": 602,
-        "nonzero_bytes": 394,
-        "transaction_base_gas": 21000,
-        "zero_byte_gas": 2408,
-        "nonzero_byte_gas": 6304
-      },
-      "gas_totals": {
-        "user_transaction": 3314312
-      },
-      "gas_components": [
-        {
-          "ledger": "user_transaction",
-          "key": "transaction.base",
-          "gas": 21000,
-          "operations": 1
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "calldata.zero_bytes",
-          "gas": 2408,
-          "operations": 602
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "calldata.nonzero_bytes",
-          "gas": 6304,
-          "operations": 394
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "precompile.configured_base",
-          "gas": 3000000,
-          "operations": 1
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.compressed_entities.read",
-          "gas": 4600,
-          "operations": 46,
-          "module": "compressed_entities"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.compressed_entities.write",
-          "gas": 120000,
-          "operations": 24,
-          "module": "compressed_entities"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.l2_registry.read",
-          "gas": 100,
-          "operations": 1,
-          "module": "l2_registry"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.metadosis.read",
-          "gas": 1500,
-          "operations": 15,
-          "module": "metadosis"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.oracle.read",
-          "gas": 1900,
-          "operations": 19,
-          "module": "oracle"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.tribute.read",
-          "gas": 1400,
-          "operations": 14,
-          "module": "tribute"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.tribute.write",
-          "gas": 25000,
-          "operations": 5,
-          "module": "tribute"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.tribute_factory.read",
-          "gas": 100,
-          "operations": 1,
-          "module": "tribute_factory"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "storage.tribute_factory.write",
-          "gas": 5000,
-          "operations": 1,
-          "module": "tribute_factory"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "compressed_entities.cleanup.first_body_touch",
-          "gas": 65000,
-          "operations": 1,
-          "module": "compressed_entities"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "compressed_entities.cleanup.body_touched_length",
-          "gas": 5000,
-          "operations": 1,
-          "module": "compressed_entities"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "compressed_entities.cleanup.first_index_touch",
-          "gas": 50000,
-          "operations": 2,
-          "module": "compressed_entities"
-        },
-        {
-          "ledger": "user_transaction",
-          "key": "compressed_entities.cleanup.index_touched_length",
-          "gas": 5000,
-          "operations": 1,
-          "module": "compressed_entities"
-        }
-      ],
-      "storage": [
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 10,
-          "gas": 1000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x1",
-          "operation": "read",
-          "count": 3,
-          "gas": 300
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x1bbe3c42eeb90c4e87ed710e0a6aefe1b6da5cd546a482349154bd169f72820c",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x2",
-          "operation": "read",
-          "count": 3,
-          "gas": 300
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x2757fd13c638f562d8cec56988f0a4dd7a5c3209fcbcbc9e830b0fe97654fd09",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x2757fd13c638f562d8cec56988f0a4dd7a5c3209fcbcbc9e830b0fe97654fd09",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x3",
-          "operation": "read",
-          "count": 3,
-          "gas": 300
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x34d15529add16d134a27f4825cb82fe020c21ccf7437e035dc0bb27ac4d13e0b",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x34d15529add16d134a27f4825cb82fe020c21ccf7437e035dc0bb27ac4d13e0c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x6",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x6e1540171b6c0c960b71a7020d9f60077f6af931a8bbf590da0223dacf75c7af",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x6e1540171b6c0c960b71a7020d9f60077f6af931a8bbf590da0223dacf75c7b0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x779ef5efe40345c0ea7c5fc0139972347feefe0c57a7a43ff2f7bfe92c9f8211",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x7d75cdc5e9876d1685123c7e3de28351368a1427eda2c631ea16750350497d73",
-          "operation": "read",
-          "count": 4,
-          "gas": 400
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x7d75cdc5e9876d1685123c7e3de28351368a1427eda2c631ea16750350497d73",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x9",
-          "operation": "read",
-          "count": 4,
-          "gas": 400
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x9",
-          "operation": "write",
-          "count": 2,
-          "gas": 10000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x9ac53581bffe9982bda27b630f9174cbabee08927d876b082a752b8824477a18",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0x9ac53581bffe9982bda27b630f9174cbabee08927d876b082a752b8824477a18",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b2713d",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b2713e",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b2713f",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b27140",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b27141",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xa232c2586c883a95f4a6a214c2d9fe761bbce276a8e19b755ad287e102b27142",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xaa6a8c179a9503fa87013defc9997472bd0c221260d6910966203d88fb40f4c6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xaa6a8c179a9503fa87013defc9997472bd0c221260d6910966203d88fb40f4c7",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xae126a1d817c46b6f30b61848f62373819caed5b238c3fce422dd7751c69c2c4",
-          "operation": "read",
-          "count": 5,
-          "gas": 500
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xae126a1d817c46b6f30b61848f62373819caed5b238c3fce422dd7751c69c2c4",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xc6e649b28d294c8137c0066201c997d6967035bd12932e59358dc8d7471bd32e",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xc6e649b28d294c8137c0066201c997d6967035bd12932e59358dc8d7471bd32e",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xee4cc8e758b701b88723bb8745906d4d7b78dd2f983b6591046417ddefe46d6f",
-          "operation": "read",
-          "count": 5,
-          "gas": 500
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xee4cc8e758b701b88723bb8745906d4d7b78dd2f983b6591046417ddefe46d6f",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xf652222313e28459528d920b65115c16c04f3efc82aaedc97be59f3f377c0d3f",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xf7e0a845f8c9e5e55ae4338f40264f47f8a5871f5565e0004652e4abf27d76ee",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "compressed_entities",
-          "address": "0x000000000000000000000000000000000000ee0d",
-          "slot": "0xf7e0a845f8c9e5e55ae4338f40264f47f8a5871f5565e0004652e4abf27d76ee",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xc8d887cfdff0669df7f3c531d80732bd2dc6cabe63010461475ed8dc3dcad722",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x31315405f9eba3c58934e30a817a145017f2863f8bb518334d4c25dc5e9432d2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x36be8cf552f26dbe33ee7e40cfd1acdd874052e1bbb2586d1bbccc78c87b735b",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x4dd456b52d9b919d50cc86a8e6428f165111cf3a0271915bb376b27239334e84",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x566cb37a9fb2e57dd8933f43ceb875d847158908f0daa96487bdf58efcc80513",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x5ca9b6a23e201a61aa3be19851300f7b4fe02138eb961d79bfcec498f0e1e634",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x6df4694d10f1e85cdd628bf65fbd9926540bc35acb5027e8249524acccc0f724",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x7f0be1601c995c9fba2a0d476e638e4b7c4f52ae16f186a52996769d565637d7",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x82b6db68f0b9ec5028821f292be1fd693e3c8fad157222882139d25b2ec4b698",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x86f4714d31bc27a220cb7ca158a03de6287c57909abe5e51af281af3917e7b2f",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0x926e17be95339294b073771d0cf4f922306aaba25ae568b8293ee185bfd1e62a",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0xc",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0xdf6966c971051c3d54ec59162606531493a51404a002842f56009d7e5cf4a8c7",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0xe",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "metadosis",
-          "address": "0x000000000000000000000000000000000000100e",
-          "slot": "0xf",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x26",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x37",
-          "operation": "read",
-          "count": 6,
-          "gas": 600
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31af",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31b0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31b1",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31b2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0xb6eaddef14935faba8e5f75320c489104db7c4e7fe720ec077fd8da880353e7d",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0xc632eac7674455e95c1680bf4d2552da06dcad24681614c00288ba2e6b9bfc1e",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0xfa9240513fa8af0cd3aa94db0c237a129a63076f21ab227c30018c124938bc88",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x4dd456b52d9b919d50cc86a8e6428f165111cf3a0271915bb376b27239334e84",
-          "operation": "read",
-          "count": 6,
-          "gas": 600
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x4dd456b52d9b919d50cc86a8e6428f165111cf3a0271915bb376b27239334e84",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x7f0be1601c995c9fba2a0d476e638e4b7c4f52ae16f186a52996769d565637d7",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x7f0be1601c995c9fba2a0d476e638e4b7c4f52ae16f186a52996769d565637d7",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x86f4714d31bc27a220cb7ca158a03de6287c57909abe5e51af281af3917e7b2f",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x86f4714d31bc27a220cb7ca158a03de6287c57909abe5e51af281af3917e7b2f",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x926e17be95339294b073771d0cf4f922306aaba25ae568b8293ee185bfd1e62a",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0x926e17be95339294b073771d0cf4f922306aaba25ae568b8293ee185bfd1e62a",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "tribute",
-          "address": "0x0000000000000000000000000000000000001101",
-          "slot": "0xf",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "tribute_factory",
-          "address": "0x0000000000000000000000000000000000001100",
-          "slot": "0x660960054c44c4d83c420af65c54e6f3437517cffaa9996495231fee01bdba41",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "tribute_factory",
-          "address": "0x0000000000000000000000000000000000001100",
-          "slot": "0x660960054c44c4d83c420af65c54e6f3437517cffaa9996495231fee01bdba41",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        }
-      ],
-      "events": [
-        {
-          "emitter": "0x0000000000000000000000000000000000001101",
-          "event": "0x3c503a150762f9a43123cde961eb1b8820bfc583e86d9c4767a3bb862d597ea7",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001101",
-          "event": "0xd662263117730df88e443e931dc643fe515b52df98e60b6ddaff5b7d4725870e",
-          "count": 1
-        }
-      ],
-      "artifacts": {
-        "full_proof": "keccak256:0x08bf15419acc1b9b69c043294c66bd4750286a918c28c30bc66881e7401436b5"
-      }
-    },
     "tribute/create/zk/cold": {
       "metadata": {
         "id": "tribute/create/zk/cold",
@@ -16649,15 +15885,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 10020,
-        "zero_bytes": 968,
-        "nonzero_bytes": 9052,
+        "bytes": 10084,
+        "zero_bytes": 1030,
+        "nonzero_bytes": 9054,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 3872,
-        "nonzero_byte_gas": 144832
+        "zero_byte_gas": 4120,
+        "nonzero_byte_gas": 144864
       },
       "gas_totals": {
-        "user_transaction": 3454904
+        "user_transaction": 745084
       },
       "gas_components": [
         {
@@ -16669,19 +15905,19 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 3872,
-          "operations": 968
+          "gas": 4120,
+          "operations": 1030
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 144832,
-          "operations": 9052
+          "gas": 144864,
+          "operations": 9054
         },
         {
           "ledger": "user_transaction",
           "key": "precompile.configured_base",
-          "gas": 3000000,
+          "gas": 300000,
           "operations": 1
         },
         {
@@ -16701,8 +15937,8 @@
         {
           "ledger": "user_transaction",
           "key": "storage.l2_registry.read",
-          "gas": 700,
-          "operations": 7,
+          "gas": 600,
+          "operations": 6,
           "module": "l2_registry"
         },
         {
@@ -16750,7 +15986,7 @@
         {
           "ledger": "user_transaction",
           "key": "compressed_entities.cleanup.first_body_touch",
-          "gas": 65000,
+          "gas": 55000,
           "operations": 1,
           "module": "compressed_entities"
         },
@@ -17076,7 +16312,7 @@
         {
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0x8c170dcd42ae34c91051362b3a792057d24385244020963977d1ab46bade24e6",
+          "slot": "0x262bb27bbdd95c1cdc8e16957e36e38579ea44f7f6413dd7a9c75939def06b2c",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -17084,31 +16320,7 @@
         {
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xc8d887cfdff0669df7f3c531d80732bd2dc6cabe63010461475ed8dc3dcad722",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xd150c06dcc85be3485278e9752e83529b870f914d16d105cdc4e960fd4de686",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xf1557e9498019f6044fef0f9701ac98fde0fb95ffc804a0f3478bfbe6a8a68a0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xf3b9476bb77d3be9725af72df7be677e98f50d773ac0df92dcd927e11414c9d8",
+          "slot": "0x44ad89ba62b98ff34f51403ac22759b55759460c0bb5521eb4b6ee3cff49cf83",
           "operation": "read",
           "count": 2,
           "gas": 200
@@ -17116,7 +16328,23 @@
         {
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xfad47b17fa56fc43ddf00981812a38141d29d5cdc8cfff0bc0cc9bfd3995cb4b",
+          "slot": "0x6a9609baa168169acaea398c4407efea4be641bb08e21e88806d9836fd9333cc",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0xa14c3d6b574d1e531bee9df1e006eb7a6ee252ea8d6813584085ea67274934ab",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "l2_registry",
+          "address": "0x000000000000000000000000000000000000ee0e",
+          "slot": "0xb34209a263f6c38fe55f099e9e70f9d67e93982480ff3234a5e0108028ad164d",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -17439,7 +16667,7 @@
         }
       ],
       "artifacts": {
-        "full_proof": "keccak256:0x08bf15419acc1b9b69c043294c66bd4750286a918c28c30bc66881e7401436b5"
+        "full_proof": "keccak256:0x7f57acdf3d550502515c28e3c466857c784559876403fe31a015f2dfe59b8855"
       }
     }
   }

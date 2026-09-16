@@ -10,6 +10,7 @@ pub(crate) mod config;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) mod economic_reference;
 pub(crate) mod eth;
+pub(crate) mod l2_fixture;
 pub(crate) mod launch_log;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) mod nod_reference;

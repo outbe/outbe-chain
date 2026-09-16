@@ -1,3 +1,4 @@
+use crate::internal::l2_fixture::{self, TributeOfferZk};
 use crate::world::rpc::*;
 
 pub struct TributeZkOffer<'a> {
@@ -5,6 +6,8 @@ pub struct TributeZkOffer<'a> {
     pub su_hash_hex: &'a str,
     pub merkle_root_hex: &'a str,
     pub proof_hex: &'a str,
+    pub l2_chain_id: u32,
+    pub circuit_version: &'a str,
     pub signature_hex: &'a str,
 }
 
@@ -68,6 +71,10 @@ impl Rpc {
     /// Submit a Tribute offer with explicit business fields. This is used by
     /// duplicate-identity tests to prove that `(owner, worldwide_day)`, rather
     /// than the rest of the encrypted payload, is the uniqueness boundary.
+    ///
+    /// The offer carries a real proof for exactly these fields, its caller, this
+    /// chain's id and its own draft; the encrypted payload the CLI builds uses
+    /// the same draft fields, so the enclave's `nft_hash` matches the proof.
     pub fn tribute_offer_with_params(
         &self,
         key: &str,
@@ -78,6 +85,17 @@ impl Rpc {
         exclude_from_intex_issuance: bool,
     ) -> Option<String> {
         let started = Instant::now();
+        let caller = eth::address_of(key)?;
+        let worldwide_day = wwd.parse::<u32>().expect("numeric worldwide day");
+        let (draft_id, su_hash) = l2_fixture::offer_identifiers("cli-offer", caller, worldwide_day);
+        let zk = self.prove_offer(
+            caller,
+            worldwide_day,
+            currency,
+            (amount_base, amount_micro),
+            draft_id,
+            su_hash,
+        );
         let mut args = vec![
             "--private-key".to_owned(),
             key.to_owned(),
@@ -92,6 +110,20 @@ impl Rpc {
             amount_micro.to_owned(),
             "--currency".to_owned(),
             currency.to_string(),
+            "--tribute-draft-id".to_owned(),
+            zk.tribute_draft_id_hex.clone(),
+            "--su-hash".to_owned(),
+            zk.su_hash_hex.clone(),
+            "--zk-proof".to_owned(),
+            zk.proof_hex(),
+            "--zk-merkle-root".to_owned(),
+            zk.merkle_root_hex(),
+            "--signature".to_owned(),
+            zk.signature_hex(),
+            "--l2-chain-id".to_owned(),
+            zk.l2_chain_id.to_string(),
+            "--circuit-version".to_owned(),
+            zk.circuit_version.to_owned(),
         ];
         if exclude_from_intex_issuance {
             args.push("--exclude-from-intex-issuance".to_owned());
@@ -99,10 +131,11 @@ impl Rpc {
         let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
         let tx_hash = parse::extract_tx_hash(&out)?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_micro={amount_micro} currency={currency} exclude={exclude_from_intex_issuance}",
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_micro={amount_micro} currency={currency} exclude={exclude_from_intex_issuance} l2_chain_id={}",
             unix_time_millis(),
             started.elapsed().as_millis(),
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
+            zk.l2_chain_id,
         );
         Some(tx_hash)
     }
@@ -110,6 +143,10 @@ impl Rpc {
     /// Submit one real encrypted Tribute whose enclave result attributes one
     /// WAA and one SRA beneficiary. This is a harness-only producer for the
     /// existing public ABI; production reward accounting remains unchanged.
+    ///
+    /// The offer is ZK-verified: the proof is bound to the caller, this chain,
+    /// the day, the issuance currency, the declared amounts and exactly the
+    /// draft and SU hash the enclave decrypts.
     #[cfg(feature = "ocomp-integration")]
     pub fn submit_tribute_offer_with_agent_rewards(
         &self,
@@ -133,17 +170,25 @@ impl Rpc {
             outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
             &ITeeRegistryV1::tributeOfferPublicKeyCall {},
         )?;
-        let entropy = format!(
-            "agent-reward-tribute:{creator:#x}:{worldwide_day}:{}",
-            unix_time_millis()
+        let (tribute_draft_id, su_hash) =
+            l2_fixture::offer_identifiers("agent-reward-tribute", creator, worldwide_day);
+        // The proof and the encrypted payload must declare the same claim, so
+        // both are built from these literals.
+        const AMOUNT_BASE: &str = "100";
+        const AMOUNT_MICRO: &str = "0";
+        let zk = self.prove_offer(
+            creator,
+            worldwide_day,
+            840,
+            (AMOUNT_BASE, AMOUNT_MICRO),
+            tribute_draft_id,
+            su_hash,
         );
-        let tribute_draft_id = keccak256(entropy.as_bytes());
-        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
         let plaintext = encode_reward_bearing_tribute_plaintext(
             creator,
             tribute_draft_id,
-            "100",
-            "0",
+            AMOUNT_BASE,
+            AMOUNT_MICRO,
             su_hash,
             wallet_addresses,
             sra_addresses,
@@ -163,11 +208,12 @@ impl Rpc {
             tributeCurrency: 840,
             referenceCurrency: 840,
             excludeFromIntexIssuance: false,
-            zkProof: Bytes::new(),
-            zkVerificationKey: Bytes::new(),
+            zkProof: zk.proof.into(),
+            chainId: zk.l2_chain_id,
+            version: zk.circuit_version.to_owned(),
             zkPublicKey: Bytes::new(),
-            zkMerkleRoot: Bytes::new(),
-            signature: Bytes::new(),
+            zkMerkleRoot: zk.merkle_root.to_vec().into(),
+            signature: zk.signature.into(),
         };
         let outcome = eth::send_call_outcome(
             &self.cfg.rpc0,
@@ -178,11 +224,12 @@ impl Rpc {
         )
         .ok()?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=agent-reward-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} waa={} sra={}",
+            "E2E_TRIBUTE_TIMELINE stage=agent-reward-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} waa={} sra={} l2_chain_id={}",
             unix_time_millis(),
             outcome.transaction_hash,
             wallet_addresses.len(),
             sra_addresses.len(),
+            zk.l2_chain_id,
         );
         Some(outcome.transaction_hash)
     }
@@ -191,6 +238,11 @@ impl Rpc {
     /// currencies independent. The product CLI intentionally remains the
     /// same-currency operator path; this narrow E2E helper exercises the
     /// already-public ABI axis without adding a new product surface.
+    ///
+    /// The proof binds the issuance currency (the reference currency is not part
+    /// of the TributeDraft claim) and the declared amounts, so the golden
+    /// nominal/reference price this scenario asserts comes from a fully
+    /// ZK-verified offer.
     #[allow(clippy::too_many_arguments)]
     pub fn tribute_cross_currency_offer(
         &self,
@@ -218,12 +270,16 @@ impl Rpc {
             &ITeeRegistryV1::tributeOfferPublicKeyCall {},
         )?;
         let offer_public_key: [u8; 32] = offer_public_key.to_be_bytes();
-        let entropy = format!(
-            "cross-currency-tribute:{creator:#x}:{worldwide_day}:{}",
-            unix_time_millis()
+        let (tribute_draft_id, su_hash) =
+            l2_fixture::offer_identifiers("cross-currency-tribute", creator, worldwide_day);
+        let zk = self.prove_offer(
+            creator,
+            worldwide_day,
+            tribute_currency,
+            (amount_base, amount_micro),
+            tribute_draft_id,
+            su_hash,
         );
-        let tribute_draft_id = keccak256(entropy.as_bytes());
-        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
         let plaintext = serde_json::to_vec(&serde_json::json!({
             "creator": format!("{creator:?}"),
             "tribute_draft_id": format!("{tribute_draft_id:#x}"),
@@ -244,11 +300,12 @@ impl Rpc {
             tributeCurrency: tribute_currency,
             referenceCurrency: reference_currency,
             excludeFromIntexIssuance: exclude_from_intex_issuance,
-            zkProof: Bytes::new(),
-            zkVerificationKey: Bytes::new(),
+            zkProof: zk.proof.into(),
+            chainId: zk.l2_chain_id,
+            version: zk.circuit_version.to_owned(),
             zkPublicKey: Bytes::new(),
-            zkMerkleRoot: Bytes::new(),
-            signature: Bytes::new(),
+            zkMerkleRoot: zk.merkle_root.to_vec().into(),
+            signature: zk.signature.into(),
         };
         let outcome = eth::send_call_outcome(
             &self.cfg.rpc0,
@@ -259,9 +316,10 @@ impl Rpc {
         )
         .ok()?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=cross-currency-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} tribute_currency={tribute_currency} reference_currency={reference_currency}",
+            "E2E_TRIBUTE_TIMELINE stage=cross-currency-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} tribute_currency={tribute_currency} reference_currency={reference_currency} l2_chain_id={}",
             unix_time_millis(),
             outcome.transaction_hash,
+            zk.l2_chain_id,
         );
         Some(outcome.transaction_hash)
     }
@@ -283,7 +341,47 @@ impl Rpc {
         );
     }
 
-    /// Submit a Tribute offer carrying explicit L2 zk fields (`0x`-hex).
+    /// Prove one real `FullProof` offer for `caller`'s registered L2 fixture
+    /// network: the proof is bound to `caller`, this chain's id, the offer's
+    /// day, currency, amounts and draft, and its Merkle root is signed with the
+    /// key that network registered.
+    fn prove_offer(
+        &self,
+        caller: Address,
+        worldwide_day: u32,
+        tribute_currency: u16,
+        (amount_base, amount_micro): (&str, &str),
+        draft_id: B256,
+        su_hash: B256,
+    ) -> TributeOfferZk {
+        let l2_chain_id = self
+            .l2_chain_by_l1_address(caller)
+            .expect("read the offering operator's L2Registry entry");
+        assert_ne!(
+            l2_chain_id, 0,
+            "offer fixtures register the operator's L2 network before offering: {caller:#x}"
+        );
+        let host_chain_id = self
+            .chain_id(self.cfg.primary_port())
+            .expect("read the chain id the offer executes on");
+        l2_fixture::prove_tribute_offer(l2_fixture::TributeOfferStatement {
+            host_chain_id,
+            caller,
+            l2_chain_id,
+            worldwide_day: u64::from(worldwide_day),
+            tribute_currency,
+            amount_base,
+            amount_micro,
+            draft_id,
+            su_hash,
+        })
+    }
+
+    /// Submit a Tribute offer with an explicit circuit selector and L2 zk
+    /// fields (`0x`-hex).
+    ///
+    /// Empty zk fields are deliberate negative transactions: the node, not the
+    /// harness, decides whether they are admissible.
     pub fn tribute_offer_with_zk(
         &self,
         key: &str,
@@ -306,6 +404,10 @@ impl Rpc {
             zk.merkle_root_hex.to_owned(),
             "--zk-proof".to_owned(),
             zk.proof_hex.to_owned(),
+            "--l2-chain-id".to_owned(),
+            zk.l2_chain_id.to_string(),
+            "--circuit-version".to_owned(),
+            zk.circuit_version.to_owned(),
             "--signature".to_owned(),
             zk.signature_hex.to_owned(),
         ];
