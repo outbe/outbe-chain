@@ -186,6 +186,8 @@ mod l2_zk_gate {
                 assert_eq!(revert_message(error), expected.to_string());
             }
             let mut valid_gate = offer(&root, &good_sig);
+            // The submitter need not be the registered network operator.
+            valid_gate.caller = Address::repeat_byte(0x88);
             valid_gate.zk_proof = dummy_full_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
@@ -193,8 +195,8 @@ mod l2_zk_gate {
                 .unwrap_err();
             assert!(revert_message(err).contains("is not in OFFERING status"));
 
-            // The otherwise valid selector cannot be borrowed by an operator
-            // registered on another L2, even with that L2's valid signature.
+            // A caller's registration on another chain cannot authorize an
+            // offer for a chain that is no longer registered.
             registry.remove_network(caller(), L2_CHAIN_ID).unwrap();
             registry.register_network(4242, caller(), &public).unwrap();
             let mut wrong_chain = offer(&root, &good_sig);
@@ -202,9 +204,8 @@ mod l2_zk_gate {
             let error = factory
                 .offer_tribute(&scope, &NoParentBodies, wrong_chain)
                 .unwrap_err();
-            let expected = crate::errors::TributeFactoryError::CircuitChainMismatch {
-                provided: u32::try_from(L2_CHAIN_ID).unwrap(),
-                registered: 4242,
+            let expected = outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
+                chain_id: L2_CHAIN_ID,
             };
             assert_eq!(revert_message(error), expected.to_string());
         });
@@ -256,19 +257,22 @@ mod l2_zk_gate {
     }
 
     #[test]
-    fn unregistered_operators_cannot_offer() {
+    fn unregistered_chains_cannot_offer() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
             let scope = ExecutionScope::new();
 
-            // An unregistered caller must fail before any enclave work.
+            // An unregistered chain must fail before any enclave work.
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
                 .offer_tribute_with_processor(&scope, &NoParentBodies, offer(&[], &[]), |_| {
-                    panic!("unregistered caller reached the enclave")
+                    panic!("unregistered chain reached the enclave")
                 })
                 .unwrap_err();
-            assert!(revert_message(err).contains("not a registered L2 operator"));
+            let expected = outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
+                chain_id: L2_CHAIN_ID,
+            };
+            assert_eq!(revert_message(err), expected.to_string());
         });
     }
 
@@ -481,7 +485,7 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         let mut registry = L2RegistryContract::new(storage.clone());
         registry
-            .register_network(0xdead, CALLER, &group_key.encode())
+            .register_network(0xdead, Address::repeat_byte(0x88), &group_key.encode())
             .unwrap();
         begin_block(storage.clone(), &scope).unwrap();
     });

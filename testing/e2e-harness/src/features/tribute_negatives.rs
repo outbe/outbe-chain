@@ -19,26 +19,25 @@ use crate::{
 
 pub(super) enum Rejection {
     Duplicate,
-    /// The caller's network is registered with ZK verification enabled, but the
-    /// offer carries no root signature.
+    /// The selected network is registered, but the offer carries no root signature.
     MissingSignature,
     /// A well-formed proof whose statement does not match the submitted one.
     InvalidProof,
-    /// The caller has no L2Registry entry. The factory guard fails closed here,
+    /// The selected chain has no L2Registry entry. The factory guard fails closed
     /// before the day, pricing, or enclave paths are reached.
-    UnregisteredOperator,
+    UnregisteredNetwork,
 }
 
 impl Rejection {
-    fn reason(&self, caller: Address) -> String {
+    fn reason(&self, l2_chain_id: u32) -> String {
         match self {
             Self::Duplicate => {
                 "tribute already exists for this combination of parameters".to_owned()
             }
             Self::MissingSignature => "invalid BLS signature over zkMerkleRoot".to_owned(),
             Self::InvalidProof => "ZK proof verification failed".to_owned(),
-            Self::UnregisteredOperator => {
-                format!("caller {caller} is not a registered L2 operator")
+            Self::UnregisteredNetwork => {
+                format!("L2 network {l2_chain_id} is not registered")
             }
         }
     }
@@ -160,7 +159,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                 outbe_zk_canonical::full_proof::COMBINED_LEN
             );
         }
-        Rejection::UnregisteredOperator => {
+        Rejection::UnregisteredNetwork => {
             assert!(
                 call.zkMerkleRoot.is_empty()
                     && call.zkProof.is_empty()
@@ -183,7 +182,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         .rpc
         .checkpoint_at(ports[0], height)
         .expect("negative receipt checkpoint");
-    let reason = rejection.reason(caller);
+    let reason = rejection.reason(call.chainId);
     let expected = Revert::from(reason.clone()).abi_encode();
     assert_eq!(
         receipt["blockHash"]

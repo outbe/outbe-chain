@@ -1,7 +1,6 @@
 //! Cross-module surface: ZK merkle-root signature verification for
 //! `TributeFactory.offerTribute`.
 
-use alloy_primitives::Address;
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
     group::G1, ops::verify_message, variant::MinSig,
@@ -22,27 +21,26 @@ pub const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 /// Outcome of the offer-time ZK signature check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZkOfferCheck {
-    /// The caller is not a registered L2 operator address.
+    /// The selected L2 chain is not registered.
     NotRegistered,
     /// The signature over `zkMerkleRoot` verified against the network key.
     Verified { chain_id: u64 },
 }
 
-/// Verifies `signature` over `zk_merkle_root` for the network registered to
-/// `l1_address`.
+/// Verifies `signature` over `zk_merkle_root` for `l2_chain_id`.
 ///
-/// - Caller not registered as an L1 operator: [`ZkOfferCheck::NotRegistered`].
-/// - Registered caller: `zk_merkle_root` must be 32 bytes and `signature`
+/// - Chain not registered: [`ZkOfferCheck::NotRegistered`].
+/// - Registered chain: `zk_merkle_root` must be 32 bytes and `signature`
 ///   must be a valid BLS MinSig G1 signature over it under
 ///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
-    l1_address: Address,
+    l2_chain_id: u64,
     zk_merkle_root: &[u8],
     signature: &[u8],
 ) -> Result<ZkOfferCheck> {
     let registry = L2RegistryContract::new(storage);
-    let Some(record) = registry.network_by_l1_address(l1_address)? else {
+    let Some(record) = registry.networks.get(l2_chain_id)? else {
         return Ok(ZkOfferCheck::NotRegistered);
     };
     let chain_id = record.chain_id;

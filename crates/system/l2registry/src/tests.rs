@@ -81,12 +81,8 @@ fn register_and_owner_remove_roundtrip() {
             .register_network(L2_CHAIN_ID, l1_addr(), &public)
             .unwrap();
         assert_eq!(
-            registry
-                .network_by_l1_address(l1_addr())
-                .unwrap()
-                .unwrap()
-                .chain_id,
-            L2_CHAIN_ID
+            registry.load_network(L2_CHAIN_ID).unwrap().l1_address,
+            l1_addr()
         );
     });
 }
@@ -174,7 +170,7 @@ fn zero_chain_id_is_rejected_on_every_host_network() {
                 .unwrap_err();
             assert!(matches!(error, PrecompileError::Revert(_)));
             assert!(!registry.networks.exists(0).unwrap());
-            assert!(registry.network_by_l1_address(l1_addr()).unwrap().is_none());
+            assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
             registry
                 .register_network(L2_CHAIN_ID, l1_addr(), &public)
                 .unwrap();
@@ -281,9 +277,9 @@ fn zk_signature_check_paths() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        // An unregistered caller is reported to the admission gate.
+        // An unregistered chain is reported to the admission gate.
         assert_eq!(
-            check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &good_sig).unwrap(),
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &good_sig).unwrap(),
             ZkOfferCheck::NotRegistered
         );
 
@@ -292,21 +288,26 @@ fn zk_signature_check_paths() {
             .register_network(L2_CHAIN_ID, l1_addr(), &public)
             .unwrap();
 
-        // Every registered operator's signature is required and checked.
+        // The signature is checked against the selected network's key.
         assert_eq!(
-            check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &good_sig).unwrap(),
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &good_sig).unwrap(),
             ZkOfferCheck::Verified {
                 chain_id: L2_CHAIN_ID
             }
         );
+        assert_eq!(
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID + 1, &root, &good_sig)
+                .unwrap(),
+            ZkOfferCheck::NotRegistered
+        );
 
         // Empty root.
-        let err =
-            check_zk_merkle_root_signature(storage.clone(), l1_addr(), &[], &good_sig).unwrap_err();
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &[], &good_sig)
+            .unwrap_err();
         assert!(revert_message(err).contains("exactly 32 bytes"));
 
         // Malformed signature bytes.
-        let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &[0x01; 8])
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &[0x01; 8])
             .unwrap_err();
         assert!(revert_message(err).contains("invalid BLS signature"));
 
@@ -314,17 +315,26 @@ fn zk_signature_check_paths() {
         let wrong_sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &[0x24; 32])
             .encode()
             .to_vec();
-        let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &wrong_sig)
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &wrong_sig)
             .unwrap_err();
         assert!(revert_message(err).contains("invalid BLS signature"));
 
-        // Signature by a different key.
-        let (other_private, _) = keypair();
+        // Another registered network's signature cannot authenticate this chain.
+        let (other_private, other_public) = keypair();
+        registry
+            .register_network(L2_CHAIN_ID + 1, Address::repeat_byte(0x22), &other_public)
+            .unwrap();
         let foreign_sig = sign_message::<MinSig>(&other_private, ZK_MERKLE_ROOT_NAMESPACE, &root)
             .encode()
             .to_vec();
-        let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &foreign_sig)
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &foreign_sig)
             .unwrap_err();
         assert!(revert_message(err).contains("invalid BLS signature"));
+        assert_eq!(
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID + 1, &root, &foreign_sig).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID + 1
+            }
+        );
     });
 }
