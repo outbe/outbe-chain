@@ -24,7 +24,7 @@ impl std::ops::DerefMut for TestTopology {
 pub(super) fn topology_with_validators(validators: usize) -> TestTopology {
     let directory = tempfile::tempdir().unwrap();
     let env = Environment {
-        data_dir: directory.path().to_path_buf(),
+        data_dir: directory.path().canonicalize().unwrap(),
         validators,
         ..Environment::default()
     };

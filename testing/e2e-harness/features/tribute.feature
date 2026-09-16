@@ -27,11 +27,11 @@ Feature: Tribute admission, projection, and proofs
     When the operator submits a valid FullProof offer for one encrypted tribute
     Then the tribute transaction succeeds and supply becomes one
 
-  @tribute-unregistered-operator
-  Scenario: An unregistered operator cannot submit a Tribute offer
+  @tribute-unregistered-chain
+  Scenario: An offer for an unregistered L2 chain is rejected
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
-    When an unregistered operator submits one encrypted tribute offer
-    Then the offer is rejected as an unregistered L2 operator and tribute supply stays zero
+    When an operator submits one encrypted tribute offer for an unregistered L2 chain
+    Then the offer is rejected for an unregistered L2 chain and tribute supply stays zero
 
   @pfs-001-11
   Scenario: A registered L2 network rejects a signed tampered proof and admits the valid FullProof
