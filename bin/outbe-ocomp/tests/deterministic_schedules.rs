@@ -55,7 +55,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
-use tempfile::tempdir;
+use support::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";

@@ -442,7 +442,7 @@ mod tests {
     fn node_role_transition_keeps_one_storage_config_argument() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         let mut command = std::process::Command::new("node");
         configure_node_command(&cfg, 4, &mut command).unwrap();
         configure_node_command(&cfg, 4, &mut command).unwrap();
@@ -454,7 +454,7 @@ mod tests {
     fn persisted_mongo_config_is_rejected_without_overwrite_or_connection() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         ensure_node_config(&cfg, 0).unwrap();
         let path = cfg.projection_storage_config(0);
         let incompatible = "version = 1\nbackend = \"mongodb\"\n[mongodb]\nuri = \"mongodb://127.0.0.1:1\"\ndatabase = \"forbidden\"\n";
@@ -474,7 +474,7 @@ mod tests {
     fn persisted_storage_identity_and_start_block_cannot_change() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         ensure_node_config(&cfg, 0).unwrap();
         let path = cfg.projection_storage_config(0);
         let original = StorageConfig::load(&path).unwrap();
@@ -503,7 +503,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         ensure_node_config(&cfg, 0).unwrap();
         let data = cfg.validator_dir(0).join("data");
         fs::create_dir_all(&data).unwrap();
@@ -525,7 +525,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         let data = cfg.validator_dir(0).join("data");
         fs::create_dir_all(&data).unwrap();
         std::os::unix::fs::symlink(external.path(), data.join("offchain")).unwrap();
@@ -543,7 +543,7 @@ mod tests {
     fn reset_validates_every_owned_path_before_removing_any_storage() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         for index in 0..2 {
             ensure_node_config(&cfg, index).unwrap();
             fs::create_dir_all(cfg.validator_dir(index).join("data/offchain")).unwrap();
@@ -564,7 +564,7 @@ mod tests {
     fn node_config_is_shared_with_readers_and_survives_restart() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
-        cfg.dir = root.path().to_path_buf();
+        cfg.dir = root.path().canonicalize().unwrap();
         ensure_node_config(&cfg, 4).unwrap();
         let path = cfg.projection_storage_config(4);
         let original = fs::read(&path).unwrap();

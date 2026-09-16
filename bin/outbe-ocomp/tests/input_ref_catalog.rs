@@ -141,7 +141,7 @@ fn one_chunk_stage_fixture() -> OneChunkStageFixture {
         ordinal: 0,
         canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 8_388_608,
@@ -228,7 +228,7 @@ fn fixture() -> Fixture {
         opening_codec_registry_hash: hash(14),
         compression: Compression::None,
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas = FilesystemCas::open(
         directory.path().join("cas"),
         CasWriterRole::SnapshotExporter,
@@ -368,7 +368,7 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
         ordinal: 0,
         canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 8_388_608,
@@ -487,7 +487,7 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
         ordinal: 0,
         canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 8_388_608,
@@ -583,7 +583,7 @@ fn staged_append_rejects_gaps_kind_regressions_and_latches_conflicts() {
         job_id: hash(71),
         attempt: 0,
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let root = directory.path().join("input-refs");
     let mut publisher =
         InputRefCatalogPublisher::open_or_resume(&root, subject, limits, list_limits).unwrap();
@@ -631,7 +631,7 @@ fn staged_reopen_discards_regular_orphan_temps_but_rejects_symlinks() {
         job_id: hash(81),
         attempt: 0,
     };
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let root = directory.path().join("input-refs");
     drop(InputRefCatalogPublisher::open_or_resume(&root, subject, limits, list_limits).unwrap());
     fs::write(root.join("interrupted.input-ref.tmp"), b"partial").unwrap();
@@ -895,7 +895,7 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
         exclude_from_intex_issuance: false,
     };
     let canonical_tribute = encode_tribute_v1(&tribute).unwrap();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 128 * 1_048_576,
