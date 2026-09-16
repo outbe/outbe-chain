@@ -34,7 +34,7 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Validate every technical prerequisite before the API may classify an
+/// Validate every technical prerequisite before the API may classify
 /// an oversized Desis Limit as the sole committed business rejection. Returns the
 /// schedule anchor: the midnight of `now`, or the next one when too little of
 /// the commit window would remain.
@@ -525,14 +525,14 @@ fn start_auction(
 }
 
 /// Return a retiring day's unused Desis Limit to PromisLimit. No-op once the
-/// supply was consumed at clearing (or for a red day, which briefs zero).
+/// limit was consumed at clearing (or for a red day, which briefs zero).
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
-    let supply = contract.pending_desis_limit_minor.read(&worldwide_day)?;
-    if supply.is_zero() {
+    let unused = contract.pending_desis_limit_minor.read(&worldwide_day)?;
+    if unused.is_zero() {
         return Ok(());
     }
     contract
@@ -540,13 +540,13 @@ fn refund_unused_desis_limit(
         .write(&worldwide_day, U256::ZERO)?;
     contract.emit(IDesis::UnusedSupplyReported {
         worldwideDay: worldwide_day.into(),
-        unusedPromis: supply,
+        unusedPromis: unused,
     })?;
-    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(supply)?;
+    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
     Ok(())
 }
 
-/// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
+/// Arm the clearing from the briefed Desis Limit: convert raw PROMIS to whole Intex
 /// units, start the fan-in gate and broadcast the clearing stage.
 fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();

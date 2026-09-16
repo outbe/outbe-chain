@@ -270,7 +270,7 @@ fn open_revealing(s: &StorageHandle) {
     runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
 }
 
-/// The reveal-end tick: arms the clearing gate from the brief supply.
+/// The reveal-end tick: arms the clearing gate from the briefed Desis Limit.
 fn arm_clearing(s: &StorageHandle) {
     runtime::schedule_tick(s, ANCHOR + 2 * 86_400).unwrap();
 }

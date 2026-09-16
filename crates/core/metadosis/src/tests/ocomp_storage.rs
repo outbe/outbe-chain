@@ -38,7 +38,7 @@ const DEADLINE_HEIGHT: u64 = REQUEST_HEIGHT
 const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 const LYSIS_LIMIT: U256 = U256::from_limbs([700, 0, 0, 0]);
-const AUCTION_BASE: U256 = U256::from_limbs([300, 0, 0, 0]);
+const DESIS_LIMIT: U256 = U256::from_limbs([300, 0, 0, 0]);
 const AUCTION_ENTRY_PRICE: U256 = U256::from_limbs([55, 0, 0, 0]);
 
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
@@ -188,13 +188,13 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
         day_type: DayType::Green,
         day_limit: DAY_LIMIT,
         lysis_limit_minor: LYSIS_LIMIT,
-        desis_limit_minor: AUCTION_BASE,
+        desis_limit_minor: DESIS_LIMIT,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
                 protocol_bundle_hash,
                 WWD.value(),
-                AUCTION_BASE,
+                DESIS_LIMIT,
                 &entry_prices(),
                 REQUEST_TIME,
             )
@@ -247,7 +247,7 @@ fn intent(
             gratis_demand: LYSIS_LIMIT,
             day_gratis_limit_minor: DAY_LIMIT,
             lysis_limit_minor: LYSIS_LIMIT,
-            desis_limit_minor: AUCTION_BASE,
+            desis_limit_minor: DESIS_LIMIT,
             auction_entry_prices: entry_prices(),
             request_budget_split_receipt_hash: receipt_hash,
         },

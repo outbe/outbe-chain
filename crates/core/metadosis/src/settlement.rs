@@ -52,29 +52,29 @@ impl MetadosisContract<'_> {
             .ok_or_else(|| {
                 crate::errors::storage_corruption("Metadosis full-precision demand overflow".into())
             })?;
-        let mut supply = wwd_metadosis_limit;
+        let mut day_gratis_limit_minor = wwd_metadosis_limit;
         match wwd_type {
             WwdDayType::Green => {}
             WwdDayType::Red => {
                 demand /= U256::from(RED_DAY_REDUCTION_COEF);
-                supply /= U256::from(RED_DAY_REDUCTION_COEF);
+                day_gratis_limit_minor /= U256::from(RED_DAY_REDUCTION_COEF);
             }
             WwdDayType::Unknown => {
                 return Err(MetadosisError::UnknownWorldwideDayType.into());
             }
         }
-        let allocation = demand.min(supply);
+        let lysis_limit_minor = demand.min(day_gratis_limit_minor);
         // The day sells what it earned beyond the symbolic share, and the limit
         // only caps it: the headroom a weak day leaves is not issued at all.
         let desis_limit_minor = tribute_nominal_total
             .min(wwd_metadosis_limit)
-            .checked_sub(allocation)
+            .checked_sub(lysis_limit_minor)
             .ok_or_else(|| {
                 crate::errors::storage_corruption(
-                    "Metadosis allocation exceeds the day's nominal".into(),
+                    "Metadosis Lysis Limit exceeds the day's nominal".into(),
                 )
             })?;
-        let split_total = allocation
+        let split_total = lysis_limit_minor
             .checked_add(desis_limit_minor)
             .ok_or_else(|| crate::errors::storage_corruption("Metadosis split overflow".into()))?;
         if split_total > wwd_metadosis_limit {
@@ -84,8 +84,8 @@ impl MetadosisContract<'_> {
         }
         Ok(MetadosisCalculation {
             gratis_demand: demand,
-            day_gratis_limit_minor: supply,
-            lysis_limit_minor: allocation,
+            day_gratis_limit_minor,
+            lysis_limit_minor,
             desis_limit_minor,
         })
     }
