@@ -621,7 +621,7 @@ impl MetadosisContract<'_> {
                 worldwideDay: record.intent.wwd,
                 tributeTotals: record.intent.authenticated_day_nominal,
                 dayGratisDemand: frozen.gratis_demand,
-                dayGratisLimit: frozen.gratis_supply,
+                dayGratisLimit: frozen.day_gratis_limit_minor,
                 dayGratisAllocation: frozen.lysis_limit_minor,
                 dayGratisAllocationRemainder: unused_lysis_limit_minor,
                 netDayGratisAllocation: lysis_allocation_minor,

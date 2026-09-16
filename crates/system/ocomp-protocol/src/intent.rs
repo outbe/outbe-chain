@@ -89,7 +89,7 @@ wire_struct! {
         pub previous_vwap: U256,
         pub current_vwap: U256,
         pub gratis_demand: U256,
-        pub gratis_supply: U256,
+        pub day_gratis_limit_minor: U256,
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
         pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,

@@ -588,7 +588,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_briefs_no_supply_however_large_the_limit() {
+fn green_empty_day_briefs_nothing_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
@@ -762,7 +762,7 @@ fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
 }
 
 #[test]
-fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
+fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));

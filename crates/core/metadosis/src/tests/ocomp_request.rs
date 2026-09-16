@@ -297,7 +297,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .request_budget_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        let desis_supply_before = DesisContract::new(storage.clone())
+        let desis_limit_before = DesisContract::new(storage.clone())
             .pending_desis_limit_minor
             .read(&wwd)
             .unwrap();
@@ -357,7 +357,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         let terminal = metadosis
             .ocomp_job_record(intent_id, &poc_schema_limits())
@@ -379,7 +379,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(

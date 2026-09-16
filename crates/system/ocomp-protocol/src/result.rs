@@ -99,7 +99,7 @@ wire_struct! {
         pub tribute_nominal_total: U256,
         pub day_limit: U256,
         pub gratis_demand: U256,
-        pub gratis_supply: U256,
+        pub day_gratis_limit_minor: U256,
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
         pub lysis_allocation_minor: U256,
@@ -156,7 +156,7 @@ wire_struct! {
         pub eligible_nominal_total: U256,
         pub day_limit: U256,
         pub gratis_demand: U256,
-        pub gratis_supply: U256,
+        pub day_gratis_limit_minor: U256,
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
         pub lysis_allocation_minor: U256,
@@ -506,7 +506,7 @@ impl LysisResultV1 {
             completion.tribute_nominal_total == self.tribute_nominal_total
                 && completion.day_limit == self.conservation.day_limit
                 && completion.gratis_demand == self.conservation.gratis_demand
-                && completion.gratis_supply == self.conservation.gratis_supply
+                && completion.day_gratis_limit_minor == self.conservation.day_gratis_limit_minor
                 && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
                 && completion.desis_limit_minor == self.conservation.desis_limit_minor
                 && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
@@ -578,7 +578,7 @@ impl LysisResultV1 {
                 && completion.day_type == frozen.day_type
                 && completion.day_limit == frozen.day_limit
                 && completion.gratis_demand == frozen.gratis_demand
-                && completion.gratis_supply == frozen.gratis_supply
+                && completion.day_gratis_limit_minor == frozen.day_gratis_limit_minor
                 && completion.lysis_limit_minor == frozen.lysis_limit_minor
                 && completion.desis_limit_minor == frozen.desis_limit_minor
                 && completion.status == CompletionStatus::Completed

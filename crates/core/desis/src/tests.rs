@@ -513,7 +513,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
 }
 
 #[test]
-fn strict_request_desis_limit_rejects_oversized_supply_without_state() {
+fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
     with_storage(|s| {
         assert!(crate::ocomp_budget::apply_request_desis_limit(
             s.clone(),
@@ -725,7 +725,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
+fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
 
@@ -744,7 +744,7 @@ fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
                 reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
-                supply: U256::MAX,
+                desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
             }
         );
@@ -803,7 +803,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
                 reason: AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
-                supply,
+                desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
             }
         );
@@ -1603,7 +1603,7 @@ fn no_bids_clears_as_no_sale() {
 // --- Clearing algorithm ---
 
 #[test]
-fn clearing_allocates_up_to_supply() {
+fn clearing_allocates_up_to_the_limit() {
     with_storage(|s| {
         let supply = 3u32;
         open_clearing(&s, supply as u128);
@@ -1654,7 +1654,7 @@ fn clearing_transitions_to_cleared() {
 }
 
 #[test]
-fn zero_supply_brief_arms_clearing() {
+fn zero_limit_brief_arms_clearing() {
     with_storage(|s| {
         open_clearing(&s, 0);
         let contract = s.contract::<DesisContract>();
@@ -1667,7 +1667,7 @@ fn zero_supply_brief_arms_clearing() {
 }
 
 #[test]
-fn clearing_empty_supply_refunds_all_bidders() {
+fn clearing_empty_limit_refunds_all_bidders() {
     with_storage(|s| {
         open_clearing(&s, 0);
         runtime::process_bids_batch(
@@ -1924,7 +1924,7 @@ fn clear_rate_escrow_scales_by_basis() {
 }
 
 #[test]
-fn clearing_returns_unsold_supply_and_dust_to_promis() {
+fn clearing_returns_the_unused_limit_and_dust_to_promis() {
     use outbe_promislimit::PromisLimitContract;
 
     with_storage(|s| {
@@ -2633,7 +2633,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_supply_rejects_under_the_reject_policy() {
+fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
         let error = crate::api::dispatch_auction_brief(

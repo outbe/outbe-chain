@@ -336,7 +336,7 @@ fn build_and_commit_request(
             previous_vwap,
             current_vwap,
             gratis_demand: calculation.gratis_demand,
-            gratis_supply: calculation.gratis_supply,
+            day_gratis_limit_minor: calculation.day_gratis_limit_minor,
             lysis_limit_minor,
             desis_limit_minor: receipt.desis_limit_minor,
             auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),

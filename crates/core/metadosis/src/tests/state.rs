@@ -145,7 +145,7 @@ fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() 
                     .checked_add(calculation.desis_limit_minor),
                 Some(total)
             );
-            assert!(calculation.lysis_limit_minor <= calculation.gratis_supply);
+            assert!(calculation.lysis_limit_minor <= calculation.day_gratis_limit_minor);
         }
     });
 }
