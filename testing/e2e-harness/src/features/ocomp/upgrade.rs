@@ -517,6 +517,7 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .expect("validator-1 V2 Tribute owner")
         .evm_key()
         .expect("validator-1 V2 Tribute key");
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &offerer);
     let tribute_tx = world
         .rpc
         .tribute_offer(&offerer, &successor_wwd_value.to_string())
