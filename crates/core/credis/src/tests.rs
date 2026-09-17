@@ -1367,7 +1367,7 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
         for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
             let invalid = params(handle(2), alice());
-            let new_id = CredisContract::position_id(invalid.handle_id, invalid.smart_account);
+            let new_id = invalid.credis_id;
             assert!(credis.open_position(invalid).is_err());
             assert!(!credis.position_exists(new_id).unwrap());
             assert!(credis.void_position(id, deadline).is_err());
