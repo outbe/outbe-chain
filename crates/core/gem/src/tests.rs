@@ -1912,7 +1912,7 @@ fn token_uri_renders_the_gem_card() {
 }
 
 #[test]
-fn token_uri_reads_expired_once_the_call_notice_lapses() {
+fn token_uri_stays_called_past_the_call_deadline() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
@@ -1938,7 +1938,7 @@ fn token_uri_reads_expired_once_the_call_notice_lapses() {
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
         let (json, svg) = token_uri_parts(&storage, gem_id);
-        assert_eq!(trait_value(&json, "State").unwrap(), "Expired");
-        assert!(svg.contains(">EXPIRED</text>"));
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+        assert!(svg.contains(">CALLED</text>"));
     });
 }

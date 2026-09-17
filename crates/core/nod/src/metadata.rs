@@ -6,14 +6,11 @@ use crate::api;
 use crate::constants::{CALL_RATE_PCT, TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{NodBucketState, NodContract, NodItemState};
 
-/// The Nod's `tokenURI` at block time `now`. Qualification and the call live on
-/// the bucket, so both are read from there; a called Nod past its settlement
-/// deadline reads as Expired until the call scan forfeits it.
+/// Qualification and the call live on the bucket, so both are read from there.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,
     bucket: &NodBucketState,
-    now: u64,
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
     let deadline = api::settlement_deadline_of(
@@ -34,8 +31,6 @@ pub(crate) fn token_uri(
     let called = called_at != 0 && !item.is_settled;
     let state = if item.is_settled {
         nft_card::SETTLED
-    } else if called && now > deadline {
-        nft_card::EXPIRED
     } else if called {
         nft_card::CALLED
     } else if bucket.is_qualified {

@@ -78,8 +78,7 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                let now = storage.timestamp()?.to::<u64>();
-                crate::metadata::token_uri(&nod, &item, &bucket, now)
+                crate::metadata::token_uri(&nod, &item, &bucket)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;

@@ -670,7 +670,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                     .unwrap(),
             )
             .unwrap();
-            let label = ["Issued", "Qualified", "Called", "Settled", "Expired"][usize::from(state)];
+            let label = ["Issued", "Qualified", "Called", "Settled", "Called"][usize::from(state)];
             let mut expected = vec![
                 format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
                 r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#

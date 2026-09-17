@@ -40,10 +40,6 @@ pub const CALLED: State = State {
     label: "Called",
     color: "#f97316",
 };
-pub const EXPIRED: State = State {
-    label: "Expired",
-    color: "#6b7280",
-};
 pub const VOID: State = State {
     label: "Void",
     color: "#6b7280",

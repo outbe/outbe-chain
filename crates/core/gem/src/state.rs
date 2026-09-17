@@ -66,8 +66,7 @@ impl GemContract<'_> {
 
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        let now = self.storage.timestamp()?.to::<u64>();
-        Ok(crate::metadata::token_uri(&item, now))
+        Ok(crate::metadata::token_uri(&item))
     }
 
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
