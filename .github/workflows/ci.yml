@@ -51,8 +51,6 @@ jobs:
       # carries the pinned toolchain with rustfmt, and the mise tool set.
       - name: Verify vendored CKB SMT provenance and panic safety
         run: bash scripts/check-vendored-smt.sh
-      - name: Verify local Rust cache lifecycle
-        run: python3 -m unittest discover -s scripts/ci/tests -v
       - run: mise run fmt-check
 
   # Stable checks share one target directory, persisted on each local runner.
@@ -66,12 +64,28 @@ jobs:
     env:
       # Preserve rust-cache's build setting after removing remote archiving.
       CARGO_INCREMENTAL: "0"
-      OUTBE_RUST_CACHE_MAX_GIB: ${{ vars.CI_RUST_CACHE_MAX_GIB || '100' }}
     steps:
       - uses: actions/checkout@v6
       - name: Set up persistent local Rust cache
-        id: rust-cache
-        run: python3 scripts/ci/local_rust_cache.py setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_key="$(
+            {
+              printf '%s\n' "$GITHUB_WORKFLOW" "$GITHUB_JOB" "$GITHUB_REF"
+              rustc -vV
+              sha256sum .github/workflows/ci.yml Dockerfile.project-toolchain \
+                release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
+            } | sha256sum | cut -d ' ' -f1
+          )"
+          # The runner's persistent _work mount survives checkout and temp cleanup.
+          # Old cache directories must be cleaned up on the runner when needed.
+          cache_dir="${RUNNER_TEMP%/*}/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          test ! -e "$GITHUB_WORKSPACE/target"
+          ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
+          printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
+            "$cache_dir/cargo" "$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
       # The image always carries /usr/include/sgx_dcap_quoteverify.h, so
       # `mise run lint` also runs its native-dcap clippy pass. On the host that
       # header was only present when something else had installed the Intel
@@ -90,9 +104,6 @@ jobs:
           cargo test --locked --package outbe-macros --test trybuild
           cargo test --locked --package outbe-primitives --test trybuild
           cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
-      - name: Maintain local Rust cache
-        if: ${{ always() && steps.rust-cache.outcome == 'success' }}
-        run: python3 scripts/ci/local_rust_cache.py finish
 
   test:
     name: test
@@ -103,12 +114,28 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
-      OUTBE_RUST_CACHE_MAX_GIB: ${{ vars.CI_RUST_CACHE_MAX_GIB || '100' }}
     steps:
       - uses: actions/checkout@v6
       - name: Set up persistent local Rust cache
-        id: rust-cache
-        run: python3 scripts/ci/local_rust_cache.py setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_key="$(
+            {
+              printf '%s\n' "$GITHUB_WORKFLOW" "$GITHUB_JOB" "$GITHUB_REF"
+              rustc -vV
+              sha256sum .github/workflows/ci.yml Dockerfile.project-toolchain \
+                release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
+            } | sha256sum | cut -d ' ' -f1
+          )"
+          # The runner's persistent _work mount survives checkout and temp cleanup.
+          # Old cache directories must be cleaned up on the runner when needed.
+          cache_dir="${RUNNER_TEMP%/*}/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          test ! -e "$GITHUB_WORKSPACE/target"
+          ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
+          printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
+            "$cache_dir/cargo" "$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
       - name: Trust the container checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install LLVM coverage tools
@@ -135,9 +162,6 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: code-coverage-results.md
-      - name: Maintain local Rust cache
-        if: ${{ always() && steps.rust-cache.outcome == 'success' }}
-        run: python3 scripts/ci/local_rust_cache.py finish
 
   no-test-deps:
     name: no-test-deps

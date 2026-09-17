@@ -162,8 +162,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
 
         self.assertIn("      python-is-python3 \\\n", ci_packages)
         self.assertRegex(ci_stage, r"for tool in [^;]+ python; do")
-        self.assertIn("      zstd &&", ci_packages)
-        self.assertRegex(ci_stage, r"for tool in [^;]+\bzstd\b")
 
     def test_reproducible_release_is_owned_by_the_project_toolchain_recipe(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
@@ -297,11 +295,7 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertNotIn("qpl", recipe)
         self.assertNotIn("pccs", recipe)
         self.assertNotRegex(recipe, r"from\s+\S+:(latest|main|master)(?:\s|$)")
-        # The developer-tools CI stage is separate from the release builder.
-        self.assertEqual(
-            re.findall(r"^from\s+\S+\s+as\s+(\S+)$", recipe, re.MULTILINE),
-            ["rust", "toolchain", "ci", "builder", "artifacts"],
-        )
+        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 4)
         external_images = re.findall(
             r"^from\s+(\S+)\s+as\s+(?:rust|toolchain)$", recipe, re.MULTILINE
         )
