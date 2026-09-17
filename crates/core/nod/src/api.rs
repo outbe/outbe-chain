@@ -40,9 +40,9 @@ pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Re
 /// Timestamp by which a called bucket must be settled, or `0` while it is not
 /// called at all.
 ///
-/// Reads the notice period the bucket sealed when it qualified, so retuning the
+/// Reads the notice period the bucket sealed at issuance, so retuning the
 /// constant cannot move the deadline of a bucket that is already called. A
-/// bucket armed before the terms existed carries a zero notice, which is treated
+/// bucket issued before the terms existed carries a zero notice, which is treated
 /// as "no deadline" rather than "already lapsed".
 pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<u64> {
     let nod = NodContract::new(storage.clone());

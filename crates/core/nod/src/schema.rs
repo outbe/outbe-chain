@@ -65,9 +65,9 @@ pub struct NodItemState {
     pub is_settled: bool,
 }
 
-/// Call terms a bucket is armed with when it qualifies, and the only terms every
-/// later check reads. Grouped rather than passed positionally so five same-typed
-/// numbers cannot silently swap places on the way to storage.
+/// Call terms a bucket seals at issuance, and the only terms every later check
+/// reads. Grouped rather than passed positionally so five same-typed numbers
+/// cannot silently swap places on the way to storage.
 ///
 /// Second-encoded like `GemData`'s window, threshold and notice; the daily scan
 /// divides them back into day counts.
@@ -321,7 +321,7 @@ pub struct NodContract {
     #[attribute(order = 39)]
     pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at qualification so
+    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
@@ -346,9 +346,9 @@ pub struct NodContract {
     pub ocomp_materialization_protocol_bundle_hash:
         outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
-    // --- Call terms sealed at qualification. The daily scan and the settlement-time
+    // --- Call terms sealed at issuance. The daily scan and the settlement-time
     // deadline check read a bucket's own copy, so retuning a constant leaves
-    // every already-armed bucket on the terms it was armed with.
+    // every already-issued bucket on the terms it was issued with.
     /// Markup percent [`Self::callable_bucket_call_price`] was derived at.
     #[attribute(order = 45)]
     pub callable_bucket_call_rate: Mapping<B256, u16>,
@@ -365,7 +365,7 @@ pub struct NodContract {
     #[attribute(order = 48)]
     pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// Widest `call_window` ever armed in a reference currency, in seconds. It
+    /// Widest `call_window` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// bucket whose sealed window outruns the current constant.
     #[attribute(order = 49)]

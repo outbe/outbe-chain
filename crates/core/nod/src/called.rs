@@ -12,9 +12,9 @@
 //!   with Nods still unpaid. The two can never fire in one pass, since a
 //!   bucket called now cannot also be a notice period past its call.
 //!
-//! All four terms are sealed onto the bucket when it qualifies and read back
-//! from it here, so retuning a constant leaves every armed bucket on the terms
-//! it was armed with. Gem and intex give the same guarantee.
+//! All four terms are sealed onto the bucket at issuance and read back from it
+//! here, so retuning a constant leaves every issued bucket on the terms it was
+//! issued with. Gem and intex give the same guarantee.
 //!
 //! The breach rule needs no per-bucket streak state: the daily series is global
 //! per currency, so one trailing window per currency decides every bucket

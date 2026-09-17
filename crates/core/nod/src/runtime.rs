@@ -4,11 +4,9 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
     api::LoadedNodBucket,
-    constants::{
-        CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, TOKEN_NAME, TOKEN_SYMBOL,
-    },
+    constants::{TOKEN_NAME, TOKEN_SYMBOL},
     precompile::INod,
-    schema::{CallTerms, NodContract},
+    schema::NodContract,
 };
 
 impl NodContract<'_> {
@@ -43,35 +41,20 @@ impl NodContract<'_> {
             capability,
             BodyInput::NodBucket(&canonical),
         )?;
-        // Arm the bucket for the daily call scan. A zero entry price would yield
-        // a zero call price that every published VWAP exceeds, calling the bucket
-        // on its first scan; leave such a bucket unarmed instead. Lysis rejects a
-        // zero nominal price, but the certified-materialization path takes the
-        // value from a batch.
+        // Arm the bucket for the daily call scan from the terms sealed at
+        // issuance. A zero entry price was left unsealed then, because a zero
+        // call price would fire on the first scan; leave such a bucket unarmed.
+        // A non-zero entry with a zero sealed price means issuance failed to
+        // snapshot - do not fall back to live constants.
         if !bucket.entry_price_minor.is_zero() {
-            let call_price = bucket
-                .entry_price_minor
-                .checked_mul(U256::from(100 + CALL_RATE_PCT))
-                .ok_or_else(|| {
-                    PrecompileError::Fatal(format!(
-                        "Nod bucket {} call price overflow",
-                        bucket.bucket_key
-                    ))
-                })?
-                / U256::from(100u64);
-            // The constants are read exactly here, once. Every later check reads
-            // the bucket's sealed copy, so a retune cannot re-term it.
-            self.insert_callable_bucket(
-                bucket.bucket_key,
-                CallTerms {
-                    call_price,
-                    reference_currency: bucket.reference_currency,
-                    call_rate: CALL_RATE_PCT,
-                    call_window: CALL_WINDOW,
-                    call_threshold: CALL_THRESHOLD,
-                    call_notice_period: CALL_NOTICE_PERIOD,
-                },
-            )?;
+            let terms = self.read_call_terms(bucket.bucket_key)?;
+            if terms.call_price.is_zero() {
+                return Err(PrecompileError::Fatal(format!(
+                    "Nod bucket {} is missing issuance-sealed call terms",
+                    bucket.bucket_key
+                )));
+            }
+            self.insert_callable_bucket(bucket.bucket_key)?;
         }
         self.emit(INod::NodBucketQualified {
             bucketKey: bucket.bucket_key,

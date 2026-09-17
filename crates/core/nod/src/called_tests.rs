@@ -30,7 +30,7 @@ use crate::{
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
 const DAY: u64 = 86_400;
-/// The notice period a bucket seals at qualification, in the width these tests
+/// The notice period a bucket seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
 const ISO: u16 = 840;
@@ -217,9 +217,9 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>, &ExecutionScope, &NodRepository
 
 // --- Sealed call terms -----------------------------------------------------
 
-/// Rewrites the terms a qualified bucket sealed, the way a retuned constant
-/// would have if the scan still read the constants. Widens the currency's
-/// high-water mark alongside, exactly as `insert_callable_bucket` does.
+/// Rewrites the terms a bucket sealed at issuance, the way a retuned constant
+/// would have if later checks still read the constants. Widens the currency's
+/// high-water mark alongside, exactly as `seal_bucket_call_terms` does.
 fn reterm(
     storage: &StorageHandle<'_>,
     bucket_key: B256,
@@ -244,11 +244,14 @@ fn reterm(
     }
 }
 
-/// Qualification seals the terms; the constants are read exactly once, there.
+/// Issuance seals the terms; the constants are read exactly once, there.
+/// Qualification must not be required for the snapshot to exist, and must not
+/// put the bucket on the callable list by itself.
 #[test]
-fn qualification_seals_the_call_terms_on_the_bucket() {
+fn issuance_seals_the_call_terms_on_the_bucket() {
     harness(|storage, scope, parent| {
-        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let item = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
         let nod = NodContract::new(storage.clone());
         assert_eq!(
             nod.callable_bucket_call_rate
@@ -275,11 +278,63 @@ fn qualification_seals_the_call_terms_on_the_bucket() {
             CALL_NOTICE_PERIOD
         );
         assert_eq!(nod.max_call_window.read(&ISO).unwrap(), CALL_WINDOW);
+        assert_eq!(
+            nod.callable_buckets.len().unwrap(),
+            0,
+            "issuance seals terms without arming the call scan"
+        );
+    });
+}
+
+/// Q022: a parameter change between issuance and qualification must not re-term
+/// an already-issued bucket. Rewrite the stored copy, then qualify; the scan
+/// and deadline follow the issuance-time terms, not the live constants.
+#[test]
+fn qualification_does_not_reterm_an_already_issued_bucket() {
+    harness(|storage, scope, parent| {
+        let item = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+        reterm(storage, item.bucket_key, ISO, 3, 3, 1);
+
+        NodContract::new(storage.clone())
+            .qualify_bucket(scope, parent, item.bucket_key)
+            .unwrap();
+
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(
+            nod.callable_bucket_call_window
+                .read(&item.bucket_key)
+                .unwrap(),
+            3 * SECS_PER_DAY
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold
+                .read(&item.bucket_key)
+                .unwrap(),
+            3 * SECS_PER_DAY
+        );
+        assert_eq!(
+            nod.callable_bucket_call_notice_period
+                .read(&item.bucket_key)
+                .unwrap(),
+            SECS_PER_DAY
+        );
+
+        let at = START + 30 * DAY;
+        let latest = last_closed_day(at);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
+        fill_days(storage, latest, 3, above_call());
+        assert_eq!(scan(storage, scope, parent, at), 1);
+        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(
+            api::settlement_deadline(storage, item.bucket_key).unwrap(),
+            at + DAY
+        );
     });
 }
 
 /// The terms a bucket is called and forfeited under are the ones sealed at
-/// qualification, not the live constants. A `const` cannot be retuned at
+/// issuance, not the live constants. A `const` cannot be retuned at
 /// runtime, so this proves it from the other side: rewrite what the bucket
 /// holds and watch the scan follow the bucket rather than the constant.
 #[test]

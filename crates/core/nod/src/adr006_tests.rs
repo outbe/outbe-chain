@@ -276,7 +276,7 @@ fn nod_contract_slot_layout_is_pinned() {
             nod.ocomp_materialization_protocol_bundle_hash.base_slot(),
             U256::from(33)
         );
-        // Call terms sealed at qualification, appended after everything above.
+        // Call terms sealed at issuance, appended after everything above.
         assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(34));
         assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(35));
         assert_eq!(

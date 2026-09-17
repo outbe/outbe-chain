@@ -15,10 +15,10 @@ pub const BIN_STEP_BP: u16 = 25;
 /// and is resumed deterministically on the next daily run.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_RUN: u32 = 256;
 
-/// The four call terms below are snapshotted onto a bucket when it qualifies,
-/// and every later check reads the bucket's copy. Retuning one of them re-terms
-/// buckets that qualify afterwards, and leaves every already-armed bucket on
-/// the terms it was armed with - the same guarantee gem and intex give.
+/// The four call terms below are snapshotted onto a bucket when it is first
+/// issued, and every later check reads the bucket's copy. Retuning one of them
+/// re-terms buckets issued afterwards, and leaves every already-issued bucket
+/// on the terms it was issued with - the same guarantee gem and intex give.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
@@ -38,11 +38,11 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 pub const CALL_BREACH_DAYS: u32 = 21;
 
 /// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window`
-/// seals at qualification, matching `GemData::call_window`.
+/// seals at issuance, matching `GemData::call_window`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
 /// [`CALL_BREACH_DAYS`] in seconds - the encoding
-/// `callable_bucket_call_threshold` seals at qualification, matching
+/// `callable_bucket_call_threshold` seals at issuance, matching
 /// `GemData::call_threshold`.
 pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
 
