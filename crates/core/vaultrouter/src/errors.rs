@@ -12,6 +12,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
+    #[error("ERC20 operation failed or returned malformed data")]
+    TokenOperationFailed,
     #[error("zero address")]
     ZeroAddress,
     #[error("unauthorized")]

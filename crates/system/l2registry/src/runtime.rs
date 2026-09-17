@@ -86,18 +86,6 @@ impl L2RegistryContract<'_> {
             .get(chain_id)?
             .ok_or_else(|| L2RegistryError::NetworkNotRegistered { chain_id }.into())
     }
-
-    /// Loads the registration owned by `l1_address`, if any.
-    pub(crate) fn network_by_l1_address(
-        &self,
-        l1_address: Address,
-    ) -> Result<Option<L2NetworkRecord>> {
-        let chain_id = self.l1_to_chain.read(&l1_address)?;
-        if chain_id == 0 {
-            return Ok(None);
-        }
-        self.load_network(chain_id).map(Some)
-    }
 }
 
 /// Decodes a 96-byte MinSig G2 group public key, performing the group check.

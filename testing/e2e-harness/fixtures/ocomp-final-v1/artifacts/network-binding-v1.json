@@ -15,14 +15,14 @@
   "genesis_hash": "0x88cf63d3a70910c1fa3ac5e5c86bc56e1fdc7eda8531257f93ef1298d5f4895f",
   "fork_id": "0x1d1378c5bf42070e0326f13d3094f4b7ed3ef42c63edb3179745045f65027eb2",
   "correctness_profile_id": "0x0469002bbc5065d8e9d200daede2a65ec479cad78210d7dadabdd5320d241c8d",
-  "correctness_profile_ocb1_sha256": "0x25d54aa2d840d3b70c0f4b532fcd643fbc3a957aaae07319dffc9d22a65ac84f",
+  "correctness_profile_ocb1_sha256": "0x85e5d4de0e51f1569235615cbdcf20be9605742af354d60466daf0261f3539bc",
   "capacity_profile_id": "0x7c9614691067b57829fba66f37e02860529ab1a24497dbb8f5b53dc5bd0f52df",
   "capacity_profile_ocb1_sha256": "0xc109454bdcc0cff0847f37382043b8dd60554f115f1e149c2fba212b6e127900",
-  "protocol_bundle_hash": "0x22f538ebdbdb10a50d78fb615fb9bc689d0cdbea67bad911fa79bf0a9b7de970",
-  "protocol_bundle_ocb1_sha256": "0xa30cd34abaea678f229262c66aa913f53790d1015e507effeb62e8a443fb8183",
+  "protocol_bundle_hash": "0xae3b96dffe6076574bce2fc5f26936b1a2003bb24723502751aef009574e3c29",
+  "protocol_bundle_ocb1_sha256": "0x902db97890ca0f845649efba6343b23a50c524865aebe36553357047a8b40149",
   "founder_registration_count": 4,
-  "fork_install_hash": "0x9043da41f854e7ff763490b44543983b7e8d5926e0443518fa680eb058fb3f1b",
-  "fork_install_ocb1_sha256": "0x7d2370d4ef6e81227823dbbb201dbd9e63882bafc245e75ccad0b64be025355b",
-  "chain_manifest_sha256": "0xdd822d966875318ae772f68c6ee8257bce61545a3d4195737f6e45ffe8a96ebf",
-  "semantic_artifacts_sha256": "0xa421b649b6f8f3e31a1e53e51c3a746b37970690cfd130efb5da7f8fe33da2f3"
+  "fork_install_hash": "0xe3ebe82801ec2ad2a4a74d43733a984c91949149f457614b0652430f4d12658f",
+  "fork_install_ocb1_sha256": "0x25f31e5e9d65f08f72b66e12dd2801ec17061148b85202fe6292ed51c187c9f4",
+  "chain_manifest_sha256": "0x27244491c5f81a342700b696e2350484aecd4817d2e4d617ca467df97c4783d6",
+  "semantic_artifacts_sha256": "0x45c5f49e33c0848f257e1b2dd319b2b6adb57680a85c0489beb163544c1c2560"
 }

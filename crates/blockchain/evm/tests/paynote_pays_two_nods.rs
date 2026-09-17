@@ -1,14 +1,14 @@
 //! End-to-end: one deposited PayNote pays two Nods, the second from its change.
 //!
-//! A Nod's cost is no longer settled by a transfer — the value reaches the
-//! reserve vault when a note is deposited, and `settleNod` only has to be shown
+//! With PayNote settlement, the value reaches the reserve vault when a note
+//! is deposited, and `settleNodWithPayNote` only has to be shown
 //! a spend proof. This test drives that whole chain through the real EVM:
 //! `IPayNote.deposit` routes an ERC20 into the vault via VaultRouter and appends
-//! a leaf, then two `INodFactory.settleNod` calls spend against that leaf.
+//! a leaf, then two `INodFactory.settleNodWithPayNote` calls spend against that leaf.
 //!
 //! What it pins that the module tests cannot:
 //!   * a note deposited by the real `deposit` path — commitment derived by the
-//!     runtime, not handed to it — is spendable by `settleNod`;
+//!     runtime, not handed to it — is spendable by `settleNodWithPayNote`;
 //!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
 //!     spends it. Spend authority is knowledge of the note spend key, and
 //!     nothing on chain ties the depositor to the Nods the note pays for;
@@ -80,7 +80,7 @@ const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner: each proof names that address as its owner,
-/// matching the Nod owner as `settleNod` requires. The depositor can be different.
+/// matching the Nod owner as `settleNodWithPayNote` requires. The depositor can be different.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -248,7 +248,7 @@ fn call(
             target,
             value: U256::ZERO,
             calldata,
-            // `settleNod` charges `ZK_VERIFY_GAS` (300k) before it reads a byte
+            // `settleNodWithPayNote` charges `ZK_VERIFY_GAS` (300k) before it reads a byte
             // of storage, so the limit has to clear that with room to spare.
             gas_limit: 20_000_000,
             is_static,
@@ -313,7 +313,7 @@ fn settle_and_mine(
         ALICE1,
         NOD_FACTORY_ADDRESS,
         Bytes::from(
-            INodFactory::settleNodCall {
+            INodFactory::settleNodWithPayNoteCall {
                 nodId: nod_id.to_u256(),
                 payNoteProof: proof.to_vec().into(),
             }

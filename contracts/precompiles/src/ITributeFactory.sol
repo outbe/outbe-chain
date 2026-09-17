@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
-    // Every caller must be a registered L2 operator.
-    // `chainId` must match that operator's L2 and `version` selects an exact
+    // The caller need not be a registered L2 operator.
+    // `chainId` selects a registered L2 and `version` selects an exact
     // circuit binding. Devnet may use its development binding stub; verification is real.
     // `zkProof` uses bb-keccak-v1 with four public inputs in order:
     // derived_owner, nft_hash, binding_hash, merkle_root. The hashes must retain

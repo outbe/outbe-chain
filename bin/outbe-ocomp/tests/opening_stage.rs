@@ -181,7 +181,7 @@ fn opening_resolution_with_oracle_value(
 fn split_tree_and_completed_openings_replay_identically_after_restart() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
@@ -284,7 +284,7 @@ fn split_tree_and_completed_openings_replay_identically_after_restart() {
 fn opening_stage_rejects_a_substituted_finalized_checkpoint() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
@@ -306,7 +306,7 @@ fn opening_stage_rejects_a_substituted_finalized_checkpoint() {
 fn contradictory_done_and_split_markers_fail_before_replay_side_effects() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
@@ -370,7 +370,7 @@ fn contradictory_done_and_split_markers_fail_before_replay_side_effects() {
 fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
@@ -490,7 +490,7 @@ fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
 fn durable_oracle_subject_substitution_fails_before_replay_side_effects() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
@@ -554,7 +554,7 @@ fn durable_oracle_subject_substitution_fails_before_replay_side_effects() {
 fn oracle_conflict_after_partial_publication_fails_closed() {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let (inventory, day) = inventory(&directory);
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),

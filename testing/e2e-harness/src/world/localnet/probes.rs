@@ -184,9 +184,13 @@ fn stopped_header_command(
     // The DB subcommand does not raise the node's file-descriptor limit itself.
     // Set only this reader child's soft limit so RocksDB can open its files
     // without a performance warning; preserve the hard limit and strict parser.
-    let mut command = Command::new("prlimit");
+    let mut command = Command::new("sh");
     command
-        .args(["--nofile=131072:", "--"])
+        .args([
+            "-c",
+            "ulimit -Sn 131072 && exec \"$@\"",
+            "outbe-header-reader",
+        ])
         .arg(binary)
         .arg("db")
         .arg("--datadir")
@@ -868,7 +872,7 @@ mod tests {
         assert!(!data.join("rocksdb/CURRENT").exists());
         std::fs::write(data.join("rocksdb/CURRENT"), "MANIFEST-000001\n").unwrap();
         let command = super::stopped_header_command(binary, &data, &genesis, 42).unwrap();
-        assert_eq!(command.get_program(), "prlimit");
+        assert_eq!(command.get_program(), "sh");
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -876,8 +880,9 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "--nofile=131072:".to_owned(),
-                "--".into(),
+                "-c".to_owned(),
+                "ulimit -Sn 131072 && exec \"$@\"".into(),
+                "outbe-header-reader".into(),
                 binary.display().to_string(),
                 "db".to_owned(),
                 "--datadir".into(),
@@ -906,7 +911,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let data = directory.path().join("data");
         let genesis = directory.path().join("genesis.json");
-        let binary = directory.path().join("reader");
+        let binary = directory.path().join("reader with spaces");
         for relative in ["db", "static_files", "rocksdb"] {
             std::fs::create_dir_all(data.join(relative)).unwrap();
         }

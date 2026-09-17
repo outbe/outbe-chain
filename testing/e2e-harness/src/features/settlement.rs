@@ -944,7 +944,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &url,
         addresses::NOD_FACTORY_ADDR,
         &key,
-        &eth::INodFactory::settleNodCall {
+        &eth::INodFactory::settleNodWithPayNoteCall {
             nodId: U256::from_be_slice(&nod_id),
             payNoteProof: paynote_proof.into(),
         },

@@ -107,7 +107,7 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
         },
     ];
 
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas = FilesystemCas::open(
         directory.path(),
         CasWriterRole::SnapshotExporter,
@@ -287,7 +287,7 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
         }
     }
 
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas = FilesystemCas::open(
         directory.path(),
         CasWriterRole::SnapshotExporter,

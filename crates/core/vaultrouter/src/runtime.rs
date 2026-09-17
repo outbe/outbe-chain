@@ -953,6 +953,9 @@ fn erc20_transfer_from(
 ) -> Result<()> {
     let calldata = IERC20::transferFromCall { from, to, amount }.abi_encode();
     let ret = storage.call_with_gas(token, U256::ZERO, calldata.into(), TOKEN_CALL_GAS)?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(VaultRouterError::TokenOperationFailed.into());
+    }
     check_token_return(&ret)
 }
 
