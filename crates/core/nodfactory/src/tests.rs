@@ -386,8 +386,10 @@ fn failed_authorization_preserves_the_loaded_nod() {
     let input = params(Address::repeat_byte(0x33));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
+    let proof = world.covering_proof(&input);
+    world.settle(nod_id, input.owner, &proof).unwrap();
     let nonce = find_valid_nonce(nod_id);
-    let error = world
+    world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
                 &storage,
@@ -402,8 +404,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
             )
         })
         .unwrap_err();
-    // The rejection is the authorization, not the sender.
-    assert!(matches!(error, PrecompileError::Revert(_)));
+    // Dummy MAC is rejected regardless of who submits; the paid Nod remains.
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
@@ -788,6 +789,102 @@ fn a_paynote_naming_another_owner_cannot_pay_this_nod() {
 }
 
 #[test]
+fn a_stranger_cannot_lift_the_owners_paynote() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x66));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = cost_of(&input);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
+    let stranger = Address::repeat_byte(0x67);
+
+    let error = world.settle(nod_id, stranger, &proof).unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::PayNoteOwnerMismatch {
+                expected: stranger,
+                actual: input.owner,
+            }
+            .to_string()),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn a_stranger_can_pay_a_nod_with_their_own_paynote() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x68));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = cost_of(&input);
+    let stranger = Address::repeat_byte(0x69);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
+
+    world.settle(nod_id, stranger, &proof).unwrap();
+
+    let item = world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .unwrap();
+    assert!(item.is_settled);
+    assert_eq!(item.owner, input.owner);
+    assert!(world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap()));
+    let paid = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .last()
+        .expect("NodPaid event");
+    assert_eq!(paid.owner, input.owner);
+    assert_eq!(paid.nodId, nod_id.to_u256());
+}
+
+#[test]
+fn a_stranger_can_mine_with_the_owners_auth() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x6a));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    let proof = world.covering_proof(&input);
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    let nonce = find_valid_nonce(nod_id);
+    let stranger = Address::repeat_byte(0x6b);
+
+    let minted = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                api::MineGratisRequest {
+                    caller: stranger,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
+    let exercised = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodExercised::decode_log_data(&event.data).ok())
+        .last()
+        .expect("NodExercised event");
+    assert_eq!(exercised.owner, input.owner);
+    assert_eq!(exercised.nodId, nod_id.to_u256());
+}
+
+#[test]
 fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x66));
@@ -1039,7 +1136,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         world
             .settle(nod_id, Address::repeat_byte(0x82), &proof)
             .is_err(),
-        "owner only"
+        "lifted proof: caller is not the named PayNote owner"
     );
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
@@ -1286,19 +1383,15 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
             api::settle_nod(&storage, scope, parent, caller, nod_id, asset)
         })
     };
-    for (caller, expected) in [
-        (Address::repeat_byte(0x92), NodFactoryError::NotOwner),
-        (input.owner, NodFactoryError::NodNotQualified),
-    ] {
-        assert_eq!(
-            settle(&mut world, caller, NOTE_ASSET)
-                .unwrap_err()
-                .to_string(),
-            PrecompileError::from(expected).to_string()
-        );
-    }
+    let stranger = Address::repeat_byte(0x92);
+    assert_eq!(
+        settle(&mut world, stranger, NOTE_ASSET)
+            .unwrap_err()
+            .to_string(),
+        PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
+    );
     world.qualify(nod_id);
-    let error = settle(&mut world, input.owner, Address::ZERO).unwrap_err();
+    let error = settle(&mut world, stranger, Address::ZERO).unwrap_err();
     assert!(error.to_string().contains("settlement asset"));
     assert!(
         !world
@@ -1309,7 +1402,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     );
 
     // No token transfer stubs: zero cost must require neither funds nor approvals.
-    settle(&mut world, input.owner, NOTE_ASSET).unwrap();
+    settle(&mut world, stranger, NOTE_ASSET).unwrap();
     assert_eq!(
         settle(&mut world, input.owner, NOTE_ASSET)
             .unwrap_err()
@@ -1323,6 +1416,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
         .last()
         .unwrap();
+    assert_eq!(paid.owner, input.owner);
     assert_eq!(paid.nullifier, B256::ZERO);
     assert_eq!(paid.amountCovered, U256::ZERO);
 }

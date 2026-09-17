@@ -44,7 +44,7 @@ jobs:
     name: fmt
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     steps:
       - uses: actions/checkout@v6
       # No `rustup component add rustfmt` and no mise install: the image already
@@ -53,27 +53,50 @@ jobs:
         run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
-  # Stable checks share one target directory and cache restore.
+  # Stable checks share one target directory, persisted on each runner host.
   clippy:
     name: clippy
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      volumes:
+        - outbe-rust-cache:/__w/_outbe_rust_cache
+    # Keep concurrent runs of this job/ref from writing the same cache.
+    concurrency:
+      group: rust-cache-${{ github.workflow }}-clippy-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 60
     env:
-      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain is reachable
-      # regardless of HOME, but Swatinem/rust-cache saves and restores the Cargo
-      # directories under HOME. Point CARGO_HOME back inside the container's HOME
-      # so the registry cache is actually what the build reads.
-      CARGO_HOME: /github/home/.cargo
+      # Preserve rust-cache's build setting after removing remote archiving.
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v6
-      # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
-      # keyed on Cargo.lock + rustc version, and reused by every check below.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+      - name: Set up persistent local Rust cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_key="$(
+            {
+              printf '%s\n' "$GITHUB_WORKFLOW" "$GITHUB_JOB" "$GITHUB_REF"
+              rustc -vV
+              sha256sum .github/workflows/ci.yml Dockerfile.project-toolchain \
+                release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
+            } | sha256sum | cut -d ' ' -f1
+          )"
+          # The Docker volume is shared by all runner instances on this host.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
+          cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
+          test ! -e "$GITHUB_WORKSPACE/target"
+          ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
+          printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
+            "$cache_dir/cargo" "$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
       # The image always carries /usr/include/sgx_dcap_quoteverify.h, so
       # `mise run lint` also runs its native-dcap clippy pass. On the host that
       # header was only present when something else had installed the Intel
@@ -98,17 +121,45 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      volumes:
+        - outbe-rust-cache:/__w/_outbe_rust_cache
+    # Coverage cleanup must not race another run using the same cache.
+    concurrency:
+      group: rust-cache-${{ github.workflow }}-test-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 45
     env:
-      CARGO_HOME: /github/home/.cargo
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v6
+      - name: Set up persistent local Rust cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_key="$(
+            {
+              printf '%s\n' "$GITHUB_WORKFLOW" "$GITHUB_JOB" "$GITHUB_REF"
+              rustc -vV
+              sha256sum .github/workflows/ci.yml Dockerfile.project-toolchain \
+                release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
+            } | sha256sum | cut -d ' ' -f1
+          )"
+          # The Docker volume is shared by all runner instances on this host.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
+          cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
+          test ! -e "$GITHUB_WORKSPACE/target"
+          ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
+          printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
+            "$cache_dir/cargo" "$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
       - name: Trust the container checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview --toolchain 1.96.0-x86_64-unknown-linux-gnu
       - name: Run tests with coverage
@@ -139,7 +190,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 10
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -164,7 +215,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 15
     continue-on-error: true
     env:
@@ -185,7 +236,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -198,7 +249,7 @@ jobs:
     if: contains(github.event.head_commit.message, '[miri]')
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 60
     continue-on-error: true
     env:
@@ -249,7 +300,7 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -290,7 +341,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

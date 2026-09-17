@@ -93,7 +93,8 @@ fn issue_nod_inner(
     Ok(nod_id)
 }
 
-/// Owner-authorized exercise of one paid Nod.
+/// Exercise of one paid Nod. Any caller may submit; the owner's Gratis
+/// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
     pub nod_id: WwdEntityId,
@@ -114,7 +115,6 @@ pub fn settle_nod(
         storage,
         scope,
         parent,
-        caller,
         nod_id,
         |reference_currency, gratis_load, entry_price| {
             check_settlement_asset(storage, reference_currency, asset)?;
@@ -168,7 +168,6 @@ pub fn settle_nod_with_paynote(
         storage,
         scope,
         parent,
-        caller,
         nod_id,
         |reference_currency, gratis_load, entry_price| {
             discharge_cost(
@@ -187,11 +186,10 @@ fn settle(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
     nod_id: WwdEntityId,
     pay: impl FnOnce(u16, U256, U256) -> Result<PaidCost>,
 ) -> Result<()> {
-    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
@@ -203,6 +201,7 @@ fn settle(
         return Err(NodFactoryError::CallDeadlineExpired.into());
     }
     storage.clone().with_checkpoint(|| {
+        let owner = item.body().owner;
         let reference_currency = item.body().reference_currency;
         let gratis_load = item.body().gratis_load_minor;
         let entry_price = bucket.body().entry_price_minor;
@@ -213,7 +212,7 @@ fn settle(
         emit_event(
             storage,
             INodFactory::NodPaid {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 asset: paid.asset,
                 nullifier: paid.nullifier,
@@ -257,23 +256,24 @@ pub fn mine_gratis(
     request: MineGratisRequest,
 ) -> Result<U256> {
     let MineGratisRequest {
-        caller,
         nod_id,
         nonce,
         auth,
+        ..
     } = request;
-    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if !item.body().is_settled {
         return Err(NodFactoryError::NodNotSettled.into());
     }
     validate_pow(nod_id, nonce)?;
+    let owner = item.body().owner;
     let gratis_load_minor = item.body().gratis_load_minor;
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, scope, item, bucket)?;
         emit_event(
             storage,
             INodFactory::NodExercised {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 gratisLoadMinor: gratis_load_minor,
             },
@@ -281,28 +281,25 @@ pub fn mine_gratis(
         emit_event(
             storage,
             INodFactory::NodBurned {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 gratisLoadMinor: gratis_load_minor,
             },
         )?;
-        outbe_gratisfactory::api::mint(storage.clone(), caller, gratis_load_minor, auth)?;
+        // Anyone may submit; mint is authorized by the Nod owner's modify key.
+        outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
         Ok(gratis_load_minor)
     })
 }
 
-fn load_owned_nod(
+fn load_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
     nod_id: WwdEntityId,
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if caller != item.body().owner {
-        return Err(NodFactoryError::NotOwner.into());
-    }
     if NodContract::new(storage.clone())
         .ocomp_certified_generation(item.body().worldwide_day)?
         .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
@@ -328,7 +325,7 @@ struct PaidCost {
 /// The proof is the payment. `consume` books its nullifier before returning, so
 /// the note cannot be spent twice; running inside the caller's checkpoint means
 /// a later failure un-books it. It is called last, after the cheap
-/// owner/qualification/deadline guards, so rejected settlement never pays for
+/// qualification/deadline guards, so rejected settlement never pays for
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
