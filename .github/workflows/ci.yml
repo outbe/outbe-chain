@@ -85,9 +85,14 @@ jobs:
             } | sha256sum | cut -d ' ' -f1
           )"
           # The Docker volume is shared by all runner instances on this host.
-          # Old cache directories must be cleaned up on the runner when needed.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
           cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
           mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
           test ! -e "$GITHUB_WORKSPACE/target"
           ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
           printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
@@ -141,9 +146,14 @@ jobs:
             } | sha256sum | cut -d ' ' -f1
           )"
           # The Docker volume is shared by all runner instances on this host.
-          # Old cache directories must be cleaned up on the runner when needed.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
           cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
           mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
           test ! -e "$GITHUB_WORKSPACE/target"
           ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
           printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
