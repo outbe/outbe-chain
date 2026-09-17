@@ -80,9 +80,21 @@ interface ICredis {
         uint8 state;
     }
 
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+
     function totalSupply() external view returns (uint256);
     function getPosition(uint256 positionId) external view returns (Position memory);
     function ownerOf(uint256 positionId) external view returns (address);
+
+    // ERC-721 transfer surface. A position is bound to its smart account: the five mutators always revert.
+    function transferFrom(address from, address to, uint256 positionId) external;
+    function safeTransferFrom(address from, address to, uint256 positionId) external;
+    function safeTransferFrom(address from, address to, uint256 positionId, bytes calldata data) external;
+    function approve(address to, uint256 positionId) external;
+    function setApprovalForAll(address operator, bool approved) external;
+    function getApproved(uint256 positionId) external view returns (address);
+    function isApprovedForAll(address owner, address operator) external view returns (bool);
 
     function positionByIndex(uint256 index) external view returns (Position memory);
 

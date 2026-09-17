@@ -1,5 +1,8 @@
 //! Module-local protocol constants for credis positions.
 
+pub const TOKEN_NAME: &str = "Credis";
+pub const TOKEN_SYMBOL: &str = "CREDIS";
+
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 

@@ -54,6 +54,13 @@ pub fn dispatch(
                     .ok_or(NodError::NodNotFound)?
                     .owner)
             }),
+            transferFrom(_)
+            | safeTransferFrom_0(_)
+            | safeTransferFrom_1(_)
+            | approve(_)
+            | setApprovalForAll(_) => Err(NodError::NonTransferable.into()),
+            getApproved(c) => view(c, |_| Ok(Address::ZERO)),
+            isApprovedForAll(c) => view(c, |_| Ok(false)),
             tokenURI(c) => view(c, |c| {
                 let nod_id = WwdEntityId::from(c.nodId);
                 let item =

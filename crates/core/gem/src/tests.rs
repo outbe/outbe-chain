@@ -603,7 +603,7 @@ fn precompile_transfer_paths_revert() {
                 gemId: gem_id,
             }
             .abi_encode(),
-            IGem::safeTransferFromCall {
+            IGem::safeTransferFrom_0Call {
                 from: ALICE,
                 to: BOB,
                 gemId: gem_id,
@@ -1684,4 +1684,48 @@ fn an_unindexable_day_price_skips_qualification_for_the_day_and_says_so() {
     assert_eq!(skipped.len(), 1);
     assert_eq!(skipped[0].referenceCurrency, 840);
     assert_eq!(skipped[0].utcDay, day);
+}
+
+#[test]
+fn token_by_index_reads_the_live_gem_list() {
+    with_storage(|storage| {
+        let burned = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let kept = api::add_gem(storage, sample_params(BOB)).unwrap();
+        api::set_state(storage, burned, GemState::Settled).unwrap();
+        api::burn(storage, burned).unwrap();
+
+        let token_at = |index: u64| {
+            let data = IGem::tokenByIndexCall {
+                index: U256::from(index),
+            }
+            .abi_encode();
+            dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO)
+        };
+        let out = token_at(0).unwrap();
+        assert_eq!(
+            IGem::tokenByIndexCall::abi_decode_returns(&out).unwrap(),
+            kept
+        );
+        let err = token_at(1).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("index out of bounds"),
+            "{err:?}"
+        );
+    });
+}
+
+#[test]
+fn precompile_safe_transfer_with_data_reverts() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let data = IGem::safeTransferFrom_1Call {
+            from: ALICE,
+            to: BOB,
+            gemId: gem_id,
+            data: Default::default(),
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
+        assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+    });
 }

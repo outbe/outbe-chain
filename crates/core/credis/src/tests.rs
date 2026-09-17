@@ -1389,3 +1389,76 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
         );
     });
 }
+
+#[test]
+fn precompile_names_the_collection_and_is_soul_bound() {
+    with_credis(|storage| {
+        let call = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO);
+        let out = call(ICredis::nameCall {}.abi_encode()).unwrap();
+        assert_eq!(
+            ICredis::nameCall::abi_decode_returns(&out).unwrap(),
+            "Credis"
+        );
+        let out = call(ICredis::symbolCall {}.abi_encode()).unwrap();
+        assert_eq!(
+            ICredis::symbolCall::abi_decode_returns(&out).unwrap(),
+            "CREDIS"
+        );
+
+        let position = U256::from(7);
+        for data in [
+            ICredis::transferFromCall {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::safeTransferFrom_0Call {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::safeTransferFrom_1Call {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+                data: Default::default(),
+            }
+            .abi_encode(),
+            ICredis::approveCall {
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::setApprovalForAllCall {
+                operator: bob(),
+                approved: true,
+            }
+            .abi_encode(),
+        ] {
+            let err = call(data).unwrap_err();
+            assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+        }
+        let out = call(
+            ICredis::getApprovedCall {
+                positionId: position,
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(
+            ICredis::getApprovedCall::abi_decode_returns(&out).unwrap(),
+            Address::ZERO
+        );
+        let out = call(
+            ICredis::isApprovedForAllCall {
+                owner: alice(),
+                operator: bob(),
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert!(!ICredis::isApprovedForAllCall::abi_decode_returns(&out).unwrap());
+    });
+}

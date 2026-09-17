@@ -713,3 +713,68 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
         });
     }
 }
+
+#[test]
+fn transfer_surface_is_soul_bound() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+
+    let owner = Address::repeat_byte(0x41);
+    let other = Address::repeat_byte(0x42);
+    let token = U256::from(7);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    StorageHandle::enter(&mut provider, |storage| {
+        let call =
+            |data: Vec<u8>| dispatch(storage.clone(), &scope, &parent, &data, owner, U256::ZERO);
+        for data in [
+            INod::transferFromCall {
+                from: owner,
+                to: other,
+                nodId: token,
+            }
+            .abi_encode(),
+            INod::safeTransferFrom_0Call {
+                from: owner,
+                to: other,
+                nodId: token,
+            }
+            .abi_encode(),
+            INod::safeTransferFrom_1Call {
+                from: owner,
+                to: other,
+                nodId: token,
+                data: Default::default(),
+            }
+            .abi_encode(),
+            INod::approveCall {
+                to: other,
+                nodId: token,
+            }
+            .abi_encode(),
+            INod::setApprovalForAllCall {
+                operator: other,
+                approved: true,
+            }
+            .abi_encode(),
+        ] {
+            let err = call(data).unwrap_err();
+            assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+        }
+        let out = call(INod::getApprovedCall { nodId: token }.abi_encode()).unwrap();
+        assert_eq!(
+            INod::getApprovedCall::abi_decode_returns(&out).unwrap(),
+            Address::ZERO
+        );
+        let out = call(
+            INod::isApprovedForAllCall {
+                owner,
+                operator: other,
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert!(!INod::isApprovedForAllCall::abi_decode_returns(&out).unwrap());
+    });
+}

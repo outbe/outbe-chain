@@ -83,6 +83,10 @@ pub fn dispatch(
             balanceOf(c) => view(c, |c| gem.balance_of(c.owner).map(U256::from)),
             ownerOf(c) => view(c, |c| gem.owner_of(c.gemId)),
             tokenURI(c) => view(c, |c| gem.token_uri(c.gemId)),
+            tokenByIndex(c) => view(c, |c| {
+                let idx = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
+                gem.token_by_index(idx)
+            }),
             tokenOfOwnerByIndex(c) => view(c, |c| {
                 let idx = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
                 gem.token_of_owner_by_index(c.owner, idx)
@@ -92,9 +96,11 @@ pub fn dispatch(
                 Ok(to_abi_data(&item))
             }),
 
-            transferFrom(_) | safeTransferFrom(_) | approve(_) | setApprovalForAll(_) => {
-                Err(GemError::NonTransferable.into())
-            }
+            transferFrom(_)
+            | safeTransferFrom_0(_)
+            | safeTransferFrom_1(_)
+            | approve(_)
+            | setApprovalForAll(_) => Err(GemError::NonTransferable.into()),
 
             getApproved(_) => view(IGem::getApprovedCall { gemId: U256::ZERO }, |_| {
                 Ok(Address::ZERO)

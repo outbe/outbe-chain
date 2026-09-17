@@ -108,6 +108,15 @@ interface INod {
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 nodId) external view returns (address);
 
+    // ERC-721 transfer surface. Nods are soul-bound: the five mutators always revert.
+    function transferFrom(address from, address to, uint256 nodId) external;
+    function safeTransferFrom(address from, address to, uint256 nodId) external;
+    function safeTransferFrom(address from, address to, uint256 nodId, bytes calldata data) external;
+    function approve(address to, uint256 nodId) external;
+    function setApprovalForAll(address operator, bool approved) external;
+    function getApproved(uint256 nodId) external view returns (address);
+    function isApprovedForAll(address owner, address operator) external view returns (bool);
+
     // Metadata reads
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);

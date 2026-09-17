@@ -21,9 +21,10 @@ interface IGem {
     // ERC-721
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 gemId) external view returns (address);
-    // Declared for ERC-721 shape only: all four always revert NonTransferable.
+    // Declared for ERC-721 shape only: all five always revert NonTransferable.
     function transferFrom(address from, address to, uint256 gemId) external;
     function safeTransferFrom(address from, address to, uint256 gemId) external;
+    function safeTransferFrom(address from, address to, uint256 gemId, bytes calldata data) external;
     function approve(address to, uint256 gemId) external;
     function setApprovalForAll(address operator, bool approved) external;
     function getApproved(uint256 gemId) external view returns (address);
@@ -34,8 +35,9 @@ interface IGem {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 gemId) external view returns (string memory);
 
-    // ERC-721 Enumerable (partial)
+    // ERC-721 Enumerable
     function totalSupply() external view returns (uint256);
+    function tokenByIndex(uint256 index) external view returns (uint256);
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific views

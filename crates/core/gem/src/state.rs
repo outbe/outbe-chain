@@ -49,6 +49,12 @@ impl GemContract<'_> {
         self.gem_items.get(gem_id)
     }
 
+    pub fn token_by_index(&self, index: u32) -> Result<U256> {
+        self.all_gem_ids
+            .get(index)?
+            .ok_or_else(|| GemError::IndexOutOfBounds.into())
+    }
+
     pub fn token_of_owner_by_index(&self, owner: Address, index: u32) -> Result<U256> {
         let count = self.owner_gem_counts.read(&owner)?;
         if index >= count {
