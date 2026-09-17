@@ -258,8 +258,20 @@ pub struct SeriesRecord {
 }
 
 impl SeriesRecord {
+    /// The stored state. This node never writes `Expired`: ask `effective_state` whether one expired.
     pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
         IntexState::from_u8(self.state)
+    }
+
+    /// The state as of `now`: derived, because no transaction arrives at the
+    /// deadline to write it.
+    pub fn effective_state(&self, now: u64) -> Result<IntexState, IntexError> {
+        let stored = self.lifecycle_state()?;
+        let deadline = u64::from(self.called_at) + u64::from(self.call_notice_period_seconds);
+        match stored == IntexState::Called && now > deadline {
+            true => Ok(IntexState::Expired),
+            false => Ok(stored),
+        }
     }
 
     pub fn call_trigger(&self) -> IntexCallTrigger {

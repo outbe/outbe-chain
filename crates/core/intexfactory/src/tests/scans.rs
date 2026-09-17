@@ -1315,10 +1315,21 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
 
         let retry_day = IntexFactoryContract::deadline_bucket(first_pass) + 1;
         assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
-        assert_eq!(f.called_group_count.read(&key).unwrap(), 2);
+        // Only the phantom stays, so the retry cannot meet the member already credited.
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 1);
+        assert_eq!(
+            f.called_group_members
+                .read(&IntexFactoryContract::group_member_key(
+                    REFERENCE_ISO,
+                    day,
+                    0
+                ))
+                .unwrap(),
+            sid(20260999).to_word()
+        );
 
         // The phantom goes away and the retry finishes the group.
-        f.called_group_count.write(&key, 1).unwrap();
+        f.called_group_count.write(&key, 0).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
             s.clone(),

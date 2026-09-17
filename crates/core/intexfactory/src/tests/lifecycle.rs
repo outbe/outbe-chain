@@ -633,53 +633,100 @@ mod call_sweep {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
-
-            let day = WorldwideDay::new(20260101);
-            let trigger = U256::from(TRIGGER);
-            let mut members = Vec::new();
-            for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
-                let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
-                let params = outbe_intex::CreateSeriesParams {
-                    series_id,
-                    worldwide_day: day,
-                    issued_units: count,
-                    promis_load_minor: 1_000_000_000_000_000_000,
-                    entry_price_minor: trigger,
-                    floor_price_minor: trigger,
-                    call_price_minor: trigger,
-                    call_trigger: outbe_intex::IntexCallTrigger {
-                        call_window_seconds: WINDOW_DAYS * DAY as u32,
-                        call_threshold_seconds: 21 * DAY as u32,
-                        call_notice_period_seconds: 7 * DAY as u32,
-                    },
-                    issued_at: ISSUED_AT,
-                    issuance_currency: issuance,
-                    reference_currency: REFERENCE_ISO,
-                };
-                outbe_intex::api::create_series(&s, params).unwrap();
-                outbe_intex::api::mark_qualified(&s, series_id).unwrap();
-                members.push(series_id);
-            }
-            IntexFactoryContract::new(s.clone())
-                .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
-                .unwrap();
-
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let (_, deadline) = called_two_member_group(&s, scan_ts);
             sweep_at(&s, due(deadline));
 
-            assert_eq!(
-                unallocated(&s),
-                U256::from(140u64) * U256::from(1_000_000_000_000_000_000u128)
+            assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
+        });
+    }
+
+    const LOAD: u128 = 1_000_000_000_000_000_000;
+
+    /// A called day group of two series against USD: 100 units issued in USD, 40 in EUR.
+    fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
+        let day = WorldwideDay::new(20260101);
+        let trigger = U256::from(TRIGGER);
+        let mut members = Vec::new();
+        for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
+            let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+            let params = outbe_intex::CreateSeriesParams {
+                series_id,
+                worldwide_day: day,
+                issued_units: count,
+                promis_load_minor: LOAD,
+                entry_price_minor: trigger,
+                floor_price_minor: trigger,
+                call_price_minor: trigger,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: issuance,
+                reference_currency: REFERENCE_ISO,
+            };
+            outbe_intex::api::create_series(s, params).unwrap();
+            outbe_intex::api::mark_qualified(s, series_id).unwrap();
+            members.push(series_id);
+        }
+        IntexFactoryContract::new(s.clone())
+            .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
+            .unwrap();
+        let deadline = call_and_deadline(s, 20260101, scan_ts);
+        (members, deadline)
+    }
+
+    fn group_len(s: &StorageHandle<'_>) -> u32 {
+        IntexFactoryContract::new(s.clone())
+            .called_group_count
+            .read(&IntexFactoryContract::scoped(REFERENCE_ISO, 20260101))
+            .unwrap()
+    }
+
+    /// Nothing marks a series as done any more, so a group walked again after a failure
+    /// must no longer hold the members whose load already went back.
+    #[test]
+    fn a_group_walked_again_credits_only_the_member_left_behind() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let (members, deadline) = called_two_member_group(&s, scan_ts);
+            let registry = outbe_intex::IntexContract::new(s.clone());
+            // More settled than issued: the EUR series fails its accounting.
+            registry.settled_units.write(&members[1], 1_000).unwrap();
+
+            sweep_at(&s, due(deadline));
+            assert_eq!(unallocated(&s), U256::from(100u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 1);
+
+            registry.settled_units.write(&members[1], 0).unwrap();
+            let retry = IntexFactoryContract::bucket_end(
+                IntexFactoryContract::deadline_bucket(due(deadline)) + 1,
             );
-            for series_id in members {
-                assert_eq!(
-                    outbe_intex::api::read_series(&s, series_id)
-                        .unwrap()
-                        .lifecycle_state()
-                        .unwrap(),
-                    outbe_intex::IntexState::Expired
-                );
-            }
+            sweep_at(&s, retry);
+            assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
+        });
+    }
+
+    /// A group deferred across the upgrade may hold a series the old sweep already
+    /// credited and stored as Expired; its load must not go back a second time.
+    #[test]
+    fn a_member_an_older_node_retired_is_not_credited_again() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let (members, deadline) = called_two_member_group(&s, scan_ts);
+            let registry = outbe_intex::IntexContract::new(s.clone());
+            let mut record = registry.series.get(members[0]).unwrap().unwrap();
+            record.state = outbe_intex::IntexState::Expired as u8;
+            registry.series.update(&record).unwrap();
+
+            sweep_at(&s, due(deadline));
+            assert_eq!(unallocated(&s), U256::from(40u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
         });
     }
 

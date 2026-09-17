@@ -370,6 +370,32 @@ impl IntexFactoryContract<'_> {
         self.release_expiry_slot(day, slot, key)
     }
 
+    /// Keep only `members` in a called group, so a re-walk never meets a series whose
+    /// load already went back to the pool.
+    pub(crate) fn retain_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        members: &[SeriesId],
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let count = self.called_group_count.read(&key)?;
+        for (index, series_id) in members.iter().enumerate() {
+            self.called_group_members.write(
+                &Self::group_member_key(reference_currency, worldwide_day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        for index in members.len() as u32..count {
+            self.called_group_members.clear(&Self::group_member_key(
+                reference_currency,
+                worldwide_day,
+                index,
+            ))?;
+        }
+        self.called_group_count.write(&key, members.len() as u32)
+    }
+
     /// Drop whatever is left of a bucket the sweep has finished.
     pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
         let len = self.expiry_bucket_len.read(&day)?;
