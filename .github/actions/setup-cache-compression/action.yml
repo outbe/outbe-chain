@@ -1,0 +1,18 @@
+name: Setup cache compression
+description: Ensure GitHub caches use zstd in the pinned CI container
+
+runs:
+  using: composite
+  steps:
+    # Keep existing image digests usable until the zstd-enabled CI image is
+    # published and pinned. New images and GitHub-hosted Ubuntu already have it.
+    # This installs only the missing tool inside the job container, not the host.
+    - name: Ensure zstd is available
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v zstd >/dev/null 2>&1; then
+          apt-get update
+          apt-get install --yes --no-install-recommends --no-upgrade zstd
+        fi
+        zstd --version

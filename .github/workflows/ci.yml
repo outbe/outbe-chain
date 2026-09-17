@@ -51,9 +51,11 @@ jobs:
       # carries the pinned toolchain with rustfmt, and the mise tool set.
       - name: Verify vendored CKB SMT provenance and panic safety
         run: bash scripts/check-vendored-smt.sh
+      - name: Verify local Rust cache lifecycle
+        run: python3 -m unittest discover -s scripts/ci/tests -v
       - run: mise run fmt-check
 
-  # Stable checks share one target directory and cache restore.
+  # Stable checks share one target directory, persisted on each local runner.
   clippy:
     name: clippy
     if: github.event_name == 'push' || !github.event.pull_request.draft
@@ -62,18 +64,14 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     timeout-minutes: 60
     env:
-      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain is reachable
-      # regardless of HOME, but Swatinem/rust-cache saves and restores the Cargo
-      # directories under HOME. Point CARGO_HOME back inside the container's HOME
-      # so the registry cache is actually what the build reads.
-      CARGO_HOME: /github/home/.cargo
+      # Preserve rust-cache's build setting after removing remote archiving.
+      CARGO_INCREMENTAL: "0"
+      OUTBE_RUST_CACHE_MAX_GIB: ${{ vars.CI_RUST_CACHE_MAX_GIB || '100' }}
     steps:
       - uses: actions/checkout@v6
-      # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
-      # keyed on Cargo.lock + rustc version, and reused by every check below.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+      - name: Set up persistent local Rust cache
+        id: rust-cache
+        run: python3 scripts/ci/local_rust_cache.py setup
       # The image always carries /usr/include/sgx_dcap_quoteverify.h, so
       # `mise run lint` also runs its native-dcap clippy pass. On the host that
       # header was only present when something else had installed the Intel
@@ -92,6 +90,9 @@ jobs:
           cargo test --locked --package outbe-macros --test trybuild
           cargo test --locked --package outbe-primitives --test trybuild
           cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
+      - name: Maintain local Rust cache
+        if: ${{ always() && steps.rust-cache.outcome == 'success' }}
+        run: python3 scripts/ci/local_rust_cache.py finish
 
   test:
     name: test
@@ -101,14 +102,15 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     timeout-minutes: 45
     env:
-      CARGO_HOME: /github/home/.cargo
+      CARGO_INCREMENTAL: "0"
+      OUTBE_RUST_CACHE_MAX_GIB: ${{ vars.CI_RUST_CACHE_MAX_GIB || '100' }}
     steps:
       - uses: actions/checkout@v6
+      - name: Set up persistent local Rust cache
+        id: rust-cache
+        run: python3 scripts/ci/local_rust_cache.py setup
       - name: Trust the container checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview --toolchain 1.96.0-x86_64-unknown-linux-gnu
       - name: Run tests with coverage
@@ -133,6 +135,9 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: code-coverage-results.md
+      - name: Maintain local Rust cache
+        if: ${{ always() && steps.rust-cache.outcome == 'success' }}
+        run: python3 scripts/ci/local_rust_cache.py finish
 
   no-test-deps:
     name: no-test-deps
@@ -148,6 +153,7 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -174,6 +180,7 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -213,6 +220,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
+      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
