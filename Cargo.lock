@@ -9187,6 +9187,7 @@ dependencies = [
  "outbe-nod",
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-paynote",
  "outbe-primitives",
  "outbe-protocol",

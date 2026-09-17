@@ -65,6 +65,18 @@ pub fn settle_nod_with_paynote(
     runtime::settle_nod_with_paynote(storage, scope, parent, caller, nod_id, paynote_proof)
 }
 
+/// What settling `nod_id` with `asset` costs, and which of the Nod's two
+/// currencies that asset settles on.
+pub fn quote_settlement(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    nod_id: WwdEntityId,
+    asset: Address,
+) -> Result<(u16, U256)> {
+    runtime::quote_settlement(storage, scope, parent, nod_id, asset)
+}
+
 /// Pays a qualified Nod's cost directly in ERC20 base units.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,

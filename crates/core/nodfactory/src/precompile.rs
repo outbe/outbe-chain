@@ -71,6 +71,19 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::settleNodWithPayNoteReturn {})
             }),
+            quoteSettlement(c) => view(c, |c| {
+                let (settlement_currency, amount) = runtime::quote_settlement(
+                    &storage,
+                    scope,
+                    parent,
+                    WwdEntityId::from(c.nodId),
+                    c.asset,
+                )?;
+                Ok(INodFactory::quoteSettlementReturn {
+                    settlementCurrency: settlement_currency,
+                    payableUnits: amount,
+                })
+            }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,

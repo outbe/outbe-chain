@@ -7,6 +7,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -20,7 +21,8 @@ use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use crate::sol_ext::IERC20;
+use crate::sol_ext::{IReferenceCurrency, IERC20};
+use outbe_vaultrouter::api::IVaultRouter;
 
 /// Issues a Nod through the block-scoped compressed-body lifecycle.
 pub fn issue_nod(
@@ -111,48 +113,47 @@ pub fn settle_nod(
     nod_id: WwdEntityId,
     asset: Address,
 ) -> Result<()> {
-    settle(
-        storage,
-        scope,
-        parent,
-        nod_id,
-        |reference_currency, gratis_load, entry_price| {
-            check_settlement_asset(storage, reference_currency, asset)?;
-            let cost = nod_api::cost_amount_minor(entry_price, gratis_load)?;
-            if !cost.is_zero() {
-                let before = token_balance(storage, asset)?;
-                checked_token_call(
-                    storage,
-                    asset,
-                    IERC20::transferFromCall {
-                        from: caller,
-                        to: NOD_FACTORY_ADDRESS,
-                        amount: cost,
-                    },
-                )?;
-                if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
-                    return Err(NodFactoryError::SettlementAmountMismatch.into());
-                }
-                checked_token_call(
-                    storage,
-                    asset,
-                    IERC20::approveCall {
-                        spender: VAULT_ROUTER_ADDRESS,
-                        amount: cost,
-                    },
-                )?;
-                outbe_vaultrouter::api::deposit(storage, asset, cost)?;
-                if token_balance(storage, asset)? != before {
-                    return Err(NodFactoryError::SettlementAmountMismatch.into());
-                }
-            }
-            Ok(PaidCost {
+    settle(storage, scope, parent, nod_id, |terms, entry_price| {
+        let currency = accept_payment_asset(
+            storage,
+            asset,
+            terms.issuance_currency,
+            terms.reference_currency,
+        )?;
+        let cost = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        if !cost.is_zero() {
+            let before = token_balance(storage, asset)?;
+            checked_token_call(
+                storage,
                 asset,
-                nullifier: B256::ZERO,
-                spend_amount: cost,
-            })
-        },
-    )
+                IERC20::transferFromCall {
+                    from: caller,
+                    to: NOD_FACTORY_ADDRESS,
+                    amount: cost,
+                },
+            )?;
+            if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
+                return Err(NodFactoryError::SettlementAmountMismatch.into());
+            }
+            checked_token_call(
+                storage,
+                asset,
+                IERC20::approveCall {
+                    spender: VAULT_ROUTER_ADDRESS,
+                    amount: cost,
+                },
+            )?;
+            outbe_vaultrouter::api::deposit(storage, asset, cost)?;
+            if token_balance(storage, asset)? != before {
+                return Err(NodFactoryError::SettlementAmountMismatch.into());
+            }
+        }
+        Ok(PaidCost {
+            asset,
+            nullifier: B256::ZERO,
+            spend_amount: cost,
+        })
+    })
 }
 
 /// Pays a qualified Nod's exact cost by spending a PayNote.
@@ -164,22 +165,17 @@ pub fn settle_nod_with_paynote(
     nod_id: WwdEntityId,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    settle(
-        storage,
-        scope,
-        parent,
-        nod_id,
-        |reference_currency, gratis_load, entry_price| {
-            discharge_cost(
-                storage,
-                reference_currency,
-                gratis_load,
-                entry_price,
-                caller,
-                paynote_proof,
-            )
-        },
-    )
+    settle(storage, scope, parent, nod_id, |terms, entry_price| {
+        discharge_cost(storage, terms, entry_price, caller, paynote_proof)
+    })
+}
+
+/// Currency pair and load a settlement charges against. Copied off the item
+/// before `settle_nod` consumes the loaded body.
+struct SettlementTerms {
+    issuance_currency: u16,
+    reference_currency: u16,
+    gratis_load_minor: U256,
 }
 
 fn settle(
@@ -187,7 +183,7 @@ fn settle(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     nod_id: WwdEntityId,
-    pay: impl FnOnce(u16, U256, U256) -> Result<PaidCost>,
+    pay: impl FnOnce(&SettlementTerms, U256) -> Result<PaidCost>,
 ) -> Result<()> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if item.body().is_settled {
@@ -202,13 +198,16 @@ fn settle(
     }
     storage.clone().with_checkpoint(|| {
         let owner = item.body().owner;
-        let reference_currency = item.body().reference_currency;
-        let gratis_load = item.body().gratis_load_minor;
+        let terms = SettlementTerms {
+            issuance_currency: item.body().issuance_currency,
+            reference_currency: item.body().reference_currency,
+            gratis_load_minor: item.body().gratis_load_minor,
+        };
         let entry_price = bucket.body().entry_price_minor;
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::settle_nod(storage, scope, item, bucket)?;
-        let paid = pay(reference_currency, gratis_load, entry_price)?;
+        let paid = pay(&terms, entry_price)?;
         emit_event(
             storage,
             INodFactory::NodPaid {
@@ -329,8 +328,7 @@ struct PaidCost {
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
-    reference_currency: u16,
-    gratis_load_minor: U256,
+    terms: &SettlementTerms,
     entry_price_minor: U256,
     caller: Address,
     paynote_proof: &[u8],
@@ -347,12 +345,13 @@ fn discharge_cost(
         }
         .into());
     }
-    check_settlement_asset(storage, reference_currency, claim.asset)?;
-    let cost = settlement_units(
-        entry_price_minor,
-        gratis_load_minor,
-        read_decimals(storage, claim.asset)?,
+    let currency = accept_payment_asset(
+        storage,
+        claim.asset,
+        terms.issuance_currency,
+        terms.reference_currency,
     )?;
+    let cost = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
     if claim.spend_amount != cost {
         return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
@@ -368,17 +367,88 @@ fn discharge_cost(
     })
 }
 
+/// Which of a Nod's two currencies a payment asset is denominated in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+/// Vaulted asset whose `isoCode()` is the Nod's reference or issuance currency.
+/// Registration is checked first, so an unregistered asset need not implement
+/// `isoCode()` at all; reference is matched first, so a same-currency Nod takes
+/// the no-rate branch.
+fn accept_payment_asset(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> Result<PaymentCurrency> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall { asset }
+            .abi_encode()
+            .into(),
+    )?;
+    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+    if vaults.is_zero() {
+        return Err(NodFactoryError::SettlementAssetNotRegistered { asset }.into());
+    }
+
+    let iso = asset_iso_code(storage, asset)?;
+    if iso == reference_currency {
+        return Ok(PaymentCurrency::Reference);
+    }
+    if iso == issuance_currency {
+        return Ok(PaymentCurrency::Issuance);
+    }
+    Err(NodFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
+}
+
+/// Cost of one Nod in `asset`'s minor units. The issuance rail folds the COEN
+/// cross rate into the same fraction, so the whole thing is floored once.
+fn cost_in_token(
+    storage: &StorageHandle<'_>,
+    terms: &SettlementTerms,
+    entry_price_minor: U256,
+    asset: Address,
+    currency: PaymentCurrency,
+) -> Result<U256> {
+    let asset_decimals = read_decimals(storage, asset)?;
+    let rate = match currency {
+        PaymentCurrency::Reference => None,
+        PaymentCurrency::Issuance => Some((
+            fresh_coen_rate_for(storage.clone(), terms.issuance_currency)?,
+            fresh_coen_rate_for(storage.clone(), terms.reference_currency)?,
+        )),
+    };
+    settlement_units(
+        entry_price_minor,
+        terms.gratis_load_minor,
+        rate,
+        asset_decimals,
+    )
+}
+
 /// The Nod's cost in the settlement asset's minor units, floored once.
+/// `rate` is `(COEN/issuance, COEN/reference)` on the issuance rail.
 pub(crate) fn settlement_units(
     entry_price_minor: U256,
     gratis_load_minor: U256,
+    rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
     const OBLIGATION_DECIMALS: u32 = 12;
+    let overflow = || PrecompileError::Revert("nod cost overflow".into());
     let obligation = entry_price_minor
         .checked_mul(gratis_load_minor)
-        .ok_or_else(|| PrecompileError::Revert("nod cost overflow".into()))?;
-    floor_to_asset_units(obligation, U256::ONE, OBLIGATION_DECIMALS, asset_decimals)
+        .ok_or_else(overflow)?;
+    let (numerator, denominator) = match rate {
+        Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
+        None => (obligation, U256::ONE),
+    };
+    floor_to_asset_units(numerator, denominator, OBLIGATION_DECIMALS, asset_decimals)
         .map_err(|e| NodFactoryError::from(e).into())
 }
 
@@ -389,28 +459,50 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
         .map_err(|_| PrecompileError::Revert("settlement asset decimals undecodable".into()))
 }
 
-/// Rejects a payment whose asset the vault router does not register under
-/// `reference_currency`.
-///
-/// The cost is denominated in the Nod's own reference currency, so any asset
-/// registered under it settles the Nod: the registry lists interchangeable
-/// alternatives, not a preference, and the payer selects the asset. An empty
-/// registry is a configuration error, not a payer one.
-fn check_settlement_asset(
+/// Reads the settlement asset's ISO 4217 code via a static sub-call.
+fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
+}
+
+/// What settling `nod_id` with `asset` costs, and in which currency.
+pub fn quote_settlement(
     storage: &StorageHandle<'_>,
-    reference_currency: u16,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    nod_id: WwdEntityId,
     asset: Address,
-) -> Result<()> {
-    let registered =
-        outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?;
-    if !registered.contains(&asset) {
-        return Err(NodFactoryError::SettlementAssetMismatch {
+) -> Result<(u16, U256)> {
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
+    let terms = SettlementTerms {
+        issuance_currency: item.body().issuance_currency,
+        reference_currency: item.body().reference_currency,
+        gratis_load_minor: item.body().gratis_load_minor,
+    };
+    let currency = accept_payment_asset(
+        storage,
+        asset,
+        terms.issuance_currency,
+        terms.reference_currency,
+    )?;
+    let settlement_currency = match currency {
+        PaymentCurrency::Reference => terms.reference_currency,
+        PaymentCurrency::Issuance => terms.issuance_currency,
+    };
+    Ok((
+        settlement_currency,
+        cost_in_token(
+            storage,
+            &terms,
+            bucket.body().entry_price_minor,
             asset,
-            reference_currency,
-        }
-        .into());
-    }
-    Ok(())
+            currency,
+        )?,
+    ))
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
