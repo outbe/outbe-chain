@@ -298,7 +298,7 @@ contract EscrowAdapterTest is Test {
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
-        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized), "lock finalized");
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "lock deleted");
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, 0, "totalLocked cleared (bidder2 at finalize, bidder1 on claim)");
 
@@ -695,7 +695,7 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT);
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
     }
 
     function test_ClaimRefund_BeforeDelay_Reverts() public {

@@ -82,7 +82,7 @@ contract EscrowAdapterBurnTest is Test {
         // nothing left parked in the escrow accounting or The Compact.
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion, "bidder refunded");
         assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), paidPortion, "remainder burned");
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, 0, "no parked state survives");
         assertEq(_liveCompactBalance(), 0, "Compact drained");
@@ -97,7 +97,7 @@ contract EscrowAdapterBurnTest is Test {
 
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT, "full principal refunded");
         assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), 0, "nothing to burn");
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
     }
 
     /// @dev Token conservation with the dead address as a sink: every minted token is either with

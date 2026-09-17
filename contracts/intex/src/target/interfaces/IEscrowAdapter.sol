@@ -301,7 +301,7 @@ interface IEscrowAdapter {
     /// @notice Permissionless refund, always paying the stored `bidder` rather than `msg.sender`: the
     ///         full principal when the day never finalized (`UNFINALIZED_REFUND_DELAY`) or when the
     ///         bidder was omitted or mismatched, and the recorded refund portion - remainder burned -
-    ///         for a failed bidder with a validated split (`POST_FINALIZE_REFUND_DELAY`).
+    ///         for a failed bidder with a validated split (`POST_FINALIZE_REFUND_DELAY`). The lock is deleted.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     function claimRefund(uint32 worldwideDay, address bidder) external;
@@ -321,6 +321,17 @@ interface IEscrowAdapter {
     /// @param bidder Bidder address whose lock is being read.
     /// @return lock The stored `BidLock` record for the series/bidder pair.
     function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory lock);
+
+    /// @notice What `claimRefund` would pay `bidder` for the day, and from when. Zero once nothing is left to
+    ///         claim: a settled or claimed lock is gone.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Bidder address.
+    /// @return amount Refund the claim would pay.
+    /// @return claimableAt Earliest unix-seconds timestamp the claim succeeds at.
+    function getClaimableRefund(uint32 worldwideDay, address bidder)
+        external
+        view
+        returns (uint128 amount, uint32 claimableAt);
 
     /// @notice Get commit bond information. A zero `amount` means no live bond.
     /// @param worldwideDay Worldwide day (yyyymmdd).

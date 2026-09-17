@@ -463,63 +463,58 @@ contract EscrowAdapter is
         if (lock.status != LockStatus.Locked) revert LockNotActive();
 
         AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        (uint128 refund, uint32 claimableAt) = _claimable(state, lock);
+        if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
+
         uint128 lockedAmount = lock.lockedAmount;
         uint8 version = state.assetVersion;
+        delete $.bidLocks[worldwideDay][bidder];
+        state.totalLocked -= lockedAmount;
+
+        _withdrawFromCompact(version, lockedAmount);
         IERC20 token = _tokenOf(version);
-
-        if (state.finalized) {
-            // Post-finalize: the bidder's instruction failed during finalization. Refund only the
-            // validated refund portion - never the full principal - so a stranded winner cannot
-            // over-draw the shared Compact pool against other series' funds.
-            uint32 claimableAt = state.finalizedAt + POST_FINALIZE_REFUND_DELAY;
-            if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-
-            if (!lock.splitRecorded) {
-                // Omitted or mismatched bidder: no split to pay, and nobody can reconstruct one, so
-                // the lock is terminal with a full-principal refund - our fan-out was wrong, not theirs.
-                lock.status = LockStatus.Finalized;
-                state.totalLocked -= lockedAmount;
-                _withdrawFromCompact(version, lockedAmount);
-                token.safeTransfer(bidder, lockedAmount);
-                emit FundsRefunded(bytes32(0), worldwideDay, bidder, lockedAmount);
-                return;
-            }
-
-            // Refund the bidder's validated portion and burn the winning remainder (the series
-            // proceeds were already routed on Outbe) - terminal in one transaction.
-            uint128 refundAmount = lock.failedRefund;
-            uint128 burnAmount = lockedAmount - refundAmount;
-
-            lock.status = LockStatus.Finalized;
-            state.totalLocked -= lockedAmount;
-            _withdrawFromCompact(version, lockedAmount);
-            if (refundAmount > 0) {
-                token.safeTransfer(bidder, refundAmount);
-                emit FundsRefunded(bytes32(0), worldwideDay, bidder, refundAmount);
-            }
-            if (burnAmount > 0) {
-                token.safeTransfer(BURN_ADDRESS, burnAmount);
-                emit ProceedsBurned(worldwideDay, bidder, burnAmount);
-            }
-        } else {
-            // Never-finalized: the relayer never settled the series, so a full-principal refund is
-            // correct - no clearing result exists on this chain.
-            uint32 claimableAt = lock.lockedAt + UNFINALIZED_REFUND_DELAY;
-            if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-
-            lock.status = LockStatus.Finalized;
-            state.totalLocked -= lockedAmount;
-
-            _withdrawFromCompact(version, lockedAmount);
-            token.safeTransfer(bidder, lockedAmount);
-            emit FundsRefunded(bytes32(0), worldwideDay, bidder, lockedAmount);
+        if (refund > 0) {
+            token.safeTransfer(bidder, refund);
+            emit FundsRefunded(bytes32(0), worldwideDay, bidder, refund);
         }
+        // The winning remainder of a recorded split: its proceeds were already routed on Outbe.
+        uint128 burn = lockedAmount - refund;
+        if (burn > 0) {
+            token.safeTransfer(BURN_ADDRESS, burn);
+            emit ProceedsBurned(worldwideDay, bidder, burn);
+        }
+    }
+
+    /// @dev What a live lock is owed and from when. A day that never finalized owes the full principal. On a
+    ///      finalized day a lock stays live only when its instruction failed or never came: the recorded split
+    ///      where the numbers added up, the full principal where they did not.
+    function _claimable(AuctionEscrowState storage state, BidLock storage lock)
+        private
+        view
+        returns (uint128 refund, uint32 claimableAt)
+    {
+        if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_REFUND_DELAY);
+        return
+            (lock.splitRecorded ? lock.failedRefund : lock.lockedAmount, state.finalizedAt + POST_FINALIZE_REFUND_DELAY);
     }
 
     // --- Views ---
     /// @inheritdoc IEscrowAdapter
     function getBidLock(uint32 worldwideDay, address bidder) external view override returns (BidLock memory) {
         return _s().bidLocks[worldwideDay][bidder];
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function getClaimableRefund(uint32 worldwideDay, address bidder)
+        external
+        view
+        override
+        returns (uint128 amount, uint32 claimableAt)
+    {
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        if (lock.status != LockStatus.Locked) return (0, 0);
+        return _claimable($.auctionEscrowState[worldwideDay], lock);
     }
 
     /// @inheritdoc IEscrowAdapter
