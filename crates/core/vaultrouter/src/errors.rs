@@ -32,8 +32,6 @@ pub enum VaultRouterError {
     ReservationAccounting,
     #[error("token did not move the exact reserved amount")]
     InexactTokenMovement,
-    #[error("token operation returned false")]
-    TokenOperationFailed,
     #[error("router custody operation is already in progress")]
     ReentrantCustody,
     #[error("invalid liquidity source")]
