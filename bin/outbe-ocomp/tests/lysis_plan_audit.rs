@@ -216,7 +216,7 @@ fn synthetic_fixture_with_options(
         }
     }
 
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_root = directory.path().join("cas");
     let input_ref_root = directory.path().join("input-refs");
     let admission_root = directory.path().join("admissions");

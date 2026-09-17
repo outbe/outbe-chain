@@ -77,7 +77,7 @@ pub(crate) fn aggregate_shard_roots(roots: &[TreeRoot]) -> Result<TreeRoot, Tree
     let mut level = 0_u32;
     while level_roots.len() > 1 {
         let mut parents = Vec::with_capacity(level_roots.len() / 2);
-        for pair in level_roots.chunks_exact(2) {
+        for pair in level_roots.as_chunks::<2>().0 {
             let inputs = [
                 Fr::from(level),
                 Fr::from_be_bytes_mod_order(&pair[0].as_bytes()),

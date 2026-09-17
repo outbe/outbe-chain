@@ -852,6 +852,11 @@
   },
   {
     "type": "error",
+    "name": "TokenOperationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnsupportedAssetDecimals",
     "inputs": [
       {

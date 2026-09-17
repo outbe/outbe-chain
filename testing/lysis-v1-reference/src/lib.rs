@@ -402,7 +402,14 @@ fn fraction_table_with_projection(
     }
     let target = wrap_u256(allocation * &unit) / total_nominal;
     let maximum = wrap_u256(&target * 2_u8);
+    // The distribution prioritizes its first group: highest league first.
+    shares.reverse();
+    populations.reverse();
     let mut fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
+    // Restore ascending league order for projection and the public table.
+    fractions.reverse();
+    shares.reverse();
+    populations.reverse();
     let raw_projected = group_nominals
         .iter()
         .zip(&fractions)
@@ -926,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn six_decimal_projection_normalization_has_the_frozen_eight_unit_dust() {
+    fn six_decimal_projection_has_the_frozen_twenty_five_unit_dust() {
         let case = load_cases(&default_vectors_path())
             .unwrap()
             .into_iter()
@@ -942,9 +949,11 @@ mod tests {
             fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
 
         assert_eq!(allocation, BigUint::from(4_800_000u64));
-        assert_eq!(raw, BigUint::from(4_800_034u64));
-        assert_eq!(normalized, BigUint::from(4_799_992u64));
-        assert_eq!(allocation - normalized, BigUint::from(8u64));
+        // The share remainder belongs to the highest league, so this projection
+        // is already within budget and needs no real-amount scaling.
+        assert_eq!(raw, BigUint::from(4_799_975u64));
+        assert_eq!(normalized, raw);
+        assert_eq!(allocation - normalized, BigUint::from(25u64));
     }
 
     #[test]

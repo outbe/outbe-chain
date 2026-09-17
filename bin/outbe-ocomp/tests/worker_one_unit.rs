@@ -77,7 +77,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_primitives::time::WorldwideDay;
-use tempfile::tempdir;
+use support::tempdir;
 
 struct RunningWorker {
     child: Child,

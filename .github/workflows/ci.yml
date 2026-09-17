@@ -53,13 +53,14 @@ jobs:
         run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
+  # Stable checks share one target directory and cache restore.
   clippy:
     name: clippy
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain is reachable
       # regardless of HOME, but Swatinem/rust-cache saves and restores the Cargo
@@ -69,8 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
-      # keyed on Cargo.lock + rustc version. sccache still helps on lockfile
-      # changes (per-crate granularity).
+      # keyed on Cargo.lock + rustc version, and reused by every check below.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -79,7 +79,19 @@ jobs:
       # header was only present when something else had installed the Intel
       # stack on the same machine first, so the pass fired at random. With
       # dcap-replay gone this is the only lane that compiles native-dcap at all.
-      - run: mise run lint
+      - name: Clippy
+        run: mise run lint
+      # The `test` job runs under llvm-cov, which does NOT execute doctests
+      # (M-24). Run them explicitly so executable doc-examples are covered.
+      - name: Doctests
+        run: mise run test-doc
+      # trybuild creates nested temporary crates. Running those under llvm-cov
+      # adds no useful runtime coverage and repeatedly rebuilds their crate graphs.
+      - name: Verify compile-time API contracts
+        run: |
+          cargo test --locked --package outbe-macros --test trybuild
+          cargo test --locked --package outbe-primitives --test trybuild
+          cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
 
   test:
     name: test
@@ -121,70 +133,6 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: code-coverage-results.md
-
-  compile-contracts:
-    name: compile contracts
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: testnet-release-sgx
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    timeout-minutes: 40
-    env:
-      CARGO_HOME: /github/home/.cargo
-    steps:
-      - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      # trybuild creates nested temporary crates. Running those under llvm-cov
-      # adds no useful runtime coverage and repeatedly rebuilds their crate graphs.
-      - name: Verify compile-time API contracts
-        run: |
-          cargo test --locked --package outbe-macros --test trybuild
-          cargo test --locked --package outbe-primitives --test trybuild
-          cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
-
-  doctests:
-    name: doctests
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: testnet-release-sgx
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    timeout-minutes: 30
-    env:
-      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
-      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
-      # Point it back inside HOME so the cache is what the build reads.
-      CARGO_HOME: /github/home/.cargo
-    steps:
-      - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      # The `test` job runs under llvm-cov, which does NOT execute doctests
-      # (M-24). Run them explicitly so executable doc-examples are covered.
-      - run: mise run test-doc
-
-  udeps:
-    name: udeps
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: testnet-release-sgx
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    timeout-minutes: 30
-    env:
-      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
-      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
-      # Point it back inside HOME so the cache is what the build reads.
-      CARGO_HOME: /github/home/.cargo
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - uses: taiki-e/install-action@cargo-udeps
-      - run: cargo +nightly udeps --workspace --lib --examples --tests --benches
 
   no-test-deps:
     name: no-test-deps
@@ -278,9 +226,6 @@ jobs:
       - fmt
       - clippy
       - test
-      - compile-contracts
-      - doctests
-      - udeps
       - no-test-deps
       - deny
       - machete
@@ -290,7 +235,7 @@ jobs:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: clippy, test, doctests, udeps, no-test-deps, deny, machete, miri
+          allowed-skips: clippy, test, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}
 
   # --- Versioning (cocogitto) ----------------------------------------- #

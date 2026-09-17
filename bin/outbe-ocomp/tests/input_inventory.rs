@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+mod support;
+
 use std::fs;
 
 use alloy_primitives::{Address, B256, U256};
@@ -101,7 +104,7 @@ fn tiny_work() -> TributeInventoryWorkConfig {
 fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
     const COUNT: u32 = 4_097;
     let (day, records, root) = fixture_records(COUNT);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let inventory_root = directory.path().join("inventory");
     let authority = subject(day, COUNT, root);
     let mut builder =
@@ -144,7 +147,7 @@ fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
 #[test]
 fn incomplete_inventory_is_rebuilt_without_accepting_partial_authority() {
     let (day, records, root) = fixture_records(257);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let inventory_root = directory.path().join("inventory");
     let authority = subject(day, 257, root);
     let mut interrupted =
@@ -165,7 +168,7 @@ fn incomplete_inventory_is_rebuilt_without_accepting_partial_authority() {
 #[test]
 fn inventory_rejects_body_field_substitution_and_source_reordering() {
     let (day, records, root) = fixture_records(2);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let authority = subject(day, 2, root);
     let mut substituted = TributeInventoryBuilder::create(
         directory.path().join("substituted"),
@@ -203,7 +206,7 @@ fn inventory_rejects_body_field_substitution_and_source_reordering() {
 #[test]
 fn sealed_inventory_rejects_a_substituted_finalized_checkpoint() {
     let (day, records, root) = fixture_records(17);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let inventory_root = directory.path().join("inventory");
     let authority = subject(day, 17, root);
     let mut builder =
@@ -221,7 +224,7 @@ fn sealed_inventory_rejects_a_substituted_finalized_checkpoint() {
 #[test]
 fn sealed_inventory_detects_body_spool_corruption() {
     let (day, records, root) = fixture_records(17);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let inventory_root = directory.path().join("inventory");
     let authority = subject(day, 17, root);
     let mut builder =

@@ -84,25 +84,25 @@ pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
 pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
 
 /// Selector for [`SystemTxKind::CertifiedParentAccounting`] (V2 OSA3).
-pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = [b'O', b'S', b'A', b'3'];
+pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = *b"OSA3";
 /// Selector for [`SystemTxKind::CycleTick`] (V2 OSC2).
-pub const CYCLE_TICK_SELECTOR: [u8; 4] = [b'O', b'S', b'C', b'2'];
+pub const CYCLE_TICK_SELECTOR: [u8; 4] = *b"OSC2";
 /// Selector for [`SystemTxKind::RewardsGemDelivery`] (V2 OSG2).
-pub const REWARDS_GEM_DELIVERY_SELECTOR: [u8; 4] = [b'O', b'S', b'G', b'2'];
+pub const REWARDS_GEM_DELIVERY_SELECTOR: [u8; 4] = *b"OSG2";
 /// Selector for [`SystemTxKind::BoundaryOutcome`] (V2 OSB2).
-pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = [b'O', b'S', b'B', b'2'];
+pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = *b"OSB2";
 /// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
-pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = [b'O', b'S', b'O', b'2'];
+pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
 /// Selector for the evidence-carrying V1 TEE bootstrap payload.
 ///
 /// `OST2` was never a valid selector for this greenfield chain. Only `OST3`
 /// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
 /// networks.
-pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'3'];
+pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
-pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = [b'O', b'S', b'L', b'2'];
+pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
-pub const HOOK_EVENTS_SELECTOR: [u8; 4] = [b'O', b'S', b'H', b'2'];
+pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
