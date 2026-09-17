@@ -31,7 +31,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
-      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
