@@ -420,7 +420,7 @@ pub(crate) fn rebalance(
     amount: U256,
     max_amount_to: U256,
 ) -> Result<U256> {
-    if !outbe_cca::api::is_active(&storage, caller)? {
+    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(VaultRouterError::CcaNotActive(caller).into());
     }
     if vault_from == vault_to {

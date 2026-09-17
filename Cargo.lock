@@ -8211,6 +8211,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-ccaregistry",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -8219,12 +8220,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-cca"
+name = "outbe-ccaregistry"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-macros",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8417,6 +8420,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-ccaregistry",
  "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
@@ -8428,7 +8432,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
@@ -8452,6 +8456,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-credisfactory",
@@ -8699,7 +8704,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-accounting",
  "outbe-agentreward",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -9491,6 +9496,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "hex",
+ "outbe-ccaregistry",
  "outbe-compressed-entities",
  "outbe-credis",
  "outbe-credisfactory",
@@ -9983,7 +9989,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

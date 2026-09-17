@@ -87,6 +87,19 @@ fn iso_word(iso: u16) -> Bytes {
 }
 
 fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
+    storage
+        .increase_balance(
+            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        )
+        .map_err(|error| error.to_string())?;
+    outbe_ccaregistry::runtime::bond(
+        storage.clone(),
+        CCA,
+        outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .map_err(|error| error.to_string())?;
     outbe_gratis::api::mint(
         storage.clone(),
         ALICE,

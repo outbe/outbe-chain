@@ -8,7 +8,8 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::{
@@ -17,6 +18,14 @@ use crate::constants::{
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
+
+/// Current execution timestamp's UTC reward day key (YYYYMMDD).
+fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
+    // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
+    let timestamp =
+        u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow)?;
+    Ok(timestamp_to_date_key(timestamp))
+}
 
 /// Terms captured when a position opens. Grouped rather than passed positionally
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
@@ -138,53 +147,62 @@ impl CredisContract<'_> {
     /// live position. Collateral starts fully locked and the interest anchor
     /// starts at origination.
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
-        if params.principal.is_zero() || params.collateral.is_zero() {
-            return Err(CredisError::InvalidAmount.into());
-        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            if params.principal.is_zero() || params.collateral.is_zero() {
+                return Err(CredisError::InvalidAmount.into());
+            }
 
-        let position_id = CredisContract::position_id(params.handle_id, params.smart_account);
-        if self.position_exists(position_id)? {
-            return Err(CredisError::PositionAlreadyExists.into());
-        }
+            let position_id = CredisContract::position_id(params.handle_id, params.smart_account);
+            if self.position_exists(position_id)? {
+                return Err(CredisError::PositionAlreadyExists.into());
+            }
 
-        let position = Position {
-            position_id,
-            smart_account: params.smart_account,
-            cca: params.cca,
-            asset: params.asset,
-            issuance_currency: params.issuance_currency,
-            reference_currency: params.reference_currency,
-            eoa_ct: params.eoa_ct,
-            principal: params.principal,
-            outstanding: params.principal,
-            collateral: params.collateral,
-            collateral_locked: params.collateral,
-            policy_rate: params.policy_rate,
-            entry_price: params.entry_price,
-            call_price: calc_call_price(params.entry_price)?,
-            originated_at: params.originated_at,
-            last_settled_at: params.originated_at,
-            called_at: 0,
-            state: CredisState::Open as u8,
-            call_notice_period: CALL_NOTICE_PERIOD,
-            call_rate: CALL_RATE_PCT,
-            call_window: CALL_WINDOW,
-            call_threshold: CALL_THRESHOLD,
-        };
-        self.create_position_record(&position)?;
-        self.widen_max_call_window(position.reference_currency, position.call_window)?;
-        self.append_to_address_index(params.smart_account, position_id)?;
-        self.append_to_global_index(position_id)?;
-        self.insert_active(position_id)?;
+            let position = Position {
+                position_id,
+                smart_account: params.smart_account,
+                cca: params.cca,
+                asset: params.asset,
+                issuance_currency: params.issuance_currency,
+                reference_currency: params.reference_currency,
+                eoa_ct: params.eoa_ct,
+                principal: params.principal,
+                outstanding: params.principal,
+                collateral: params.collateral,
+                collateral_locked: params.collateral,
+                policy_rate: params.policy_rate,
+                entry_price: params.entry_price,
+                call_price: calc_call_price(params.entry_price)?,
+                originated_at: params.originated_at,
+                last_settled_at: params.originated_at,
+                called_at: 0,
+                state: CredisState::Open as u8,
+                call_notice_period: CALL_NOTICE_PERIOD,
+                call_rate: CALL_RATE_PCT,
+                call_window: CALL_WINDOW,
+                call_threshold: CALL_THRESHOLD,
+            };
+            outbe_ccaregistry::api::position_opened(
+                &self.storage,
+                params.cca,
+                reward_day(&self.storage)?,
+                params.collateral,
+            )?;
+            self.create_position_record(&position)?;
+            self.widen_max_call_window(position.reference_currency, position.call_window)?;
+            self.append_to_address_index(params.smart_account, position_id)?;
+            self.append_to_global_index(position_id)?;
+            self.insert_active(position_id)?;
 
-        self.emit(ICredis::PositionCreated {
-            positionId: position_id,
-            smartAccount: params.smart_account,
-            cca: params.cca,
-            principal: params.principal,
-            collateral: params.collateral,
-        })?;
-        Ok(position_id)
+            self.emit(ICredis::PositionCreated {
+                positionId: position_id,
+                smartAccount: params.smart_account,
+                cca: params.cca,
+                principal: params.principal,
+                collateral: params.collateral,
+            })?;
+            Ok(position_id)
+        })
     }
 
     /// Calls an open position, opening the settlement window. Settlement terms
@@ -318,50 +336,59 @@ impl CredisContract<'_> {
     /// Returns what the caller must burn and credit; the position itself is
     /// closed here.
     pub fn void_position(&mut self, position_id: U256, now: u64) -> Result<Void> {
-        let mut position = self.load_position(position_id)?;
-        if position.lifecycle_state()? != CredisState::Called {
-            return Err(CredisError::NotCalled.into());
-        }
-        if now < settlement_deadline(&position) {
-            return Err(CredisError::CallWindowOpen.into());
-        }
-        if position.outstanding.is_zero() {
-            return Err(CredisError::NothingOutstanding.into());
-        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let mut position = self.load_position(position_id)?;
+            if position.lifecycle_state()? != CredisState::Called {
+                return Err(CredisError::NotCalled.into());
+            }
+            if now < settlement_deadline(&position) {
+                return Err(CredisError::CallWindowOpen.into());
+            }
+            if position.outstanding.is_zero() {
+                return Err(CredisError::NothingOutstanding.into());
+            }
 
-        let gratis_burned = position.collateral_locked;
-        let principal_written_off = position.outstanding;
-        let interest_written_off = Self::accrued_interest(&position, now)?;
-        // A dimensionless fraction of the original principal, carried at the
-        // protocol's 1e6 fixed-point scale.
-        let unpaid_share = principal_written_off
-            .checked_mul(SCALE_1E6_U256)
-            .ok_or(CredisError::ArithmeticOverflow)?
-            / position.principal;
+            let gratis_burned = position.collateral_locked;
+            let principal_written_off = position.outstanding;
+            let interest_written_off = Self::accrued_interest(&position, now)?;
+            // A dimensionless fraction of the original principal, carried at the
+            // protocol's 1e6 fixed-point scale.
+            let unpaid_share = principal_written_off
+                .checked_mul(SCALE_1E6_U256)
+                .ok_or(CredisError::ArithmeticOverflow)?
+                / position.principal;
 
-        position.outstanding = U256::ZERO;
-        position.collateral_locked = U256::ZERO;
-        position.state = CredisState::Void as u8;
-        self.update_position_record(&position)?;
-        self.remove_active(position_id)?;
-        self.drop_called_count(position.smart_account)?;
+            outbe_ccaregistry::api::position_voided(
+                &self.storage,
+                position.cca,
+                reward_day(&self.storage)?,
+                gratis_burned,
+            )?;
+            position.outstanding = U256::ZERO;
+            position.collateral_locked = U256::ZERO;
+            position.state = CredisState::Void as u8;
+            self.update_position_record(&position)?;
+            self.remove_active(position_id)?;
+            self.drop_called_count(position.smart_account)?;
 
-        self.emit(ICredis::PositionVoided {
-            positionId: position_id,
-            cca: position.cca,
-            gratisBurned: gratis_burned,
-            principalWrittenOff: principal_written_off,
-            interestWrittenOff: interest_written_off,
-        })?;
+            self.emit(ICredis::PositionVoided {
+                positionId: position_id,
+                cca: position.cca,
+                gratisBurned: gratis_burned,
+                principalWrittenOff: principal_written_off,
+                interestWrittenOff: interest_written_off,
+            })?;
 
-        Ok(Void {
-            gratis_burned,
-            principal_written_off,
-            interest_written_off,
-            smart_account: position.smart_account,
-            cca: position.cca,
-            unpaid_share,
-            eoa_ct: position.eoa_ct,
+            Ok(Void {
+                gratis_burned,
+                principal_written_off,
+                interest_written_off,
+                smart_account: position.smart_account,
+                cca: position.cca,
+                unpaid_share,
+                eoa_ct: position.eoa_ct,
+            })
         })
     }
 
