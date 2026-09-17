@@ -359,7 +359,7 @@ fn settle_and_mine(world: &mut World) {
         &url,
         addresses::GEM_FACTORY_ADDR,
         DEPLOYER_KEY,
-        &eth::IGemFactory::settleGemCall {
+        &eth::IGemFactory::settleGemWithPayNoteCall {
             gemId: gem_id,
             payNoteProof: paynote_proof.into(),
         },

@@ -52,7 +52,10 @@ pub fn dispatch(
                 runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId, &c.payNoteProof)
+                runtime::settle_gem(&storage, sender, c.gemId, c.asset)
+            }),
+            settleGemWithPayNote(c) => mutate_void(c, caller, |sender, c| {
+                runtime::settle_gem_with_paynote(&storage, sender, c.gemId, &c.payNoteProof)
             }),
             minePromis(c) => mutate(c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {

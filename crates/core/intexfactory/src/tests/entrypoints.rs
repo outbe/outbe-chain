@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let data = IIntexFactory::settleIntexCall {
+        let data = IIntexFactory::settleIntexWithPayNoteCall {
             seriesId: sid(7).into(),
             intexOwner: owner(),
             amount: U256::from(1),

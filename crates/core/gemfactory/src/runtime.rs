@@ -280,15 +280,61 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// The cost is discharged by spending a PayNote, so no tokens move here.
+/// Settles a gem paying its cost from `caller` in `asset` by direct ERC20 transfer.
 pub fn settle_gem(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    gem_id: U256,
+    asset: Address,
+) -> Result<()> {
+    settle(storage, gem_id, |item| {
+        let currency = accept_payment_asset(storage, asset, item)?;
+        let amount_paid = cost_in_token(storage, item, asset, currency)?;
+        deposit_payment(storage, caller, asset, amount_paid)?;
+        Ok((settlement_currency(item, currency), amount_paid))
+    })
+}
+
+/// Settles a gem by spending a PayNote owned by `caller`, so no tokens move here.
+pub fn settle_gem_with_paynote(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
+    settle(storage, gem_id, |item| {
+        let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+
+        // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
+        if claim.owner != caller {
+            return Err(GemFactoryError::PayNoteOwnerMismatch {
+                expected: caller,
+                actual: claim.owner,
+            }
+            .into());
+        }
+
+        let currency = accept_payment_asset(storage, claim.asset, item)?;
+        let amount_paid = cost_in_token(storage, item, claim.asset, currency)?;
+        if claim.spend_amount < amount_paid {
+            return Err(GemFactoryError::PayNoteUndercoversCost {
+                covered: claim.spend_amount,
+                required: amount_paid,
+            }
+            .into());
+        }
+        Ok((settlement_currency(item, currency), amount_paid))
+    })
+}
+
+/// `pay` returns the settlement currency and the amount it charged.
+fn settle(
+    storage: &StorageHandle<'_>,
+    gem_id: U256,
+    pay: impl FnOnce(&outbe_gem::GemData) -> Result<(u16, U256)>,
+) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may pay for a gem; the note is bound to the caller, the gem is not.
+    // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
     // Settlement is allowed from Qualified (voluntary) or Called (forced). A
     // Called gem must settle before its notice period lapses.
     match item.state {
@@ -303,45 +349,92 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // Last, so a doomed settle never pays for proof verification.
-    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+    storage.clone().with_checkpoint(|| {
+        // Settled before payment so a token callback cannot settle the gem twice;
+        // a failed payment rolls the state back.
+        gem_api::set_state(storage, gem_id, GemState::Settled)?;
+        let (settlement_currency, amount_paid) = pay(&item)?;
+        emit_event(
+            storage,
+            GemSettled {
+                gemId: gem_id,
+                owner: item.owner,
+                amountPaid: amount_paid,
+                settlementCurrency: settlement_currency,
+            },
+        )
+    })
+}
 
-    // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
-    if claim.owner != caller {
-        return Err(GemFactoryError::PayNoteOwnerMismatch {
-            expected: caller,
-            actual: claim.owner,
-        }
-        .into());
-    }
-
-    let currency = accept_payment_asset(storage, claim.asset, &item)?;
-    let expected = match currency {
+fn settlement_currency(item: &outbe_gem::GemData, currency: PaymentCurrency) -> u16 {
+    match currency {
         PaymentCurrency::Reference => item.reference_currency,
         PaymentCurrency::Issuance => item.issuance_currency,
-    };
-    let amount_paid = cost_in_token(storage, &item, claim.asset, currency)?;
-    if claim.spend_amount < amount_paid {
-        return Err(GemFactoryError::PayNoteUndercoversCost {
-            covered: claim.spend_amount,
-            required: amount_paid,
-        }
-        .into());
     }
+}
 
-    gem_api::set_state(storage, gem_id, GemState::Settled)?;
-
-    emit_event(
+/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
+/// vault through the router, leaving the factory's own balance untouched.
+fn deposit_payment(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    cost: U256,
+) -> Result<()> {
+    if cost.is_zero() {
+        return Ok(());
+    }
+    let before = token_balance(storage, asset)?;
+    checked_token_call(
         storage,
-        GemSettled {
-            gemId: gem_id,
-            owner: item.owner,
-            amountPaid: amount_paid,
-            settlementCurrency: expected,
+        asset,
+        IERC20::transferFromCall {
+            from: payer,
+            to: GEM_FACTORY_ADDRESS,
+            amount: cost,
         },
     )?;
-
+    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
+        return Err(GemFactoryError::SettlementAmountMismatch.into());
+    }
+    checked_token_call(
+        storage,
+        asset,
+        IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount: cost,
+        },
+    )?;
+    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
+    if token_balance(storage, asset)? != before {
+        return Err(GemFactoryError::SettlementAmountMismatch.into());
+    }
     Ok(())
+}
+
+fn checked_token_call(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    call: impl SolCall,
+) -> Result<()> {
+    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(GemFactoryError::TokenOperationFailed.into());
+    }
+    Ok(())
+}
+
+fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::balanceOfCall {
+            account: GEM_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| GemFactoryError::TokenOperationFailed.into())
 }
 
 /// Reads the settlement asset's `decimals()` via a static sub-call.
@@ -472,12 +565,8 @@ pub fn quote_settlement(
 ) -> Result<(u16, U256)> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let currency = accept_payment_asset(storage, asset, &item)?;
-    let settlement_currency = match currency {
-        PaymentCurrency::Reference => item.reference_currency,
-        PaymentCurrency::Issuance => item.issuance_currency,
-    };
     Ok((
-        settlement_currency,
+        settlement_currency(&item, currency),
         cost_in_token(storage, &item, asset, currency)?,
     ))
 }
