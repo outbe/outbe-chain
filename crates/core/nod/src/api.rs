@@ -9,7 +9,30 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::{NodBucketState, NodContract, NodItemState};
+use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
+
+/// Derives the current entitlement state without waiting for sweep cleanup.
+/// Paid entitlements survive expiry; the settlement deadline is inclusive.
+#[must_use]
+pub fn effective_state(
+    item: &NodItemState,
+    bucket: &NodBucketState,
+    called_at: u64,
+    deadline: u64,
+    now: U256,
+) -> EffectiveState {
+    if item.is_settled {
+        EffectiveState::Settled
+    } else if called_at != 0 && now > U256::from(deadline) {
+        EffectiveState::Forfeited
+    } else if called_at != 0 {
+        EffectiveState::Called
+    } else if bucket.is_qualified {
+        EffectiveState::Qualified
+    } else {
+        EffectiveState::Issued
+    }
+}
 
 /// Frozen entry prices, or `None` before the snapshot has been captured.
 pub fn entry_price_snapshot(

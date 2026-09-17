@@ -63,6 +63,18 @@ interface INod {
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
         bool isSettled;
+        /// Read-time state: 0 Issued, 1 Qualified, 2 Called, 3 Settled, 4 Forfeited.
+        /// Paid entitlements remain Settled after expiry. Forfeited items are
+        /// still stored pending cleanup; deleted items revert with NodNotFound.
+        uint8 effectiveState;
+        /// Bucket terms sealed at issuance, independent of current defaults.
+        uint256 callPriceMinor;
+        uint16 callRate; // percent
+        uint32 callWindow; // seconds
+        uint32 callThreshold; // seconds
+        uint32 callNoticePeriod; // seconds
+        /// Inclusive deadline: 0 when uncalled, uint64.max for zero notice.
+        uint64 settlementDeadline;
     }
 
     /// Finalized on-chain commitment to one activated OCOMP Nod generation.

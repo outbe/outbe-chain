@@ -62,7 +62,7 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                token_uri(&item, &bucket)
+                token_uri(&item, &bucket, &to_abi_data(&storage, &item, &bucket)?)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -86,8 +86,7 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
-                to_abi_data(&item, &bucket, called_at)
+                to_abi_data(&storage, &item, &bucket)
             }),
             certifiedGeneration(c) => view(c, |c| {
                 let worldwide_day = WorldwideDay::new(c.worldwideDay);
@@ -100,12 +99,11 @@ pub fn dispatch(
     })
 }
 
-fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
+fn token_uri(item: &NodItemState, bucket: &NodBucketState, data: &INod::NodData) -> Result<String> {
     let nod_id_str = item.nod_id.to_u256().to_string();
-    let cost_amount_minor =
-        api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?;
+    let cost_amount_minor = data.costAmountMinor;
     let json = format!(
-        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
+        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"calledAt\",\"value\":{}}},{{\"trait_type\":\"effectiveState\",\"value\":{}}},{{\"trait_type\":\"callPriceMinor\",\"value\":\"{}\"}},{{\"trait_type\":\"callRate\",\"value\":{}}},{{\"trait_type\":\"callWindow\",\"value\":{}}},{{\"trait_type\":\"callThreshold\",\"value\":{}}},{{\"trait_type\":\"callNoticePeriod\",\"value\":{}}},{{\"trait_type\":\"settlementDeadline\",\"value\":{}}}]}}",
         nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
         crate::constants::TOKEN_IMAGE_BASE,
@@ -122,16 +120,33 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
         item.issued_at,
         item.reference_currency,
         item.issuance_currency,
+        data.calledAt,
+        data.effectiveState,
+        data.callPriceMinor,
+        data.callRate,
+        data.callWindow,
+        data.callThreshold,
+        data.callNoticePeriod,
+        data.settlementDeadline,
     );
     let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
     Ok(format!("data:application/json;base64,{encoded}"))
 }
 
 fn to_abi_data(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
     item: &NodItemState,
     bucket: &NodBucketState,
-    called_at: u64,
 ) -> Result<INod::NodData> {
+    let nod = NodContract::new(storage.clone());
+    let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
+    let terms = nod.read_call_terms(item.bucket_key)?;
+    let deadline = if called_at == 0 {
+        0
+    } else {
+        api::settlement_deadline_of(called_at, terms.call_notice_period)
+    };
+    let state = api::effective_state(item, bucket, called_at, deadline, storage.timestamp()?);
     Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
@@ -147,6 +162,13 @@ fn to_abi_data(
         issuedAt: item.issued_at,
         calledAt: called_at,
         isSettled: item.is_settled,
+        effectiveState: state as u8,
+        callPriceMinor: terms.call_price,
+        callRate: terms.call_rate,
+        callWindow: terms.call_window,
+        callThreshold: terms.call_threshold,
+        callNoticePeriod: terms.call_notice_period,
+        settlementDeadline: deadline,
     })
 }
 

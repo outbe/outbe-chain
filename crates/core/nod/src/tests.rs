@@ -414,3 +414,155 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
             .contains("\"trait_type\":\"isSettled\",\"value\":true"));
     });
 }
+
+#[test]
+fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
+    use crate::precompile::{dispatch, INod};
+    use crate::schema::CallTerms;
+    use alloy_sol_types::SolCall;
+    use base64::Engine;
+
+    // qualified, paid, called_at, notice, now, expected state, expected deadline
+    for (qualified, paid, called_at, notice, now, state, deadline) in [
+        (false, false, 0, 17, 118, 0, 0),
+        (true, false, 0, 17, 118, 1, 0),
+        (true, false, 100, 17, 116, 2, 117),
+        (true, false, 100, 17, 117, 2, 117),
+        (true, false, 100, 17, 118, 4, 117),
+        (true, true, 100, 17, 118, 3, 117),
+        (true, false, 100, 0, u64::MAX, 2, u64::MAX),
+        (true, false, u64::MAX - 1, 17, u64::MAX, 2, u64::MAX),
+    ] {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(now));
+        let scope = ExecutionScope::new();
+        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+        StorageHandle::enter(&mut provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), &scope).unwrap();
+            let item = item(Address::repeat_byte(0x87), U256::from(13), USD);
+            api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+            let mut nod = NodContract::new(storage.clone());
+            nod.seal_bucket_call_terms(
+                item.bucket_key,
+                CallTerms {
+                    call_price: U256::from(937),
+                    reference_currency: USD,
+                    call_rate: 23,
+                    call_window: 432_000,
+                    call_threshold: 172_800,
+                    call_notice_period: notice,
+                },
+            )
+            .unwrap();
+            if qualified {
+                nod.qualify_bucket(&scope, &parent, item.bucket_key)
+                    .unwrap();
+            }
+            nod.bucket_called_at
+                .write(&item.bucket_key, called_at)
+                .unwrap();
+            let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+            if paid {
+                api::settle_nod(
+                    &storage,
+                    &scope,
+                    api::load_item(&storage, &scope, &parent, item.nod_id)
+                        .unwrap()
+                        .unwrap(),
+                    api::load_bucket(&storage, &scope, &parent, bucket_id)
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap();
+            }
+            let call = INod::nodDataCall {
+                nodId: item.nod_id.to_u256(),
+            };
+            let bytes = dispatch(
+                storage.clone(),
+                &scope,
+                &parent,
+                &call.abi_encode(),
+                item.owner,
+                U256::ZERO,
+            )
+            .unwrap();
+            let data = INod::nodDataCall::abi_decode_returns(&bytes).unwrap();
+            assert_eq!(data.effectiveState, state);
+            assert_eq!(data.isQualified, qualified);
+            assert_eq!(data.isSettled, paid);
+            assert_eq!(data.calledAt, called_at);
+            assert_eq!(data.settlementDeadline, deadline);
+            assert_eq!(data.callPriceMinor, U256::from(937));
+            assert_eq!(
+                (
+                    data.callRate,
+                    data.callWindow,
+                    data.callThreshold,
+                    data.callNoticePeriod
+                ),
+                (23, 432_000, 172_800, notice)
+            );
+            let bytes = dispatch(
+                storage.clone(),
+                &scope,
+                &parent,
+                &INod::tokenURICall {
+                    nodId: item.nod_id.to_u256(),
+                }
+                .abi_encode(),
+                item.owner,
+                U256::ZERO,
+            )
+            .unwrap();
+            let uri = INod::tokenURICall::abi_decode_returns(&bytes).unwrap();
+            let json = String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            for (name, value) in [
+                ("effectiveState", state.to_string()),
+                ("calledAt", called_at.to_string()),
+                ("settlementDeadline", deadline.to_string()),
+                ("callPriceMinor", "\"937\"".to_string()),
+                ("callRate", "23".to_string()),
+                ("callWindow", "432000".to_string()),
+                ("callThreshold", "172800".to_string()),
+                ("callNoticePeriod", notice.to_string()),
+            ] {
+                assert!(
+                    json.contains(&format!("{{\"trait_type\":\"{name}\",\"value\":{value}}}")),
+                    "{json}"
+                );
+            }
+            // Cleanup removes the public entity instead of retaining a tombstone.
+            api::remove_nod(
+                &storage,
+                &scope,
+                api::load_item(&storage, &scope, &parent, item.nod_id)
+                    .unwrap()
+                    .unwrap(),
+                api::load_bucket(&storage, &scope, &parent, bucket_id)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            let error = dispatch(
+                storage,
+                &scope,
+                &parent,
+                &call.abi_encode(),
+                item.owner,
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, outbe_primitives::error::PrecompileError::Revert(reason)
+                if reason == crate::errors::NodError::NodNotFound.to_string())
+            );
+        });
+    }
+}

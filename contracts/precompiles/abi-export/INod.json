@@ -197,6 +197,41 @@
             "name": "isSettled",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "effectiveState",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callRate",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

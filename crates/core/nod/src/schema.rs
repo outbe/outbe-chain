@@ -8,6 +8,17 @@ use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
+/// Read-time lifecycle state. Values are part of the public Nod ABI, not storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EffectiveState {
+    Issued = 0,
+    Qualified = 1,
+    Called = 2,
+    Settled = 3,
+    Forfeited = 4,
+}
+
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
 /// `NodContract::nod_id(owner, worldwide_day)`; the cost is derived from
 /// `entry_price_minor` and `gratis_load_minor` (see

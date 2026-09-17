@@ -1099,6 +1099,24 @@ fn certified_generation_has_no_public_installation_selector() {
 
 mod materialization;
 
+fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
+    world.enter(|storage, scope, parent| {
+        let bytes = outbe_nod::precompile::dispatch(
+            storage,
+            scope,
+            parent,
+            &INod::nodDataCall {
+                nodId: nod_id.to_u256(),
+            }
+            .abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        INod::nodDataCall::abi_decode_returns(&bytes).unwrap()
+    })
+}
+
 /// Settlement at the deadline remains valid; the paid Nod can then be mined.
 #[test]
 fn a_called_nod_still_mines_at_the_settlement_deadline() {
@@ -1110,6 +1128,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
+    assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 2);
 
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
@@ -1144,6 +1163,15 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 1);
+
+    let data = public_nod_data(&mut world, nod_id);
+    assert_eq!(data.effectiveState, 4);
+    assert!(data.isQualified);
+    assert!(!data.isSettled);
+    assert_eq!(
+        data.settlementDeadline,
+        called_at + u64::from(CALL_NOTICE_PERIOD)
+    );
 
     let error = world.settle(nod_id, input.owner, &[]).unwrap_err();
     assert!(
@@ -1210,6 +1238,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         "duplicate settlement"
     );
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * 86_400);
+    assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 3);
     let nonce = find_valid_nonce(nod_id);
     for (caller, candidate, auth) in [
         (Address::repeat_byte(0x82), nonce, dummy_auth()),
