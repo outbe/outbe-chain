@@ -68,11 +68,12 @@ library IntexGas {
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
 
-    /// @dev 3.68M for 64 bidders against the canonical Compact over a mainnet fork, 5.9k per bidder over the
-    ///      `MockTheCompact` the suite runs on - do not recalibrate from the stand. The chunk closing a day
-    ///      also routes the paid wCOEN home, which lands on the base.
+    /// @dev Against the canonical Compact: 1.18M for the widest chunk (128 winners), 553k for a day of 40 and
+    ///      159k for a chunk with none - a winner is ~7.1k, carried here with the usual 1.5x margin. The base
+    ///      stays as it was: the chunk closing a day also routes the paid wCOEN home, and the token-bridge
+    ///      stand-in the measurement runs against understates that leg.
     uint256 internal constant REFUND_BASE = 560_000;
-    uint256 internal constant REFUND_PER_ITEM = 78_500;
+    uint256 internal constant REFUND_PER_ITEM = 11_000;
 
     /// @dev Cut from the failure path: 2.06M for a fully rejected batch against 664k for one that all lands.
     uint256 internal constant NFT_MINT_BASE = 225_000;
