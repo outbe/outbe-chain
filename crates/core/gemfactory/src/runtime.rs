@@ -538,20 +538,17 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-/// COEN price in `reference_currency`: the fresh rate, raised to the four-hour
-/// VWAP when that window holds samples. A zero rate maps to `OracleUnavailable`.
+/// Four-hour VWAP of COEN in `reference_currency`; an empty window maps to
+/// `OracleUnavailable`, so issuance pauses rather than pricing off another source.
 fn read_market_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
     now: u64,
 ) -> Result<U256> {
-    let rate = fresh_coen_rate_for(storage.clone(), reference_currency)?;
-    if rate.is_zero() {
-        return Err(GemFactoryError::OracleUnavailable.into());
-    }
     let pair = AddressPair::new_coen_to(reference_currency);
-    let vwap = four_hour_vwap(storage.clone(), pair, now)?.unwrap_or_default();
-    Ok(rate.max(vwap))
+    four_hour_vwap(storage.clone(), pair, now)?
+        .filter(|vwap| !vwap.is_zero())
+        .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 fn compute_params(

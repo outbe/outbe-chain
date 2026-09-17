@@ -1147,6 +1147,7 @@ fn an_expired_position_returns_its_remainder() {
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {
+        seed_vwap(storage, T_NOW - 60, six_decimal_unit());
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -1188,6 +1189,7 @@ fn issue_gem_position_unknown_source_rejects() {
 fn issue_merchant_gem_mints_issued_and_drains_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry below coen -> entry follows coen.
         let id = seed_and_send(
             storage,
@@ -1229,6 +1231,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry above coen, source floor above 1.08 * entry -> both dominate.
         let source_entry = U256::from(3u64) * six_decimal_unit();
         let source_floor = U256::from(5u64) * six_decimal_unit();
@@ -1320,7 +1323,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
 }
 
 #[test]
-fn issue_merchant_gem_prices_at_the_four_hour_vwap_above_spot() {
+fn issue_merchant_gem_prices_at_the_four_hour_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let vwap = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -1347,24 +1350,12 @@ fn issue_merchant_gem_prices_at_the_four_hour_vwap_above_spot() {
 }
 
 #[test]
-fn issue_merchant_gem_keeps_spot_above_the_four_hour_vwap() {
-    let rate = U256::from(2u64) * six_decimal_unit();
+fn issue_merchant_gem_ignores_a_spot_above_the_four_hour_vwap() {
+    let rate = U256::from(5u64) * six_decimal_unit();
+    let vwap = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        seed_vwap(storage, T_NOW - 60, six_decimal_unit());
-        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), rate);
-    });
-}
-
-#[test]
-fn issue_merchant_gem_ignores_samples_older_than_four_hours() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        seed_vwap(
-            storage,
-            T_NOW - 4 * 3600 - 60,
-            U256::from(5u64) * six_decimal_unit(),
-        );
-        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), rate);
+        seed_vwap(storage, T_NOW - 60, vwap);
+        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
     });
 }
 
@@ -1379,27 +1370,17 @@ fn issue_merchant_gem_source_entry_dominates_the_four_hour_vwap() {
 }
 
 #[test]
-fn issue_merchant_gem_rejects_a_stale_spot_despite_a_vwap() {
+fn issue_merchant_gem_rejects_an_empty_four_hour_window() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 4 * 3600 - 60, rate);
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        seed_vwap(storage, T_NOW - 60, U256::from(3u64) * six_decimal_unit());
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
-
         let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
-        assert!(err_msg(r).contains("stale"));
+        assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }
