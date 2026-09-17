@@ -10,7 +10,9 @@ interface ICredisFactory {
     /// and entry price were fixed at quote time; policy rate is fixed at issuance.
     /// msg.value matches Gratis collateral in native-18 COEN and goes to the SA.
     function issueCredis(address ownerSA, bytes calldata encryptedUseAuth)
-        external payable returns (uint256 credisId, uint256 amountStables);
+        external
+        payable
+        returns (uint256 credisId, uint256 amountStables);
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.

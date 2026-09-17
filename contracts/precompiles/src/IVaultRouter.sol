@@ -42,7 +42,6 @@ interface IVaultRouter {
     error VaultHasReservations();
     error ReservationAccounting();
     error InexactTokenMovement();
-    error TokenOperationFailed();
     error ReentrantCustody();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
