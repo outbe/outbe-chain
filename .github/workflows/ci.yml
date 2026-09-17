@@ -153,7 +153,6 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -180,7 +179,6 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -220,7 +218,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
-      - uses: ./.github/actions/setup-cache-compression
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

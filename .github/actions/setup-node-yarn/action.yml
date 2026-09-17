@@ -26,8 +26,6 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: corepack prepare yarn@4.9.3 --activate
 
-    - uses: ./.github/actions/setup-cache-compression
-
     - name: Cache Yarn
       uses: actions/cache@v4
       with:
