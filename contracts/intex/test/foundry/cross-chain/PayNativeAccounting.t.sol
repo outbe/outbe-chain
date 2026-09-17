@@ -180,17 +180,17 @@ contract PayNativeAccountingTest is CrossChainTest {
     // Relay / float path - fired from inside receiveMessage (CLEARING)
     // ---------------------------------------------------------------
 
-    /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float. With
-    ///      that float empty the send reverts, which the handler catches and parks for later flush.
-    function test_Relay_InsideReceiveMessage_EmptyFloatDefers() public {
+    /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float.
+    ///      With that float empty the send reverts, the round rolls back whole, and the day stays resumable.
+    function test_Relay_InsideReceiveMessage_EmptyFloatLeavesTheDayResumable() public {
         assertEq(address(bnbRouter).balance, 0, "router float unfunded");
 
         _deliverClearing();
 
-        (uint32 storedDay, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
-        assertEq(storedDay, SERIES_ID_DAY, "bids relay deferred on float-starved NotEnoughNative");
-        assertTrue(exists);
-        assertFalse(done);
+        (uint16 nextBatch, uint16 totalBatches, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        assertEq(nextBatch, 0, "the float-starved round sent nothing");
+        assertEq(totalBatches, 0, "and rolled back the span it had frozen");
+        assertFalse(done, "so the day is still open");
     }
 
     /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` draws the fee and
@@ -201,8 +201,9 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         _deliverClearing();
 
-        // One bid relays as a data batch plus the final empty one, so the float pays two fees.
-        assertEq(bnbRouter.nextPendingBidsRelayIdx(), 0, "no bids relay deferred");
+        // One bid relays as a data batch plus the completeness marker, so the float pays two fees.
+        (,, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
+        assertTrue(done, "the day relayed whole");
         assertEq(floatBefore - address(bnbRouter).balance, 2 * BRIDGE_FEE, "every batch drew its fee from the float");
     }
 
@@ -276,6 +277,36 @@ contract StubAuction {
             issuanceCurrency: 840,
             referenceCurrency: 840
         });
+    }
+
+    function revealedBidsCount(uint32) external view returns (uint256) {
+        return 1;
+    }
+
+    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        uint256 length = 1;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = IIntexAuction.SubmittedBidData({
+                bidderAddress: address(uint160(0xCAFE + offset + i)),
+                intexQuantity: 1,
+                intexBidRate: 100e6,
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
+            });
+        }
+    }
+
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Issuance;
     }
 }
 

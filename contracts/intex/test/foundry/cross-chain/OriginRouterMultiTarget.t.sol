@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -12,6 +13,7 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
 /// @dev Multi-target OriginRouter behavior: registry, broadcast fan-out over the frozen day snapshot, addressed-send
 ///      membership, per-leg parking + flush, and inbound BIDS_DONE. Delivery is off (sends only record).
@@ -112,13 +114,44 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendAuctionStageStart(_params(DAY));
     }
 
-    function test_clearing_broadcastsOverSnapshot_notLiveRegistry() public {
+    /// @dev Clearing is addressed per chain now (each round is sized from that chain's own history), so
+    ///      membership is what the frozen snapshot says - a mid-day removal must not close a chain out.
+    function test_clearing_addressesTheSnapshot_notLiveRegistry() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
         vm.recordLogs();
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY);
-        assertEq(_countStageSent(), 2, "clearing still fans to the frozen snapshot");
+        origin.sendAuctionStageClearing(DAY, TARGET_B, IntexGas.AUCTION_STAGE_CLEARING);
+        assertEq(_countStageSent(), 1, "the removed target still takes the day's clearing");
+
+        vm.prank(desis);
+        vm.expectRevert(IOriginRouter.NoTargets.selector);
+        origin.sendAuctionStageClearing(DAY, 4242, IntexGas.AUCTION_STAGE_CLEARING);
+    }
+
+    /// @dev A round smaller than a round is worth comes back up to the floor, and one above what a target
+    ///      chain would accept comes down to the cap.
+    function test_clearing_clampsTheAskToWhatARoundIsWorth() public {
+        _fireStart(DAY);
+        vm.prank(desis);
+        origin.sendAuctionStageClearing(DAY, TARGET_A, 1);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING, "clamped up to the floor");
+
+        vm.prank(desis);
+        origin.sendAuctionStageClearing(DAY, TARGET_A, 100_000_000);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING_MAX, "clamped down to the cap");
+    }
+
+    function _lastGasAttribute() internal view returns (uint256) {
+        bytes[] memory attrs = bridge.getLastAttributes();
+        return abi.decode(_slice(attrs[0]), (uint256));
+    }
+
+    function _slice(bytes memory attribute) internal pure returns (bytes memory body) {
+        body = new bytes(attribute.length - 4);
+        for (uint256 i = 0; i < body.length; ++i) {
+            body[i] = attribute[i + 4];
+        }
     }
 
     // --- Addressed-send membership ---
@@ -144,19 +177,19 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.setRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails; A still routes
         _fireStart(DAY);
 
-        IOriginRouter.ParkedSend memory p = origin.parkedSend(0);
+        IOriginRouter.ParkedMessage memory p = origin.parkedMessage(0);
         assertEq(p.dstChainId, TARGET_B);
         assertEq(p.sent, false);
         assertGt(p.payload.length, 0);
 
         origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
-        origin.flushPendingSend(0);
-        assertTrue(origin.parkedSend(0).sent);
+        origin.resendParkedMessage(0);
+        assertTrue(origin.parkedMessage(0).sent);
     }
 
     function test_flush_revert_unknown() public {
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedSend.selector, uint256(0)));
-        origin.flushPendingSend(0);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedMessage.selector, uint256(0)));
+        origin.resendParkedMessage(0);
     }
 
     // --- Inbound BIDS_DONE ---
@@ -166,6 +199,52 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         vm.expectEmit(true, true, false, true, address(origin));
         emit IOriginRouter.BidsDoneReceived(TARGET_A, DAY, 2, 7);
         _deliver(TARGET_A, peerA, address(origin), pkt);
+    }
+
+    /// @dev A target whose relay stopped part way reports the remainder; the origin answers with another
+    ///      CLEARING round to that chain alone, so a heavy day finishes without a hand.
+    function test_inbound_bidsRemaining_sendsAnotherRound() public {
+        _fireStart(DAY);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+
+        _deliver(TARGET_A, peerA, address(origin), pkt);
+
+        assertEq(
+            uint8(bridge.lastPayload()[1]),
+            BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING,
+            "the answer is another clearing round"
+        );
+        assertEq(
+            keccak256(bridge.lastRecipient()),
+            keccak256(_interop(TARGET_A, peerA)),
+            "and it goes only to the chain that asked"
+        );
+    }
+
+    /// @dev Once the day's intake has closed - cleared on the fan-in timeout, cancelled - another round
+    ///      would have every chunk it produces ignored on arrival, so the report is acknowledged instead.
+    function test_inbound_bidsRemaining_ignoreClosedDay() public {
+        _fireStart(DAY);
+        MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Cleared);
+        bytes32 key = bytes32((uint256(DAY) << 32) | TARGET_A);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit IOriginRouter.InboundMessageIgnored(
+            TARGET_A, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.OBSOLETE
+        );
+        _deliver(TARGET_A, peerA, address(origin), pkt);
+    }
+
+    function test_inbound_bidsRemaining_ignoreNonSnapshotSource() public {
+        _fireStart(DAY);
+        origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        bytes32 key = bytes32((uint256(DAY) << 32) | 9);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, 9, 1, 2);
+
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.NOT_FOUND);
+        _deliver(9, address(0x9999), address(origin), pkt);
     }
 
     function test_inbound_bids_ignoreNonSnapshotSource() public {

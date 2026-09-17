@@ -433,36 +433,36 @@ fn flush_parked_deliveries(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn flush_parked_bid_relays(world: &mut World) {
+fn flush_parked_bid_relays(world: &mut World, worldwide_day: u32) {
     for venue in venue_sides(world) {
-        flush_one_venue_bid_relays(&venue);
+        push_one_venue_bid_relay(&venue, worldwide_day);
     }
 }
 
-/// Each venue keeps its own deferred-relay queue, and the routers share an
-/// address across chains - so a flush has to be asked of the chain that parked it.
+/// A relay that stopped part way carries on from the chunk it left, and the routers share an address
+/// across chains - so the push has to be asked of the chain that is relaying.
 #[cfg(feature = "ocomp-integration")]
-fn flush_one_venue_bid_relays(venue: &VenueSide) {
-    let url = venue.url.clone();
-    let venue_router = venue.target_router;
-    let parked = eth::read_call(
-        &url,
-        venue_router,
-        &IParkedWork::nextPendingBidsRelayIdxCall {},
-    )
-    .unwrap_or_default();
-    let mut idx = U256::ZERO;
-    while idx < parked {
-        eth::send_call(
-            &url,
-            venue_router,
-            crate::world::forge::DEPLOYER_KEY,
-            &IParkedWork::flushPendingBidsRelayCall { idx },
-            None,
-        )
-        .ok();
-        idx += U256::from(1);
+fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
+    let progress = eth::read_call(
+        &venue.url,
+        venue.target_router,
+        &IParkedWork::bidsRelayCall {
+            worldwideDay: worldwide_day,
+        },
+    );
+    if progress.is_none_or(|p| p.done) {
+        return;
     }
+    eth::send_call(
+        &venue.url,
+        venue.target_router,
+        crate::world::forge::DEPLOYER_KEY,
+        &IParkedWork::relayBidsCall {
+            worldwideDay: worldwide_day,
+        },
+        None,
+    )
+    .ok();
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -574,7 +574,7 @@ fn auction_clears(world: &mut World) {
         if stage == Some(5) {
             return;
         }
-        flush_parked_bid_relays(world);
+        flush_parked_bid_relays(world, worldwide_day);
         flush_parked_deliveries(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
@@ -590,7 +590,7 @@ fn auction_clears(world: &mut World) {
                 },
             ),
             venue_probes::venue_bid_counts(&venue_url, venue, worldwide_day),
-            venue_probes::parked_work(&url, &venue_url, router, venue_router),
+            venue_probes::parked_work(&url, &venue_url, router, venue_router, worldwide_day),
             venue_probes::stages_received(&venue_url, venue_router, worldwide_day),
             venue_probes::ignored_inbound(&url, router, "origin"),
             venue_probes::ignored_inbound(&venue_url, venue_router, "venue"),

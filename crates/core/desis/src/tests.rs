@@ -2663,3 +2663,33 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
         .is_empty());
 }
+
+/// A round is sized from the busiest of the chain's recent days, floored at a small day's worth: a miss
+/// only costs another round, so the estimate has to be close, not exact.
+#[test]
+fn a_clearing_round_is_sized_from_the_chains_recent_days() {
+    let day = WorldwideDay::new(20260501);
+    let chain = 56u32;
+    with_targets(&[chain], |s| {
+        let quiet = crate::runtime::clearing_round_gas(&s, day, chain).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        let busy = outbe_primitives::time::previous_date_key(day.value());
+        contract
+            .chain_bid_count
+            .write(
+                &DesisContract::chain_key(WorldwideDay::new(busy), chain),
+                300,
+            )
+            .unwrap();
+        let loaded = crate::runtime::clearing_round_gas(&s, day, chain).unwrap();
+
+        assert!(loaded > quiet, "a busy week buys a bigger round");
+        // Another chain's history is not this chain's: the key carries the chain id.
+        assert_eq!(
+            crate::runtime::clearing_round_gas(&s, day, chain + 1).unwrap(),
+            quiet,
+            "history is per chain"
+        );
+    });
+}

@@ -103,7 +103,7 @@ interface IEscrowAdapter {
     event FundsRefunded(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when an undistributable winning portion is burned (sent to the canonical
-    ///         dead address): `retryFinalize` residuals and post-finalize `claimRefund` remainders,
+    ///         dead address): post-finalize `claimRefund` remainders,
     ///         where the series proceeds were already routed on Outbe.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose winning portion was burned.
@@ -143,7 +143,7 @@ interface IEscrowAdapter {
     );
 
     /// @notice Emitted when a single bidder's finalization step fails. The lock stays in
-    ///         `Locked` status and can be recovered via `retryFinalize` (RELAYER) or `claimRefund`
+    ///         `Locked` status and is recovered by the bidder through `claimRefund`
     ///         (permissionless, after the post-finalize safety window).
     /// @param receiveId Inbound bridge message that triggered the failed finalization.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -153,22 +153,8 @@ interface IEscrowAdapter {
         bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
     );
 
-    /// @notice Emitted on a successful `retryFinalize` call.
-    /// @param receiveId Original inbound bridge message the relayer is retrying for.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Bidder whose finalization was retried.
-    /// @param refundedAmount Amount refunded to the bidder on retry.
-    /// @param paidAmount Winning portion burned on retry (the series was already routed).
-    event BidderRetried(
-        bytes32 indexed receiveId,
-        uint32 indexed worldwideDay,
-        address indexed bidder,
-        uint128 refundedAmount,
-        uint128 paidAmount
-    );
-
     /// @notice Emitted when `finalizeAuction` settled zero bidders (every instruction failed). The
-    ///         series is finalized but degenerate; bidders are recoverable only via `retryFinalize`.
+    ///         series is finalized but degenerate; every bidder recovers through `claimRefund`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsProcessed Number of instructions processed, all of which failed.
     event FinalizationNoOp(uint32 indexed worldwideDay, uint32 bidsProcessed);
@@ -216,18 +202,10 @@ interface IEscrowAdapter {
     error NotSelf();
     /// @notice Finalization produced proceeds but no recipient is configured.
     error ProceedsRecipientNotSet();
-    /// @notice `retryFinalize` invoked before the series was finalized at least once.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    error NotFinalizedYet(uint32 worldwideDay);
     /// @notice `claimRefund` was called before the safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
     error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
-    /// @notice Post-finalize `claimRefund` has no validated split (bidder omitted or mismatched).
-    ///         Reverts only until `NO_SPLIT_REFUND_DELAY`, after which the full principal is refundable.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Bidder whose split was never recorded.
-    error SplitNotRecorded(uint32 worldwideDay, address bidder);
     /// @notice `lockCommitBond` called while the bidder already holds a live bond for the series.
     error CommitBondAlreadyLocked();
     /// @notice No live commit bond exists for the series/bidder pair.
@@ -299,22 +277,13 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless refund: full principal when the relayer never finalizes
-    ///         (`UNFINALIZED_REFUND_DELAY`) or once `NO_SPLIT_REFUND_DELAY` elapses for an
-    ///         omitted/mismatched `Locked` bidder; the recorded refund portion - with the
-    ///         remainder burned - for a failed bidder with a validated split
-    ///         (`POST_FINALIZE_REFUND_DELAY`). Pays the stored `bidder`, not `msg.sender`.
+    /// @notice Permissionless refund, always paying the stored `bidder` rather than `msg.sender`: the
+    ///         full principal when the day never finalized (`UNFINALIZED_REFUND_DELAY`) or when the
+    ///         bidder was omitted or mismatched, and the recorded refund portion - remainder burned -
+    ///         for a failed bidder with a validated split (`POST_FINALIZE_REFUND_DELAY`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     function claimRefund(uint32 worldwideDay, address bidder) external;
-
-    /// @notice Per-bidder retry after `finalizeAuction` left a bidder in `BidderRefundFailed`.
-    ///         Gated by `RELAYER_ROLE` (operational, not admin). Lets the relayer deliver the
-    ///         correct refund/payout split for a failed bidder once the upstream issue is fixed.
-    /// @param worldwideDay Worldwide day (yyyymmdd) (must be already finalized).
-    /// @param receiveId Original inbound bridge message id being retried; threaded into the emitted events.
-    /// @param inst Finalization instruction for the single bidder being retried.
-    function retryFinalize(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst) external;
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the

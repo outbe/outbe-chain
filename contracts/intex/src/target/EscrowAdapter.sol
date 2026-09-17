@@ -44,15 +44,10 @@ contract EscrowAdapter is
     ///         legitimate finalization latency (settlement window + cross-chain delivery).
     uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
 
-    /// @notice Relayer-priority window after `finalizeAuction` for a failed bidder, anchored at
-    ///         `finalizedAt`: time to `retryFinalize` (possibly with a corrected split) before the
-    ///         recorded split becomes permissionlessly payable via `claimRefund`.
+    /// @notice Settling window after `finalizeAuction` for a bidder whose instruction failed, anchored
+    ///         at `finalizedAt`. A day finalizes only once every chunk has landed, so a failed
+    ///         instruction is final: the wait is a cushion, not a window for anyone to act in.
     uint32 public constant POST_FINALIZE_REFUND_DELAY = 72 hours;
-
-    /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series
-    ///         (no recorded split) can `claimRefund` the full principal, anchored at
-    ///         `finalizedAt`. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
-    uint32 public constant NO_SPLIT_REFUND_DELAY = 30 days;
 
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
@@ -395,7 +390,7 @@ contract EscrowAdapter is
 
         // Per-bidder try/catch: a single failed iteration emits BidderRefundFailed and the loop
         // continues. The failed bidder's lock stays in `Locked` status (the inner revert rolls
-        // back its state writes) and can be recovered via retryFinalize or claimRefund.
+        // back its state writes) and is recovered by the bidder through claimRefund.
         for (uint256 i = 0; i < instructions.length; ++i) {
             FinalizationInstruction calldata inst = instructions[i];
             try this.processFinalizationOne(worldwideDay, receiveId, inst) returns (uint128 released) {
@@ -454,28 +449,6 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function retryFinalize(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst)
-        external
-        override
-        onlyRole(RELAYER_ROLE)
-        nonReentrant
-    {
-        if (!_s().auctionEscrowState[worldwideDay].finalized) {
-            revert NotFinalizedYet(worldwideDay);
-        }
-        uint128 released =
-            _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
-        _s().auctionEscrowState[worldwideDay].totalLocked -= released;
-
-        // Stranded recovery: series already routed on Outbe, burn the residual.
-        if (inst.paidAmount > 0) {
-            _burnProceeds(worldwideDay, inst.bidder, inst.paidAmount);
-        }
-
-        emit BidderRetried(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
-    }
-
-    /// @inheritdoc IEscrowAdapter
     function claimRefund(uint32 worldwideDay, address bidder) external override nonReentrant {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
@@ -489,18 +462,13 @@ contract EscrowAdapter is
         if (state.finalized) {
             // Post-finalize: the bidder's instruction failed during finalization. Refund only the
             // validated refund portion - never the full principal - so a stranded winner cannot
-            // over-draw the shared Compact pool against other series' funds. Without a recorded
-            // split the amount is unknowable on-chain; the relayer must retryFinalize instead.
+            // over-draw the shared Compact pool against other series' funds.
             uint32 claimableAt = state.finalizedAt + POST_FINALIZE_REFUND_DELAY;
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
             if (!lock.splitRecorded) {
-                // Omitted/mismatched bidder: relayer gets the retryFinalize window; after
-                // NO_SPLIT_REFUND_DELAY the lock becomes permissionlessly terminal with a
-                // full-principal refund.
-                uint32 abandonAt = state.finalizedAt + NO_SPLIT_REFUND_DELAY;
-                if (block.timestamp < abandonAt) revert SplitNotRecorded(worldwideDay, bidder);
-
+                // Omitted or mismatched bidder: no split to pay, and nobody can reconstruct one, so
+                // the lock is terminal with a full-principal refund - our fan-out was wrong, not theirs.
                 lock.status = LockStatus.Finalized;
                 state.totalLocked -= lockedAmount;
                 _withdrawFromCompact(lockedAmount);

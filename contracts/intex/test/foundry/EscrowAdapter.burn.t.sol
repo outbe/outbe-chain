@@ -63,22 +63,6 @@ contract EscrowAdapterBurnTest is Test {
         compact.setForcedWithdrawalShouldFail(false);
     }
 
-    function test_RetryFinalize_BurnsResidual() public {
-        _strandWithSplit(0, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
-
-        vm.expectEmit(true, true, false, true, address(escrow));
-        emit IEscrowAdapter.ProceedsBurned(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
-
-        assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), LOCK_AMOUNT, "residual burned");
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        assertEq(_liveCompactBalance(), 0, "Compact drained");
-    }
-
     function test_ClaimRefund_PostFinalize_RefundsBidderAndBurnsRemainder_OneTx() public {
         uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
         uint128 paidPortion = LOCK_AMOUNT - refundPortion;
