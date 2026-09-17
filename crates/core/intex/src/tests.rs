@@ -1105,7 +1105,7 @@ fn expiry_forfeits_every_unrealized_unit() {
         assert_eq!(api::expire_series(&s, id).unwrap().units, 100);
         assert_eq!(
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
-            IntexState::Expired
+            IntexState::Called
         );
     });
 }
@@ -1124,17 +1124,13 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
 }
 
 #[test]
-fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
+fn a_fully_realized_series_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
         api::record_settled_units(&s, id, 60).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
 
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
-        assert_eq!(
-            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
-            IntexState::Expired
-        );
     });
 }
 
@@ -1159,8 +1155,6 @@ fn the_view_carries_the_whole_split() {
         assert_eq!(data.settledUnits, 25);
         assert_eq!(data.exercisedUnits, 5);
         assert_eq!(data.gemFactoryUnits, 25);
-        // Retired by the sweep: the stored state passes through.
-        assert_eq!(data.state, IntexState::Expired as u8);
     });
 }
 
@@ -1190,12 +1184,11 @@ fn expiry_is_rejected_before_the_series_is_called() {
 }
 
 #[test]
-fn expired_is_terminal() {
+fn a_called_series_never_moves_back() {
     with_registry(|s| {
         let id = called_series(&s, 44);
         api::expire_series(&s, id).unwrap();
 
-        assert!(api::expire_series(&s, id).is_err());
         assert!(api::mark_qualified(&s, id).is_err());
         assert!(api::mark_called(&s, id, ISSUED_AT).is_err());
     });
@@ -1254,6 +1247,27 @@ fn the_unpaid_remainder_is_forfeited_from_the_deadline_not_from_the_sweep() {
 }
 
 #[test]
+fn a_series_an_older_node_stored_as_expired_still_reads_expired() {
+    with_registry(|s| {
+        let id = called_series(&s, 63);
+        api::record_settled_units(&s, id, 30).unwrap();
+        let mut registry = crate::IntexContract::new(s.clone());
+        let mut record = registry.load_series(id).unwrap();
+        record.state = IntexState::Expired as u8;
+        registry.update_series_record(&record).unwrap();
+
+        // The clock is still before the deadline: only the stored state says Expired.
+        assert_eq!(
+            dispatch_series_data(&s, id).state,
+            IntexState::Expired as u8
+        );
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.forfeited, 70);
+    });
+}
+
+#[test]
 fn realized_units_can_never_exceed_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 45);
@@ -1293,12 +1307,11 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
 
 #[test]
 fn expiry_moves_the_active_units_into_forfeited() {
-    with_registry(|s| {
+    with_registry_at(NOTICE_END + 1, |s| {
         let id = called_series(&s, 51);
         api::record_settled_units(&s, id, 30).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
         api::record_exercised_units(&s, id, owner(), 30).unwrap();
-        api::expire_series(&s, id).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.active, 0);
@@ -1372,8 +1385,6 @@ fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
         assert_eq!(counts.active, 55);
 
         assert_eq!(api::expire_series(&s, id).unwrap().units, 55);
-        // Expired is terminal, so a repeated sweep can credit nothing more.
-        assert!(api::expire_series(&s, id).is_err());
     });
 }
 

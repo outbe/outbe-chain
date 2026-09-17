@@ -258,6 +258,7 @@ pub struct SeriesRecord {
 }
 
 impl SeriesRecord {
+    /// The stored state. This node never writes `Expired`: ask `effective_state` whether one expired.
     pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
         IntexState::from_u8(self.state)
     }
