@@ -106,7 +106,7 @@ contract EscrowAdapterTest is Test {
     function test_HasOutstandingLocks_ReflectsLockState() public {
         assertFalse(escrow.hasOutstandingLocks());
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         assertTrue(escrow.hasOutstandingLocks());
     }
 
@@ -165,7 +165,7 @@ contract EscrowAdapterTest is Test {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         // Check bidder balance decreased
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore - LOCK_AMOUNT);
@@ -186,10 +186,10 @@ contract EscrowAdapterTest is Test {
 
     function test_LockFunds_MultipleBidders() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2);
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2, 1_000_000, 1);
 
         // Check auction stats
         (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
@@ -202,13 +202,13 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroBidder() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, address(0), LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, address(0), LOCK_AMOUNT, 1_000_000, 1);
     }
 
     function test_LockFunds_ZeroAmount() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "amount"));
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, 0);
+        escrow.lockFunds(worldwideDay1, bidder1, 0, 1_000_000, 1);
     }
 
     /// @notice cheap sanity floor on `worldwideDay`. The `AUCTION_ROLE` gate already guarantees
@@ -216,37 +216,37 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroWorldwideDay() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         vm.prank(auction);
-        escrow.lockFunds(0, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(0, bidder1, LOCK_AMOUNT, 1_000_000, 1);
     }
 
     function test_LockFunds_AlreadyLocked() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         vm.expectRevert(IEscrowAdapter.BidAlreadyLocked.selector);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
     }
 
     function test_LockFunds_OnlyAuctionRole() public {
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(bridger);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
     }
 
     // --- FinalizeAuction Tests ---
     function test_FinalizeAuction_FullRefund() public {
         // Lock funds
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
 
@@ -278,9 +278,9 @@ contract EscrowAdapterTest is Test {
     // Finalize the series settling bidder2 only; bidder1 is omitted, left Locked with no split.
     function _finalizeOmittingBidder1() internal {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -309,7 +309,7 @@ contract EscrowAdapterTest is Test {
     function test_FinalizeAuction_FullClaim() public {
         // Lock funds
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
 
@@ -338,7 +338,7 @@ contract EscrowAdapterTest is Test {
     function test_FinalizeAuction_PartialRefundAndClaim() public {
         // Lock funds
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
@@ -365,9 +365,9 @@ contract EscrowAdapterTest is Test {
     function test_FinalizeAuction_MultipleBidders() public {
         // Lock funds for multiple bidders
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2);
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2, 1_000_000, 1);
 
         // Finalize: bidder1 gets full refund, bidder2 gets a 50/50 split.
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
@@ -394,7 +394,7 @@ contract EscrowAdapterTest is Test {
 
     function test_FinalizeAuction_EmptyInstructions() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](0);
 
@@ -405,7 +405,7 @@ contract EscrowAdapterTest is Test {
 
     function test_FinalizeAuction_AlreadyFinalized() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -424,7 +424,7 @@ contract EscrowAdapterTest is Test {
         // A zero-address bidder fails inside the per-bidder try/catch and emits BidderRefundFailed;
         // the outer call still succeeds (with zero totals because the single iteration failed).
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -457,9 +457,9 @@ contract EscrowAdapterTest is Test {
         // Two bidders: bidder1's instruction has an amount mismatch (fails), bidder2's is valid.
         // Fail-safe loop: bidder1 emits BidderRefundFailed, bidder2 finalizes normally.
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
@@ -490,7 +490,7 @@ contract EscrowAdapterTest is Test {
         // A bidder whose refund + payout doesn't match the locked amount fails inside the per-bidder
         // try/catch and emits BidderRefundFailed; the outer call still succeeds.
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
@@ -513,7 +513,7 @@ contract EscrowAdapterTest is Test {
         // Every instruction fails (here: amount mismatch on the only bidder) -> zero settled. The
         // series is finalized but degenerate; FinalizationNoOp surfaces it instead of a silent no-op.
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -527,7 +527,7 @@ contract EscrowAdapterTest is Test {
 
     function test_FinalizeAuction_OnlyBridgeRole() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -550,7 +550,7 @@ contract EscrowAdapterTest is Test {
     function test_Attest_ValidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         uint256 lockId = escrow.lockId();
         bytes4 result = escrow.attest(address(0), address(0), address(0), lockId, 0);
@@ -560,7 +560,7 @@ contract EscrowAdapterTest is Test {
     function test_Attest_InvalidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnexpectedLockId.selector, uint256(999)));
         escrow.attest(address(0), address(0), address(0), 999, 0);
@@ -581,7 +581,7 @@ contract EscrowAdapterTest is Test {
     // --- View Functions Tests ---
     function test_GetBidLock() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(lock.lockedAmount, LOCK_AMOUNT);
@@ -603,7 +603,7 @@ contract EscrowAdapterTest is Test {
 
         // After lock
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         (hasLocks, isFinalized, totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(hasLocks);
@@ -622,12 +622,12 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.FundsLocked(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
     }
 
     function test_Events_FundsRefunded() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -642,7 +642,7 @@ contract EscrowAdapterTest is Test {
 
     function test_Events_AuctionEscrowFinalized() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
@@ -669,7 +669,7 @@ contract EscrowAdapterTest is Test {
     function test_Wire_RewireSameTokenStaysAllowedWithLocks() public {
         // Active locks must not block re-wiring with the same token (e.g. rotating the auction).
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         address newAuction = address(0xBEEF);
         vm.prank(admin);
@@ -681,7 +681,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_AfterDelay_Succeeds() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
@@ -701,7 +701,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_BeforeDelay_Reverts() public {
         uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         // One second before the delay elapses.
         uint32 claimableAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
@@ -721,7 +721,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_DoubleClaim_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         escrow.claimRefund(worldwideDay1, bidder1);
@@ -737,7 +737,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // The Compact's forced withdrawal returns false (e.g. reset period not elapsed); the
@@ -753,7 +753,7 @@ contract EscrowAdapterTest is Test {
         // lock Locked).
         uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         // via-ir CSEs TIMESTAMP across vm.warp, so derive finalizedAt instead of re-reading it.
         uint32 finalizedAt = lockedAt + 1 days;
@@ -780,7 +780,7 @@ contract EscrowAdapterTest is Test {
     ///      terminal at the full principal: the fan-out was ours to get right, not the bidder's.
     function test_ClaimRefund_PostFinalize_NoSplit_RefundsFullPrincipal() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -814,9 +814,9 @@ contract EscrowAdapterTest is Test {
         bytes32 packet = keccak256("inbound-packet-A");
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT); // refunded bidder
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1); // refunded bidder
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT); // paid (winning) bidder
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1); // paid (winning) bidder
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
         instructions[0] =

@@ -38,7 +38,7 @@ abstract contract EscrowFinalizeGasBase is Test {
             deal(address(token), who[i], LOCK);
             vm.prank(who[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(WORLDWIDE_DAY, who[i], LOCK);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], LOCK, 1_000_000, 1);
         }
 
         // ResetPeriod.OneMinute: forced withdrawal only clears once the period has elapsed.
@@ -159,7 +159,7 @@ contract RefundMessageGasRealCompactTest is CrossChainTest {
             deal(address(token), who[i], LOCK);
             vm.prank(who[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(WORLDWIDE_DAY, who[i], LOCK);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], LOCK, 1_000_000, 1);
             refunded[i] = LOCK;
             paid[i] = 0;
         }

@@ -203,6 +203,16 @@
               "internalType": "enum IEscrowAdapter.LockStatus"
             },
             {
+              "name": "bidRate",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "quantity",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
               "name": "failedRefund",
               "type": "uint128",
               "internalType": "uint128"
@@ -341,6 +351,16 @@
           "name": "amount",
           "type": "uint128",
           "internalType": "uint128"
+        },
+        {
+          "name": "bidRate",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "quantity",
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ],
       "outputs": [],

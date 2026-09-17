@@ -438,7 +438,7 @@ contract IntexAuction is
         }
         // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
-        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount));
+        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
     }
 
     /// @inheritdoc IIntexAuction

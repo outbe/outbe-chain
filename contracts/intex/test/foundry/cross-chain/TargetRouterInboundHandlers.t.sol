@@ -280,7 +280,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         vm.prank(admin);
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
         vm.prank(admin);
-        escrow.lockFunds(WORLDWIDE_DAY, bidder, lockedAmount);
+        escrow.lockFunds(WORLDWIDE_DAY, bidder, lockedAmount, 1_000_000, 1);
 
         address[] memory bidders = new address[](1);
         bidders[0] = bidder;

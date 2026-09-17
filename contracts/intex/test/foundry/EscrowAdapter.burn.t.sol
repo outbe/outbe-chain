@@ -51,7 +51,7 @@ contract EscrowAdapterBurnTest is Test {
     /// @dev Strand bidder1 at finalize with a valid refund/paid split recorded.
     function _strandWithSplit(uint128 refundPortion, uint128 paidPortion) internal {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         compact.setForcedWithdrawalShouldFail(true);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);

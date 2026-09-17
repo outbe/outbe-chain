@@ -40,7 +40,7 @@ contract EscrowAdapterProceedsTest is Test {
 
     function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =

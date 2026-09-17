@@ -293,14 +293,16 @@ contract EscrowAdapter is
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount)
+    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
         external
         override
         onlyRole(AUCTION_ROLE)
         nonReentrant
     {
         _validateLockInputs(worldwideDay, bidder, amount);
-        _executeLock(worldwideDay, bidder, amount);
+        if (bidRate == 0) revert ZeroValue("bidRate");
+        if (quantity == 0) revert ZeroValue("quantity");
+        _executeLock(worldwideDay, bidder, amount, bidRate, quantity);
     }
 
     // --- Commit bonds ---
@@ -581,7 +583,9 @@ contract EscrowAdapter is
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealBid`,
     ///      forwarded through the `AUCTION_ROLE`-gated `lockFunds` entry point. Safety relies
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
-    function _executeLock(uint32 worldwideDay, address bidder, uint128 amount) internal {
+    function _executeLock(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
+        internal
+    {
         EscrowAdapterStorage storage $ = _s();
         AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
         // A day's locks share one asset, so its proceeds leave in one withdrawal.
@@ -602,6 +606,8 @@ contract EscrowAdapter is
             lockedAmount: amount,
             lockedAt: uint32(block.timestamp),
             status: LockStatus.Locked,
+            bidRate: bidRate,
+            quantity: quantity,
             failedRefund: 0,
             splitRecorded: false
         });

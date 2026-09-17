@@ -21,7 +21,8 @@ interface IEscrowAdapter {
     }
 
     /// @notice Bid lock data stored per series per bidder.
-    /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) = 21B, one slot;
+    /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) + `bidRate` (4B) + `quantity` (2B)
+    ///      = 27B, one slot;
     ///      `failedRefund` (16B) + `splitRecorded` (1B) = 17B, a second slot.
     struct BidLock {
         /// @notice Amount of payment-token locked.
@@ -30,6 +31,10 @@ interface IEscrowAdapter {
         uint32 lockedAt;
         /// @notice Current status of the lock.
         LockStatus status;
+        /// @notice Bid rate the lock was taken at (`1e6` fixed-point, share of the escrow basis).
+        uint32 bidRate;
+        /// @notice Intex units the bid asked for.
+        uint16 quantity;
         /// @notice Refund-portion of the finalization instruction that failed for this bidder.
         /// @dev Valid only when `splitRecorded` is true. Drives the post-finalize `claimRefund`
         ///      payout so a stranded winner is refunded only what they are owed, not the full lock.
@@ -253,7 +258,9 @@ interface IEscrowAdapter {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount) external;
+    /// @param bidRate Bid rate the amount was computed at.
+    /// @param quantity Intex units the bid asked for.
+    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity) external;
 
     /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The bond is

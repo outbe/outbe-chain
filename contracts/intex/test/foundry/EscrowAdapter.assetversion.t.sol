@@ -43,7 +43,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         deal(address(token), who, LOCK);
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
-        escrow.lockFunds(day, who, LOCK);
+        escrow.lockFunds(day, who, LOCK, 1_000_000, 1);
     }
 
     function _positionOf(address compactAt, uint256 lockId) internal view returns (uint256) {
@@ -122,7 +122,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         vm.prank(bob);
         tokenB.approve(address(escrow), type(uint256).max);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.DayAssetRetired.selector, DAY_1, uint8(0)));
-        escrow.lockFunds(DAY_1, bob, LOCK);
+        escrow.lockFunds(DAY_1, bob, LOCK, 1_000_000, 1);
     }
 
     function test_ACommitBondTakenBeforeARotationIsReleasedInItsOwnAsset() public {

@@ -71,15 +71,15 @@ contract EscrowAdapterInvariantsTest is Test {
 
         // Mixed locks across two series.
         vm.prank(auction);
-        escrow.lockFunds(s1, bidderA, LOCK_A);
+        escrow.lockFunds(s1, bidderA, LOCK_A, 1_000_000, 1);
         _assertSeriesInvariant(s1, bidders);
 
         vm.prank(auction);
-        escrow.lockFunds(s1, bidderB, LOCK_B);
+        escrow.lockFunds(s1, bidderB, LOCK_B, 1_000_000, 1);
         _assertSeriesInvariant(s1, bidders);
 
         vm.prank(auction);
-        escrow.lockFunds(s2, bidderC, LOCK_C);
+        escrow.lockFunds(s2, bidderC, LOCK_C, 1_000_000, 1);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
@@ -114,7 +114,7 @@ contract EscrowAdapterInvariantsTest is Test {
         address[3] memory bidders = [bidderA, bidderB, bidderC];
 
         vm.prank(auction);
-        escrow.lockFunds(s1, bidderA, LOCK_A);
+        escrow.lockFunds(s1, bidderA, LOCK_A, 1_000_000, 1);
 
         // auctionEscrowState mapping slot lookup: keccak256(abi.encode(s1, baseSlot)).
         // We bump `totalLocked` (low 8 bytes of the packed slot) without touching bidLocks

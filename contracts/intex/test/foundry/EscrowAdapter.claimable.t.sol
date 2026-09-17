@@ -43,7 +43,7 @@ contract EscrowAdapterClaimableTest is Test {
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
         vm.prank(auction);
-        escrow.lockFunds(DAY, who, LOCK);
+        escrow.lockFunds(DAY, who, LOCK, 1_000_000, 1);
     }
 
     function _finalize(address who, uint128 refunded) internal {

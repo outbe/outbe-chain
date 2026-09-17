@@ -42,7 +42,7 @@ contract EscrowConservationHandler is Test {
     function lock(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
         uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
         vm.prank(auction);
-        try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
+        try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount, 1_000_000, 1) {} catch {}
     }
 
     function finalize(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {

@@ -511,7 +511,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             paymentToken.mint(who[i], 1000e6);
             vm.prank(who[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1000e6);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1000e6, 1_000_000, 1);
             refunded[i] = 1000e6;
             paid[i] = 0;
         }

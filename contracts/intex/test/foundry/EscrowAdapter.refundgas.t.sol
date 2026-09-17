@@ -63,7 +63,7 @@ abstract contract RefundGasBase is CrossChainTest {
             deal(address(token), who, uint256(amount) + held);
             vm.prank(who);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, who, amount);
+            escrow.lockFunds(DAY, who, amount, 1_000_000, 1);
         }
     }
 
