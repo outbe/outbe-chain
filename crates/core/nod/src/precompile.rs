@@ -3,7 +3,10 @@ use alloy_sol_types::{sol, SolInterface};
 use base64::Engine;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
+use outbe_primitives::erc::{
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
@@ -15,6 +18,14 @@ use crate::schema::{NodBucketState, NodCertifiedGenerationProjection, NodContrac
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
+const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
+    ERC165_INTERFACE_ID,
+    ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
+    ERC721_ENUMERABLE_INTERFACE_ID,
+    ERC4906_INTERFACE_ID,
+];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -35,10 +46,9 @@ pub fn dispatch(
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
         match call {
-            supportsInterface(c) => view(c, |c| {
-                let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID)
-            }),
+            supportsInterface(c) => {
+                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            }
             name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
             symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
             totalSupply(_) => {

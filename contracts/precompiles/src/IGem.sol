@@ -18,6 +18,9 @@ interface IGem {
         uint32 callNoticePeriod;
     }
 
+    // ERC-165
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
     // ERC-721
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 gemId) external view returns (address);

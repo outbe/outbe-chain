@@ -1783,3 +1783,69 @@ fn transfer_logs_announce_mint_and_burn() {
         ]
     );
 }
+
+#[test]
+fn supported_interfaces_match_the_implemented_selectors() {
+    use outbe_primitives::erc::{
+        ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
+        ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
+    };
+
+    let interface_id = |selectors: &[[u8; 4]]| {
+        selectors.iter().fold([0u8; 4], |acc, selector| {
+            std::array::from_fn(|i| acc[i] ^ selector[i])
+        })
+    };
+    assert_eq!(
+        interface_id(&[
+            IGem::balanceOfCall::SELECTOR,
+            IGem::ownerOfCall::SELECTOR,
+            IGem::safeTransferFrom_0Call::SELECTOR,
+            IGem::safeTransferFrom_1Call::SELECTOR,
+            IGem::transferFromCall::SELECTOR,
+            IGem::approveCall::SELECTOR,
+            IGem::setApprovalForAllCall::SELECTOR,
+            IGem::getApprovedCall::SELECTOR,
+            IGem::isApprovedForAllCall::SELECTOR,
+        ]),
+        ERC721_INTERFACE_ID
+    );
+    assert_eq!(
+        interface_id(&[
+            IGem::nameCall::SELECTOR,
+            IGem::symbolCall::SELECTOR,
+            IGem::tokenURICall::SELECTOR,
+        ]),
+        ERC721_METADATA_INTERFACE_ID
+    );
+    assert_eq!(
+        interface_id(&[
+            IGem::totalSupplyCall::SELECTOR,
+            IGem::tokenByIndexCall::SELECTOR,
+            IGem::tokenOfOwnerByIndexCall::SELECTOR,
+        ]),
+        ERC721_ENUMERABLE_INTERFACE_ID
+    );
+
+    with_storage(|storage| {
+        let supports = |id: [u8; 4]| {
+            let data = IGem::supportsInterfaceCall {
+                interfaceId: id.into(),
+            }
+            .abi_encode();
+            let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+            IGem::supportsInterfaceCall::abi_decode_returns(&out).unwrap()
+        };
+        for id in [
+            ERC165_INTERFACE_ID,
+            ERC721_INTERFACE_ID,
+            ERC721_METADATA_INTERFACE_ID,
+            ERC721_ENUMERABLE_INTERFACE_ID,
+            ERC4906_INTERFACE_ID,
+        ] {
+            assert!(supports(id), "{id:02x?}");
+        }
+        assert!(!supports(ERC20_INTERFACE_ID));
+        assert!(!supports([0xff; 4]));
+    });
+}

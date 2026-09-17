@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
+use outbe_primitives::erc::{ERC165_INTERFACE_ID, ERC721_INTERFACE_ID};
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_NAME, TOKEN_SYMBOL};
@@ -13,6 +13,8 @@ use crate::schema::CredisContract;
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
+const SUPPORTED_INTERFACES: [[u8; 4]; 2] = [ERC165_INTERFACE_ID, ERC721_INTERFACE_ID];
 
 sol!("../../../contracts/precompiles/src/ICredis.sol");
 
@@ -71,10 +73,9 @@ pub fn dispatch(
                     _1: outstanding,
                 })
             }),
-            supportsInterface(c) => view(c, |c| {
-                let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID)
-            }),
+            supportsInterface(c) => {
+                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            }
         }
     })
 }

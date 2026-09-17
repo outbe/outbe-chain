@@ -1499,3 +1499,43 @@ fn open_position_announces_the_mint() {
         .collect();
     assert_eq!(transfers, vec![(Address::ZERO, alice(), id)]);
 }
+
+#[test]
+fn supported_interfaces_match_the_implemented_selectors() {
+    use outbe_primitives::erc::{ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID};
+
+    let interface_id = |selectors: &[[u8; 4]]| {
+        selectors.iter().fold([0u8; 4], |acc, selector| {
+            std::array::from_fn(|i| acc[i] ^ selector[i])
+        })
+    };
+    assert_eq!(
+        interface_id(&[
+            ICredis::balanceOfCall::SELECTOR,
+            ICredis::ownerOfCall::SELECTOR,
+            ICredis::safeTransferFrom_0Call::SELECTOR,
+            ICredis::safeTransferFrom_1Call::SELECTOR,
+            ICredis::transferFromCall::SELECTOR,
+            ICredis::approveCall::SELECTOR,
+            ICredis::setApprovalForAllCall::SELECTOR,
+            ICredis::getApprovedCall::SELECTOR,
+            ICredis::isApprovedForAllCall::SELECTOR,
+        ]),
+        ERC721_INTERFACE_ID
+    );
+
+    with_credis(|storage| {
+        let supports = |id: [u8; 4]| {
+            let data = ICredis::supportsInterfaceCall {
+                interfaceId: id.into(),
+            }
+            .abi_encode();
+            let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+            ICredis::supportsInterfaceCall::abi_decode_returns(&out).unwrap()
+        };
+        assert!(supports(ERC165_INTERFACE_ID));
+        assert!(supports(ERC721_INTERFACE_ID));
+        assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
+        assert!(!supports([0xff; 4]));
+    });
+}
