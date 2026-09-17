@@ -53,13 +53,19 @@ jobs:
         run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
-  # Stable checks share one target directory, persisted on each local runner.
+  # Stable checks share one target directory, persisted on each runner host.
   clippy:
     name: clippy
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      volumes:
+        - outbe-rust-cache:/__w/_outbe_rust_cache
+    # Keep concurrent runs of this job/ref from writing the same cache.
+    concurrency:
+      group: rust-cache-${{ github.workflow }}-clippy-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 60
     env:
       # Preserve rust-cache's build setting after removing remote archiving.
@@ -78,10 +84,15 @@ jobs:
                 release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
             } | sha256sum | cut -d ' ' -f1
           )"
-          # The runner's persistent _work mount survives checkout and temp cleanup.
-          # Old cache directories must be cleaned up on the runner when needed.
-          cache_dir="${RUNNER_TEMP%/*}/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          # The Docker volume is shared by all runner instances on this host.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
+          cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
           mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
           test ! -e "$GITHUB_WORKSPACE/target"
           ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
           printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
@@ -111,6 +122,12 @@ jobs:
     runs-on: testnet-release-sgx
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      volumes:
+        - outbe-rust-cache:/__w/_outbe_rust_cache
+    # Coverage cleanup must not race another run using the same cache.
+    concurrency:
+      group: rust-cache-${{ github.workflow }}-test-${{ github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
@@ -128,10 +145,15 @@ jobs:
                 release/project-toolchain-v1.json rust-toolchain.toml .cargo/config.toml
             } | sha256sum | cut -d ' ' -f1
           )"
-          # The runner's persistent _work mount survives checkout and temp cleanup.
-          # Old cache directories must be cleaned up on the runner when needed.
-          cache_dir="${RUNNER_TEMP%/*}/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
+          # The Docker volume is shared by all runner instances on this host.
+          # Coordinate with the host cleanup timer before registering this container.
+          exec 9>/__w/_outbe_rust_cache/.maintenance.lock
+          flock -x 9
+          cache_dir="/__w/_outbe_rust_cache/$GITHUB_REPOSITORY_ID/$cache_key"
           mkdir -p "$cache_dir/cargo" "$cache_dir/target"
+          [[ "$HOSTNAME" =~ ^[0-9a-f]{12,64}$ ]]
+          printf '%s\n' "$HOSTNAME" > "$cache_dir/.active-container"
+          touch "$cache_dir/.last-used"
           test ! -e "$GITHUB_WORKSPACE/target"
           ln -s "$cache_dir/target" "$GITHUB_WORKSPACE/target"
           printf 'CARGO_HOME=%s\nCARGO_TARGET_DIR=%s\n' \
