@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use base64::Engine;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
@@ -79,7 +78,8 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                token_uri(&item, &bucket, &to_abi_data(&storage, &item, &bucket)?)
+                let now = storage.timestamp()?.to::<u64>();
+                crate::metadata::token_uri(&nod, &item, &bucket, now)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -114,40 +114,6 @@ pub fn dispatch(
             }),
         }
     })
-}
-
-fn token_uri(item: &NodItemState, bucket: &NodBucketState, data: &INod::NodData) -> Result<String> {
-    let nod_id_str = item.nod_id.to_u256().to_string();
-    let settlement_cost_minor = data.settlementCostMinor;
-    let json = format!(
-        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"settlement_cost_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"calledAt\",\"value\":{}}},{{\"trait_type\":\"effectiveState\",\"value\":{}}},{{\"trait_type\":\"callPriceMinor\",\"value\":\"{}\"}},{{\"trait_type\":\"callRate\",\"value\":{}}},{{\"trait_type\":\"callWindow\",\"value\":{}}},{{\"trait_type\":\"callThreshold\",\"value\":{}}},{{\"trait_type\":\"callNoticePeriod\",\"value\":{}}},{{\"trait_type\":\"settlementDeadline\",\"value\":{}}}]}}",
-        nod_id_str,
-        crate::constants::TOKEN_DESCRIPTION,
-        crate::constants::TOKEN_IMAGE_BASE,
-        nod_id_str,
-        nod_id_str,
-        item.worldwide_day,
-        item.league_id,
-        item.floor_price_minor,
-        item.gratis_load_minor,
-        bucket.entry_price_minor,
-        settlement_cost_minor,
-        if bucket.is_qualified { "true" } else { "false" },
-        item.is_settled,
-        item.issued_at,
-        item.reference_currency,
-        item.issuance_currency,
-        data.calledAt,
-        data.effectiveState,
-        data.callPriceMinor,
-        data.callRate,
-        data.callWindow,
-        data.callThreshold,
-        data.callNoticePeriod,
-        data.settlementDeadline,
-    );
-    let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-    Ok(format!("data:application/json;base64,{encoded}"))
 }
 
 fn to_abi_data(

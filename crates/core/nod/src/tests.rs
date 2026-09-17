@@ -558,7 +558,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
             .unwrap();
         assert!(String::from_utf8(json)
             .unwrap()
-            .contains("\"trait_type\":\"isSettled\",\"value\":true"));
+            .contains("\"trait_type\":\"State\",\"value\":\"Settled\""));
     });
 }
 
@@ -670,20 +670,24 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                     .unwrap(),
             )
             .unwrap();
-            for (name, value) in [
-                ("effectiveState", state.to_string()),
-                ("calledAt", called_at.to_string()),
-                ("settlementDeadline", deadline.to_string()),
-                ("callPriceMinor", "\"937\"".to_string()),
-                ("callRate", "23".to_string()),
-                ("callWindow", "432000".to_string()),
-                ("callThreshold", "172800".to_string()),
-                ("callNoticePeriod", notice.to_string()),
-            ] {
-                assert!(
-                    json.contains(&format!("{{\"trait_type\":\"{name}\",\"value\":{value}}}")),
-                    "{json}"
-                );
+            let label = ["Issued", "Qualified", "Called", "Settled", "Expired"][usize::from(state)];
+            let mut expected = vec![
+                format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
+                r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#
+                    .to_string(),
+            ];
+            if called_at != 0 && !paid {
+                expected.push(format!(
+                    r#"{{"trait_type":"Called At","value":{called_at},"display_type":"date"}}"#
+                ));
+                if deadline != u64::MAX {
+                    expected.push(format!(
+                        r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
+                    ));
+                }
+            }
+            for trait_json in expected {
+                assert!(json.contains(&trait_json), "{json}");
             }
             // Cleanup removes the public entity instead of retaining a tombstone.
             api::remove_nod(
@@ -957,5 +961,90 @@ fn supported_interfaces_match_the_implemented_selectors() {
         }
         assert!(!supports(ERC20_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
+    });
+}
+
+#[test]
+fn token_uri_renders_the_nod_image_and_metadata() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+    use base64::Engine;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let body = item(Address::repeat_byte(0x71), U256::from(500_000), USD);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &body, U256::from(400_000)).unwrap();
+        let read = || {
+            let data = INod::tokenURICall {
+                nodId: body.nod_id.to_u256(),
+            }
+            .abi_encode();
+            let out = dispatch(
+                storage.clone(),
+                &scope,
+                &parent,
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
+            let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
+            let json = engine
+                .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+            let svg = engine
+                .decode(
+                    json["image"]
+                        .as_str()
+                        .unwrap()
+                        .strip_prefix("data:image/svg+xml;base64,")
+                        .unwrap(),
+                )
+                .unwrap();
+            (json, String::from_utf8(svg).unwrap())
+        };
+        let value = |json: &serde_json::Value, name: &str| {
+            json["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["trait_type"] == name)
+                .map(|entry| entry["value"].clone())
+        };
+
+        let (json, svg) = read();
+        assert_eq!(value(&json, "State").unwrap(), "Issued");
+        assert!(svg.contains(">ISSUED</text>"));
+
+        NodContract::new(storage.clone())
+            .qualify_bucket(&scope, &parent, body.bucket_key)
+            .unwrap();
+        let (json, svg) = read();
+        let hex = format!("{:064x}", body.nod_id.to_u256());
+        let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
+        assert_eq!(json["name"], format!("Nod {id}"));
+        assert_eq!(json["description"], "Outbe Nod");
+        assert!(!json.to_string().contains("https://"));
+        assert_eq!(value(&json, "State").unwrap(), "Qualified");
+        assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);
+        assert_eq!(value(&json, "League").unwrap(), 4);
+        assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
+        assert_eq!(value(&json, "Floor Price").unwrap(), 0.5);
+        assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
+        assert_eq!(value(&json, "Gratis Load").unwrap(), 0.000011);
+        assert_eq!(value(&json, "Cost Amount").unwrap(), 0.000004);
+        assert!(value(&json, "Settlement Deadline").is_none());
+
+        assert!(svg.contains(">NOD</text>"));
+        assert!(svg.contains(&format!(">{id}</text>")));
+        assert!(svg.contains(">QUALIFIED</text>"));
+        assert!(svg.contains(">1.424</text>"));
+        assert!(!svg.contains("Floor Price"));
     });
 }

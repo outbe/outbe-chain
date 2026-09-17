@@ -9087,6 +9087,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "mongodb",
+ "outbe-common",
  "outbe-compressed-entities",
  "outbe-macros",
  "outbe-ocomp-protocol",
@@ -9095,6 +9096,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]

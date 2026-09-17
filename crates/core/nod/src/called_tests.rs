@@ -1391,3 +1391,45 @@ fn a_call_pass_announces_one_batch_metadata_update() {
         .count();
     assert_eq!(batches, 1);
 }
+
+#[test]
+fn token_uri_reads_called_then_expired_across_the_settlement_deadline() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+    use base64::Engine;
+
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    let at = START + 30 * DAY;
+    let item = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        call_bucket(&storage, &scope, &parent, Address::repeat_byte(0x71), at)
+    });
+    let json_at = |provider: &mut HashMapStorageProvider, timestamp: u64| {
+        provider.set_timestamp(U256::from(timestamp));
+        StorageHandle::enter(provider, |storage| {
+            let data = INod::tokenURICall {
+                nodId: item.nod_id.to_u256(),
+            }
+            .abi_encode();
+            let out = dispatch(storage, &scope, &parent, &data, Address::ZERO, U256::ZERO).unwrap();
+            let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
+            let json = base64::engine::general_purpose::STANDARD
+                .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+                .unwrap();
+            String::from_utf8(json).unwrap()
+        })
+    };
+
+    let deadline = at + NOTICE;
+    let json = json_at(&mut provider, deadline);
+    assert!(json.contains(r#"{"trait_type":"State","value":"Called"}"#));
+    assert!(json.contains(&format!(
+        r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
+    )));
+    let json = json_at(&mut provider, deadline + 1);
+    assert!(json.contains(r#"{"trait_type":"State","value":"Expired"}"#));
+}
