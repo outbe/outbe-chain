@@ -6,6 +6,8 @@ interface ICredis {
     // Declared for ERC-721 shape only: a position is bound to its smart account, so these two are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+    /// @notice ERC-4906: the metadata of `_tokenId` changed.
+    event MetadataUpdate(uint256 _tokenId);
 
     event PositionCreated(
         uint256 indexed positionId,
@@ -87,6 +89,7 @@ interface ICredis {
 
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
+    function tokenURI(uint256 positionId) external view returns (string memory);
 
     function totalSupply() external view returns (uint256);
     function getPosition(uint256 positionId) external view returns (Position memory);

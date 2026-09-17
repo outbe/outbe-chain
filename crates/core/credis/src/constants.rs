@@ -2,6 +2,7 @@
 
 pub const TOKEN_NAME: &str = "Credis";
 pub const TOKEN_SYMBOL: &str = "CREDIS";
+pub const TOKEN_DESCRIPTION: &str = "Outbe Credis";
 
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;

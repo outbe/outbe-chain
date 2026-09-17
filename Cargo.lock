@@ -8422,9 +8422,12 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

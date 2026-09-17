@@ -229,6 +229,9 @@ impl CredisContract<'_> {
             calledAt: now,
             settlementDeadline: settlement_deadline(&position),
         })?;
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: position_id,
+        })?;
         Ok(true)
     }
 
@@ -316,6 +319,9 @@ impl CredisContract<'_> {
                 positionId: position_id,
             })?;
         }
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: position_id,
+        })?;
 
         Ok(Settlement {
             interest,
@@ -383,6 +389,9 @@ impl CredisContract<'_> {
                 gratisBurned: gratis_burned,
                 principalWrittenOff: principal_written_off,
                 interestWrittenOff: interest_written_off,
+            })?;
+            self.emit(ICredis::MetadataUpdate {
+                _tokenId: position_id,
             })?;
 
             Ok(Void {
