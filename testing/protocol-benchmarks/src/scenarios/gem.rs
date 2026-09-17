@@ -102,7 +102,12 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         T_NOW,
     )
     .map_err(|error| error.to_string())?;
-    OracleContract::new(storage)
+    let oracle = OracleContract::new(storage);
+    oracle
+        .config_lookback_duration
+        .write(86_400)
+        .map_err(|error| error.to_string())?;
+    oracle
         .reference_currencies
         .push(840_u16)
         .map_err(|error| error.to_string())
