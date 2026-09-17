@@ -13,9 +13,9 @@ use outbe_primitives::{
     units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_pledged, derive_modify_key, derive_view_key, modify_mac, pledge_secret, spend_auth_mac,
-};
+use outbe_tee_enclave::gratis::{derive_modify_key, derive_view_key, modify_mac};
+
+use outbe_tee::pledgenote::*;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -47,8 +47,7 @@ impl CredisScenario {
 
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
-    pledge_handle: B256,
-    spend_auth: [u8; 32],
+    spend_auth: Vec<u8>,
 }
 
 fn pledge_stables() -> U256 {
@@ -86,7 +85,7 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(bytes)
 }
 
-fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
+fn seed_world(storage: StorageHandle<'_>) -> Result<Vec<u8>, String> {
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -140,25 +139,34 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
         .map_err(|error| error.to_string())?;
 
-    let (pledge_handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+    let quote = Quote {
+        asset: ASSET,
+        principal_minor: pledge_stables(),
+        max_gratis_minor: U256::MAX,
+        reference_currency: REFERENCE_ISO,
+    };
+    let envelope =
+        gratis_enclave::owner_envelope(&storage, ALICE, 1, OwnerAction::Create(quote.clone()));
+    let encrypted = outbe_gratisfactory::runtime::create_pledge_note(
         storage.clone(),
-        ALICE,
-        pledge_stables(),
-        ASSET,
-        U256::MAX,
-        auth(GratisOp::Pledge, pledge_stables(), 1),
+        &encode(&CreateRequest { quote, envelope })?,
     )
     .map_err(|error| error.to_string())?;
-    if gratis_cost != pledge_cost() {
-        return Err("Credis benchmark pledge price drifted".to_owned());
-    }
+    let view =
+        derive_view_key(&gratis_enclave::state_key(), ALICE).map_err(|error| error.to_string())?;
+    let receipt = decrypt_receipt(&view, &encrypted)?;
     storage
         .increase_balance(CREDIS_FACTORY_ADDRESS, native_stake())
         .map_err(|error| error.to_string())?;
-    let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
-        .map_err(|error| error.to_string())?;
-    let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_handle), ALICE);
-    Ok((pledge_handle, spend_auth))
+    encrypt_request(
+        outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::PLEDGE_OFFER_SECRET),
+        &PrivateRequest::Use {
+            chain_id: chain_identity(),
+            note_id: receipt.note_id,
+            owner_sa: ALICE,
+            authorization: use_mac(receipt.secret, chain_identity(), receipt.note_id, ALICE)?,
+        },
+    )
 }
 
 impl BenchmarkScenario for CredisScenario {
@@ -183,10 +191,9 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_sub_call_stub();
         provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
         provider.stub_sub_call_at(ASSET, iso_word(ISSUANCE_ISO));
-        let (pledge_handle, spend_auth) = StorageHandle::enter(&mut provider, seed_world)?;
+        let spend_auth = StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {
             provider,
-            pledge_handle,
             spend_auth,
         })
     }
@@ -197,11 +204,9 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_production_storage_gas_metering();
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
-        let calldata = ICredisFactory::requestCredisCall {
-            smartAccount: ALICE,
-            pledgeHandle: prepared.pledge_handle,
-            spendAuth: B256::from(prepared.spend_auth),
-            referenceCurrency: REFERENCE_ISO,
+        let calldata = ICredisFactory::issueCredisCall {
+            ownerSA: ALICE,
+            encryptedUseAuth: prepared.spend_auth.clone().into(),
         }
         .abi_encode();
 
@@ -211,7 +216,7 @@ impl BenchmarkScenario for CredisScenario {
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);
-        let decoded = ICredisFactory::requestCredisCall::abi_decode_returns(&output)
+        let decoded = ICredisFactory::issueCredisCall::abi_decode_returns(&output)
             .map_err(|error| error.to_string())?;
         let runtime_gas = StorageHandle::enter(&mut provider, |storage| {
             storage.gas_used().map_err(|error| error.to_string())
@@ -224,22 +229,15 @@ impl BenchmarkScenario for CredisScenario {
             "credis_factory",
         )?;
 
-        let (position, revealed_owner, pledged) = StorageHandle::enter(&mut provider, |storage| {
+        let (position, pledged) = StorageHandle::enter(&mut provider, |storage| {
             let position = CredisContract::new(storage.clone())
-                .get_position(decoded.positionId)
+                .get_position(decoded.credisId)
                 .map_err(|error| error.to_string())?;
-            let owner = outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)
-                .map_err(|error| error.to_string())?;
-            let view_key = derive_view_key(&gratis_enclave::state_key(), ALICE)
-                .map_err(|error| error.to_string())?;
-            let pledged_blob =
-                outbe_gratis::api::pledged_ct(storage, ALICE).map_err(|error| error.to_string())?;
-            let pledged = decrypt_pledged(&view_key, ALICE, &pledged_blob)
-                .map_err(|error| error.to_string())?;
-            Ok::<_, String>((position, owner, pledged))
+            let pledged = gratis_enclave::query(&storage, ALICE).pledged;
+            Ok::<_, String>((position, pledged))
         })?;
         if position.smart_account != ALICE
-            || revealed_owner != ALICE
+            || position.collateral_handle == B256::ZERO
             || pledged != pledge_cost()
             || decoded.amountStables != pledge_stables()
         {
@@ -284,10 +282,10 @@ impl BenchmarkScenario for CredisScenario {
                 .with_latency("chain.credis.request_marginal", latency_ns)
                 .with_calldata(calldata_stats)
                 .with_postcondition("credis.created", "true")
-                .with_postcondition("credis.owner_revealed", "true")
+                .with_postcondition("credis.opaque_collateral_handle", "true")
                 .with_postcondition("credis.collateral_pledged", "true")
                 .with_postcondition("credis.child_frame_gas_included", "false")
-                .with_postcondition("credis.position_id", decoded.positionId.to_string());
+                .with_postcondition("credis.position_id", decoded.credisId.to_string());
         observation.storage = captured.storage;
         observation.events = captured.events;
         Ok(observation)

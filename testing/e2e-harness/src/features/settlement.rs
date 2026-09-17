@@ -955,13 +955,12 @@ fn owner_redeems_materialized_nod(world: &mut World) {
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
-    let gratis_before = gratis_balance(&url, owner, &keys.view);
-    let mint_nonce = eth::read_call(
-        &url,
-        addresses::GRATIS_ADDR,
-        &eth::IGratis::opNonceOfCall { account: owner },
-    )
-    .expect("Gratis nonce before Nod mining");
+    let gratis_before = eth::query_gratis(&url, owner, &keys)
+        .expect("private Gratis query")
+        .balance;
+    let mint_nonce = eth::query_gratis(&url, owner, &keys)
+        .expect("private Gratis query")
+        .next_nonce;
     let chain_id = chain_id_b256(world);
     let mint_mac = outbe_tee_enclave::gratis::modify_mac(
         &keys.modify,
@@ -987,17 +986,16 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     .expect("exercise the paid Nod");
     assert_mined_success(&mine_gratis, "exercise the paid Nod");
     assert_eq!(
-        gratis_balance(&url, owner, &keys.view),
+        eth::query_gratis(&url, owner, &keys)
+            .expect("private Gratis query")
+            .balance,
         gratis_before + body.gratisLoadMinor,
         "Nod load was not minted exactly into owner Gratis"
     );
 
-    let burn_nonce = eth::read_call(
-        &url,
-        addresses::GRATIS_ADDR,
-        &eth::IGratis::opNonceOfCall { account: owner },
-    )
-    .expect("Gratis nonce before COEN mining");
+    let burn_nonce = eth::query_gratis(&url, owner, &keys)
+        .expect("private Gratis query")
+        .next_nonce;
     let burn_mac = outbe_tee_enclave::gratis::modify_mac(
         &keys.modify,
         owner,
@@ -1027,7 +1025,12 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let fee =
         crate::world::rpc::Rpc::receipt_gas_cost(&mine_coen.receipt).expect("Gratis burn gas cost");
     let native_after = eth::balance(&url, owner).expect("native balance after Gratis burn");
-    assert_eq!(gratis_balance(&url, owner, &keys.view), gratis_before);
+    assert_eq!(
+        eth::query_gratis(&url, owner, &keys)
+            .expect("private Gratis query")
+            .balance,
+        gratis_before
+    );
     assert_eq!(
         native_after + fee,
         native_before
@@ -1463,21 +1466,6 @@ pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> 
     } else {
         outbe_tee_enclave::promis::decrypt_balance(view_key, owner, blob.as_ref())
             .expect("decrypt Promis balance")
-    }
-}
-
-fn gratis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {
-    let blob = eth::read_call(
-        url,
-        addresses::GRATIS_ADDR,
-        &eth::IGratis::balanceOfCall { account: owner },
-    )
-    .expect("Gratis ciphertext");
-    if blob.is_empty() {
-        U256::ZERO
-    } else {
-        outbe_tee_enclave::gratis::decrypt_balance(view_key, owner, blob.as_ref())
-            .expect("decrypt Gratis balance")
     }
 }
 

@@ -8,7 +8,6 @@
 //! owner.
 
 use alloy_primitives::{address, Address, U256};
-use k256::ecdsa::signature::hazmat::PrehashSigner;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -26,6 +25,7 @@ const T0: u64 = 1_000_000;
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     let mut storage = HashMapStorageProvider::new(test_enclave::DEV_CHAIN_ID);
+    storage.set_timestamp(U256::from(T0 + 1000 * DAY));
     let out = StorageHandle::enter(&mut storage, |storage| f(storage.clone()));
     test_enclave::uninstall();
     out
@@ -36,15 +36,20 @@ fn cohort_in_encrypts_and_sets_anchor() {
     with_env(|storage| {
         let c = FidelityContract::new(storage.clone());
         // No state yet: empty blob, unset anchor.
-        assert!(c.cohorts_ct_of(ALICE).unwrap().is_empty());
+        assert_eq!(
+            outbe_tee::pledge_ledger::head(&storage).unwrap().sequence,
+            0
+        );
         assert_eq!(c.first_qualified_start().unwrap(), 0);
 
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
 
         // Blob is now non-empty ciphertext, and the global anchor is set to the
         // first acquisition time.
-        let blob = c.cohorts_ct_of(ALICE).unwrap();
-        assert!(!blob.is_empty());
+        assert_eq!(
+            outbe_tee::pledge_ledger::head(&storage).unwrap().sequence,
+            1
+        );
         assert_eq!(c.first_qualified_start().unwrap(), T0);
 
         // A later acquisition by a different owner does NOT move the set-once
@@ -59,7 +64,10 @@ fn zero_amount_cohort_op_is_a_noop() {
     with_env(|storage| {
         api::cohort_in(storage.clone(), ALICE, U256::ZERO, T0).unwrap();
         let c = FidelityContract::new(storage.clone());
-        assert!(c.cohorts_ct_of(ALICE).unwrap().is_empty());
+        assert_eq!(
+            outbe_tee::pledge_ledger::head(&storage).unwrap().sequence,
+            0
+        );
         assert_eq!(c.first_qualified_start().unwrap(), 0);
     });
 }
@@ -102,56 +110,6 @@ fn snapshot_batches_owner_leagues_in_order() {
     });
 }
 
-/// secp256k1 signer + its EVM address.
-fn evm_signer(seed: u8) -> (k256::ecdsa::SigningKey, Address) {
-    let sk = k256::ecdsa::SigningKey::from_slice(&[seed; 32]).unwrap();
-    let point = sk.verifying_key().to_encoded_point(false);
-    let addr = Address::from_slice(&alloy_primitives::keccak256(&point.as_bytes()[1..])[12..]);
-    (sk, addr)
-}
-
-/// EIP-191 owner authorization over the query-auth message for the test chain.
-fn query_auth(sk: &k256::ecdsa::SigningKey, account: Address, expiry: u64) -> Vec<u8> {
-    let msg = outbe_tee::protocol::fidelity_query_auth_message(
-        test_enclave::dev_chain(),
-        account,
-        expiry,
-    );
-    let prehash = outbe_tee::protocol::eip191_hash(&msg);
-    let (sig, recid): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-        sk.sign_prehash(prehash.as_slice()).unwrap();
-    let mut sig65 = [0u8; 65];
-    sig65[..64].copy_from_slice(sig.to_bytes().as_slice());
-    sig65[64] = recid.to_byte();
-    sig65.to_vec()
-}
-
-#[test]
-fn signed_query_returns_index_for_owner_and_rejects_others() {
-    with_env(|storage| {
-        let (sk, account) = evm_signer(0x33);
-        api::cohort_in(storage.clone(), account, U256::from(1_000u64), T0).unwrap();
-
-        let c = FidelityContract::new(storage.clone());
-        let expiry = T0 + 400 * DAY;
-
-        // Owner-signed authorization -> the enclave returns a positive RCFI.
-        let sig = query_auth(&sk, account, expiry);
-        let result = c
-            .query_index_at(account, T0 + 100 * DAY, expiry, sig)
-            .unwrap();
-        assert!(result.rcfi > U256::ZERO);
-        assert_eq!(result.league, MAX_LEAGUE);
-
-        // A different key signing for `account` is rejected (wrong signer).
-        let (other, _) = evm_signer(0x34);
-        let forged = query_auth(&other, account, expiry);
-        assert!(c
-            .query_index_at(account, T0 + 100 * DAY, expiry, forged)
-            .is_err());
-    });
-}
-
 #[test]
 fn max_rcfi_at_uses_plaintext_anchor() {
     with_env(|storage| {
@@ -179,16 +137,14 @@ fn cohort_ciphertext_is_deterministic_across_executions() {
             api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
             api::cohort_in(storage.clone(), ALICE, U256::from(500u64), T0 + 10 * DAY).unwrap();
             api::cohort_out(storage.clone(), ALICE, U256::from(300u64), T0 + 20 * DAY).unwrap();
-            let blob = FidelityContract::new(storage.clone())
-                .cohorts_ct_of(ALICE)
-                .unwrap();
+            let blob = outbe_tee::pledge_ledger::head(&storage).unwrap().root;
             let league = api::league_at(storage.clone(), ALICE, T0 + 100 * DAY).unwrap();
             (blob, league)
         })
     };
     let a = run();
     let b = run();
-    assert!(!a.0.is_empty());
+    assert!(!a.0.is_zero());
     assert_eq!(
         a.0, b.0,
         "cohort ciphertext must be byte-identical across runs"
@@ -197,65 +153,54 @@ fn cohort_ciphertext_is_deterministic_across_executions() {
 }
 
 #[test]
-fn precompile_dispatch_query_auth_and_metadata() {
+fn encrypted_query_auth_and_metadata() {
     use crate::precompile::{dispatch, IFidelity};
-    use alloy_primitives::Bytes;
-    use alloy_sol_types::{SolCall, SolInterface};
-
+    use alloy_primitives::B256;
+    use alloy_sol_types::SolCall;
+    use outbe_tee::pledgenote::*;
     with_env(|storage| {
-        let (sk, account) = evm_signer(0x77);
-        api::cohort_in(storage.clone(), account, U256::from(1_000u64), T0).unwrap();
-        let expiry = T0 + 400 * DAY;
-        let query_ts = T0 + 100 * DAY;
-
-        // getFidelityIndexAt through the ABI dispatch with a valid owner
-        // authorization -> decoded RCFI is positive.
-        let sig = query_auth(&sk, account, expiry);
-        let call =
-            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
-                account,
-                timestamp: query_ts,
-                expiry,
-                signature: Bytes::from(sig),
-            })
-            .abi_encode();
-        let out = dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let rcfi = IFidelity::getFidelityIndexAtCall::abi_decode_returns(&out).unwrap();
-        assert!(rcfi > U256::ZERO);
-
-        // A signature from a different key is rejected by the dispatch.
-        let (other, _) = evm_signer(0x78);
-        let forged = query_auth(&other, account, expiry);
-        let bad =
-            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
-                account,
-                timestamp: query_ts,
-                expiry,
-                signature: Bytes::from(forged),
-            })
-            .abi_encode();
-        // ...and surfaced as a Revert carrying the reason (not an opaque Fatal,
-        // which eth_call drops as data-less "missing revert data").
-        let err = dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).unwrap_err();
-        assert!(
-            matches!(err, outbe_primitives::error::PrecompileError::Revert(_)),
-            "query failure must surface as Revert, got {err:?}"
-        );
-
-        // Plaintext metadata needs no authorization.
-        let min_call =
-            IFidelity::IFidelityCalls::minLeague(IFidelity::minLeagueCall {}).abi_encode();
-        let out = dispatch(storage.clone(), &min_call, Address::ZERO, U256::ZERO).unwrap();
+        api::cohort_in(storage.clone(), ALICE, U256::from(1000), T0).unwrap();
+        let chain_id = B256::from(U256::from(test_enclave::DEV_CHAIN_ID));
+        let action = OwnerAction::QueryAt {
+            timestamp: T0 + 100 * DAY,
+        };
+        let key = outbe_tee_enclave::gratis::derive_modify_key(&test_enclave::state_key(), ALICE)
+            .unwrap();
+        let mac = owner_mac(&key, chain_id, ALICE, 0, &action).unwrap();
+        let request = PrivateRequest::Owner {
+            chain_id,
+            account: ALICE,
+            nonce: 0,
+            action,
+            mac,
+        };
+        let public =
+            outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::PLEDGE_OFFER_SECRET);
+        let envelope = encrypt_request(public, &request).unwrap();
+        let call = IFidelity::queryCall {
+            encryptedRequest: envelope.clone().into(),
+        }
+        .abi_encode();
+        let encoded = dispatch(storage.clone(), &call, BOB, U256::ZERO).unwrap();
+        let encrypted = IFidelity::queryCall::abi_decode_returns(&encoded).unwrap();
+        let view =
+            outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), ALICE).unwrap();
+        let receipt = decrypt_receipt(&view, &encrypted).unwrap();
+        assert!(receipt.rcfi > U256::ZERO);
+        assert_eq!(receipt.league, MAX_LEAGUE);
+        assert!(decrypt_receipt(&[0; 32], &encrypted).is_err());
+        let mut tampered = envelope;
+        tampered[50] ^= 1;
+        let call = IFidelity::queryCall {
+            encryptedRequest: tampered.into(),
+        }
+        .abi_encode();
+        assert!(dispatch(storage.clone(), &call, BOB, U256::ZERO).is_err());
+        let call = IFidelity::minLeagueCall {}.abi_encode();
+        let output = dispatch(storage, &call, BOB, U256::ZERO).unwrap();
         assert_eq!(
-            IFidelity::minLeagueCall::abi_decode_returns(&out).unwrap(),
+            IFidelity::minLeagueCall::abi_decode_returns(&output).unwrap(),
             MIN_LEAGUE
-        );
-        let max_call =
-            IFidelity::IFidelityCalls::maxLeague(IFidelity::maxLeagueCall {}).abi_encode();
-        let out = dispatch(storage.clone(), &max_call, Address::ZERO, U256::ZERO).unwrap();
-        assert_eq!(
-            IFidelity::maxLeagueCall::abi_decode_returns(&out).unwrap(),
-            MAX_LEAGUE
         );
     });
 }

@@ -1,8 +1,8 @@
-// Client-side crypto for the confidential (TEE-encrypted) Gratis token.
+// Client-side key delivery and mint/burn authorization for Gratis and Promis.
 //
 // Byte-for-byte mirror of the enclave engine
 // (`bin/outbe-tee-enclave/src/{gratis.rs,crypto.rs}` + the HKDF/label constants
-// in `crates/system/tee/src/lib.rs`). Any divergence means a balance won't
+// in the shared confidential core). Any divergence means a receipt/balance won't
 // decrypt or a write authorization is rejected, so keep these in lockstep.
 //
 // Crypto primitives use Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256,
@@ -12,18 +12,10 @@ import { createHash, createHmac, hkdfSync, createDecipheriv } from "node:crypto"
 import { x25519 } from "@noble/curves/ed25519";
 import { ethers } from "ethers";
 
-// GratisOp discriminants - MUST match `outbe_tee::protocol::GratisOp` order.
-// Only Mint/Burn/Pledge/Unpledge are client-authorized; the rest are chain-driven
-// (credis) and listed so the discriminants stay aligned with the Rust enum.
+// Mint/burn authorization tags for PledgeLedger; match Rust GratisOp.
 export enum GratisOp {
   Mint = 0,
   Burn = 1,
-  Pledge = 2,
-  Unpledge = 3,
-  ConsumePledge = 4,
-  ReleaseToEoa = 5,
-  BurnPledged = 6,
-  RevealOwner = 7,
 }
 
 // PromisOp discriminants - MUST match `outbe_tee::protocol::PromisOp` order.
@@ -61,10 +53,8 @@ const LEDGER_LABELS: Record<Ledger, LedgerLabels> = {
 
 // Domain-separation labels - MUST match the Rust constants.
 const DKG_SHARE_INFO = utf8("outbe/tee/dkg-share/v1"); // crypto.rs
-const SPEND_BIND_TAG = utf8("outbe/gratis/credis-bind/v1"); // gratis.rs SPEND_BIND_TAG
 
 const FIELD_BALANCE = 0;
-const FIELD_PLEDGED = 1;
 
 // ---------------------------------------------------------------------------
 // Byte helpers
@@ -134,11 +124,11 @@ function chachaDecrypt(key: Uint8Array, nonce: Uint8Array, ctWithTag: Uint8Array
 }
 
 // ---------------------------------------------------------------------------
-// Key delivery - outbe_deriveGratisKeys RPC
+// Key delivery - outbe_deriveKeys RPC
 // ---------------------------------------------------------------------------
 
 export interface GratisKeys {
-  viewKey: Uint8Array; // decrypts this account's balance/pledged ciphertext
+  viewKey: Uint8Array; // decrypts Gratis receipts or Promis balance ciphertext
   modifyKey: Uint8Array; // authorizes writes (never decrypts)
 }
 
@@ -195,37 +185,7 @@ export function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
 }
 
 // ---------------------------------------------------------------------------
-// Fidelity index query authorization (owner-signed, expiring)
-// ---------------------------------------------------------------------------
-
-/**
- * Owner-signed authorization for a Fidelity index query (`getFidelityIndex[At]`).
- * The Fidelity precompile forwards it to the enclave, which recovers the signer
- * and rejects the read unless it equals `account`, the chain matches, and
- * `expiry >= block timestamp`. Unlike a view key, this only authorizes index
- * reads until `expiry` - never decryption of the raw cohort ledger.
- *
- * Message = "outbe/fidelity/query-auth/v1" || chainId(32 BE) || account(20) || expiry(8 BE),
- * signed as EIP-191 personal_sign - mirrors `outbe_tee::protocol::fidelity_query_auth_message`
- * (chainId is `B256::from(U256::from(chain_id))`, i.e. the numeric chain id big-endian).
- */
-export async function signFidelityQueryAuth(
-  signer: ethers.Wallet,
-  chainId: bigint,
-  account: string,
-  expiry: bigint,
-): Promise<string> {
-  const message = concat(
-    utf8("outbe/fidelity/query-auth/v1"),
-    be(chainId, 32),
-    addressBytes(account),
-    be(expiry, 8),
-  );
-  return signer.signMessage(message);
-}
-
-// ---------------------------------------------------------------------------
-// Balance / pledged decryption (view key, client-side)
+// Promis balance decryption (view key, client-side)
 // ---------------------------------------------------------------------------
 
 function decryptField(
@@ -251,14 +211,9 @@ export function decryptBalance(
   viewKey: Uint8Array,
   account: string,
   blobHex: string,
-  ledger: Ledger = "Gratis",
+  ledger: "Promis" = "Promis",
 ): bigint {
   return decryptField(viewKey, account, FIELD_BALANCE, blobHex, ledger);
-}
-
-/** Decrypt a Gratis account's `pledgedOf(...)` ciphertext blob into a bigint. */
-export function decryptPledged(viewKey: Uint8Array, account: string, blobHex: string): bigint {
-  return decryptField(viewKey, account, FIELD_PLEDGED, blobHex, "Gratis");
 }
 
 // ---------------------------------------------------------------------------
@@ -303,34 +258,4 @@ export function findPowNonce(id: bigint): bigint {
     if (hash[0] === 0) return n;
   }
   throw new Error("findPowNonce: no valid nonce found in 1e6 attempts");
-}
-
-/**
- * The per-pledge spend secret the EOA derives from its modify key + the public
- * pledge handle, then hands to the CCA off-chain: `HMAC(modify_key, handle)`.
- */
-export function pledgeSecret(modifyKey: Uint8Array, handleHex: string): Uint8Array {
-  const handle = ethers.getBytes(handleHex);
-  if (handle.length !== 32) throw new Error("pledgeSecret: handle must be 32 bytes");
-  return hmacSha256(modifyKey, handle);
-}
-
-/**
- * The spend authorization binding a pledge to a destination smart account:
- * `HMAC(pledge_secret, "credis-bind" || bundle)`. Prevents a mempool observer of
- * `requestCredis(handle, spendAuth)` from redirecting the loan.
- */
-export function spendAuth(secret: Uint8Array, bundle: string): string {
-  return ethers.hexlify(hmacSha256(secret, concat(SPEND_BIND_TAG, addressBytes(bundle))));
-}
-
-// ---------------------------------------------------------------------------
-// Position id - keccak256(handle || smartAccount), matches CredisContract
-// ---------------------------------------------------------------------------
-
-/** `position_id = keccak256(pledge_handle(32) || smart_account(20))` as uint256. */
-export function positionId(handleHex: string, smartAccount: string): bigint {
-  const handle = ethers.getBytes(handleHex);
-  if (handle.length !== 32) throw new Error("positionId: handle must be 32 bytes");
-  return BigInt(ethers.keccak256(concat(handle, addressBytes(smartAccount))));
 }

@@ -28,6 +28,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Prepare private PledgeNote requests and decrypt receipts locally.
+    PledgeNote {
+        #[command(subcommand)]
+        cmd: commands::pledgenote::PledgeNoteCmd,
+    },
     Paynote {
         #[command(subcommand)]
         cmd: commands::paynote::PaynoteCmd,
@@ -115,6 +120,7 @@ async fn main() -> Result<()> {
     let client = rpc::RpcClient::new(&cli.rpc_url);
 
     match cli.command {
+        Commands::PledgeNote { cmd } => cmd.run(),
         Commands::Paynote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Staking { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,

@@ -170,6 +170,10 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| provider.sload(address, key))
     }
 
+    pub fn pledge_journal_word(&self, index: u64, word: u16) -> Result<U256> {
+        self.with_provider(|provider| provider.pledge_journal_word(index, word))
+    }
+
     pub fn tload(&self, address: Address, key: U256) -> Result<U256> {
         self.with_provider(|provider| provider.tload(address, key))
     }
@@ -310,6 +314,10 @@ impl<'storage> StorageHandle<'storage> {
 
     pub fn gas_used(&self) -> Result<u64> {
         self.with_provider(|provider| Ok(provider.gas_used()))
+    }
+
+    pub fn gas_remaining(&self) -> Result<u64> {
+        self.with_provider(|provider| Ok(provider.gas_remaining()))
     }
 
     pub fn gas_refunded(&self) -> Result<i64> {

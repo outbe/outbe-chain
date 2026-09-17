@@ -24,6 +24,8 @@ mod metrics;
 pub mod native_qvl;
 pub mod node_host;
 pub mod offer_encrypt;
+pub mod pledge_ledger;
+pub mod pledgenote;
 pub mod protocol;
 pub mod quote;
 pub mod release_dcap_artifacts;
@@ -33,11 +35,10 @@ pub mod tee_dkg;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use client::{
-    verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
-    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
-    verify_promis_op_attestation, verify_tribute_offer_attestation, AttestedPeerKeys,
-    AuthorizedEnclaveClient, EnclaveClient, EnclaveInitializationChallenge, GeneratedDcapQuoteV1,
-    NodeHostNoiseKey, RemoteEnclaveClient, RemoteEnclavePublicKeysV1, RemoteSessionTicketV1,
+    verify_peer_quote, verify_promis_op_attestation, verify_tribute_offer_attestation,
+    AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient, EnclaveInitializationChallenge,
+    GeneratedDcapQuoteV1, NodeHostNoiseKey, RemoteEnclaveClient, RemoteEnclavePublicKeysV1,
+    RemoteSessionTicketV1,
 };
 pub use client_global::{
     generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,

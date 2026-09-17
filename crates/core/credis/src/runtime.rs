@@ -5,7 +5,7 @@
 //! day count, and even that is evaluated lazily at settlement rather than
 //! accrued per block.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -32,11 +32,11 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPositionParams {
     /// The pledge handle the position id derives from.
-    pub handle_id: U256,
+    pub credis_id: U256,
     pub smart_account: Address,
     pub cca: Address,
     /// Sealed pledger EOA, opaque here.
-    pub eoa_ct: Vec<u8>,
+    pub collateral_handle: B256,
     pub asset: Address,
     /// ISO 4217 code of `asset`; denominates the position and keys the policy rate.
     pub issuance_currency: u16,
@@ -87,7 +87,7 @@ pub struct Void {
     /// originating CCA's penalty.
     pub unpaid_share: U256,
     /// Sealed pledger EOA - the caller opens it to key the confidential ledgers.
-    pub eoa_ct: Vec<u8>,
+    pub collateral_handle: B256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -153,7 +153,7 @@ impl CredisContract<'_> {
                 return Err(CredisError::InvalidAmount.into());
             }
 
-            let position_id = CredisContract::position_id(params.handle_id, params.smart_account);
+            let position_id = params.credis_id;
             if self.position_exists(position_id)? {
                 return Err(CredisError::PositionAlreadyExists.into());
             }
@@ -165,7 +165,7 @@ impl CredisContract<'_> {
                 asset: params.asset,
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                eoa_ct: params.eoa_ct,
+                collateral_handle: params.collateral_handle,
                 principal: params.principal,
                 outstanding: params.principal,
                 collateral: params.collateral,
@@ -387,7 +387,7 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                eoa_ct: position.eoa_ct,
+                collateral_handle: position.collateral_handle,
             })
         })
     }

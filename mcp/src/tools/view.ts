@@ -163,16 +163,10 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   // --- Balances --------------------------------------------------------------
   server.tool(
-    "gratis_balance",
-    "Gratis balance + pledged amount for an account (in COEN).",
-    { account: addr },
-    handler(async ({ account }) => {
-      const [balance, pledged] = await Promise.all([
-        view(ctx, "gratis", "balanceOf", [account]),
-        view(ctx, "gratis", "pledgedOf", [account]),
-      ]);
-      return ok({ account, balance, pledged });
-    }),
+    "gratis_query",
+    "Submit an encrypted owner query prepared offline. Returns an encrypted balance, pledged amount, nonce and Fidelity receipt for local decryption.",
+    { encrypted_request: z.string().regex(/^0x(?:[0-9a-fA-F]{2})*$/).describe("Encrypted query bytes; never supply owner keys") },
+    handler(async ({ encrypted_request }) => ok(await view(ctx, "gratis", "query", [encrypted_request]))),
   );
 
   server.tool(
@@ -182,8 +176,8 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
   );
 
-  // Per-account fidelity index is now encrypted and owner-signature-gated, so a
-  // read-only MCP tool cannot fetch it. Expose the public synthetic-max ceiling
+  // Private Fidelity values are included in gratis_query encrypted receipts.
+  // Also expose the public synthetic-max ceiling
   // (`maxFidelityIndexAt`) instead - the upper bound on any account's RCFI at a
   // given time, in decayed days.
   server.tool(

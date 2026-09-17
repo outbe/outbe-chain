@@ -1,3 +1,4 @@
+import { queryGratis } from "./pledgenote.js";
 import { ethers, Wallet } from "ethers";
 import {
   IGem__factory,
@@ -105,7 +106,7 @@ async function main() {
     await promis.balanceOf(userAddress),
     "Promis",
   );
-  const gratisBefore = decryptBalance(gratisKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const gratisBefore = BigInt((await queryGratis(provider, gratisKeys, userAddress)).balance);
 
   console.log("=== Setup Gratis via Gem -> Promis -> Gratis (confidential / TEE) ===");
   console.log(`Env:            ${envName} (${envPath})`);
@@ -149,7 +150,7 @@ async function main() {
   // bound to its own ledger's current op-nonce: the Promis BURN auth (PromisOp.Burn)
   // and the Gratis MINT auth (GratisOp.Mint). The Promis op-nonce has advanced to 1
   // after the mint above.
-  const gratisMintNonce = await gratis.opNonceOf(userAddress);
+  const gratisMintNonce = BigInt((await queryGratis(provider, gratisKeys, userAddress)).next_nonce);
   const gratisMintMac = modifyMac(
     gratisKeys.modifyKey,
     userAddress,
@@ -188,7 +189,7 @@ async function main() {
     await promis.balanceOf(userAddress),
     "Promis",
   );
-  const gratisAfter = decryptBalance(gratisKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const gratisAfter = BigInt((await queryGratis(provider, gratisKeys, userAddress)).balance);
 
   console.log("\n=== State AFTER (both decrypted with the view keys) ===");
   console.log(`  Promis:   ${formatToken(promisAfter, promisMeta.decimals, promisMeta.symbol)}`);

@@ -413,3 +413,32 @@ test("external intent amounts retain their existing 18-decimal presentation", ()
   assert.equal(order.amountIn.value1e18, "1");
   assert.equal(order.amountOut.value1e18, "0.5");
 });
+
+test("PledgeNote tools relay encrypted bytes and preserve the exact native stake", async () => {
+  type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+  const handlers: Record<string, ToolHandler> = {};
+  const server = { tool(name: string, ...args: unknown[]) { handlers[name] = args.at(-1) as ToolHandler; } } as unknown as McpServer;
+  const sent: {data: Hex; value: bigint}[] = [];
+  const ctx = {
+    rpcUrl: "http://unused.invalid",
+    chain: {id: 1, nativeCurrency: {name: "COEN", symbol: "COEN", decimals: 18}} as Chain,
+    publicClient: {} as PublicClient,
+    account: privateKeyToAccount(`0x${"01".repeat(32)}`),
+    walletClient: { sendTransaction: async (transaction: {data: Hex; value: bigint}) => {
+      sent.push(transaction); return `0x${"11".repeat(32)}` as Hex;
+    } } as WalletClient,
+  } satisfies Ctx;
+  registerSignTools(server, ctx);
+  await handlers.pledge_note_create!({request: "0xaabb", wait: false});
+  const created = decodeFunctionData({abi: resolveContract("gratisfactory").abi, data: sent[0]!.data});
+  assert.equal(created.functionName, "createPledgeNote");
+  assert.deepEqual(created.args, ["0xaabb"]);
+  assert.equal(sent[0]!.value, 0n);
+  const owner = "0x2222222222222222222222222222222222222222";
+  const stake = "1000000000000000000000001";
+  await handlers.credis_issue!({owner_sa: owner, encrypted_auth: "0xccdd", stake_raw: stake, wait: false});
+  const issued = decodeFunctionData({abi: resolveContract("credisfactory").abi, data: sent[1]!.data});
+  assert.equal(issued.functionName, "issueCredis");
+  assert.deepEqual(issued.args, [owner, "0xccdd"]);
+  assert.equal(sent[1]!.value, BigInt(stake));
+});

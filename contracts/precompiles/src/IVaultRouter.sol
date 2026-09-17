@@ -35,6 +35,14 @@ interface IVaultRouter {
     error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
     error UnsupportedAssetDecimals(uint8 decimals);
     error CcaNotActive(address cca);
+    error InvalidReservation();
+    error ReservationAlreadyUsed();
+    error ReservationUnavailable();
+    error ReservationExpired();
+    error VaultHasReservations();
+    error ReservationAccounting();
+    error InexactTokenMovement();
+    error ReentrantCustody();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -145,6 +153,23 @@ interface IVaultRouter {
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
+
+    /// @notice Protocol-internal reservation. Only GratisFactory can create it.
+    /// The opaque custody ID is independent of the confidential PledgeNote ID.
+    function reserve(bytes32 id, address asset, uint256 amount, uint64 validUntil) external;
+
+    /// @notice Only CredisFactory may deliver the exact authorized reservation.
+    function releaseReservation(bytes32 id, address asset, uint256 amount, address receiver) external;
+
+    /// @notice Only GratisFactory may invalidate an unused reservation early.
+    /// Failed vault refunds remain in custody and are retried automatically.
+    function cancelReservation(bytes32 id) external;
+
+    /// @notice Permissionless bounded expiry/refund processing. Never cancels live quotes.
+    function sweepExpiredPledges(uint32 maxVisits) external returns (uint32 visited);
+
+    /// @notice Aggregate reserved inventory; no note or main-account resolver is exposed.
+    function reservedTotal(address asset) external view returns (uint256);
 
     /// @notice Moves `assetsAmount` of liquidity from `vaultFrom` to `vaultTo`. The caller
     ///         supplies the destination asset at the oracle cross rate and receives the source

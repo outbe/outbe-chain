@@ -527,6 +527,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             .unwrap_or(U256::ZERO))
     }
 
+    fn pledge_journal_word(&mut self, index: u64, word: u16) -> Result<U256> {
+        let key = super::pledge_journal_slot(index, word)?;
+        Ok(self
+            .storage
+            .get(&(crate::addresses::GRATIS_ADDRESS, key))
+            .copied()
+            .unwrap_or(U256::ZERO))
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if self.meter_storage_gas {
             self.deduct_gas(SSTORE_RESET)?;
@@ -574,6 +583,11 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn gas_used(&self) -> u64 {
         self.gas_used
+    }
+
+    fn gas_remaining(&self) -> u64 {
+        self.gas_limit
+            .map_or(u64::MAX, |limit| limit.saturating_sub(self.gas_used))
     }
 
     fn gas_refunded(&self) -> i64 {

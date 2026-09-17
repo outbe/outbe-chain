@@ -1,11 +1,5 @@
-//! Storage schema for the credisfactory precompile.
-//!
-//! The positions themselves (terms, state, the pledger EOA) live in the
-//! `outbe_credis` crate. The pledger's own collateral stays in its confidential Gratis
-//! `pledged_ct` for the whole life of the position (no escrow account), and the
-//! originating CCA's matching COEN passes straight through to the borrower's smart
-//! account at origination - so all this precompile keeps is the daily price-path scan's
-//! cursor.
+//! The factory stores its daily scan cursor. Public positions live in Credis;
+//! ownership and collateral balances live only inside the confidential ledger.
 
 use outbe_macros::contract;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;

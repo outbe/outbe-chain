@@ -2,12 +2,11 @@
 //! movement + Fidelity bookkeeping lives in [`crate::runtime`]. Writes are
 //! authorized by the caller's Gratis modify key (`mac` + `opNonce`).
 
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{sol, SolEvent, SolInterface};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::{sol, SolInterface};
 
 use outbe_gratis::api::ModifyAuth;
-use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
-use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -34,35 +33,12 @@ pub fn dispatch(
         |call| {
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
-                pledgeGratis(c) => mutate(c, caller, |sender, c| {
-                    let auth = ModifyAuth {
-                        mac: c.mac.0,
-                        op_nonce: c.opNonce,
-                    };
-                    let (handle, gratis_amount) = runtime::pledge_gratis(
-                        storage.clone(),
-                        sender,
-                        c.amountStables,
-                        c.asset,
-                        c.maxGratis,
-                        auth,
-                    )?;
-                    emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
-                    Ok(handle)
+                createPledgeNote(c) => mutate(c, caller, |_sender, c| {
+                    runtime::create_pledge_note(storage.clone(), &c.request).map(Bytes::from)
                 }),
-                unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
-                    let auth = ModifyAuth {
-                        mac: c.mac.0,
-                        op_nonce: c.opNonce,
-                    };
-                    let gratis_amount = runtime::unpledge_gratis(
-                        storage.clone(),
-                        sender,
-                        c.amountStables,
-                        c.pledgeHandle,
-                        auth,
-                    )?;
-                    emit_unpledged(&storage, sender, gratis_amount)
+                cancelPledgeNote(c) => mutate(c, caller, |_sender, c| {
+                    runtime::cancel_pledge_note(storage.clone(), c.encryptedAuth.to_vec())
+                        .map(Bytes::from)
                 }),
                 mineCoen(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
@@ -77,38 +53,5 @@ pub fn dispatch(
                 }),
             }
         },
-    )
-}
-
-fn emit_pledged(
-    storage: &StorageHandle<'_>,
-    account: Address,
-    call: &IGratisFactory::pledgeGratisCall,
-    gratis_amount: U256,
-    pledge_handle: B256,
-) -> Result<()> {
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisPledged {
-            account,
-            amountStables: call.amountStables,
-            asset: call.asset,
-            gratisAmount: gratis_amount,
-            pledgeHandle: pledge_handle,
-        }),
-    )
-}
-
-fn emit_unpledged(
-    storage: &StorageHandle<'_>,
-    account: Address,
-    gratis_amount: U256,
-) -> Result<()> {
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::GratisUnpledged {
-            account,
-            gratisAmount: gratis_amount,
-        }),
     )
 }

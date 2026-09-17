@@ -48,13 +48,12 @@ interface ICredis {
         /// ISO 4217 numeric code of the disbursed asset. Denominates the position
         /// and keys its policy rate; it is NOT the call threshold anchor.
         uint16 issuanceCurrency;
-        /// ISO 4217 numeric code of the reference currency elected at origination
+        /// ISO 4217 numeric code of the reference currency elected at quote creation
         /// and fixed for the position's life. Threshold-evaluation anchor only:
         /// the call is gated on the COEN/<reference> daily series.
         uint16 referenceCurrency;
-        // Pledger EOA ciphertext (not an address). The enclave recovers
-        // the plaintext EOA on-chain via a RevealOwner round-trip.
-        bytes eoaCiphertext;
+        // Opaque collateral allocation handle; only the enclave resolves its owner.
+        bytes32 collateralHandle;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principal;
         /// P_out - decreases with each settlement; the position closes at zero.

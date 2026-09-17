@@ -20,6 +20,7 @@ alloy-sol-types.workspace = true
 outbe-tee-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true
 # Fidelity's own tests run the confidential path against the in-process engine.
@@ -32,7 +33,7 @@ default = []
 test-utils = ["outbe-primitives/test-utils"]
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Fidelity path (mirrors gratis' `test-enclave`).
-test-enclave = ["dep:outbe-tee-enclave"]
+test-enclave = ["dep:outbe-tee-enclave", "outbe-tee/test-utils"]
 
 [lints]
 workspace = true

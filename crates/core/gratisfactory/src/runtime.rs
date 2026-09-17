@@ -1,26 +1,14 @@
-//! Orchestration logic for the gratisfactory precompile.
-//!
-//! Bridges the confidential Gratis token (`outbe_gratis::api`) and the Fidelity
-//! ledger. `pledge_gratis`/`unpledge_gratis` move gratis into/out of the credis
-//! escrow; `mine`/`mine_coen` own the mint/burn plus Fidelity cohort bookkeeping.
-//! The Fidelity cohort op rides INSIDE the gratis enclave round-trip (no extra
-//! trip): `mine` folds an acquisition (`In`), `mine_coen` a sale (`Out`), and
-//! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
-//! factory persists the returned fidelity outcome.
-//!
-//! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
-//! credit they want and this module derives the gratis it costs, sealing both plus
-//! the asset and the rate into the ticket. `requestCredis` then reads that quote back
-//! out instead of re-pricing the collateral a transaction later.
+//! Quote creation pins both currencies and reserves stablecoins atomically with
+//! the private Gratis debit. Cancellation restores Gratis and schedules refunds.
+//! Mint/burn apply their Fidelity cohort change in the same journal entry.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
 use crate::sol_ext::IReferenceCurrency;
-use outbe_fidelity::api::FidelityCohortOp;
-use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
+use outbe_gratis::api::{self as gratis, ModifyAuth, Quote, Terms};
 use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -60,70 +48,90 @@ fn convert_stables_to_gratis(
     Ok((gratis, rate))
 }
 
-/// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
-/// pending pledge-lock ticket (authorized by the caller's modify key, which binds the
-/// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
-/// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
-/// by their transaction signature rather than the MAC. Returns
-/// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The loan's own terms - the policy rate, the floor and call prices -
-/// are sealed on the Credis position, not on the pledge.
-pub fn pledge_gratis(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount_stables: U256,
-    asset: Address,
-    max_gratis: U256,
-    auth: ModifyAuth,
-) -> Result<(B256, U256)> {
-    // todo add asset validation and check if it is enought liquidity in the vaults
-    if asset.is_zero() {
-        return Err(GratisFactoryError::InvalidAsset.into());
-    }
-    if amount_stables.is_zero() {
-        return Err(GratisFactoryError::InvalidAmount.into());
-    }
-
-    let (gratis_amount, entry_rate) =
-        convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
-    if gratis_amount.is_zero() {
-        return Err(GratisFactoryError::InvalidAmount.into());
-    }
-    if gratis_amount > max_gratis {
-        return Err(GratisFactoryError::GratisCapExceeded.into());
-    }
-    let terms = PledgeTerms {
-        stables_amount: amount_stables,
-        gratis_amount,
+/// Quote and reserve liquidity atomically with the private Gratis debit.
+pub fn create_pledge_note(storage: StorageHandle<'_>, request: &[u8]) -> Result<Vec<u8>> {
+    let request: outbe_tee::pledgenote::CreateRequest =
+        outbe_tee::pledgenote::decode(request).map_err(PrecompileError::Revert)?;
+    let Quote {
         asset,
-        entry_rate,
-    };
-
-    // Fold a read-only league probe into the pledge round-trip (no separate
-    // fidelity call): the pledge op returns the caller's current league.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, section)?;
-    // todo implement correct fidelity eligibility check on `outcome.league`
-    if outcome.league == u16::MAX {
-        return Err(GratisFactoryError::FidelityNotEligible.into());
+        principal_minor,
+        max_gratis_minor,
+        reference_currency,
+    } = request.quote.clone();
+    if asset.is_zero() || principal_minor.is_zero() {
+        return Err(GratisFactoryError::InvalidAmount.into());
     }
-    Ok((handle, gratis_amount))
+    storage.with_checkpoint(|| {
+        let issuance_currency = read_iso_code(&storage, asset)?;
+        outbe_oracle::api::check_reference_currency_with_storage(
+            storage.clone(),
+            reference_currency,
+        )?;
+        let (gratis_minor, issuance_price) =
+            convert_stables_to_gratis(storage.clone(), principal_minor, asset)?;
+        if gratis_minor.is_zero() || gratis_minor > max_gratis_minor {
+            return Err(GratisFactoryError::GratisCapExceeded.into());
+        }
+        let entry_price_minor = if reference_currency == issuance_currency {
+            issuance_price
+        } else {
+            fresh_coen_rate_for(storage.clone(), reference_currency)?
+        };
+        // The header timestamp is u64; reject malformed storage providers.
+        let created_at: u64 = storage
+            .timestamp()?
+            .try_into()
+            .map_err(|_| PrecompileError::Revert("invalid quote timestamp".into()))?;
+        let valid_until = created_at
+            .checked_add(outbe_tee::pledgenote::QUOTE_TTL_SECONDS)
+            .ok_or_else(|| PrecompileError::Revert("quote timestamp overflow".into()))?;
+        let terms = Terms {
+            asset,
+            principal_minor,
+            gratis_minor,
+            issuance_currency,
+            reference_currency,
+            entry_price_minor,
+            created_at,
+            valid_until,
+        };
+        let outcome = gratis::create_note(
+            &storage,
+            request.quote.clone(),
+            terms,
+            request.envelope.clone(),
+        )?;
+        outbe_vaultrouter::api::reserve(
+            &storage,
+            outcome.reservation_id,
+            asset,
+            principal_minor,
+            valid_until,
+        )?;
+        storage.emit_event(
+            GRATIS_FACTORY_ADDRESS,
+            IGratisFactory::PledgeNoteCreated {
+                encryptedReceipt: outcome.encrypted_receipt.clone().into(),
+            }
+            .encode_log_data(),
+        )?;
+        Ok(outcome.encrypted_receipt)
+    })
 }
 
-/// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
-/// `amount_stables` is the figure the pledge was quoted for; returns the gratis
-/// collateral credited back.
-pub fn unpledge_gratis(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount_stables: U256,
-    pledge_handle: B256,
-    auth: ModifyAuth,
-) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+pub fn cancel_pledge_note(storage: StorageHandle<'_>, encrypted_auth: Vec<u8>) -> Result<Vec<u8>> {
+    storage.with_checkpoint(|| {
+        let outcome = gratis::cancel_note(&storage, encrypted_auth)?;
+        outbe_vaultrouter::api::cancel_reservation(&storage, outcome.reservation_id)?;
+        storage.emit_event(
+            GRATIS_FACTORY_ADDRESS,
+            IGratisFactory::PledgeNoteCancelled {
+                encryptedReceipt: outcome.encrypted_receipt.clone().into(),
+            }
+            .encode_log_data(),
+        )?;
+        Ok(outcome.encrypted_receipt)
+    })
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
@@ -135,14 +143,7 @@ pub fn mint(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    // Fold the acquisition cohort into the gratis mint round-trip; persist the
-    // returned fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::In, now)?;
-    let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
-    Ok(())
+    gratis::mint_with_fidelity(storage, account, amount, auth).map(|_| ())
 }
 
 pub fn mine_coen(
@@ -154,24 +155,20 @@ pub fn mine_coen(
     let native_amount = checked_protocol_to_native(amount)
         .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
 
-    // Fold the sale cohort into the gratis burn round-trip; persist the returned
-    // fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::Out, now)?;
-    let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
+    storage.with_checkpoint(|| {
+        gratis::burn_with_fidelity(storage.clone(), account, amount, auth)?;
 
-    // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
-    storage.increase_balance(account, native_amount)?;
+        // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
+        storage.increase_balance(account, native_amount)?;
 
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::CoenMined {
-            sender: account,
-            amount: native_amount,
-        }),
-    )?;
+        storage.emit_event(
+            GRATIS_FACTORY_ADDRESS,
+            SolEvent::encode_log_data(&IGratisFactory::CoenMined {
+                sender: account,
+                amount: native_amount,
+            }),
+        )?;
 
-    Ok(native_amount)
+        Ok(native_amount)
+    })
 }

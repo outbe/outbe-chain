@@ -12,15 +12,14 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-};
+use outbe_tee_enclave::gratis::{derive_modify_key, derive_view_key, modify_mac};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
+use outbe_tee::pledgenote::*;
 
 const CHAIN_ID: u64 = 1;
 const CREATED_AT: u64 = 1_700_000_000;
@@ -79,27 +78,20 @@ fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth
 }
 
 fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::balance_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_balance(&vk, a, &blob).unwrap()
+    test_enclave::query(s, a).balance
 }
-
 fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_pledged(&vk, a, &blob).unwrap()
+    test_enclave::query(s, a).pledged
 }
 
 /// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
 /// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .reference_currencies
+        .push(ASSET_ISO)
+        .unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage,
         Address::ZERO,
@@ -111,7 +103,7 @@ fn seed_oracle(storage: StorageHandle<'_>, rate: U256) {
     .unwrap();
 }
 
-/// Give `account` a positive Fidelity index so `pledge_gratis` clears the
+/// Give `account` a positive Fidelity index so `create_pledge_note` clears the
 /// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
@@ -132,7 +124,7 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
-    // `pledge_gratis` staticcalls the asset for its ISO 4217 code before pricing.
+    // `create_pledge_note` staticcalls the asset for its ISO 4217 code before pricing.
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
     let out = StorageHandle::enter(&mut storage, |s| {
@@ -144,75 +136,105 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     out
 }
 
-/// `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` calldata. `max_gratis`
-/// is the caller's slippage cap; pass `U256::MAX` when the test does not exercise it.
-fn pledge_call(a: ModifyAuth, amount_stables: U256, max_gratis: U256) -> Bytes {
-    Bytes::from(
-        IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
-            amountStables: amount_stables,
-            asset: asset(),
-            maxGratis: max_gratis,
-            mac: FixedBytes(a.mac),
-            opNonce: a.op_nonce,
-        })
-        .abi_encode(),
-    )
+fn create_call(storage: &StorageHandle<'_>, nonce: u64, principal: U256, cap: U256) -> Bytes {
+    let quote = Quote {
+        asset: asset(),
+        principal_minor: principal,
+        max_gratis_minor: cap,
+        reference_currency: ASSET_ISO,
+    };
+    let envelope =
+        test_enclave::owner_envelope(storage, alice(), nonce, OwnerAction::Create(quote.clone()));
+    IGratisFactory::createPledgeNoteCall {
+        request: encode(&CreateRequest { quote, envelope }).unwrap().into(),
+    }
+    .abi_encode()
+    .into()
 }
 
-/// The pledger names the CREDIT they want; the gratis it costs is derived from the
-/// oracle rate, and that - not the stables figure - is what leaves the balance.
-#[test]
-fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
-    with_env(|storage| {
-        let seed = pledge_cost() * U256::from(2u64);
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            seed,
-            auth(GratisOp::Mint, alice(), seed, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
+fn seed(storage: &StorageHandle<'_>) {
+    let amount = pledge_cost() * U256::from(2);
+    outbe_gratis::api::mint(
+        storage.clone(),
+        alice(),
+        amount,
+        auth(GratisOp::Mint, alice(), amount, 0),
+    )
+    .unwrap();
+    seed_fidelity(storage.clone(), alice());
+}
 
-        // Pledge at op-nonce 1 (mine advanced it from 0). The MAC binds the STABLES.
+#[test]
+fn private_create_and_cancel_restore_collateral_through_relayer() {
+    with_env(|storage| {
+        seed(&storage);
+        let relayer = Address::repeat_byte(0x77);
         let out = dispatch(
             storage.clone(),
-            &pledge_call(
-                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-                pledge_stables(),
-                U256::MAX,
-            ),
-            alice(),
+            &create_call(&storage, 1, pledge_stables(), U256::MAX),
+            relayer,
             U256::ZERO,
         )
         .unwrap();
-        let handle = IGratisFactory::pledgeGratisCall::abi_decode_returns(&out).unwrap();
-        assert_ne!(handle, B256::ZERO, "a pledge handle is returned");
-
-        // `pledge_cost()` gratis left the balance and is parked in the pending ticket
-        // (NOT yet in the per-account pledged ledger); the aggregate - gratis, not
-        // stables - counts it.
-        assert_eq!(view_balance(&storage, alice()), seed - pledge_cost());
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        let encrypted = IGratisFactory::createPledgeNoteCall::abi_decode_returns(&out).unwrap();
+        let view = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
+        let note = decrypt_receipt(&view, &encrypted).unwrap();
+        assert_ne!(note.note_id, B256::ZERO);
+        assert_eq!(
+            note.terms.as_ref().unwrap().valid_until,
+            CREATED_AT + QUOTE_TTL_SECONDS
+        );
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost()
         );
+        let encrypted_auth = test_enclave::owner_envelope(
+            &storage,
+            alice(),
+            2,
+            OwnerAction::Cancel {
+                note_id: note.note_id,
+            },
+        );
+        let call = IGratisFactory::cancelPledgeNoteCall {
+            encryptedAuth: encrypted_auth.into(),
+        }
+        .abi_encode();
+        dispatch(storage.clone(), &call, relayer, U256::ZERO).unwrap();
+        assert_eq!(
+            view_balance(&storage, alice()),
+            pledge_cost() * U256::from(2)
+        );
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert!(dispatch(storage.clone(), &call, relayer, U256::ZERO).is_err());
     });
 }
 
 #[test]
-fn pledge_rejects_a_stale_oracle_rate_without_debiting_gratis() {
+fn quote_guards_leave_private_state_unchanged() {
     with_env(|storage| {
-        let seed = pledge_cost() * U256::from(2u64);
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            seed,
-            auth(GratisOp::Mint, alice(), seed, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
+        seed(&storage);
+        let before = outbe_tee::pledge_ledger::head(&storage).unwrap();
+        for (nonce, principal, cap) in [
+            (1, pledge_stables(), pledge_cost() - U256::ONE),
+            (5, pledge_stables(), U256::MAX),
+            (1, U256::ONE, U256::MAX),
+        ] {
+            assert!(dispatch(
+                storage.clone(),
+                &create_call(&storage, nonce, principal, cap),
+                Address::repeat_byte(0x77),
+                U256::ZERO
+            )
+            .is_err());
+            assert_eq!(outbe_tee::pledge_ledger::head(&storage).unwrap(), before);
+            assert_eq!(
+                view_balance(&storage, alice()),
+                pledge_cost() * U256::from(2)
+            );
+        }
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,
@@ -222,237 +244,38 @@ fn pledge_rejects_a_stale_oracle_rate_without_debiting_gratis() {
             CREATED_AT - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
         )
         .unwrap();
-
-        let error = dispatch(
-            storage.clone(),
-            &pledge_call(
-                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-                pledge_stables(),
-                U256::MAX,
-            ),
-            alice(),
-            U256::ZERO,
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("stale"), "{error}");
-        assert_eq!(view_balance(&storage, alice()), seed);
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage).unwrap(),
-            U256::ZERO
-        );
-    });
-}
-
-#[test]
-fn pledge_rounds_collateral_down_before_checking_the_cap() {
-    with_env(|storage| {
-        let stable_raw = U256::from(3u64);
-        let gratis_raw = U256::ONE;
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            gratis_raw,
-            auth(GratisOp::Mint, alice(), gratis_raw, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-
-        let (handle, charged) = runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            stable_raw,
-            asset(),
-            gratis_raw,
-            auth(GratisOp::Pledge, alice(), stable_raw, 1),
-        )
-        .unwrap();
-        // 3 / 2 = 1.5 Gratis minor units: floor to 1, which fits the cap.
-        assert_eq!(charged, gratis_raw);
-        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            gratis_raw
-        );
-        assert_eq!(
-            runtime::unpledge_gratis(
-                storage.clone(),
-                alice(),
-                stable_raw,
-                handle,
-                auth(GratisOp::Unpledge, alice(), stable_raw, 2),
-            )
-            .unwrap(),
-            gratis_raw
-        );
-        assert_eq!(view_balance(&storage, alice()), gratis_raw);
-    });
-}
-
-/// `maxGratis` is the pledger's slippage protection: the MAC only covers the stables
-/// figure, so a rate move that makes the credit cost more gratis than they accepted
-/// must revert rather than quietly draining the extra.
-#[test]
-fn pledge_rejects_when_derived_gratis_exceeds_max() {
-    with_env(|storage| {
-        let seed = pledge_cost() * U256::from(2u64);
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            seed,
-            auth(GratisOp::Mint, alice(), seed, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-
         let err = dispatch(
             storage.clone(),
-            &pledge_call(
-                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-                pledge_stables(),
-                pledge_cost() - U256::from(1u64),
-            ),
-            alice(),
+            &create_call(&storage, 1, pledge_stables(), U256::MAX),
+            Address::repeat_byte(0x77),
             U256::ZERO,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("maxGratis"), "got: {err}");
-
-        // Nothing moved.
-        assert_eq!(view_balance(&storage, alice()), seed);
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
+        assert!(err.to_string().contains("stale"), "{err}");
+        assert_eq!(outbe_tee::pledge_ledger::head(&storage).unwrap(), before);
     });
 }
 
 #[test]
-fn pledge_rejects_a_quote_that_rounds_to_zero_without_changing_balances() {
+fn quote_rounds_down_and_binds_the_slippage_cap() {
     with_env(|storage| {
-        outbe_gratis::api::mint(
+        seed(&storage);
+        let out = dispatch(
             storage.clone(),
-            alice(),
-            U256::ONE,
-            auth(GratisOp::Mint, alice(), U256::ONE, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        let error = runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            U256::ONE,
-            asset(),
-            U256::MAX,
-            auth(GratisOp::Pledge, alice(), U256::ONE, 1),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("amount"), "{error}");
-        assert_eq!(view_balance(&storage, alice()), U256::ONE);
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(outbe_gratis::api::total_supply(storage).unwrap(), U256::ONE);
-    });
-}
-
-#[test]
-fn pledge_rejects_wrong_op_nonce() {
-    with_env(|storage| {
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_cost(),
-            auth(GratisOp::Mint, alice(), pledge_cost(), 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-
-        // op-nonce is 1 after the mine; a stale/forged 5 must be rejected.
-        let err = dispatch(
-            storage.clone(),
-            &pledge_call(
-                auth(GratisOp::Pledge, alice(), pledge_stables(), 5),
-                pledge_stables(),
-                U256::MAX,
-            ),
-            alice(),
+            &create_call(&storage, 1, U256::from(3), U256::ONE),
+            Address::repeat_byte(0x77),
             U256::ZERO,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("op nonce"), "got: {err}");
-    });
-}
-
-#[test]
-fn pledge_rejects_zero_asset() {
-    with_env(|storage| {
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_cost(),
-            auth(GratisOp::Mint, alice(), pledge_cost(), 0),
-        )
         .unwrap();
-        seed_fidelity(storage.clone(), alice());
-
-        let err = runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_stables(),
-            Address::ZERO,
-            U256::MAX,
-            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("asset"), "got: {err}");
-    });
-}
-
-#[test]
-fn unpledge_returns_collateral_to_pledger() {
-    with_env(|storage| {
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_cost(),
-            auth(GratisOp::Mint, alice(), pledge_cost(), 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        let (handle, gratis_cost) = runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_stables(),
-            asset(),
-            U256::MAX,
-            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-        )
-        .unwrap();
-        assert_eq!(gratis_cost, pledge_cost());
-        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
-
-        // Direct unpledge (credis rejected) at op-nonce 2, quoted in the same unit the
-        // pledge was: stables in, the full gratis collateral back.
-        let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::unpledgeGratis(
-                IGratisFactory::unpledgeGratisCall {
-                    amountStables: pledge_stables(),
-                    pledgeHandle: handle,
-                    mac: FixedBytes(auth(GratisOp::Unpledge, alice(), pledge_stables(), 2).mac),
-                    opNonce: 2,
-                },
-            )
-            .abi_encode(),
-        );
-        dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-
-        assert_eq!(view_balance(&storage, alice()), pledge_cost());
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        let encrypted = IGratisFactory::createPledgeNoteCall::abi_decode_returns(&out).unwrap();
+        let view = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
         assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
+            decrypt_receipt(&view, &encrypted)
+                .unwrap()
+                .terms
+                .unwrap()
+                .gratis_minor,
+            U256::ONE
         );
     });
 }
@@ -499,7 +322,7 @@ fn mine_rejects_zero_amount() {
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("amount must be positive"),
+            err.to_string().contains("invalid gratis command"),
             "got: {err}"
         );
     });
@@ -576,7 +399,8 @@ fn mine_coen_rejects_insufficient_balance() {
         );
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
         assert!(
-            err.to_string().contains("insufficient balance"),
+            err.to_string()
+                .contains("insufficient confidential balance"),
             "got: {err}"
         );
 
@@ -618,16 +442,10 @@ fn supports_interface() {
 fn rejects_msg_value() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
-                amountStables: U256::from(1u64),
-                asset: asset(),
-                maxGratis: U256::MAX,
-                mac: FixedBytes([0u8; 32]),
-                opNonce: 0,
-            })
-            .abi_encode(),
-        );
+        let call = IGratisFactory::createPledgeNoteCall {
+            request: Bytes::new(),
+        }
+        .abi_encode();
         let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
         assert!(err.to_string().contains("non-payable"), "got: {err}");
     });

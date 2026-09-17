@@ -23,6 +23,9 @@ export interface ContractEntry {
 const A = (hex: string): Address => getAddress(hex);
 
 export const CONTRACTS: Record<string, ContractEntry> = {
+  vaultrouter: {address: A("0x0000000000000000000000000000000000001017"), abi: ABI.IVaultRouter, note: "vaultrouter"},
+  credisfactory: {address: A("0x0000000000000000000000000000000000001009"), abi: ABI.ICredisFactory, note: "credisfactory"},
+  gratisfactory: {address: A("0x0000000000000000000000000000000000002003"), abi: ABI.IGratisFactory, note: "gratisfactory"},
   tribute: {
     address: A("0x0000000000000000000000000000000000001101"),
     note: "Tribute NFT",
@@ -43,7 +46,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
+    note: "Gratis confidential ledger; query accepts an encrypted owner authorization and returns a view-key encrypted receipt. Prepare requests offline with outbe-cli pledge-note.",
     abi: ABI.IGratis,
   },
 
@@ -85,7 +88,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   fidelity: {
     address: A("0x000000000000000000000000000000000000100C"),
-    note: "Fidelity RCFI (per-account index is owner-signature-gated; only the public scalars are callable here)",
+    note: "Fidelity RCFI; private queries use encrypted owner authorization and encrypted receipts.",
     abi: ABI.IFidelity,
   },
 

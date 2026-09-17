@@ -1,6 +1,6 @@
 //! ABI dispatch for the credisfactory precompile at `CREDIS_FACTORY_ADDRESS`.
 //!
-//! `requestCredis` consumes a confidential Gratis pledge (pledge handle + spend
+//! `issueCredis` consumes a confidential Gratis pledge (pledge handle + spend
 //! authorization) and opens a credis position bound to `smartAccount`.
 //! `settle` applies an arbitrary amount interest-first and releases the matching
 //! share of the pledged collateral back to the original pledger's encrypted
@@ -21,7 +21,7 @@ use crate::runtime;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICredisFactory::requestCredisCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICredisFactory::issueCredisCall::SELECTOR];
 
 sol!("../../../contracts/precompiles/src/ICredisFactory.sol");
 
@@ -40,19 +40,17 @@ pub fn dispatch(
         |call| {
             use ICredisFactory::ICredisFactoryCalls::*;
             match call {
-                requestCredis(c) => {
+                issueCredis(c) => {
                     mutate_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
-                        let (position_id, amount_stables) = runtime::request_credis(
+                        let (position_id, amount_stables) = runtime::issue_credis(
                             storage.clone(),
                             sender,
-                            c.smartAccount,
-                            c.pledgeHandle,
-                            c.spendAuth.0,
-                            c.referenceCurrency,
+                            c.ownerSA,
+                            c.encryptedUseAuth.to_vec(),
                             val,
                         )?;
-                        Ok(ICredisFactory::requestCredisReturn {
-                            positionId: position_id,
+                        Ok(ICredisFactory::issueCredisReturn {
+                            credisId: position_id,
                             amountStables: amount_stables,
                         })
                     })

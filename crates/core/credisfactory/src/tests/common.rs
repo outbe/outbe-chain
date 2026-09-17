@@ -22,12 +22,10 @@ use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-    pledge_secret, spend_auth_mac,
-};
+use outbe_tee_enclave::gratis::{derive_modify_key, derive_view_key, modify_mac};
 
 use crate::runtime;
+use outbe_tee::pledgenote::*;
 
 pub const CHAIN_ID: u64 = 1;
 pub const CREATED_AT: u64 = 1_700_000_000;
@@ -62,7 +60,7 @@ pub fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
-/// The originating agent. `requestCredis`'s caller is recorded on the position.
+/// The originating agent. `issueCredis`'s caller is recorded on the position.
 pub fn cca() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
@@ -113,18 +111,43 @@ pub fn pledge_stake() -> U256 {
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
 /// return the resulting handle. The gratis it costs is derived from the seeded rate.
-pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
-    let (handle, gratis_cost) = gf::pledge_gratis(
-        storage.clone(),
+pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> Receipt {
+    pledge_quote(
+        storage,
         who,
+        nonce,
         pledge_stables(),
-        asset(),
         U256::MAX,
-        auth(GratisOp::Pledge, who, pledge_stables(), nonce),
+        REFERENCE_ISO,
+    )
+}
+
+pub fn pledge_quote(
+    storage: &StorageHandle<'_>,
+    who: Address,
+    nonce: u64,
+    principal: U256,
+    cap: U256,
+    reference_currency: u16,
+) -> Receipt {
+    let quote = Quote {
+        asset: asset(),
+        principal_minor: principal,
+        max_gratis_minor: cap,
+        reference_currency,
+    };
+    let envelope =
+        test_enclave::owner_envelope(storage, who, nonce, OwnerAction::Create(quote.clone()));
+    let bytes = gf::create_pledge_note(
+        storage.clone(),
+        &encode(&CreateRequest { quote, envelope }).unwrap(),
     )
     .unwrap();
-    assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
-    handle
+    decrypt_receipt(
+        &derive_view_key(&test_enclave::state_key(), who).unwrap(),
+        &bytes,
+    )
+    .unwrap()
 }
 
 /// Pledge and open a position for alice, originated by [`cca`].
@@ -135,18 +158,10 @@ pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
 /// Pledge and open a position owned by `who`, originated by [`cca`].
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let handle = pledge(storage, who, nonce);
-    let spend = credis_spend_auth(who, handle, who);
+    let spend = credis_spend_auth(&handle, who);
     fund_stake(storage, pledge_stake());
-    let (position_id, _) = runtime::request_credis(
-        storage.clone(),
-        cca(),
-        who,
-        handle,
-        spend,
-        REFERENCE_ISO,
-        pledge_stake(),
-    )
-    .unwrap();
+    let (position_id, _) =
+        runtime::issue_credis(storage.clone(), cca(), who, spend, pledge_stake()).unwrap();
     position_id
 }
 
@@ -155,7 +170,7 @@ pub fn chain_b256() -> B256 {
 }
 
 /// Registers the `COEN/840` and `COEN/978` pairs, seeds both spot rates, the USD
-/// policy rate, and the reference-currency registry `request_credis` validates
+/// policy rate, and the reference-currency registry `issue_credis` validates
 /// the elected anchor against. Idempotent - `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
@@ -202,7 +217,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the one
-/// `request_credis` strikes a position's entry price from.
+/// `issue_credis` strikes a position's entry price from.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
@@ -321,7 +336,7 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
+/// Positive Fidelity so `gratisfactory::create_pledge_note` clears the eligibility gate.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     outbe_fidelity::api::cohort_in(
@@ -342,28 +357,25 @@ pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> Modify
 }
 
 pub fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::balance_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_balance(&vk, a, &blob).unwrap()
+    test_enclave::query(s, a).balance
 }
 
 pub fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_pledged(&vk, a, &blob).unwrap()
+    test_enclave::query(s, a).pledged
 }
 
-/// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
-pub fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
-    let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
-    spend_auth_mac(&pledge_secret(&mk, handle), bundle)
+pub fn credis_spend_auth(note: &Receipt, owner_sa: Address) -> Vec<u8> {
+    let authorization = use_mac(note.secret, chain_b256(), note.note_id, owner_sa).unwrap();
+    encrypt_request(
+        outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::PLEDGE_OFFER_SECRET),
+        &PrivateRequest::Use {
+            chain_id: chain_b256(),
+            note_id: note.note_id,
+            owner_sa,
+            authorization,
+        },
+    )
+    .unwrap()
 }
 
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
@@ -391,6 +403,17 @@ pub fn env() -> HashMapStorageProvider {
         )
         .unwrap();
     });
+    use alloy_sol_types::SolCall;
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::approveCall::SELECTOR,
+        Bytes::new(),
+    );
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::transferFromCall::SELECTOR,
+        Bytes::new(),
+    );
     storage
 }
 
@@ -414,7 +437,7 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     deploy_smart_account(storage, who);
 }
 
-/// Gives `who` non-empty code so `request_credis`'s deployed-account guard passes.
+/// Gives `who` non-empty code so `issue_credis`'s deployed-account guard passes.
 /// The bytes are never executed - `HashMapStorageProvider` runs no EVM - only the
 /// code hash is read.
 pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
@@ -425,7 +448,7 @@ pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
 
 /// Credits the factory with the stake the payable boundary would have credited.
 ///
-/// Tests drive `runtime::request_credis` directly, below the precompile boundary that
+/// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
 /// moves `msg.value`, so without this the escrow would have a claim with no COEN
 /// behind it and the release would underflow.
 pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {

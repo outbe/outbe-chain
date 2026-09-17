@@ -488,6 +488,10 @@ where
                     proposer,
                 )?;
                 run_atomic_storage_hooks(db, ctx, |hook_ctx| {
+                    // Local readiness: reconstruct the committed parent before
+                    // executing any receipt-producing transaction. This writes
+                    // no chain state; missing/authentication-failed history is fatal.
+                    outbe_tee::pledge_ledger::synchronize(&hook_ctx.storage)?;
                     let lifecycle =
                         outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
                             hook_ctx.clone(),

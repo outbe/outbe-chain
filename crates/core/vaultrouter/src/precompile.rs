@@ -175,6 +175,37 @@ fn dispatch_local(
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
+            reserve(c) => mutate_void(c, caller, |sender, c| {
+                runtime::reserve(
+                    storage.clone(),
+                    sender,
+                    c.id,
+                    c.asset,
+                    c.amount,
+                    c.validUntil,
+                )
+            }),
+            releaseReservation(c) => mutate_void(c, caller, |sender, c| {
+                runtime::release_reservation(
+                    storage.clone(),
+                    sender,
+                    c.id,
+                    c.asset,
+                    c.amount,
+                    c.receiver,
+                )
+            }),
+            cancelReservation(c) => mutate_void(c, caller, |sender, c| {
+                runtime::cancel_reservation(storage.clone(), sender, c.id)
+            }),
+            sweepExpiredPledges(c) => mutate(c, caller, |_sender, c| {
+                runtime::sweep_expired_reservations(&storage, c.maxVisits)
+            }),
+            reservedTotal(c) => view(c, |c| {
+                VaultRouterContract::new(storage.clone())
+                    .reserved_totals
+                    .read(&c.asset)
+            }),
 
             // --- rebalance (CCA-gated; caller supplies the destination asset) ---
             rebalance(c) => mutate(c, caller, |sender, c| {

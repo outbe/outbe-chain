@@ -198,13 +198,7 @@ fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> Modi
 
 /// Decrypt `account`'s confidential gratis balance with its view key.
 fn gratis_view_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
-    let sk = outbe_gratis::enclave_client::test_enclave::state_key();
-    let vk = outbe_tee_enclave::gratis::derive_view_key(&sk, account).unwrap();
-    let blob = outbe_gratis::api::balance_ct(storage.clone(), account).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    outbe_tee_enclave::gratis::decrypt_balance(&vk, account, &blob).unwrap()
+    outbe_gratis::enclave_client::test_enclave::query(storage, account).balance
 }
 
 fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> Bytes {
@@ -304,8 +298,6 @@ fn mine_gratis_rejects_insufficient_balance() {
 
         // No gratis minted (no ciphertext ever written), promis untouched.
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(100u64));
-        assert!(outbe_gratis::api::balance_ct(storage.clone(), alice())
-            .unwrap()
-            .is_empty());
+        assert_eq!(gratis_view_balance(&storage, alice()), U256::ZERO);
     });
 }

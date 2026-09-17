@@ -197,13 +197,13 @@ impl Rpc {
         let nonce = (0_u64..100_000)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
-        let op_nonce = eth::read_call(
+        let keys = eth::derive_account_keys(
             &self.url(port),
-            addresses::GRATIS_ADDR,
-            &IGratis::opNonceOfCall { account: owner },
-        )
-        .ok_or_else(|| eyre!("read Gratis op nonce"))?;
-        let modify_key = eth::derive_gratis_modify_key(&self.url(port), private_key)?;
+            private_key,
+            outbe_tee::protocol::Ledger::Gratis,
+        )?;
+        let op_nonce = eth::query_gratis(&self.url(port), owner, &keys)?.next_nonce;
+        let modify_key = keys.modify;
         let chain_id = B256::from(U256::from(
             self.chain_id(port)
                 .ok_or_else(|| eyre!("read chain ID for mineGratis"))?,

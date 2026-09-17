@@ -134,6 +134,7 @@ pub fn deposit(
         let send_id = IERC7786TokenBridge::sendAndCallCall::abi_decode_returns(&ret)
             .map_err(|_| VaultRouterError::UndecodableReturn("token bridge sendAndCall"))?;
         erc20_approve(&storage, config.asset, config.token_bridge, U256::ZERO)?;
+        crate::runtime::ensure_reserved_custody(&storage, config.asset)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
         contract.emit(IVaultRouterCrosschainExtention::CrosschainDepositSent {
@@ -292,6 +293,7 @@ pub fn receive_withdrawal_return(
         validate_pending_operation(&storage, operation_id, user, amount, OPERATION_WITHDRAW)?;
 
         erc20_transfer(&storage, config.asset, user, amount)?;
+        crate::runtime::ensure_reserved_custody(&storage, config.asset)?;
         let mut contract = VaultRouterContract::new(storage.clone());
         contract
             .operation_statuses

@@ -18,6 +18,22 @@ pub enum VaultRouterError {
     ZeroAddress,
     #[error("unauthorized")]
     Unauthorized,
+    #[error("invalid reservation")]
+    InvalidReservation,
+    #[error("reservation already used")]
+    ReservationAlreadyUsed,
+    #[error("reservation is not available")]
+    ReservationUnavailable,
+    #[error("reservation expired")]
+    ReservationExpired,
+    #[error("vault still has reservations")]
+    VaultHasReservations,
+    #[error("reservation arithmetic invariant violated")]
+    ReservationAccounting,
+    #[error("token did not move the exact reserved amount")]
+    InexactTokenMovement,
+    #[error("router custody operation is already in progress")]
+    ReentrantCustody,
     #[error("invalid liquidity source")]
     InvalidLiquiditySource,
     #[error("invalid liquidity target")]
@@ -86,6 +102,9 @@ pub enum VaultRouterError {
 
 impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
+        if matches!(err, VaultRouterError::ReservationAccounting) {
+            return PrecompileError::Fatal(err.to_string());
+        }
         PrecompileError::Revert(err.to_string())
     }
 }

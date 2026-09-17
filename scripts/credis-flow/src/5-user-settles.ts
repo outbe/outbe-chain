@@ -1,3 +1,4 @@
+import { queryGratis } from "./pledgenote.js";
 import { ethers, Wallet } from "ethers";
 import {
   ICredisFactory__factory,
@@ -238,7 +239,7 @@ async function main() {
   // balance with their view key.
   const gratis = IGratis__factory.connect(gratisAddress, provider);
   const userKeys = await deriveGratisKeys(userWallet);
-  const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const gratisBalBefore = BigInt((await queryGratis(provider, userKeys, userAddress)).balance);
   console.log(
     `\nThis payment unlocks the matching share of collateral back to ${userAddress}` +
       ` (up to ${formatToken(position.collateralLocked, 6, "GRATIS")} still locked).`,
@@ -416,7 +417,7 @@ async function main() {
   // The collateral share unlocked automatically to the pledger's confidential
   // balance - verify it by decrypting with the user's view key. No reclaim note
   // or follow-up unpledge is needed.
-  const gratisBalAfter = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const gratisBalAfter = BigInt((await queryGratis(provider, userKeys, userAddress)).balance);
   const unlocked = gratisBalAfter - gratisBalBefore;
   console.log(`  User Gratis:     ${formatTokenDiff(unlocked, 6, "GRATIS")} (collateral released to the pledger)`);
 

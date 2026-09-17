@@ -125,6 +125,19 @@
   },
   {
     "type": "function",
+    "name": "cancelReservation",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "deposit",
     "inputs": [
       {
@@ -371,6 +384,34 @@
   },
   {
     "type": "function",
+    "name": "releaseReservation",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "removeLiquiditySource",
     "inputs": [
       {
@@ -410,6 +451,53 @@
   },
   {
     "type": "function",
+    "name": "reserve",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reservedTotal",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "sharesBalance",
     "inputs": [
       {
@@ -426,6 +514,25 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sweepExpiredPledges",
+    "inputs": [
+      {
+        "name": "maxVisits",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "visited",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -743,6 +850,11 @@
   },
   {
     "type": "error",
+    "name": "InexactTokenMovement",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientSharesForWithdraw",
     "inputs": [
       {
@@ -775,6 +887,11 @@
   {
     "type": "error",
     "name": "InvalidReferenceCurrency",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidReservation",
     "inputs": []
   },
   {
@@ -813,6 +930,31 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrantCustody",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationAccounting",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationUnavailable",
+    "inputs": []
   },
   {
     "type": "error",
@@ -865,5 +1007,10 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "VaultHasReservations",
+    "inputs": []
   }
 ]
