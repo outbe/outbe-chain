@@ -32,8 +32,8 @@ contract IntexAuction is
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
     /// @notice Lock on the commit bond of a bidder who never revealed, anchored at `revealEnd`.
-    ///         On a green day the bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`
-    ///         and is then reclaimable via `claimCommitBond`; reveal/cancel/red-day return it immediately.
+    ///         The bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` and is then
+    ///         reclaimable via `claimCommitBond`; reveal and cancel return it immediately.
     uint32 public constant UNREVEALED_BOND_LOCK_PERIOD = 24 hours;
 
     /// @dev EIP-712 type hash for the revealed bid; the currency pair is part of the signed
@@ -443,15 +443,11 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = $.auctions[worldwideDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
-        // Red day cancels the auction before anyone can reveal - no fault, immediate return.
-        // Every other outcome (revealed bidders have no bond; cancel is the in-window path)
-        // is a no-reveal on a live auction: the bond waits out the penalty window anchored
-        // at the (possibly snapped-forward) `revealEnd`.
-        if (_getAuctionStage(worldwideDay) != IIntexAuction.AuctionStage.Cancelled) {
-            uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
-            if (uint32(block.timestamp) < claimableAt) {
-                revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
-            }
+        // A bond that outlives its reveal window belongs to a no-reveal, and waits out the penalty
+        // window anchored at the (possibly snapped-forward) `revealEnd`.
+        uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
+        if (uint32(block.timestamp) < claimableAt) {
+            revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
         }
 
         // Pays the stored bidder; reverts CommitBondNotFound in the escrow when no bond is live.
