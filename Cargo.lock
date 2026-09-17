@@ -8842,10 +8842,12 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
+ "outbe-common",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]

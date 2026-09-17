@@ -1849,3 +1849,96 @@ fn supported_interfaces_match_the_implemented_selectors() {
         assert!(!supports([0xff; 4]));
     });
 }
+
+fn token_uri_parts(storage: &StorageHandle, gem_id: U256) -> (serde_json::Value, String) {
+    use base64::Engine;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let data = IGem::tokenURICall { gemId: gem_id }.abi_encode();
+    let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+    let uri = IGem::tokenURICall::abi_decode_returns(&out).unwrap();
+    let json = engine
+        .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    let svg = engine
+        .decode(
+            json["image"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:image/svg+xml;base64,")
+                .unwrap(),
+        )
+        .unwrap();
+    (json, String::from_utf8(svg).unwrap())
+}
+
+fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value> {
+    json["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["trait_type"] == name)
+        .map(|entry| entry["value"].clone())
+}
+
+#[test]
+fn token_uri_renders_the_gem_card() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        let (json, svg) = token_uri_parts(storage, gem_id);
+
+        let id = outbe_common::nft_card::short_id(gem_id);
+        assert_eq!(json["name"], format!("Gem {id}"));
+        assert_eq!(json["description"], "Outbe Gem");
+        assert!(!json.to_string().contains("https://"));
+        assert_eq!(trait_value(&json, "State").unwrap(), "Qualified");
+        assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");
+        assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
+        assert_eq!(trait_value(&json, "Floor Price").unwrap(), 0.54);
+        assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
+        assert_eq!(trait_value(&json, "Promis Load").unwrap(), 1);
+        assert_eq!(trait_value(&json, "Issued At").unwrap(), T_NOW);
+        assert!(trait_value(&json, "Call Deadline").is_none());
+
+        assert!(svg.contains(">GEM</text>"));
+        assert!(svg.contains(&format!(">{id}</text>")));
+        assert!(svg.contains(">QUALIFIED</text>"));
+        assert!(svg.contains(">Call Price</text>"));
+        assert!(svg.contains(">1.14</text>"));
+        assert!(!svg.contains("Floor Price"));
+    });
+}
+
+#[test]
+fn token_uri_reads_expired_once_the_call_notice_lapses() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        GemContract::new(storage.clone())
+            .mark_called(gem_id, T_NOW)
+            .unwrap();
+        let item = api::get_gem(&storage, gem_id).unwrap().unwrap();
+        (gem_id, T_NOW + u64::from(item.call_notice_period_seconds))
+    });
+
+    provider.set_timestamp(U256::from(deadline));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, svg) = token_uri_parts(&storage, gem_id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+        assert_eq!(trait_value(&json, "Called At").unwrap(), T_NOW);
+        assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
+        assert!(svg.contains(">CALLED</text>"));
+        assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+    });
+
+    provider.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, svg) = token_uri_parts(&storage, gem_id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Expired");
+        assert!(svg.contains(">EXPIRED</text>"));
+    });
+}
