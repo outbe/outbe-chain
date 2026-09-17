@@ -1,4 +1,4 @@
-use outbe_common::nft_card::{self, Card, Trait};
+use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{GemData, GemState};
@@ -21,24 +21,24 @@ pub(crate) fn token_uri(item: &GemData, now: u64) -> String {
     let mut rows = vec![
         (
             "Entry Price",
-            nft_card::amount_grouped(item.entry_price_minor),
+            nft_card::amount_grouped(item.entry_price_minor, PRICE_PRECISION),
         ),
         (
             "Call Price",
-            nft_card::amount_grouped(item.call_price_minor),
+            nft_card::amount_grouped(item.call_price_minor, PRICE_PRECISION),
         ),
         (
             "Promis Load",
-            nft_card::amount_grouped(item.promis_load_minor),
+            nft_card::amount_grouped(item.promis_load_minor, AMOUNT_PRECISION),
         ),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
         gem_type(item.gem_type),
-        Trait::amount("Entry Price", item.entry_price_minor),
-        Trait::amount("Floor Price", item.floor_price_minor),
-        Trait::amount("Call Price", item.call_price_minor),
-        Trait::amount("Promis Load", item.promis_load_minor),
+        Trait::amount("Entry Price", item.entry_price_minor, PRICE_PRECISION),
+        Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
+        Trait::amount("Call Price", item.call_price_minor, PRICE_PRECISION),
+        Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),
         Trait::integer("Reference Currency", item.reference_currency),
         Trait::date("Issued At", item.issued_at),

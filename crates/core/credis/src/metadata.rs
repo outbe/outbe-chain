@@ -1,4 +1,4 @@
-use outbe_common::nft_card::{self, Card, Trait};
+use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
@@ -17,31 +17,41 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     let accrued_interest = CredisContract::accrued_interest(position, now)?;
 
     let mut rows = vec![
-        ("Principal", nft_card::amount_grouped(position.principal)),
+        (
+            "Principal",
+            nft_card::amount_grouped(position.principal, AMOUNT_PRECISION),
+        ),
         (
             "Outstanding",
-            nft_card::amount_grouped(position.outstanding),
+            nft_card::amount_grouped(position.outstanding, AMOUNT_PRECISION),
         ),
         (
             "Accrued Interest",
-            nft_card::amount_grouped(accrued_interest),
+            nft_card::amount_grouped(accrued_interest, AMOUNT_PRECISION),
         ),
         (
             "Entry Price",
-            nft_card::amount_grouped(position.entry_price),
+            nft_card::amount_grouped(position.entry_price, PRICE_PRECISION),
         ),
-        ("Call Price", nft_card::amount_grouped(position.call_price)),
+        (
+            "Call Price",
+            nft_card::amount_grouped(position.call_price, PRICE_PRECISION),
+        ),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::amount("Principal", position.principal),
-        Trait::amount("Outstanding", position.outstanding),
-        Trait::amount("Accrued Interest", accrued_interest),
-        Trait::amount("Entry Price", position.entry_price),
-        Trait::amount("Call Price", position.call_price),
-        Trait::amount("Policy Rate", position.policy_rate),
-        Trait::amount("Collateral", position.collateral),
-        Trait::amount("Collateral Locked", position.collateral_locked),
+        Trait::amount("Principal", position.principal, AMOUNT_PRECISION),
+        Trait::amount("Outstanding", position.outstanding, AMOUNT_PRECISION),
+        Trait::amount("Accrued Interest", accrued_interest, AMOUNT_PRECISION),
+        Trait::amount("Entry Price", position.entry_price, PRICE_PRECISION),
+        Trait::amount("Call Price", position.call_price, PRICE_PRECISION),
+        Trait::amount("Policy Rate", position.policy_rate, PRICE_PRECISION),
+        Trait::amount("Collateral", position.collateral, AMOUNT_PRECISION),
+        Trait::amount(
+            "Collateral Locked",
+            position.collateral_locked,
+            AMOUNT_PRECISION,
+        ),
         Trait::integer("Issuance Currency", position.issuance_currency),
         Trait::integer("Reference Currency", position.reference_currency),
         Trait::text("Asset", position.asset.to_string()),

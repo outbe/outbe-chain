@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use outbe_common::nft_card::{self, Card, Trait};
+use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::api;
@@ -49,25 +49,31 @@ pub(crate) fn token_uri(
     let mut rows = vec![
         (
             "Entry Price",
-            nft_card::amount_grouped(bucket.entry_price_minor),
+            nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
         ),
-        ("Call Price", nft_card::amount_grouped(call_price)),
+        (
+            "Call Price",
+            nft_card::amount_grouped(call_price, PRICE_PRECISION),
+        ),
         (
             "Gratis Load",
-            nft_card::amount_grouped(item.gratis_load_minor),
+            nft_card::amount_grouped(item.gratis_load_minor, AMOUNT_PRECISION),
         ),
-        ("Cost Amount", nft_card::amount_grouped(cost_amount)),
+        (
+            "Cost Amount",
+            nft_card::amount_grouped(cost_amount, AMOUNT_PRECISION),
+        ),
         ("Worldwide Day", item.worldwide_day.to_string()),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
         Trait::integer("League", item.league_id),
-        Trait::amount("Entry Price", bucket.entry_price_minor),
-        Trait::amount("Floor Price", item.floor_price_minor),
-        Trait::amount("Call Price", call_price),
-        Trait::amount("Gratis Load", item.gratis_load_minor),
-        Trait::amount("Cost Amount", cost_amount),
+        Trait::amount("Entry Price", bucket.entry_price_minor, PRICE_PRECISION),
+        Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
+        Trait::amount("Call Price", call_price, PRICE_PRECISION),
+        Trait::amount("Gratis Load", item.gratis_load_minor, AMOUNT_PRECISION),
+        Trait::amount("Cost Amount", cost_amount, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),
         Trait::integer("Reference Currency", item.reference_currency),
     ];

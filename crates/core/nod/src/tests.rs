@@ -972,7 +972,8 @@ fn token_uri_renders_the_nod_image_and_metadata() {
 
     let engine = base64::engine::general_purpose::STANDARD;
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let body = item(Address::repeat_byte(0x71), U256::from(500_000), USD);
+    let mut body = item(Address::repeat_byte(0x71), U256::from(500_000), USD);
+    body.gratis_load_minor = U256::from(1_250_123_456u64);
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -1037,14 +1038,15 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert_eq!(value(&json, "Floor Price").unwrap(), 0.5);
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
-        assert_eq!(value(&json, "Gratis Load").unwrap(), 0.000011);
-        assert_eq!(value(&json, "Cost Amount").unwrap(), 0.000004);
+        assert_eq!(value(&json, "Gratis Load").unwrap(), 1250.12);
+        assert_eq!(value(&json, "Cost Amount").unwrap(), 500.04);
         assert!(value(&json, "Settlement Deadline").is_none());
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
         assert!(svg.contains(">QUALIFIED</text>"));
         assert!(svg.contains(">1.424</text>"));
+        assert!(svg.contains(">1,250.12</text>"));
         assert!(!svg.contains("Floor Price"));
     });
 }

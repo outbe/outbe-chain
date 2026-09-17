@@ -8,8 +8,13 @@ use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core::fmt::Write;
 
-const SCALE_1E6: u64 = 1_000_000;
+const DECIMALS: u32 = 6;
 const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Fraction digits shown for a price, enough to resolve sub-cent COEN rates.
+pub const PRICE_PRECISION: u32 = 6;
+/// Fraction digits shown for an amount or a load.
+pub const AMOUNT_PRECISION: u32 = 2;
 
 /// A lifecycle state as the card shows it: the attribute label and the badge
 /// color shared with the Intex card.
@@ -65,9 +70,9 @@ impl Trait {
         Self::Number(name, value.into().to_string())
     }
 
-    /// A six-decimal protocol amount, shown as a plain decimal number.
-    pub fn amount(name: &'static str, minor: U256) -> Self {
-        Self::Number(name, amount(minor))
+    /// A six-decimal protocol amount cut to `precision` fraction digits.
+    pub fn amount(name: &'static str, minor: U256, precision: u32) -> Self {
+        Self::Number(name, amount(minor, precision))
     }
 
     pub fn date(name: &'static str, timestamp: u64) -> Self {
@@ -165,15 +170,16 @@ pub fn token_uri(name: &str, description: &str, card: &Card<'_>, traits: &[Trait
     format!("data:application/json;base64,{}", STANDARD.encode(json))
 }
 
-/// A six-decimal amount with trailing fraction zeros trimmed: `2.28`, `0.000001`.
-pub fn amount(minor: U256) -> String {
-    let (whole, fraction) = split(minor);
+/// A six-decimal amount cut down to `precision` fraction digits, trailing zeros
+/// trimmed: `2.28`, `0.000001`.
+pub fn amount(minor: U256, precision: u32) -> String {
+    let (whole, fraction) = split(minor, precision);
     format!("{whole}{fraction}")
 }
 
 /// [`amount`] with thousands separators, for the card: `100,000`, `1,234.5`.
-pub fn amount_grouped(minor: U256) -> String {
-    let (whole, fraction) = split(minor);
+pub fn amount_grouped(minor: U256, precision: u32) -> String {
+    let (whole, fraction) = split(minor, precision);
     let digits = whole.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3 + fraction.len());
     for (index, digit) in digits.chars().enumerate() {
@@ -186,13 +192,14 @@ pub fn amount_grouped(minor: U256) -> String {
     out
 }
 
-fn split(minor: U256) -> (U256, String) {
-    let scale = U256::from(SCALE_1E6);
-    let remainder = (minor % scale).to::<u64>();
-    let fraction = if remainder == 0 {
+fn split(minor: U256, precision: u32) -> (U256, String) {
+    let precision = precision.min(DECIMALS);
+    let scale = U256::from(10u64.pow(DECIMALS));
+    let shown = (minor % scale).to::<u64>() / 10u64.pow(DECIMALS - precision);
+    let fraction = if shown == 0 {
         String::new()
     } else {
-        let digits = format!("{remainder:06}");
+        let digits = format!("{shown:0width$}", width = precision as usize);
         format!(".{}", digits.trim_end_matches('0'))
     };
     (minor / scale, fraction)
@@ -236,14 +243,35 @@ mod tests {
 
     #[test]
     fn amounts_match_the_intex_card_formatting() {
-        assert_eq!(amount(U256::from(12_000_000u64)), "12");
-        assert_eq!(amount(U256::from(2_280_000u64)), "2.28");
-        assert_eq!(amount(U256::from(1u64)), "0.000001");
-        assert_eq!(amount(U256::from(1_234u64)), "0.001234");
-        assert_eq!(amount(U256::ZERO), "0");
-        assert_eq!(amount_grouped(U256::from(100_000_000_000u64)), "100,000");
-        assert_eq!(amount_grouped(U256::from(1_234_500_000u64)), "1,234.5");
-        assert_eq!(amount_grouped(U256::from(999_000_000u64)), "999");
+        assert_eq!(amount(U256::from(12_000_000u64), PRICE_PRECISION), "12");
+        assert_eq!(amount(U256::from(2_280_000u64), PRICE_PRECISION), "2.28");
+        assert_eq!(amount(U256::from(1u64), PRICE_PRECISION), "0.000001");
+        assert_eq!(amount(U256::from(1_234u64), PRICE_PRECISION), "0.001234");
+        assert_eq!(amount(U256::ZERO, PRICE_PRECISION), "0");
+        assert_eq!(
+            amount_grouped(U256::from(100_000_000_000u64), AMOUNT_PRECISION),
+            "100,000"
+        );
+        assert_eq!(
+            amount_grouped(U256::from(1_234_500_000u64), AMOUNT_PRECISION),
+            "1,234.5"
+        );
+        assert_eq!(
+            amount_grouped(U256::from(999_000_000u64), AMOUNT_PRECISION),
+            "999"
+        );
+    }
+
+    #[test]
+    fn precision_cuts_fraction_digits_down() {
+        assert_eq!(amount(U256::from(4_931_506u64), AMOUNT_PRECISION), "4.93");
+        assert_eq!(
+            amount(U256::from(304_453_750u64), AMOUNT_PRECISION),
+            "304.45"
+        );
+        assert_eq!(amount(U256::from(1_009_999u64), AMOUNT_PRECISION), "1");
+        assert_eq!(amount(U256::from(9_999u64), AMOUNT_PRECISION), "0");
+        assert_eq!(amount(U256::from(2_280_000u64), 0), "2");
     }
 
     #[test]
@@ -265,7 +293,10 @@ mod tests {
             title: "GEM",
             subtitle: "0xababab...5454",
             state: QUALIFIED,
-            rows: vec![("Call Price", amount_grouped(U256::from(2_280_000u64)))],
+            rows: vec![(
+                "Call Price",
+                amount_grouped(U256::from(2_280_000u64), PRICE_PRECISION),
+            )],
         };
         let json = decode(&token_uri(
             "Gem 0xababab...5454",
@@ -273,7 +304,7 @@ mod tests {
             &card,
             &[
                 Trait::text("State", "Qualified"),
-                Trait::amount("Call Price", U256::from(2_280_000u64)),
+                Trait::amount("Call Price", U256::from(2_280_000u64), PRICE_PRECISION),
                 Trait::integer("Issuance Currency", 840u16),
                 Trait::date("Issued At", 1_700_000_000),
             ],
