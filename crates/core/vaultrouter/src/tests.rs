@@ -1282,6 +1282,7 @@ fn register_vault(storage: &StorageHandle<'_>, asset: Address, vault: Address) {
 fn rebalance_rejects_same_vault() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
@@ -1299,6 +1300,7 @@ fn rebalance_rejects_same_vault() {
 fn rebalance_rejects_zero_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
@@ -1329,6 +1331,7 @@ fn rebalance_rejects_an_unregistered_source_vault() {
         word_addr(asset_to()),
     );
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         // Only the destination vault is registered.
         register_vault(&storage, asset_to(), vault_to());
 
@@ -1359,6 +1362,7 @@ fn rebalance_rejects_an_unregistered_destination_vault() {
         word_addr(asset_to()),
     );
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         // Only the source vault is registered.
         register_vault(&storage, asset_from(), vault_from());
 
@@ -1399,6 +1403,7 @@ fn rebalance_accepts_a_vault_whose_reference_currency_index_is_unset() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1456,6 +1461,7 @@ fn rebalance_rejects_insufficient_source_shares() {
     );
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1488,6 +1494,7 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
     );
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1529,6 +1536,7 @@ fn rebalance_prices_an_identical_asset_pair_one_to_one() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1588,6 +1596,7 @@ fn rebalance_prices_a_same_currency_pair_one_to_one() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
 
@@ -1651,6 +1660,7 @@ fn rebalance_prices_a_cross_currency_pair_from_the_oracle() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
 
@@ -1725,6 +1735,7 @@ fn rebalance_scales_across_asset_decimals() {
         storage.enable_sub_call_stub();
 
         StorageHandle::enter(&mut storage, |storage| {
+            bond_cca(&storage);
             register_vault(&storage, asset_from(), vault_from());
             register_vault(&storage, asset_to(), vault_to());
 
@@ -1782,6 +1793,7 @@ fn rebalance_scales_across_asset_decimals() {
         storage.enable_sub_call_stub();
 
         StorageHandle::enter(&mut storage, |storage| {
+            bond_cca(&storage);
             register_vault(&storage, asset_from(), vault_from());
             register_vault(&storage, asset_to(), vault_to());
 
@@ -1830,6 +1842,7 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
     );
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
 
@@ -1890,6 +1903,7 @@ fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
     // global stub is off, so the pull fails closed.
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
 
@@ -1926,6 +1940,7 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
     // `vault_to()::depositCall` is deliberately left unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1977,6 +1992,7 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
     // `vault_from()::withdrawCall` is deliberately left unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
@@ -1993,12 +2009,8 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
     assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }
 
-/// `outbe_cca::api::is_active` is a stub that answers `Active` for every
-/// address (see its own doc comment) - so today `rebalance` rejects no
-/// caller on CCA standing alone. This pins that the gate is wired (the seam
-/// the real registry drops into), not that it currently restricts anyone.
 #[test]
-fn rebalance_succeeds_for_a_stranger_because_the_cca_registry_is_a_stub() {
+fn rebalance_rejects_an_unregistered_stranger() {
     let shares = U256::from(100u64);
     let amount = U256::from(10u64);
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -2017,10 +2029,11 @@ fn rebalance_succeeds_for_a_stranger_because_the_cca_registry_is_a_stub() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
-        let amount_to = runtime::rebalance(
+        let err = runtime::rebalance(
             storage.clone(),
             stranger(),
             vault_from(),
@@ -2028,8 +2041,8 @@ fn rebalance_succeeds_for_a_stranger_because_the_cca_registry_is_a_stub() {
             amount,
             U256::MAX,
         )
-        .unwrap();
-        assert_eq!(amount_to, amount);
+        .unwrap_err();
+        assert!(err.to_string().contains("cca not active"), "{err}");
     });
 }
 
@@ -2078,6 +2091,7 @@ fn preview_rebalance_matches_what_rebalance_pulls() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
         write_oracle_rate(
@@ -2117,6 +2131,7 @@ fn preview_rebalance_matches_what_rebalance_pulls() {
 fn rebalance_selectors_reject_native_value() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         let call = IVaultRouter::rebalanceCall {
             vaultFrom: vault_from(),
             vaultTo: vault_to(),
@@ -2199,6 +2214,7 @@ fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
+        bond_cca(&storage);
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
         // 1 COEN = 1 USD, 1 COEN = 2 EUR: 10 USD is 20 EUR.
@@ -2286,6 +2302,7 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
         storage.enable_sub_call_stub();
 
         StorageHandle::enter(&mut storage, |storage| {
+            bond_cca(&storage);
             register_vault(&storage, asset_from(), vault_from());
             register_vault(&storage, asset_to(), vault_to());
 
@@ -2306,4 +2323,12 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
         });
         assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
     }
+}
+
+fn bond_cca(storage: &StorageHandle<'_>) {
+    let amount = outbe_ccaregistry::constants::BOND_REQUIREMENT;
+    storage
+        .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, amount)
+        .unwrap();
+    outbe_ccaregistry::runtime::bond(storage.clone(), cca(), amount, "Test CCA".into()).unwrap();
 }

@@ -94,11 +94,12 @@ abstract contract BaseAATest is Test {
 
         token = new MockUSD();
 
-        // The factory reads CCA standing from a fixed protocol address, so put the mock registry
-        // there. `vm.etch` copies runtime code only; MockCcaRegistry treats its resulting empty
-        // storage as "every agent Active", which is what the current precompile stub answers.
+        // Bond the CCA explicitly against the standing test double.
         vm.etch(factory.CCA_REGISTRY(), address(new MockCcaRegistry()).code);
         ccaRegistry = MockCcaRegistry(factory.CCA_REGISTRY());
+        vm.deal(cca.addr, 1_000_000_000 ether);
+        vm.prank(cca.addr);
+        ccaRegistry.bond{value: 1_000_000_000 ether}("Test CCA");
     }
 
     // -------------------------------------------------------------------------

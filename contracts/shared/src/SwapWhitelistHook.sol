@@ -19,7 +19,7 @@ error ZeroRegistry();
 // selector the manager compares against. Declaring the structs here keeps this package free of the
 // v4-core / infinity-core dependency trees.
 //
-// ponytail: layouts copied from upstream (Uniswap v4-core types/PoolKey.sol + PoolOperation.sol,
+// NB: layouts copied from upstream (Uniswap v4-core types/PoolKey.sol + PoolOperation.sol,
 // PancakeSwap infinity-core types/PoolKey.sol + ICLPoolManager.sol). If either protocol ever
 // reshapes PoolKey or SwapParams, the selector changes and pool initialization reverts loudly -
 // swap these for real imports if that ever happens.

@@ -26,7 +26,7 @@ pub fn issue_credis(
     if smart_account.is_zero() {
         return Err(CredisFactoryError::InvalidSmartAccount.into());
     }
-    if !outbe_cca::api::is_active(&storage, caller)? {
+    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(CredisFactoryError::CcaNotActive.into());
     }
     if storage.with_account_info(smart_account, |info| Ok(info.is_empty_code_hash()))? {

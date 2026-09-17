@@ -799,3 +799,74 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
     });
     teardown();
 }
+
+#[test]
+fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_positions() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        // Model the EVM call frame: stake validation fails after pledge consumption,
+        // so the enclosing transaction must restore the ticket.
+        assert!(storage
+            .with_checkpoint(|| runtime::request_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                handle,
+                spend,
+                REFERENCE_ISO,
+                U256::ZERO
+            ))
+            .is_err());
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(
+                &storage,
+                cca(),
+                outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
+            )
+            .unwrap(),
+            U256::ZERO
+        );
+        fund_stake(&storage, pledge_stake());
+        let (id, _) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap();
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(
+                &storage,
+                cca(),
+                outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
+            )
+            .unwrap(),
+            pledge_cost()
+        );
+        outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
+        assert!(runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake()
+        )
+        .is_err());
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(id)
+                .unwrap()
+                .outstanding,
+            pledge_stables()
+        );
+    });
+}
