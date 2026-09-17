@@ -15,7 +15,7 @@ use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key},
 };
 
 use crate::{
@@ -38,9 +38,10 @@ const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
 const START: u64 = 1_800_000_000;
 
-/// The worldwide day [`START`] falls in. The two must agree: the breach walk
-/// stops at the first day preceding the bucket's worldwide day, so a fixture
-/// whose day predates its timestamp would silently never exercise that guard.
+/// The worldwide day [`START`] falls in. The breach walk now stops at
+/// `first_full_day(issued_at)`, not this WWD key; the two still have to
+/// agree so fixtures that reason in WWD days do not silently miss the
+/// issuance cutoff.
 const WWD: u32 = 20_270_115;
 
 /// Entry price every bucket here is issued at: 2.0 at scale 1e6. The call price
@@ -89,7 +90,17 @@ fn nod_item(owner: Address, iso: u16) -> NodItemState {
 /// A Nod whose bucket is keyed by `floor_price_minor`, so distinct floors give
 /// distinct buckets on the same worldwide day.
 fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemState {
-    let worldwide_day = WorldwideDay::new(WWD);
+    nod_item_issued(owner, iso, floor_price_minor, WWD, START)
+}
+
+fn nod_item_issued(
+    owner: Address,
+    iso: u16,
+    floor_price_minor: U256,
+    worldwide_day: u32,
+    issued_at: u64,
+) -> NodItemState {
+    let worldwide_day = WorldwideDay::new(worldwide_day);
     NodItemState {
         is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
@@ -101,7 +112,7 @@ fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemStat
         bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, iso),
         issuance_currency: iso,
         reference_currency: iso,
-        issued_at: START,
+        issued_at,
     }
 }
 
@@ -166,7 +177,15 @@ fn issue_qualified(
     owner: Address,
     iso: u16,
 ) -> NodItemState {
-    let item = nod_item(owner, iso);
+    issue_qualified_item(storage, scope, parent, nod_item(owner, iso))
+}
+
+fn issue_qualified_item(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    item: NodItemState,
+) -> NodItemState {
     api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
     NodContract::new(storage.clone())
         .qualify_bucket(scope, parent, item.bucket_key)
@@ -279,9 +298,36 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
         );
         assert_eq!(nod.max_call_window.read(&ISO).unwrap(), CALL_WINDOW);
         assert_eq!(
+            nod.callable_bucket_issued_at
+                .read(&item.bucket_key)
+                .unwrap(),
+            START
+        );
+        assert_eq!(
             nod.callable_buckets.len().unwrap(),
             0,
             "issuance seals terms without arming the call scan"
+        );
+    });
+}
+
+/// Later Nods join the first member's issuance stamp. A delayed second mint
+/// must not move the call-history cutoff.
+#[test]
+fn a_later_member_does_not_reissue_the_bucket_stamp() {
+    harness(|storage, scope, parent| {
+        let first = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &first, entry_price()).unwrap();
+        let mut second = nod_item(Address::repeat_byte(0x22), ISO);
+        second.issued_at = START + 3 * DAY;
+        api::add_nod(storage, scope, parent, &second, entry_price()).unwrap();
+        assert_eq!(first.bucket_key, second.bucket_key);
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .callable_bucket_issued_at
+                .read(&first.bucket_key)
+                .unwrap(),
+            START
         );
     });
 }
@@ -560,9 +606,9 @@ fn missing_days_do_not_count_as_breaches() {
 fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
-        // Scan two days into the bucket's worldwide day: only a couple of closed
-        // days post-date it, so the pre-existence run beyond them is ignored even
-        // though the whole series breaches.
+        // Scan two days after issuance: only a couple of closed UTC days sit at
+        // or after `first_full_day(issued_at)`, so the pre-existence run beyond
+        // them is ignored even though the whole series breaches.
         let at = START + 2 * DAY;
         fill_days(
             storage,
@@ -571,6 +617,103 @@ fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
             above_call(),
         );
 
+        assert_eq!(scan(storage, scope, parent, at), 0);
+        assert_eq!(called_at(storage, item.bucket_key), 0);
+    });
+}
+
+/// Q027: the issuance UTC day counts only when the Nod was issued at midnight.
+/// A second later drops that day and a threshold-length breach falls short.
+#[test]
+fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
+    let scan_at = START + 30 * DAY;
+    let latest = last_closed_day(scan_at);
+    let mut oldest_breach = latest;
+    for _ in 1..CALL_BREACH_DAYS {
+        oldest_breach = previous_date_key(oldest_breach);
+    }
+    let midnight = date_key_to_utc_timestamp(oldest_breach);
+
+    for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
+        harness(|storage, scope, parent| {
+            let wwd = WorldwideDay::from_timestamp(issued_at).value();
+            let item = issue_qualified_item(
+                storage,
+                scope,
+                parent,
+                nod_item_issued(
+                    Address::repeat_byte(0x11),
+                    ISO,
+                    U256::from(13),
+                    wwd,
+                    issued_at,
+                ),
+            );
+            fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
+            fill_days(storage, latest, CALL_BREACH_DAYS, above_call());
+            assert_eq!(
+                scan(storage, scope, parent, scan_at),
+                expected,
+                "issued at {issued_at}"
+            );
+            assert_eq!(
+                called_at(storage, item.bucket_key) != 0,
+                expected == 1,
+                "issued at {issued_at}"
+            );
+        });
+    }
+}
+
+/// Q027: a delayed materialization must not inherit VWAP days from its Tribute
+/// WWD. A 21-day breach run that sits on or after WWD but before
+/// `first_full_day(issued_at)` would have called under the old cutoff.
+#[test]
+fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
+    harness(|storage, scope, parent| {
+        // WWD a month before issuance. 21 closed UTC days ending on the
+        // partial issuance day all post-date that WWD and all predate
+        // `first_full_day(START)` = 2027-01-16.
+        let delayed_wwd = 20_261_216;
+        let item = issue_qualified_item(
+            storage,
+            scope,
+            parent,
+            nod_item_issued(
+                Address::repeat_byte(0x11),
+                ISO,
+                U256::from(13),
+                delayed_wwd,
+                START,
+            ),
+        );
+        let issuance_utc_day = timestamp_to_date_key(START);
+        fill_days(storage, issuance_utc_day, CALL_BREACH_DAYS, above_call());
+        let scan_at = date_key_to_utc_timestamp(first_full_day(START));
+        finalize_through(storage, scan_at);
+        assert_eq!(scan(storage, scope, parent, scan_at), 0);
+        assert_eq!(called_at(storage, item.bucket_key), 0);
+    });
+}
+
+/// A bucket issued before the stamp existed carries zero. Zero is "unsealed",
+/// not epoch-midnight; it cannot inherit a full-history breach. Delete and
+/// reissue through the existing empty-bucket path to arm it.
+#[test]
+fn a_zero_issued_at_stamp_does_not_call() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        NodContract::new(storage.clone())
+            .callable_bucket_issued_at
+            .clear(&item.bucket_key)
+            .unwrap();
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
         assert_eq!(scan(storage, scope, parent, at), 0);
         assert_eq!(called_at(storage, item.bucket_key), 0);
     });

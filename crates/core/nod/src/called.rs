@@ -22,7 +22,10 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Qualification and calls both read finalized UTC-day VWAPs.
+//! Qualification and calls both read finalized UTC-day VWAPs. The call walk
+//! stops at `first_full_day` of the bucket's sealed `issued_at`, so delayed
+//! materialization cannot inherit pre-issuance days and a partial issuance
+//! UTC day does not count.
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
@@ -31,7 +34,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key},
 };
 
 use crate::{
@@ -114,7 +117,11 @@ pub fn scan_and_call(
             if has_unpaid && called_at == 0 {
                 // Structural reads stay on `?` so infra errors still propagate.
                 let terms = nod.read_call_terms(bucket_key)?;
-                let start_day = nod.bucket_worldwide_day.read(&bucket_key)?.value();
+                // Sealed at first issuance. Zero means the bucket predates the
+                // stamp: skip rather than treat epoch-midnight as a full day,
+                // which would count every observation. Such a bucket can be
+                // deleted through the existing empty-bucket path and reissued.
+                let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
                 let index = window_for(
                     &nod,
                     &ctx.storage,
@@ -123,7 +130,9 @@ pub fn scan_and_call(
                     terms.reference_currency,
                     last_closed_day,
                 )?;
-                if breached_enough(&windows[index].1, &terms, start_day) {
+                if issued_at != 0
+                    && breached_enough(&windows[index].1, &terms, first_full_day(issued_at))
+                {
                     // Isolate per-bucket: a deterministic Err rolls back this
                     // bucket's checkpoint and is skipped, so one bad bucket never
                     // halts the daily scan.
@@ -175,9 +184,11 @@ pub fn scan_and_call(
 ///
 /// Days at or below the call price, and days with no published price, both
 /// simply fail to count, so the window absorbs up to `window - threshold` of
-/// either. The walk stops at the first day preceding the bucket's worldwide day
-/// so a bucket can never inherit a breach run that predates it - the window is
-/// newest-first, so everything beyond that point is older still.
+/// either. The walk stops at the first UTC day preceding `first_full_day` of
+/// the bucket's sealed `issued_at`, so a delayed materialization cannot inherit
+/// a breach run from before the right existed, and a partial issuance UTC day
+/// does not count. The window is newest-first, so everything beyond that point
+/// is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
     let window_days = terms.call_window / SECS_PER_DAY;
     let threshold_days = terms.call_threshold / SECS_PER_DAY;

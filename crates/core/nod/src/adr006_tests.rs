@@ -292,6 +292,8 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(40));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(41));
         assert_eq!(nod.entry_price_value.base_slot(), U256::from(42));
+        // Issued-at stamp for the call-scan cutoff, appended after everything above.
+        assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(43));
     });
 }
 

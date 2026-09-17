@@ -174,7 +174,7 @@ impl NodCertifiedGenerationProjection {
 /// own independent trie. See `state::CurrencyBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=42 in declaration order. New fields append, which keeps the
+/// 0..=43 in declaration order. New fields append, which keeps the
 /// genesis-seeded materialization FIFO counters at slots 19 and 20.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
@@ -381,6 +381,14 @@ pub struct NodContract {
     /// Six-decimal entry price by reference ISO, independent of Oracle indices.
     #[attribute(order = 53)]
     pub entry_price_value: Mapping<WorldwideDay, Mapping<u16, U256>>,
+
+    /// First member's `issued_at`, sealed when the bucket is created. The daily
+    /// call scan cuts the VWAP window at `first_full_day` of this stamp so a
+    /// delayed materialization cannot inherit pre-issuance days, and a partial
+    /// issuance UTC day does not count. Later members inherit it, the same way
+    /// they inherit call terms.
+    #[attribute(order = 54)]
+    pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 }
 
 impl<'storage> NodContract<'storage> {

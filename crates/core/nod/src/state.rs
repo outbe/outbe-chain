@@ -260,6 +260,8 @@ impl NodContract<'_> {
                 };
                 self.bucket_worldwide_day
                     .write(&item.bucket_key, item.worldwide_day)?;
+                self.callable_bucket_issued_at
+                    .write(&item.bucket_key, item.issued_at)?;
                 self.insert_unqualified(
                     item.bucket_key,
                     item.floor_price_minor,
@@ -328,6 +330,7 @@ impl NodContract<'_> {
         delete(self.storage_handle(), scope, current_item)?;
         if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
+            self.callable_bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage_handle(), scope, current_bucket)
@@ -636,6 +639,7 @@ impl NodContract<'_> {
         self.callable_bucket_call_window.clear(&bucket_key)?;
         self.callable_bucket_call_threshold.clear(&bucket_key)?;
         self.callable_bucket_call_notice_period.clear(&bucket_key)?;
+        self.callable_bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
