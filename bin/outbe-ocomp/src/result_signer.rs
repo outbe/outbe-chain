@@ -161,7 +161,7 @@ fn decode_secret_file(path: &Path, encoded: &[u8]) -> Result<[u8; 32], OcompKeyE
         });
     }
     let mut secret = [0u8; 32];
-    for (index, pair) in encoded[..64].chunks_exact(2).enumerate() {
+    for (index, pair) in encoded[..64].as_chunks::<2>().0.iter().enumerate() {
         secret[index] = (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]);
     }
     Ok(secret)

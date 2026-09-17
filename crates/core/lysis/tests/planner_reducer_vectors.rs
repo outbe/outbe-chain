@@ -243,7 +243,9 @@ fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
             }));
             while carriers.len() > 1 {
                 carriers = carriers
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| RawCoverageCarrierV1::merge(&pair[0], &pair[1]).unwrap())
                     .collect();
             }
@@ -1933,6 +1935,11 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
             let mut owner_bytes = [0_u8; 20];
             owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
             let owner = Address::from(owner_bytes);
+            let league = match ordinal % 3 {
+                0 => 1,
+                1 => 2048,
+                _ => 4096,
+            };
             ObservedTributeV1 {
                 tribute: TributeInputV1 {
                     tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
@@ -1944,8 +1951,8 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
                     tribute_price_minor: U256::ZERO,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
-                first_league: ObservationValueV1::Value(7),
-                second_league: ObservationValueV1::Value(7),
+                first_league: ObservationValueV1::Value(league),
+                second_league: ObservationValueV1::Value(league),
                 entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                 nod_target_available: true,
             }
@@ -1975,6 +1982,13 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
     assert_eq!(aggregate.tribute_count, 257);
     assert_eq!(aggregate.checked_total_nominal, expected.total_nominal);
     assert_eq!(actual, expected.league_fractions);
+    assert_eq!(
+        actual.iter().map(|row| row.league).collect::<Vec<_>>(),
+        [1, 2048, 4096]
+    );
+    assert!(actual
+        .windows(2)
+        .all(|pair| pair[0].fraction < pair[1].fraction));
 }
 
 #[test]
@@ -2016,6 +2030,11 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
             let mut owner_bytes = [0_u8; 20];
             owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
             let owner = Address::from(owner_bytes);
+            let league = match ordinal % 3 {
+                0 => 1,
+                1 => 2048,
+                _ => 4096,
+            };
             ObservedTributeV1 {
                 tribute: TributeInputV1 {
                     tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
@@ -2027,8 +2046,8 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
                     tribute_price_minor: U256::from(2_u8) * SIX_DECIMAL_SCALE,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
-                first_league: ObservationValueV1::Value(7),
-                second_league: ObservationValueV1::Value(7),
+                first_league: ObservationValueV1::Value(league),
+                second_league: ObservationValueV1::Value(league),
                 entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                 nod_target_available: true,
             }
@@ -2054,6 +2073,17 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let fidelity_root =
         fidelity_reduce(&fidelity_left.aggregate, &fidelity_right.aggregate).unwrap();
     let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_budget).unwrap();
+    assert_eq!(fractions, sequential.league_fractions);
+    assert!(fractions
+        .windows(2)
+        .all(|pair| pair[0].fraction < pair[1].fraction));
+    let loads = sequential
+        .nod_actions
+        .iter()
+        .map(|action| (action.league_id, action.gratis_load_minor))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert!(loads[&1] < loads[&2048]);
+    assert!(loads[&2048] < loads[&4096]);
     let amount_left =
         amount_map(0, &tributes[..256], &fidelity_left.observations, &fractions).unwrap();
     let amount_right = amount_map(

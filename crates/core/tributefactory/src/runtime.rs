@@ -100,28 +100,19 @@ impl TributeFactoryContract<'_> {
         validate_currency_code(tribute_currency)?;
         validate_currency_code(reference_currency)?;
 
-        // Every offer requires a registered L2 operator, a valid
-        // root signature, and a proof under that L2's selected circuit.
+        // Every offer requires a registered L2 chain, a valid root signature,
+        // and a proof under that chain's selected circuit, regardless of caller.
         let zk_check = outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
-            caller,
+            u64::from(l2_chain_id),
             &zk_merkle_root,
             &signature,
         )?;
         let host_chain_id = self.storage.chain_id()?;
         let (public, verification_key) = match zk_check {
-            outbe_l2registry::api::ZkOfferCheck::Verified {
-                chain_id: registered_chain_id,
-            } => {
+            outbe_l2registry::api::ZkOfferCheck::Verified { .. } => {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
-                }
-                if u64::from(l2_chain_id) != registered_chain_id {
-                    return Err(TributeFactoryError::CircuitChainMismatch {
-                        provided: l2_chain_id,
-                        registered: registered_chain_id,
-                    }
-                    .into());
                 }
                 let verification_key =
                     resolve_verification_key(host_chain_id, l2_chain_id, &circuit_version)?;
@@ -135,7 +126,12 @@ impl TributeFactoryContract<'_> {
                 (public, verification_key)
             }
             outbe_l2registry::api::ZkOfferCheck::NotRegistered => {
-                return Err(TributeFactoryError::UnregisteredL2Operator { caller }.into());
+                return Err(
+                    outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
+                        chain_id: u64::from(l2_chain_id),
+                    }
+                    .into(),
+                );
             }
         };
 

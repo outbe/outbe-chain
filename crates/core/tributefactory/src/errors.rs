@@ -21,14 +21,8 @@ pub enum TributeFactoryError {
     #[error("enclave rejected the offer: {0}")]
     EnclaveRejected(String),
 
-    #[error("caller {caller} is not a registered L2 operator")]
-    UnregisteredL2Operator { caller: alloy_primitives::Address },
-
     #[error("zkProof is required")]
     ZkProofRequired,
-
-    #[error("circuit chain {provided} does not match registered L2 chain {registered}")]
-    CircuitChainMismatch { provided: u32, registered: u64 },
 
     #[error("unknown circuit version {version:?} for L2 chain {chain_id}")]
     UnknownCircuitVersion { chain_id: u32, version: String },

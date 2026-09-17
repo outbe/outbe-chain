@@ -48,8 +48,8 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("an unregistered operator submits one encrypted tribute offer")]
-fn submit_one_offer_from_unregistered_operator(world: &mut World) {
+#[when("an operator submits one encrypted tribute offer for an unregistered L2 chain")]
+fn submit_one_offer_for_unregistered_chain(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let key = world
         .validators
@@ -57,19 +57,9 @@ fn submit_one_offer_from_unregistered_operator(world: &mut World) {
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
-    let address = l2_registration::operator_address(world, &key);
-    assert_eq!(
-        world
-            .rpc
-            .l2_chain_by_l1_address(address)
-            .expect("read the offer operator's L2Registry entry"),
-        0,
-        "the unregistered-offer scenario must not register its operator"
-    );
     wait_for_offering(world, &wwd);
-    // Deliberately no registration: the offer must be rejected by the factory
-    // guard, before the day, pricing or enclave paths are reached. It also
-    // carries no zk material, so the guard - not a proof - is what rejects it.
+    // Chain zero cannot be registered. Reject before day, pricing, or enclave
+    // work, even though the offer carries no ZK material.
     let tx_hash = world
         .rpc
         .tribute_offer_with_zk(
@@ -89,7 +79,7 @@ fn submit_one_offer_from_unregistered_operator(world: &mut World) {
     world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
 }
 
-#[then("the offer is rejected as an unregistered L2 operator and tribute supply stays zero")]
+#[then("the offer is rejected for an unregistered L2 chain and tribute supply stays zero")]
 fn unregistered_offer_rejected(world: &mut World) {
     let tx_hash = world
         .state
@@ -106,7 +96,7 @@ fn unregistered_offer_rejected(world: &mut World) {
         world,
         tx_hash,
         &key,
-        super::tribute_negatives::Rejection::UnregisteredOperator,
+        super::tribute_negatives::Rejection::UnregisteredNetwork,
     );
     super::tribute_negatives::assert_supply(world, 0);
 }
