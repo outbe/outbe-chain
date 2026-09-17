@@ -52,19 +52,15 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Pay the caller-owned qualified Nod's costAmountMinor in ERC20 base units.
+    /// @notice Pay a qualified Nod's costAmountMinor in ERC20 base units.
     /// The asset must be registered for the Nod's reference currency.
-    /// Approve NodFactory before calling. Payment is deposited through VaultRouter.
-    /// Preserves the paid Nod for later mining; the settlement deadline still applies.
     function settleNod(uint256 nodId, address asset) external;
 
-    /// @notice Pay the caller-owned qualified Nod at or before its settlement deadline.
-    /// Preserves the Nod as a paid entitlement. No PoW or mint authorization is needed.
+    /// @notice Pay a qualified Nod at or before its settlement deadline.
+    /// The PayNote proof must name the caller as its owner.
     function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
-    /// @notice Exercise a caller-owned paid Nod and mint its Gratis load.
-    /// Requires valid PoW and the owner's current Gratis mint authorization.
-    /// Paid entitlements have no mining deadline and require no further payment.
+    /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over `sha256(nodId_be32 || nonce_be8)` with the required leading zero bytes.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
