@@ -276,6 +276,34 @@
         "internalType": "uint256"
       },
       {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleIntexWithPayNote",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      },
+      {
+        "name": "intexOwner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "payNoteProof",
         "type": "bytes",
         "internalType": "bytes"
