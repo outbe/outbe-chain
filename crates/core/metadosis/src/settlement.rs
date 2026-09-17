@@ -23,8 +23,8 @@ use crate::{
 pub(crate) struct MetadosisCalculation {
     pub(crate) gratis_demand: U256,
     pub(crate) gratis_supply: U256,
-    pub(crate) gratis_allocation: U256,
-    pub(crate) auction_base: U256,
+    pub(crate) lysis_limit_minor: U256,
+    pub(crate) desis_limit_minor: U256,
 }
 
 impl MetadosisContract<'_> {
@@ -66,7 +66,7 @@ impl MetadosisContract<'_> {
         let allocation = demand.min(supply);
         // The day sells what it earned beyond the symbolic share, and the limit
         // only caps it: the headroom a weak day leaves is not issued at all.
-        let auction_base = tribute_nominal_total
+        let desis_limit_minor = tribute_nominal_total
             .min(wwd_metadosis_limit)
             .checked_sub(allocation)
             .ok_or_else(|| {
@@ -75,7 +75,7 @@ impl MetadosisContract<'_> {
                 )
             })?;
         let split_total = allocation
-            .checked_add(auction_base)
+            .checked_add(desis_limit_minor)
             .ok_or_else(|| crate::errors::storage_corruption("Metadosis split overflow".into()))?;
         if split_total > wwd_metadosis_limit {
             return Err(crate::errors::storage_corruption(
@@ -85,8 +85,8 @@ impl MetadosisContract<'_> {
         Ok(MetadosisCalculation {
             gratis_demand: demand,
             gratis_supply: supply,
-            gratis_allocation: allocation,
-            auction_base,
+            lysis_limit_minor: allocation,
+            desis_limit_minor,
         })
     }
 }
@@ -156,7 +156,7 @@ pub(crate) fn process_ocomp_ready_candidate(
 
     let calculation =
         metadosis.calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?;
-    if calculation.gratis_allocation.is_zero() {
+    if calculation.lysis_limit_minor.is_zero() {
         return process_local_terminal_outcome(
             metadosis,
             ctx,
@@ -240,14 +240,14 @@ fn process_local_terminal_outcome(
             tribute_nominal_total,
             calculation,
         } => {
-            let auction_base = calculation.auction_base;
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, auction_base)?;
+            let desis_limit_minor = calculation.desis_limit_minor;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, desis_limit_minor)?;
             // The limit headroom above the day's own nominal is issued by nobody, so it stays on
             // the warehouse together with whatever the brief did not take.
             let returned = current
                 .metadosis_limit_amount
-                .checked_sub(calculation.gratis_allocation)
-                .and_then(|rest| rest.checked_sub(auction_base))
+                .checked_sub(calculation.lysis_limit_minor)
+                .and_then(|rest| rest.checked_sub(desis_limit_minor))
                 .and_then(|headroom| headroom.checked_add(to_promis))
                 .ok_or_else(|| {
                     crate::errors::storage_corruption(
@@ -261,9 +261,9 @@ fn process_local_terminal_outcome(
                 tributeTotals: tribute_nominal_total,
                 dayGratisDemand: calculation.gratis_demand,
                 dayGratisLimit: calculation.gratis_supply,
-                dayGratisAllocation: U256::ZERO,
-                dayGratisAllocationRemainder: U256::ZERO,
-                netDayGratisAllocation: U256::ZERO,
+                lysisLimitMinor: U256::ZERO,
+                unusedLysisLimitMinor: U256::ZERO,
+                lysisAllocationMinor: U256::ZERO,
                 dayMetadosisLimitRemainder: returned,
                 status: "COMPLETED".into(),
                 blockNumber: ctx.block.block_number,
@@ -364,9 +364,9 @@ fn emit_failed_execution(
         tributeTotals: tribute_totals,
         dayGratisDemand: U256::ZERO,
         dayGratisLimit: U256::ZERO,
-        dayGratisAllocation: U256::ZERO,
-        dayGratisAllocationRemainder: U256::ZERO,
-        netDayGratisAllocation: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         dayMetadosisLimitRemainder: day_metadosis_limit_remainder,
         status: "FAILED".into(),
         blockNumber: ctx.block.block_number,

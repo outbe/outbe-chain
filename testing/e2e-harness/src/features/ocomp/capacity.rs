@@ -347,7 +347,7 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         &private_key,
         owner,
         fixture.asset,
-        body.costAmountMinor,
+        body.settlementCostMinor,
     );
     world
         .rpc

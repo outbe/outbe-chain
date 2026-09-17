@@ -435,9 +435,9 @@ fn dispatch_auction_brief_records_a_red_day() {
 }
 
 #[test]
-fn strict_request_auction_base_commits_the_exact_green_brief() {
+fn strict_request_desis_limit_minor_commits_the_exact_green_brief() {
     with_storage(|s| {
-        let digest = crate::ocomp_budget::apply_request_auction_base(
+        let digest = crate::ocomp_limits::apply_request_desis_limit_minor(
             s.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
@@ -470,9 +470,9 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
 }
 
 #[test]
-fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() {
+fn strict_request_desis_limit_minor_propagates_duplicate_refusal_without_overwrite() {
     with_storage(|s| {
-        crate::ocomp_budget::apply_request_auction_base(
+        crate::ocomp_limits::apply_request_desis_limit_minor(
             s.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
@@ -483,7 +483,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
         )
         .unwrap();
 
-        assert!(crate::ocomp_budget::apply_request_auction_base(
+        assert!(crate::ocomp_limits::apply_request_desis_limit_minor(
             s.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
@@ -504,9 +504,9 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
 }
 
 #[test]
-fn strict_request_auction_base_rejects_oversized_supply_without_state() {
+fn strict_request_desis_limit_minor_rejects_oversized_supply_without_state() {
     with_storage(|s| {
-        assert!(crate::ocomp_budget::apply_request_auction_base(
+        assert!(crate::ocomp_limits::apply_request_desis_limit_minor(
             s.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
@@ -556,11 +556,11 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
 }
 
 #[test]
-fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
+fn strict_request_desis_limit_minor_rolls_back_every_partial_write_boundary() {
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::ocomp_budget::apply_request_auction_base(
+            crate::ocomp_limits::apply_request_desis_limit_minor(
                 storage,
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
@@ -582,7 +582,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.fail_after_mutation_at(operation);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::ocomp_budget::apply_request_auction_base(
+            crate::ocomp_limits::apply_request_desis_limit_minor(
                 storage,
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
@@ -605,9 +605,9 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
 }
 
 #[test]
-fn strict_request_auction_base_never_tops_up_a_live_auction() {
+fn strict_request_desis_limit_minor_never_tops_up_a_live_auction() {
     with_storage(|storage| {
-        crate::ocomp_budget::apply_request_auction_base(
+        crate::ocomp_limits::apply_request_desis_limit_minor(
             storage.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
@@ -627,7 +627,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
         let config = before.read_auction_config(WORLDWIDE_DAY).unwrap();
         let anchor = before.auction_at.read(&WORLDWIDE_DAY).unwrap();
 
-        assert!(crate::ocomp_budget::apply_request_auction_base(
+        assert!(crate::ocomp_limits::apply_request_desis_limit_minor(
             storage.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,

@@ -40,7 +40,7 @@ fn nod_projection() -> NodCertifiedGenerationProjection {
         nod_count: 257,
         bucket_count: 10,
         nod_amount_total: U256::from(1_000),
-        nod_gratis_consumed: U256::from(500),
+        lysis_allocation_minor: U256::from(500),
         issued_at: 1_785_024_000,
         next_nod_ordinal: 0,
         last_progress_height: 1,

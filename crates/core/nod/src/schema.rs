@@ -22,7 +22,7 @@ pub enum EffectiveState {
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
 /// `NodContract::nod_id(owner, worldwide_day)`; the cost is derived from
 /// `entry_price_minor` and `gratis_load_minor` (see
-/// [`crate::api::cost_amount_minor`]). `issued_at` is stamped inside `issue`
+/// [`crate::api::settlement_cost_minor`]). `issued_at` is stamped inside `issue`
 /// from the current block timestamp and is not part of caller inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
@@ -149,7 +149,7 @@ pub struct NodCertifiedGenerationProjection {
     pub nod_count: u32,
     pub bucket_count: u32,
     pub nod_amount_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub issued_at: u64,
     pub next_nod_ordinal: u32,
     pub last_progress_height: u64,
@@ -262,9 +262,9 @@ pub struct NodContract {
     #[attribute(order = 24)]
     pub ocomp_nod_amount_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
-    /// Exact certified Gratis consumed by the Nod generation.
+    /// Exact certified Lysis Allocation: total Nod loads in protocol units (1e6 per COEN).
     #[attribute(order = 25)]
-    pub ocomp_nod_gratis_consumed: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    pub ocomp_lysis_allocation_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     /// Job whose certified result installed the generation.
     #[attribute(order = 26)]
@@ -491,7 +491,7 @@ impl<'storage> NodContract<'storage> {
         let output_manifest_root = self.ocomp_output_manifest_root.read(&worldwide_day)?;
         let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
         let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
-        let nod_gratis_consumed = self.ocomp_nod_gratis_consumed.read(&worldwide_day)?;
+        let lysis_allocation_minor = self.ocomp_lysis_allocation_minor.read(&worldwide_day)?;
         let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
         let protocol_bundle_hash = self
             .ocomp_materialization_protocol_bundle_hash
@@ -512,7 +512,7 @@ impl<'storage> NodContract<'storage> {
                 || !output_manifest_root.is_zero()
                 || !metadata.is_zero()
                 || !nod_amount_total.is_zero()
-                || !nod_gratis_consumed.is_zero()
+                || !lysis_allocation_minor.is_zero()
                 || !job_id.is_zero()
                 || !protocol_bundle_hash.is_zero()
                 || !program_semantics_hash.is_zero()
@@ -570,7 +570,7 @@ impl<'storage> NodContract<'storage> {
             nod_count,
             bucket_count,
             nod_amount_total,
-            nod_gratis_consumed,
+            lysis_allocation_minor,
             issued_at,
             next_nod_ordinal,
             last_progress_height,
@@ -593,7 +593,7 @@ impl<'storage> NodContract<'storage> {
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_nod_amount_total
             .write(&worldwide_day, U256::ZERO)?;
-        self.ocomp_nod_gratis_consumed
+        self.ocomp_lysis_allocation_minor
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_materialization_job_id
             .write(&worldwide_day, B256::ZERO)?;

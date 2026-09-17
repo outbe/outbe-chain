@@ -5,7 +5,7 @@ use outbe_ocomp_protocol::{
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, CarryOverReceiptV1,
         CarryOverStateEventProjectionV1, ContributorReceiptV1, ContributorStateEventProjectionV1,
-        EffectBindingV1, NodBatchReceiptV1, NodStateEventProjectionV1, RequestBudgetSplitReceiptV1,
+        EffectBindingV1, NodBatchReceiptV1, NodStateEventProjectionV1, RequestLimitSplitReceiptV1,
         TributeReceiptV1, TributeStateEventProjectionV1,
     },
     registry::HashDomain,
@@ -26,7 +26,7 @@ pub struct LysisOwnerReceiptsV1 {
 #[derive(Debug, Eq, PartialEq)]
 pub struct VerifiedLysisReceiptsV1 {
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
+    request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
     contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
@@ -43,7 +43,7 @@ pub struct VerifiedLysisReceiptsV1 {
 pub struct LysisTerminalPermitV1<'permit, 'frame> {
     capability: &'permit mut CertifiedLysisActivation<'frame>,
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
+    request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
     contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
@@ -64,8 +64,8 @@ impl LysisTerminalPermitV1<'_, '_> {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
     #[must_use]
@@ -114,8 +114,8 @@ impl VerifiedLysisReceiptsV1 {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
     #[must_use]
@@ -166,7 +166,7 @@ impl VerifiedLysisReceiptsV1 {
         Ok(LysisTerminalPermitV1 {
             capability,
             binding: self.binding.clone(),
-            request_budget_split_receipt_hash: self.request_budget_split_receipt_hash,
+            request_limit_split_receipt_hash: self.request_limit_split_receipt_hash,
             nod_receipt_hash: self.nod_receipt_hash,
             contributor_receipt_hash: self.contributor_receipt_hash,
             tribute_receipt_hash: self.tribute_receipt_hash,
@@ -179,7 +179,7 @@ impl VerifiedLysisReceiptsV1 {
 
 pub fn verify_receipts(
     plan: &LysisApplyPlanV1,
-    request_receipt: &RequestBudgetSplitReceiptV1,
+    request_receipt: &RequestLimitSplitReceiptV1,
     receipts: &LysisOwnerReceiptsV1,
     limits: &SchemaLimits,
 ) -> Result<VerifiedLysisReceiptsV1, ProtocolError> {
@@ -190,19 +190,19 @@ pub fn verify_receipts(
     verify_tribute_receipt(plan, &receipts.tribute, limits)?;
     verify_carry_over_receipt(plan, &receipts.carry_over, limits)?;
 
-    let request = plan.request_budget_split();
+    let request = plan.request_limit_split();
     ensure(
         plan.nod()
-            .nod_gratis_consumed()
-            .checked_add(plan.carry_over().credited_unused_lysis())
-            == Some(request.lysis_budget),
-        "Lysis receipt budget conservation",
+            .lysis_allocation_minor()
+            .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
+            == Some(request.lysis_limit_minor),
+        "Lysis receipt limit conservation",
     )?;
     // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
     ensure(
         request
-            .lysis_budget
-            .checked_add(request.auction_base)
+            .lysis_limit_minor
+            .checked_add(request.desis_limit_minor)
             .is_some_and(|total| total <= request.day_limit),
         "Lysis receipt day conservation",
     )?;
@@ -230,7 +230,7 @@ pub fn verify_receipts(
 
     Ok(VerifiedLysisReceiptsV1 {
         binding: plan.binding().clone(),
-        request_budget_split_receipt_hash: plan.request_budget_split_receipt_hash(),
+        request_limit_split_receipt_hash: plan.request_limit_split_receipt_hash(),
         nod_receipt_hash,
         contributor_receipt_hash,
         tribute_receipt_hash,
@@ -242,22 +242,22 @@ pub fn verify_receipts(
 
 fn verify_request_receipt(
     plan: &LysisApplyPlanV1,
-    receipt: &RequestBudgetSplitReceiptV1,
+    receipt: &RequestLimitSplitReceiptV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     receipt.validate_semantics()?;
     ensure(
-        receipt.receipt_hash(limits)? == plan.request_budget_split_receipt_hash(),
+        receipt.receipt_hash(limits)? == plan.request_limit_split_receipt_hash(),
         "Lysis request receipt hash",
     )?;
-    let expected = plan.request_budget_split();
+    let expected = plan.request_limit_split();
     ensure(
         receipt.protocol_bundle_hash == expected.protocol_bundle_hash
             && receipt.wwd == expected.wwd
             && receipt.day_type == expected.day_type
             && receipt.day_limit == expected.day_limit
-            && receipt.lysis_budget == expected.lysis_budget
-            && receipt.auction_base == expected.auction_base
+            && receipt.lysis_limit_minor == expected.lysis_limit_minor
+            && receipt.desis_limit_minor == expected.desis_limit_minor
             && receipt.auction_entry_prices == expected.auction_entry_prices,
         "Lysis request receipt fields",
     )?;
@@ -270,7 +270,7 @@ fn verify_request_receipt(
         "Lysis request receipt logical anchor",
     )?;
     let briefed_supply = if expected.day_type == DayType::Green {
-        expected.auction_base
+        expected.desis_limit_minor
     } else {
         U256::ZERO
     };
@@ -300,7 +300,7 @@ fn verify_nod_receipt(
             && receipt.nod_count == expected.exact_counts().nod_count
             && receipt.nod_root == expected.nod_root()
             && receipt.nod_amount_total == expected.nod_amount_total()
-            && receipt.nod_gratis_consumed == expected.nod_gratis_consumed()
+            && receipt.lysis_allocation_minor == expected.lysis_allocation_minor()
             && receipt.issued_at == expected.issued_at(),
         "Lysis Nod receipt",
     )?;
@@ -311,7 +311,7 @@ fn verify_nod_receipt(
         nod_count: expected.exact_counts().nod_count,
         nod_root: expected.nod_root(),
         nod_amount_total: expected.nod_amount_total(),
-        nod_gratis_consumed: expected.nod_gratis_consumed(),
+        lysis_allocation_minor: expected.lysis_allocation_minor(),
         issued_at: expected.issued_at(),
     };
     receipt.validate_projection(&projection, limits)?;
@@ -393,17 +393,18 @@ fn verify_carry_over_receipt(
     let expected = plan.carry_over();
     ensure(
         receipt.source_wwd == expected.source_wwd()
-            && receipt.credited_unused_lysis == expected.credited_unused_lysis()
+            && receipt.credited_unused_lysis_limit_minor
+                == expected.credited_unused_lysis_limit_minor()
             && receipt
                 .before_value
-                .checked_add(receipt.credited_unused_lysis)
+                .checked_add(receipt.credited_unused_lysis_limit_minor)
                 == Some(receipt.after_value),
         "Lysis carry-over receipt",
     )?;
     let projection = CarryOverStateEventProjectionV1 {
         source_wwd: receipt.source_wwd,
         before_value: receipt.before_value,
-        credited_unused_lysis: receipt.credited_unused_lysis,
+        credited_unused_lysis_limit_minor: receipt.credited_unused_lysis_limit_minor,
         after_value: receipt.after_value,
     };
     receipt.validate_projection(&projection, limits)?;

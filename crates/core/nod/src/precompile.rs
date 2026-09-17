@@ -101,9 +101,9 @@ pub fn dispatch(
 
 fn token_uri(item: &NodItemState, bucket: &NodBucketState, data: &INod::NodData) -> Result<String> {
     let nod_id_str = item.nod_id.to_u256().to_string();
-    let cost_amount_minor = data.costAmountMinor;
+    let settlement_cost_minor = data.settlementCostMinor;
     let json = format!(
-        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"calledAt\",\"value\":{}}},{{\"trait_type\":\"effectiveState\",\"value\":{}}},{{\"trait_type\":\"callPriceMinor\",\"value\":\"{}\"}},{{\"trait_type\":\"callRate\",\"value\":{}}},{{\"trait_type\":\"callWindow\",\"value\":{}}},{{\"trait_type\":\"callThreshold\",\"value\":{}}},{{\"trait_type\":\"callNoticePeriod\",\"value\":{}}},{{\"trait_type\":\"settlementDeadline\",\"value\":{}}}]}}",
+        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"settlement_cost_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"isSettled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"calledAt\",\"value\":{}}},{{\"trait_type\":\"effectiveState\",\"value\":{}}},{{\"trait_type\":\"callPriceMinor\",\"value\":\"{}\"}},{{\"trait_type\":\"callRate\",\"value\":{}}},{{\"trait_type\":\"callWindow\",\"value\":{}}},{{\"trait_type\":\"callThreshold\",\"value\":{}}},{{\"trait_type\":\"callNoticePeriod\",\"value\":{}}},{{\"trait_type\":\"settlementDeadline\",\"value\":{}}}]}}",
         nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
         crate::constants::TOKEN_IMAGE_BASE,
@@ -114,7 +114,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState, data: &INod::NodData)
         item.floor_price_minor,
         item.gratis_load_minor,
         bucket.entry_price_minor,
-        cost_amount_minor,
+        settlement_cost_minor,
         if bucket.is_qualified { "true" } else { "false" },
         item.is_settled,
         item.issued_at,
@@ -154,8 +154,11 @@ fn to_abi_data(
         leagueId: item.league_id,
         floorPriceMinor: item.floor_price_minor,
         gratisLoadMinor: item.gratis_load_minor,
-        costOfGratisMinor: bucket.entry_price_minor,
-        costAmountMinor: api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?,
+        entryPriceMinor: bucket.entry_price_minor,
+        settlementCostMinor: api::settlement_cost_minor(
+            bucket.entry_price_minor,
+            item.gratis_load_minor,
+        )?,
         isQualified: bucket.is_qualified,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
@@ -188,7 +191,7 @@ fn to_abi_certified_generation(
             nodCount: generation.nod_count,
             bucketCount: generation.bucket_count,
             nodAmountTotal: generation.nod_amount_total,
-            nodGratisConsumed: generation.nod_gratis_consumed,
+            lysisAllocationMinor: generation.lysis_allocation_minor,
             issuedAt: generation.issued_at,
         },
         None => INod::CertifiedGenerationData {
@@ -202,7 +205,7 @@ fn to_abi_certified_generation(
             nodCount: 0,
             bucketCount: 0,
             nodAmountTotal: U256::ZERO,
-            nodGratisConsumed: U256::ZERO,
+            lysisAllocationMinor: U256::ZERO,
             issuedAt: 0,
         },
     }

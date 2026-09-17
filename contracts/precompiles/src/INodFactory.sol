@@ -10,7 +10,7 @@ interface INodFactory {
         uint256 floorPriceMinor,
         uint256 gratisLoadMinor,
         uint256 entryPriceMinor,
-        uint256 costAmountMinor
+        uint256 settlementCostMinor
     );
 
     event NodExercised(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
@@ -47,7 +47,7 @@ interface INodFactory {
         bytes32 bucketRoot,
         bytes32 outputManifestRoot,
         uint256 nodAmountTotal,
-        uint256 nodGratisConsumed,
+        uint256 lysisAllocationMinor,
         uint64 issuedAt,
         bytes32 stateEventDigest
     );

@@ -154,7 +154,7 @@ impl SupervisorJobRunnerV1 {
                 fidelity_opening_root: manifest.fidelity_opening_root,
                 oracle_opening_root: manifest.oracle_opening_root,
                 wwd: manifest.wwd,
-                lysis_budget: intent.frozen_metadosis_values.lysis_budget,
+                lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
                 logical_evaluation_time: intent.logical_evaluation_time,
                 tribute_count: manifest.tribute_count,
                 lysis_program_semantics_hash: self

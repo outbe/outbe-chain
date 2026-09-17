@@ -51,12 +51,14 @@ pub fn store_entry_price_snapshot(
     NodContract::new(storage).store_entry_price_snapshot(day, prices)
 }
 
-/// The Nod's cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+/// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+/// Price and cost use six-decimal reference-currency precision; the load uses
+/// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
 /// Derived rather than stored — the entry price lives on the Nod's bucket and
 /// the load on the Nod itself, and lysis mints the Nod from exactly this
 /// formula.
-pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
+pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
     checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
 }
 

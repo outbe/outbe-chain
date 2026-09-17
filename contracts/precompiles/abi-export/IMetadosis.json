@@ -418,19 +418,19 @@
         "internalType": "uint256"
       },
       {
-        "name": "dayGratisAllocation",
+        "name": "lysisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "dayGratisAllocationRemainder",
+        "name": "unusedLysisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "netDayGratisAllocation",
+        "name": "lysisAllocationMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

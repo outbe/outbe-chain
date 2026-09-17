@@ -105,7 +105,7 @@ fn planner_bindings(tribute_count: u32) -> LysisPlannerBindingsV1 {
         fidelity_opening_root: B256::repeat_byte(6),
         oracle_opening_root: B256::repeat_byte(7),
         wwd: 20_260_724,
-        lysis_budget: U256::from(99_000_000_u64),
+        lysis_limit_minor: U256::from(99_000_000_u64),
         logical_evaluation_time: 1_784_765_900,
         tribute_count,
         lysis_program_semantics_hash: B256::repeat_byte(8),
@@ -378,7 +378,7 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         contributor_count: 1,
         tribute_nominal_total: U256::from(10_000),
         eligible_nominal_total: U256::from(100),
-        nod_gratis_consumed: U256::from(90),
+        lysis_allocation_minor: U256::from(90),
         nod_cost_total: U256::from(9_000),
         first_error_ordinal: None,
     };
@@ -451,7 +451,7 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
         contributor_count: 1,
         tribute_nominal_total: U256::from(100),
         eligible_nominal_total: U256::from(100),
-        nod_gratis_consumed: U256::from(10),
+        lysis_allocation_minor: U256::from(10),
         nod_cost_total: U256::from(90),
         first_error_ordinal: None,
     };
@@ -647,7 +647,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
             contributor_count,
             tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
             eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
-            nod_gratis_consumed: U256::from(tribute_count) * U256::from(3),
+            lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
             nod_cost_total: U256::from(tribute_count) * U256::from(7),
             first_error_ordinal,
         }
@@ -731,7 +731,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
         contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,
     };
@@ -894,7 +894,7 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     assert_eq!(plan.primary_work_unit_count, 2);
     assert_eq!(plan.tribute_count, 257);
     assert_eq!(plan.wwd, 20_260_724);
-    assert_eq!(plan.lysis_budget, U256::from(99_000_000_u64));
+    assert_eq!(plan.lysis_limit_minor, U256::from(99_000_000_u64));
     assert_eq!(plan.logical_evaluation_time, 1_784_765_900);
     assert_eq!(
         plan.plan_hash(&limits).unwrap(),
@@ -930,7 +930,7 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         .is_err());
 
     let mut changed_budget = plan.clone();
-    changed_budget.lysis_budget += U256::from(1);
+    changed_budget.lysis_limit_minor += U256::from(1);
     assert_ne!(
         changed_budget.plan_hash(&limits).unwrap(),
         plan.plan_hash(&limits).unwrap()
@@ -1963,11 +1963,11 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
         .iter()
         .map(|observed| observed.tribute.nominal_amount_minor)
         .sum::<U256>();
-    let gratis_allocation = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let lysis_limit_minor = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let expected = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: 1_784_765_900,
-        gratis_allocation,
+        lysis_limit_minor,
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -1977,7 +1977,7 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
     assert_eq!(first.observations.len(), 256);
     assert_eq!(second.observations.len(), 1);
     let aggregate = fidelity_reduce(&first.aggregate, &second.aggregate).unwrap();
-    let actual = finalize_fi_fraction_table(&aggregate, gratis_allocation).unwrap();
+    let actual = finalize_fi_fraction_table(&aggregate, lysis_limit_minor).unwrap();
 
     assert_eq!(aggregate.tribute_count, 257);
     assert_eq!(aggregate.checked_total_nominal, expected.total_nominal);
@@ -2058,12 +2058,12 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .iter()
         .map(|observed| observed.tribute.nominal_amount_minor)
         .sum::<U256>();
-    let lysis_budget = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let lysis_limit_minor = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let logical_time = 1_784_765_900;
     let sequential = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: logical_time,
-        gratis_allocation: lysis_budget,
+        lysis_limit_minor,
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -2072,7 +2072,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let fidelity_right = fidelity_map(256, &tributes[256..]).unwrap();
     let fidelity_root =
         fidelity_reduce(&fidelity_left.aggregate, &fidelity_right.aggregate).unwrap();
-    let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_budget).unwrap();
+    let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_limit_minor).unwrap();
     assert_eq!(fractions, sequential.league_fractions);
     assert!(fractions
         .windows(2)
@@ -2122,7 +2122,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     )
     .unwrap();
     let prefixes = gratis_prefix_down(
-        Some(lysis_budget),
+        Some(lysis_limit_minor),
         GratisSummaryValueV1::Summary(left_summary),
         GratisSummaryValueV1::Summary(right_summary),
     )
@@ -2390,7 +2390,7 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             gratis_load_minor: U256::from(1),
             entry_price_minor: SIX_DECIMAL_SCALE,
             floor_price_minor: SIX_DECIMAL_SCALE,
-            cost_amount_minor: U256::from(1),
+            settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
             exclude_from_intex_issuance: true,

@@ -117,7 +117,7 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                             nod_count: 257,
                             bucket_count: 1,
                             nod_amount_total: U256::from(100),
-                            nod_gratis_consumed: U256::ZERO,
+                            lysis_allocation_minor: U256::ZERO,
                             issued_at: 1,
                             result_evidence_hash: B256::repeat_byte(94),
                             block_number: 40,

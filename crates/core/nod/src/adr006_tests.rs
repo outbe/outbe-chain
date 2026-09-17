@@ -321,7 +321,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         nod_count: 257,
         bucket_count: 13,
         nod_amount_total: U256::from(50_000),
-        nod_gratis_consumed: U256::from(7_000),
+        lysis_allocation_minor: U256::from(7_000),
         issued_at: 1_753_488_000,
         next_nod_ordinal: 129,
         last_progress_height: 4_096,
@@ -350,8 +350,8 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         nod.ocomp_nod_amount_total
             .write(&worldwide_day, generation.nod_amount_total)
             .unwrap();
-        nod.ocomp_nod_gratis_consumed
-            .write(&worldwide_day, generation.nod_gratis_consumed)
+        nod.ocomp_lysis_allocation_minor
+            .write(&worldwide_day, generation.lysis_allocation_minor)
             .unwrap();
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, generation.job_id)
@@ -395,7 +395,10 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         assert_eq!(actual.nodCount, generation.nod_count);
         assert_eq!(actual.bucketCount, generation.bucket_count);
         assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
-        assert_eq!(actual.nodGratisConsumed, generation.nod_gratis_consumed);
+        assert_eq!(
+            actual.lysisAllocationMinor,
+            generation.lysis_allocation_minor
+        );
         assert_eq!(actual.issuedAt, generation.issued_at);
     });
 }
@@ -428,7 +431,7 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
         assert_eq!(actual.nodCount, 0);
         assert_eq!(actual.bucketCount, 0);
         assert_eq!(actual.nodAmountTotal, U256::ZERO);
-        assert_eq!(actual.nodGratisConsumed, U256::ZERO);
+        assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
         assert_eq!(actual.issuedAt, 0);
     });
 }
@@ -757,7 +760,7 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             nod_count: 7,
             bucket_count: 2,
             nod_amount_total: U256::from(50_000),
-            nod_gratis_consumed: U256::from(7_000),
+            lysis_allocation_minor: U256::from(7_000),
             issued_at: 1_753_488_000,
             next_nod_ordinal: 0,
             last_progress_height: 4_096,
@@ -768,8 +771,8 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
         nod.ocomp_nod_amount_total
             .write(&worldwide_day, shape.nod_amount_total)
             .unwrap();
-        nod.ocomp_nod_gratis_consumed
-            .write(&worldwide_day, shape.nod_gratis_consumed)
+        nod.ocomp_lysis_allocation_minor
+            .write(&worldwide_day, shape.lysis_allocation_minor)
             .unwrap();
         nod.ocomp_materialization_last_progress_height
             .write(&worldwide_day, shape.last_progress_height)

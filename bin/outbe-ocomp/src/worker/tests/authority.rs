@@ -7,7 +7,7 @@ fn plan() -> PlanCommitmentV1 {
         attempt: 0,
         input_manifest_hash: B256::repeat_byte(4),
         wwd: 20_260_724,
-        lysis_budget: U256::from(99_000_000_u64),
+        lysis_limit_minor: U256::from(99_000_000_u64),
         logical_evaluation_time: 1_784_765_900,
         tribute_count: 257,
         max_tributes_per_work_shard: 256,
@@ -36,6 +36,6 @@ fn changed_frozen_plan_context_is_rejected_even_when_job_and_manifest_bindings_m
     require_plan_binding(&committed, expected, &limits).unwrap();
 
     let mut changed = committed;
-    changed.lysis_budget += U256::from(1);
+    changed.lysis_limit_minor += U256::from(1);
     assert!(require_plan_binding(&changed, expected, &limits).is_err());
 }

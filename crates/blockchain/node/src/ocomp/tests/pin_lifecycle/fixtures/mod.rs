@@ -109,15 +109,15 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
             gratis_supply: U256::from(20),
-            lysis_budget: U256::from(300),
-            auction_base: U256::from(700),
+            lysis_limit_minor: U256::from(300),
+            desis_limit_minor: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: B256::repeat_byte(9),
+            request_limit_split_receipt_hash: B256::repeat_byte(9),
         },
         logical_evaluation_height: block_number,
         logical_evaluation_time: 1_000,
@@ -314,9 +314,9 @@ pub(super) fn canonical_terminal_fixture(
             contributor_receipt_hash: Some(B256::repeat_byte(0x97)),
             tribute_receipt_hash: Some(B256::repeat_byte(0x98)),
             carry_over_receipt_hash: Some(B256::repeat_byte(0x99)),
-            request_budget_split_receipt_hash: intent
+            request_limit_split_receipt_hash: intent
                 .frozen_metadosis_values
-                .request_budget_split_receipt_hash,
+                .request_limit_split_receipt_hash,
             active_generation_hash: Some(B256::repeat_byte(0x9a)),
             effect_commitment: outbe_ocomp_protocol::hash::hash_framed(
                 outbe_ocomp_protocol::registry::HashDomain::Effects,

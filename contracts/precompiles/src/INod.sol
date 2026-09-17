@@ -52,9 +52,13 @@ interface INod {
         uint32 worldwideDay;
         uint16 leagueId;
         uint256 floorPriceMinor;
+        /// Gratis entitlement in protocol units (1,000,000 per whole COEN).
         uint256 gratisLoadMinor;
-        uint256 costOfGratisMinor;
-        uint256 costAmountMinor;
+        /// Price of one whole COEN in referenceCurrency at six-decimal precision.
+        uint256 entryPriceMinor;
+        /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
+        /// at six-decimal precision; payment in an asset is quoted separately.
+        uint256 settlementCostMinor;
         bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
@@ -92,7 +96,8 @@ interface INod {
         uint32 nodCount;
         uint32 bucketCount;
         uint256 nodAmountTotal;
-        uint256 nodGratisConsumed;
+        /// Actual Lysis Allocation: sum of Nod gratisLoadMinor, not the Lysis Limit.
+        uint256 lysisAllocationMinor;
         uint64 issuedAt;
     }
 

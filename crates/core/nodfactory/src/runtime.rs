@@ -85,7 +85,7 @@ fn issue_nod_inner(
             floorPriceMinor: params.floor_price_minor,
             gratisLoadMinor: params.gratis_load_minor,
             entryPriceMinor: params.entry_price_minor,
-            costAmountMinor: nod_api::cost_amount_minor(
+            settlementCostMinor: nod_api::settlement_cost_minor(
                 params.entry_price_minor,
                 params.gratis_load_minor,
             )?,

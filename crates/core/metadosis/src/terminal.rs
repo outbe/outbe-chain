@@ -154,9 +154,9 @@ pub(crate) fn fail_worldwide_day(
     let mut metadosis = MetadosisContract::new(storage.clone());
     let limits = poc_schema_limits();
     let unused_limit = metadosis
-        .request_budget_receipt(worldwide_day, &limits)?
+        .request_limit_receipt(worldwide_day, &limits)?
         .map_or(current.metadosis_limit_amount, |receipt| {
-            receipt.lysis_budget
+            receipt.lysis_limit_minor
         });
 
     if current.status == WwdStatus::Failed {
@@ -201,9 +201,9 @@ pub(crate) fn fail_worldwide_day(
         tributeTotals: tribute.forfeited_nominal,
         dayGratisDemand: U256::ZERO,
         dayGratisLimit: U256::ZERO,
-        dayGratisAllocation: U256::ZERO,
-        dayGratisAllocationRemainder: U256::ZERO,
-        netDayGratisAllocation: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         dayMetadosisLimitRemainder: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,
@@ -213,7 +213,7 @@ pub(crate) fn fail_worldwide_day(
 /// Completes an OCOMP expiry as the same atomic FAILED contract
 /// used by every other exact-WWD business failure. The expiry transition has
 /// already written immutable `Expired` attempt evidence, but the live FSM and
-/// outer WWD remain active until this function credits the retained budget,
+/// outer WWD remain active until this function credits the retained limit,
 /// retires Tribute as the final CE mutation, and commits the terminal state.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fail_expired_ocomp_day(
@@ -240,7 +240,7 @@ pub(crate) fn fail_expired_ocomp_day(
         .ocomp_job_record(intent_id, &limits)?
         .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing".into()))?;
     if record.intent.wwd != worldwide_day.value()
-        || record.intent.frozen_metadosis_values.lysis_budget != unused_limit
+        || record.intent.frozen_metadosis_values.lysis_limit_minor != unused_limit
         || metadosis.terminal_intent_count(worldwide_day)? != 1
         || metadosis
             .ocomp_fsm_states
@@ -285,9 +285,9 @@ pub(crate) fn fail_expired_ocomp_day(
         tributeTotals: tribute.forfeited_nominal,
         dayGratisDemand: U256::ZERO,
         dayGratisLimit: U256::ZERO,
-        dayGratisAllocation: U256::ZERO,
-        dayGratisAllocationRemainder: U256::ZERO,
-        netDayGratisAllocation: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         dayMetadosisLimitRemainder: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,

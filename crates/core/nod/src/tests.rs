@@ -76,7 +76,7 @@ fn nod_contract_slot_layout_is_pinned() {
             nod.ocomp_output_manifest_root.base_slot(),
             nod.ocomp_generation_metadata.base_slot(),
             nod.ocomp_nod_amount_total.base_slot(),
-            nod.ocomp_nod_gratis_consumed.base_slot(),
+            nod.ocomp_lysis_allocation_minor.base_slot(),
         ]
         .into_iter()
         .enumerate()

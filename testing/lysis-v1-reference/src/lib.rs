@@ -38,7 +38,7 @@ struct CorpusCase {
 struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
-    gratis_allocation: String,
+    lysis_limit_minor: String,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -505,7 +505,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         return Err(ReferenceFailure::new("ZERO_TOTAL_NOMINAL"));
     }
 
-    let allocation = decimal(&input.gratis_allocation)?;
+    let allocation = decimal(&input.lysis_limit_minor)?;
     let table = fraction_table(&tributes, &total_nominal, &allocation)?;
     let fractions = table
         .iter()
@@ -614,7 +614,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
     Ok(json!({
         "status": "SUCCESS",
         "total_nominal": total_nominal.to_string(),
-        "gratis_allocation": allocation.to_string(),
+        "lysis_limit_minor": allocation.to_string(),
         "remaining_gratis": remaining.to_string(),
         "group_table": table,
         "nod_actions": actions,
@@ -944,7 +944,7 @@ mod tests {
             .iter()
             .map(|tribute| decimal(&tribute.nominal).unwrap())
             .sum::<BigUint>();
-        let allocation = decimal(&case.input.gratis_allocation).unwrap();
+        let allocation = decimal(&case.input.lysis_limit_minor).unwrap();
         let (_, raw, normalized) =
             fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
 

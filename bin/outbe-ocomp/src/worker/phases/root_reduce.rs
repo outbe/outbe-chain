@@ -309,7 +309,7 @@ fn execute_root_reduce_leaf(
             floor_price_minor: record.nod_action.floor_price_minor,
             gratis_load_minor: record.nod_action.gratis_load_minor,
             entry_price_minor: record.nod_action.entry_price_minor,
-            cost_amount_minor: record.nod_action.cost_amount_minor,
+            settlement_cost_minor: record.nod_action.settlement_cost_minor,
             issuance_currency: record.nod_action.issuance_currency,
             reference_currency: record.nod_action.reference_currency,
             issued_at: record.nod_action.issued_at,
@@ -365,12 +365,14 @@ fn execute_root_reduce_leaf(
             .map(|action| action.nominal_amount_minor),
         "root reducer eligible nominal total",
     )?;
-    let nod_gratis_consumed = checked_sum(
+    let lysis_allocation_minor = checked_sum(
         nod_actions.iter().map(|action| action.gratis_load_minor),
         "root reducer Nod Gratis total",
     )?;
     let nod_cost_total = checked_sum(
-        nod_actions.iter().map(|action| action.cost_amount_minor),
+        nod_actions
+            .iter()
+            .map(|action| action.settlement_cost_minor),
         "root reducer Nod cost total",
     )?;
     let summary = RootReduceSummaryV1 {
@@ -417,7 +419,7 @@ fn execute_root_reduce_leaf(
             .map_err(|_| WorkerError::UnitBindingMismatch)?,
         tribute_nominal_total: finalized.checked_tribute_nominal_total,
         eligible_nominal_total,
-        nod_gratis_consumed,
+        lysis_allocation_minor,
         nod_cost_total,
         first_error_ordinal: None,
     };
@@ -617,7 +619,7 @@ fn empty_root_reduce_leaf(
         contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,
     })

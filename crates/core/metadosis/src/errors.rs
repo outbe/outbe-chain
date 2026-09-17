@@ -16,12 +16,15 @@ pub enum MetadosisError {
     VwapMustBeNonZero,
 
     #[error(
-        "invalid OCOMP budget split: lysis budget {lysis_budget} exceeds day limit {day_limit}"
+        "invalid OCOMP limit split: Lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
     )]
-    InvalidOcompBudgetSplit { day_limit: U256, lysis_budget: U256 },
+    InvalidOcompLimitSplit {
+        day_limit: U256,
+        lysis_limit_minor: U256,
+    },
 
-    #[error("existing OCOMP request budget receipt does not match the immutable day split")]
-    OcompBudgetReceiptMismatch,
+    #[error("existing OCOMP request limit receipt does not match the immutable day split")]
+    OcompLimitReceiptMismatch,
 
     #[error("Desis returned a different OCOMP request brief hash")]
     OcompDesisBriefHashMismatch,
@@ -67,9 +70,9 @@ impl From<MetadosisError> for PrecompileError {
         match value {
             MetadosisError::UnknownWorldwideDayType
             | MetadosisError::VwapMustBeNonZero
-            | MetadosisError::InvalidOcompBudgetSplit { .. }
+            | MetadosisError::InvalidOcompLimitSplit { .. }
             | MetadosisError::OcompDesisBriefHashMismatch => business_failure(message),
-            MetadosisError::OcompBudgetReceiptMismatch
+            MetadosisError::OcompLimitReceiptMismatch
             | MetadosisError::OcompPreAdmissionNotInitialized { .. }
             | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
             | MetadosisError::OcompPreAdmissionWwdMismatch { .. }
@@ -149,7 +152,7 @@ mod tests {
     fn durable_invariant_errors_are_fatal() {
         let wwd = WorldwideDay::new(2026_0731);
         let errors = [
-            MetadosisError::OcompBudgetReceiptMismatch,
+            MetadosisError::OcompLimitReceiptMismatch,
             MetadosisError::OcompStateVersionOverflow { wwd },
             MetadosisError::CorruptOcompPreAdmissionState {
                 wwd,

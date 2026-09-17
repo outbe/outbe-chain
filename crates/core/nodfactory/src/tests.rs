@@ -91,8 +91,9 @@ fn params(owner: Address) -> NodIssueParams {
 
 /// The Nod's derived cost, in the `u128` minor units a PayNote spend carries.
 fn cost_of(input: &NodIssueParams) -> u128 {
-    let cost = outbe_nod::api::cost_amount_minor(input.entry_price_minor, input.gratis_load_minor)
-        .expect("derive the Nod cost");
+    let cost =
+        outbe_nod::api::settlement_cost_minor(input.entry_price_minor, input.gratis_load_minor)
+            .expect("derive the Nod cost");
     u128::try_from(cost).expect("test Nod cost fits a PayNote spend amount")
 }
 
@@ -595,7 +596,7 @@ const SIX_DECIMALS: u64 = 1_000_000;
 #[test]
 fn a_cost_that_does_not_divide_evenly_is_floored_and_the_note_matches_it() {
     // 500.001 six-decimal units: the chain charges 500, the figure
-    // `costAmountMinor` advertises. Rounding up would demand 501.
+    // `settlementCostMinor` advertises. Rounding up would demand 501.
     let mut world = World::new();
     let input = NodIssueParams {
         entry_price_minor: U256::from(500_001u64),

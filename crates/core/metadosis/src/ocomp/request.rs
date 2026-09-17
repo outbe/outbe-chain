@@ -9,7 +9,7 @@ use outbe_ocomp_protocol::{
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
-    receipts::RequestBudgetSplitReceiptV1,
+    receipts::RequestLimitSplitReceiptV1,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -19,7 +19,7 @@ use crate::{
     aggregate::WwdDayType,
     commit::plan_outer_transition,
     errors::storage_corruption_message,
-    ocomp_budget::{apply_fresh_request_budget_effect, RequestBudgetEffect},
+    ocomp_limits::{apply_fresh_request_limit_effect, RequestLimitEffect},
     pre_admission::{
         evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionInputs,
     },
@@ -254,16 +254,16 @@ fn build_and_commit_request(
         sealed_tribute_projection.tribute_nominal_amount,
         day_limit,
     )?;
-    let lysis_budget = calculation.gratis_allocation;
+    let lysis_limit_minor = calculation.lysis_limit_minor;
     let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
-    let effect = RequestBudgetEffect {
+    let effect = RequestLimitEffect {
         protocol_bundle_hash: profile.protocol_bundle_hash,
         wwd: wwd.value(),
         pending_nonce,
         day_type: protocol_day_type,
         day_limit,
-        lysis_budget,
+        lysis_limit_minor,
         nominal_total,
         auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
@@ -273,9 +273,9 @@ fn build_and_commit_request(
     let mode = state
         .request_effect_mode()
         .map_err(|error| storage_corruption_message(error.to_string()))?;
-    let authoritative_receipt = metadosis.request_budget_receipt(wwd, &schema_limits)?;
+    let authoritative_receipt = metadosis.request_limit_receipt(wwd, &schema_limits)?;
     let receipt =
-        apply_or_validate_budget_effect(ctx, effect, mode, authoritative_receipt.as_ref())?;
+        apply_or_validate_limit_effect(ctx, effect, mode, authoritative_receipt.as_ref())?;
     let receipt_hash = receipt.receipt_hash(&schema_limits).map_err(|error| {
         storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
     })?;
@@ -337,10 +337,10 @@ fn build_and_commit_request(
             current_vwap,
             gratis_demand: calculation.gratis_demand,
             gratis_supply: calculation.gratis_supply,
-            lysis_budget,
-            auction_base: receipt.auction_base,
+            lysis_limit_minor,
+            desis_limit_minor: receipt.desis_limit_minor,
             auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
-            request_budget_split_receipt_hash: receipt_hash,
+            request_limit_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: ctx.block.block_number,
         logical_evaluation_time: ctx.block.timestamp,
@@ -359,7 +359,7 @@ fn commit_and_emit_request(
     metadosis: &mut MetadosisContract<'_>,
     request: &TerminalRequestContext<'_, '_>,
     intent: &JobIntentV1,
-    receipt: &RequestBudgetSplitReceiptV1,
+    receipt: &RequestLimitSplitReceiptV1,
 ) -> Result<TerminalRequestOutcome> {
     let schema_limits = poc_schema_limits();
     let intent_id = intent
@@ -431,17 +431,17 @@ fn candidate_tribute_projection(
     Ok(projection)
 }
 
-fn apply_or_validate_budget_effect(
+fn apply_or_validate_limit_effect(
     ctx: &BlockRuntimeContext<'_>,
-    effect: RequestBudgetEffect,
+    effect: RequestLimitEffect,
     mode: RequestEffectMode,
-    authoritative: Option<&RequestBudgetSplitReceiptV1>,
-) -> Result<RequestBudgetSplitReceiptV1> {
+    authoritative: Option<&RequestLimitSplitReceiptV1>,
+) -> Result<RequestLimitSplitReceiptV1> {
     match (mode, authoritative) {
         (RequestEffectMode::Fresh { effect_nonce }, None)
             if effect_nonce == effect.pending_nonce =>
         {
-            apply_fresh_request_budget_effect(ctx.storage.clone(), effect)
+            apply_fresh_request_limit_effect(ctx.storage.clone(), effect)
         }
         _ => Err(storage_corruption_message(
             "authoritative OCOMP receipt disagrees with request effect mode",

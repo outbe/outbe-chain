@@ -909,7 +909,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     }
     let body = qualified_body.expect("nonempty validator committee");
     assert!(
-        !body.costAmountMinor.is_zero(),
+        !body.settlementCostMinor.is_zero(),
         "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
@@ -926,7 +926,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &key,
         owner,
         fixture.asset,
-        body.costAmountMinor,
+        body.settlementCostMinor,
     );
     assert_eq!(
         eth::read_call(
@@ -936,7 +936,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(body.costAmountMinor),
+        Some(body.settlementCostMinor),
         "reserve vault did not receive exact Nod cost at deposit time"
     );
 
@@ -1036,7 +1036,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
-        hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,
+        hex::encode(&nod_id), fixture.asset, fixture.vault, body.settlementCostMinor,
         body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
     );
 }

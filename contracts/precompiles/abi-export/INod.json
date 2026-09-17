@@ -85,7 +85,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "nodGratisConsumed",
+            "name": "lysisAllocationMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -159,12 +159,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "costOfGratisMinor",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "costAmountMinor",
+            "name": "settlementCostMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
