@@ -131,7 +131,11 @@ impl GemContract<'_> {
                 .write(&item.reference_currency, item.call_window_seconds)?;
         }
 
-        Ok(())
+        self.emit(IGem::Transfer {
+            from: Address::ZERO,
+            to: item.owner,
+            tokenId: item.gem_id,
+        })
     }
 
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
@@ -164,7 +168,11 @@ impl GemContract<'_> {
         if supply > 0 {
             self.total_supply.write(supply - 1)?;
         }
-        Ok(())
+        self.emit(IGem::Transfer {
+            from: item.owner,
+            to: Address::ZERO,
+            tokenId: item.gem_id,
+        })
     }
 
     pub(crate) fn set_state(&mut self, gem_id: U256, new_state: GemState) -> Result<()> {

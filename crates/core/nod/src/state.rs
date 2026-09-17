@@ -295,10 +295,13 @@ impl NodContract<'_> {
                 self.storage_handle(),
                 scope,
                 BodyInput::NodBucket(&canonical_bucket),
-            )
-        } else {
-            Ok(())
+            )?;
         }
+        self.emit(INod::Transfer {
+            from: Address::ZERO,
+            to: item.owner,
+            tokenId: item.nod_id.to_u256(),
+        })
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.
@@ -334,17 +337,20 @@ impl NodContract<'_> {
             self.callable_bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
-            delete(self.storage_handle(), scope, current_bucket)
+            delete(self.storage_handle(), scope, current_bucket)?;
         } else if item.is_settled {
             update(
                 self.storage_handle(),
                 scope,
                 current_bucket,
                 BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-            )
-        } else {
-            Ok(())
+            )?;
         }
+        self.emit(INod::Transfer {
+            from: item.owner,
+            to: Address::ZERO,
+            tokenId: item.nod_id.to_u256(),
+        })
     }
 
     /// Moves one unpaid member into the live paid count, preserving ownership and supply.

@@ -2,6 +2,11 @@
 pragma solidity ^0.8.30;
 
 interface INod {
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    // Declared for ERC-721 shape only: Nods are soul-bound, so these two are never emitted.
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+
     /// ERC-4906: the metadata of `_tokenId` changed.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906: the metadata of every token in `[_fromTokenId, _toTokenId]` changed. A bucket

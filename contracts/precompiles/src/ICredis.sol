@@ -2,6 +2,11 @@
 pragma solidity ^0.8.30;
 
 interface ICredis {
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    // Declared for ERC-721 shape only: a position is bound to its smart account, so these two are never emitted.
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+
     event PositionCreated(
         uint256 indexed positionId,
         address indexed smartAccount,

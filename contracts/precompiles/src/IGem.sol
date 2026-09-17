@@ -44,6 +44,10 @@ interface IGem {
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
 
     // --- Events (emitted by the Gem precompile) ---
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    // Declared for ERC-721 shape only: gems are non-transferable, so these two are never emitted.
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     /// @notice ERC-4906: the metadata of `_tokenId` changed.
     event MetadataUpdate(uint256 _tokenId);
     /// @notice Issued gem promoted to Qualified by the daily qualification sweep.

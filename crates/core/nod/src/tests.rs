@@ -836,3 +836,47 @@ fn metadata_updates_follow_qualification_passes_and_settlement() {
     assert_eq!(batches, 1);
     assert_eq!(updates, vec![first.nod_id.to_u256()]);
 }
+
+#[test]
+fn transfer_logs_announce_issuance_and_removal() {
+    use crate::precompile::INod;
+    use alloy_sol_types::SolEvent;
+
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let owner = Address::repeat_byte(0x61);
+    let body = item(owner, U256::from(500_000), USD);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key);
+        api::remove_nod(
+            &storage,
+            &scope,
+            api::load_item(&storage, &scope, &parent, body.nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+    });
+
+    let nod_id = body.nod_id.to_u256();
+    let transfers: Vec<(Address, Address, U256)> = provider
+        .get_events(outbe_primitives::addresses::NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::Transfer::decode_log_data(log).ok())
+        .map(|event| (event.from, event.to, event.tokenId))
+        .collect();
+    assert_eq!(
+        transfers,
+        vec![
+            (Address::ZERO, owner, nod_id),
+            (owner, Address::ZERO, nod_id)
+        ]
+    );
+}

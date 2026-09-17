@@ -194,6 +194,11 @@ impl CredisContract<'_> {
             self.append_to_global_index(position_id)?;
             self.insert_active(position_id)?;
 
+            self.emit(ICredis::Transfer {
+                from: Address::ZERO,
+                to: params.smart_account,
+                tokenId: position_id,
+            })?;
             self.emit(ICredis::PositionCreated {
                 positionId: position_id,
                 smartAccount: params.smart_account,

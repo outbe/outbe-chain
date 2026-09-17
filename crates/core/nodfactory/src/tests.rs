@@ -371,6 +371,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
         [
             (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
         ]
     );
@@ -569,6 +570,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
             (NOD_FACTORY_ADDRESS, INodFactory::NodPaid::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodBucketBodyDeleted::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
             (
                 NOD_FACTORY_ADDRESS,
                 INodFactory::NodExercised::SIGNATURE_HASH

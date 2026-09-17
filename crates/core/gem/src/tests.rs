@@ -1755,3 +1755,31 @@ fn metadata_update_marks_each_lifecycle_transition() {
         .collect();
     assert_eq!(updates, vec![gem_id; 3]);
 }
+
+#[test]
+fn transfer_logs_announce_mint_and_burn() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Settled).unwrap();
+        api::burn(&storage, gem_id).unwrap();
+        gem_id
+    });
+
+    let transfers: Vec<(Address, Address, U256)> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::Transfer::decode_log_data(log).ok())
+        .map(|event| (event.from, event.to, event.tokenId))
+        .collect();
+    assert_eq!(
+        transfers,
+        vec![
+            (Address::ZERO, ALICE, gem_id),
+            (ALICE, Address::ZERO, gem_id)
+        ]
+    );
+}

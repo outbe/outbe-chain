@@ -109,6 +109,23 @@ fn open_pos(credis: &mut CredisContract<'_>, tag: u8) -> U256 {
     credis.open_position(params(handle(tag), alice())).unwrap()
 }
 
+/// Bonds the test CCA that `open_position` requires, for tests that keep the provider.
+fn bond_test_cca(storage: &StorageHandle<'_>) {
+    storage
+        .increase_balance(
+            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        )
+        .unwrap();
+    outbe_ccaregistry::runtime::bond(
+        storage.clone(),
+        cca(),
+        outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .unwrap();
+}
+
 fn at(day: u64) -> u64 {
     ORIGINATED_AT + day * DAY
 }
@@ -1461,4 +1478,24 @@ fn precompile_names_the_collection_and_is_soul_bound() {
         .unwrap();
         assert!(!ICredis::isApprovedForAllCall::abi_decode_returns(&out).unwrap());
     });
+}
+
+#[test]
+fn open_position_announces_the_mint() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(ORIGINATED_AT));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        bond_test_cca(&storage);
+        open_pos(&mut CredisContract::new(storage), 1)
+    });
+
+    let transfers: Vec<(Address, Address, U256)> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::Transfer::decode_log_data(log).ok())
+        .map(|event| (event.from, event.to, event.tokenId))
+        .collect();
+    assert_eq!(transfers, vec![(Address::ZERO, alice(), id)]);
 }
