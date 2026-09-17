@@ -63,6 +63,10 @@ impl BlockLifecycle for CycleLifecycle {
         if ctx.runtime.block.block_number == ctx.metadosis_genesis_activation_height {
             outbe_metadosis::commands::init_genesis_day(&ctx.runtime)?;
         }
+        // Nod sweeps mutate compressed bodies, so they continue here rather than
+        // in a pre-exec hook. Slices run before the daily trigger so an
+        // unfinished walk keeps the day it opened on.
+        outbe_nod::hooks::continue_sweeps(&ctx.runtime, ctx.scope, &ctx.parent)?;
         crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
     }
 

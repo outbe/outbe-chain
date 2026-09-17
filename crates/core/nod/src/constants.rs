@@ -10,10 +10,10 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/nod/image/";
 /// `REAL_ID_SHIFT`, `MAX_BIN_ID`) live in `outbe_primitives::math::constants`.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Maximum number of off-chain bucket bodies inspected by the consensus
-/// daily qualifier. Remaining work stays in the compact EVM worklist
-/// and is resumed deterministically on the next daily run.
-pub const MAX_BUCKET_QUALIFICATIONS_PER_RUN: u32 = 256;
+/// Maximum number of off-chain bucket bodies inspected by one qualification
+/// slice. Remaining work stays in the compact EVM worklist and is resumed
+/// on the next CycleTick against the same frozen UTC day.
+pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
 /// The four call terms below are snapshotted onto a bucket when it is first
 /// issued, and every later check reads the bucket's copy. Retuning one of them
@@ -50,14 +50,19 @@ pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
 /// elapsed the bucket's remaining Nods are forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
-/// Callable buckets visited per daily run; the cursor resumes the rest. A bucket
-/// displaced past the cursor is picked up a day later, which cannot change an
-/// outcome: the call needs a multi-week breach count and the forfeit follows the
-/// bucket's sealed notice period.
-pub const MAX_NOD_CALL_VISITS: u32 = 4096;
+/// Callable buckets visited per call slice; the cursor resumes the rest on the
+/// next CycleTick against the same frozen UTC day. A bucket displaced past the
+/// cursor is picked up later in the same sweep, which cannot change an outcome:
+/// the call needs a multi-week breach count and the forfeit follows the bucket's
+/// sealed notice period.
+pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
 
-/// Nod bodies forfeit-burned per daily run, far below the visit budget because a
+/// Nod bodies forfeit-burned per call slice, far below the visit budget because a
 /// forfeit is a compressed-entity load plus delete rather than an EVM slot write.
 /// A correlated mass-forfeit is the expected shape of a call event, not a tail
 /// case, so the burst needs its own cap.
-pub const MAX_NOD_FORFEITS_PER_RUN: u32 = 256;
+pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;
+
+/// `SweepDaySkipped.sweep` of each daily sweep.
+pub const QUALIFY_SWEEP: u8 = 0;
+pub const CALL_SWEEP: u8 = 1;

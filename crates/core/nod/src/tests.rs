@@ -181,7 +181,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             &parent,
             USD,
             floor + U256::from(1),
-            crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_RUN,
+            crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
         assert_eq!(inspected, 1);
@@ -229,8 +229,8 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
 }
 
 /// The scan stops at its budget and resumes mid-bin on the next call via the
-/// per-bin cursor. `qualify_nods` shares one budget across currencies, so an
-/// over-run here would be unbounded work in the daily trigger.
+/// per-bin cursor. `run_qualify_slice` shares one budget across currencies, so
+/// an over-run here would be unbounded work in a CycleTick.
 #[test]
 fn the_scan_stops_at_its_budget_and_resumes_from_the_bin_cursor() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

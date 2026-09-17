@@ -174,7 +174,7 @@ impl NodCertifiedGenerationProjection {
 /// own independent trie. See `state::CurrencyBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=43 in declaration order. New fields append, which keeps the
+/// 0..=49 in declaration order. New fields append, which keeps the
 /// genesis-seeded materialization FIFO counters at slots 19 and 20.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
@@ -389,6 +389,28 @@ pub struct NodContract {
     /// they inherit call terms.
     #[attribute(order = 54)]
     pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    // --- Frozen-day sweeps. An unfinished walk keeps the UTC day it opened on
+    // so a later CycleTick cannot reprice the remainder. 0 = idle; a date key
+    // is never 0. One day waits behind the in-flight one at most.
+    /// UTC day an unfinished qualification sweep is pinned to.
+    #[attribute(order = 55)]
+    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 56)]
+    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// Registry ISO the qualify sweep resumes at, so a heavy currency cannot
+    /// starve the ones behind it and each currency is walked once per day.
+    #[attribute(order = 57)]
+    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    /// Next bin this currency's qualify sweep visits. Non-zero only while a
+    /// sweep was cut short by the per-block budget.
+    #[attribute(order = 58)]
+    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+    /// UTC day an unfinished call sweep is pinned to.
+    #[attribute(order = 59)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 60)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl<'storage> NodContract<'storage> {

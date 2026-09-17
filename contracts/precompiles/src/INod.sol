@@ -38,6 +38,14 @@ interface INod {
     /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
+    /// @notice A reference currency was left out of one day's qualification because its
+    ///         day price could not be indexed. The next day's pass tries it again.
+    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
+    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
+
     struct NodData {
         uint256 nodId;
         address owner;

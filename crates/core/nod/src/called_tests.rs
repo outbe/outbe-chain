@@ -7,12 +7,13 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key},
@@ -21,9 +22,10 @@ use outbe_primitives::{
 use crate::{
     api,
     constants::{
-        CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD,
-        CALL_WINDOW, SECS_PER_DAY,
+        CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP,
+        CALL_THRESHOLD, CALL_WINDOW, SECS_PER_DAY,
     },
+    precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
 };
 
@@ -1256,4 +1258,93 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(reserve(storage), U256::ZERO);
     });
+}
+
+/// An unfinished call sweep keeps the day it opened on: a later clock whose
+/// own window would not call still force-calls against the pinned day's
+/// trailing VWAP.
+#[test]
+fn a_running_call_sweep_keeps_its_day() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x21), ISO);
+        let at = START + 30 * DAY;
+        let day = last_closed_day(at);
+        let later = at + 21 * DAY;
+        let later_day = last_closed_day(later);
+
+        fill_days(storage, later_day, CALL_LOOKBACK_DAYS, below_call());
+        fill_days(storage, day, CALL_BREACH_DAYS, above_call());
+
+        let nod = NodContract::new(storage.clone());
+        nod.call_sweep_day.write(day).unwrap();
+        nod.call_scan_cursor.write(0).unwrap();
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::called::run_call_slice(&ctx, scope, parent).unwrap();
+        assert_eq!(called_at(storage, item.bucket_key), later);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+    });
+}
+
+/// A closed day behind a running call sweep waits, and a newer one takes its
+/// place and names the day it pushed out.
+#[test]
+fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::new();
+    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        issue_qualified(&storage, &scope, &parent, Address::repeat_byte(0x22), ISO);
+
+        let at = START + 30 * DAY;
+        let closed = [
+            last_closed_day(at),
+            last_closed_day(at + DAY),
+            last_closed_day(at + 2 * DAY),
+        ];
+        fill_days(&storage, closed[2], CALL_LOOKBACK_DAYS, below_call());
+
+        let nod = NodContract::new(storage.clone());
+        nod.call_sweep_day.write(closed[0]).unwrap();
+        nod.call_scan_cursor.write(1).unwrap();
+
+        crate::called::scan_and_call(
+            &BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
+                storage.clone(),
+            ),
+            &scope,
+            &parent,
+        )
+        .unwrap();
+        crate::called::scan_and_call(
+            &BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
+                storage.clone(),
+            ),
+            &scope,
+            &parent,
+        )
+        .unwrap();
+        assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
+        assert_eq!(nod.call_pending_day.read().unwrap(), closed[2]);
+        assert_eq!(nod.call_scan_cursor.read().unwrap(), 1);
+        (closed[0], closed[1])
+    });
+
+    let events: Vec<_> = provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::SweepDaySkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].sweep, CALL_SWEEP);
+    assert_eq!(events[0].skippedDay, skipped);
+    assert_eq!(events[0].inFlightDay, in_flight);
 }

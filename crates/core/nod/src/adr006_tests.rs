@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     error::{PrecompileError, Result},
     math::constants::REAL_ID_SHIFT,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -33,7 +33,8 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
 use outbe_oracle::api::AddressPair;
 
 use crate::{
-    api, NodCertifiedGenerationProjection, NodContract, NodItemState, NodRepositoryReader,
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, precompile::INod,
+    NodCertifiedGenerationProjection, NodContract, NodItemState, NodRepositoryReader,
 };
 
 fn item(owner: Address) -> NodItemState {
@@ -294,6 +295,13 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.entry_price_value.base_slot(), U256::from(42));
         // Issued-at stamp for the call-scan cutoff, appended after everything above.
         assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(43));
+        // Frozen-day sweep columns, appended after the issued-at stamp.
+        assert_eq!(nod.qualify_sweep_day.slot(), U256::from(44));
+        assert_eq!(nod.qualify_pending_day.slot(), U256::from(45));
+        assert_eq!(nod.qualify_currency_cursor.slot(), U256::from(46));
+        assert_eq!(nod.qualify_scan_cursor.base_slot(), U256::from(47));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(48));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(49));
     });
 }
 
@@ -783,5 +791,164 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
                 .is_none(),
             "clearing has to wipe the bundle too, or the day reads as residual state"
         );
+    });
+}
+
+fn owner_n(n: u16) -> Address {
+    let mut bytes = [0u8; 20];
+    bytes[18..].copy_from_slice(&n.to_be_bytes());
+    Address::from(bytes)
+}
+
+fn seed_priced_bucket(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    owner: Address,
+    iso: u16,
+    floor: U256,
+) -> WwdEntityId {
+    let mut body = item(owner);
+    body.floor_price_minor = floor;
+    body.reference_currency = iso;
+    body.bucket_key = NodContract::bucket_key(body.worldwide_day, floor, iso);
+    api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
+    WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
+}
+
+fn publish_vwap_on(storage: &StorageHandle<'_>, index: u32, day: u32, rate: U256) {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, rate)
+        .unwrap();
+    oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+}
+
+/// A running sweep keeps its day while later ones queue: the remainder still
+/// qualifies against the pinned day's price, not a later, lower close.
+#[test]
+fn a_running_qualify_sweep_keeps_its_day_while_the_next_ones_queue() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    let skipped = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 1)
+            .unwrap();
+
+        let count = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK + 1;
+        let mut ids = Vec::with_capacity(count as usize);
+        for n in 1..=count {
+            ids.push(seed_priced_bucket(
+                &storage,
+                &scope,
+                &parent,
+                owner_n(n as u16),
+                978,
+                U256::from(n),
+            ));
+        }
+
+        let stamps = [NOW, NOW + 86_400, NOW + 2 * 86_400];
+        let closed = stamps.map(|ts| previous_date_key(timestamp_to_date_key(ts)));
+        publish_vwap_on(&storage, 1, closed[0], U256::from(1_000u64));
+        let ctx = |ts: u64| {
+            outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(1, ts, 1),
+                storage.clone(),
+            )
+        };
+
+        crate::hooks::scan_and_qualify(&ctx(stamps[0]), &scope, &parent).unwrap();
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.qualify_sweep_day.read().unwrap(), closed[0]);
+        let qualified = ids
+            .iter()
+            .filter(|id| is_qualified(&storage, &scope, &parent, **id))
+            .count();
+        assert_eq!(qualified, MAX_BUCKET_QUALIFICATIONS_PER_BLOCK as usize);
+
+        for (ts, day) in stamps.iter().zip(closed).skip(1) {
+            publish_vwap_on(&storage, 1, day, U256::from(1u64));
+            crate::hooks::scan_and_qualify(&ctx(*ts), &scope, &parent).unwrap();
+        }
+        assert_eq!(nod.qualify_sweep_day.read().unwrap(), closed[0]);
+        assert_eq!(nod.qualify_pending_day.read().unwrap(), closed[2]);
+
+        crate::hooks::run_qualify_slice(&ctx(stamps[2]), &scope, &parent).unwrap();
+        assert!(ids
+            .iter()
+            .all(|id| is_qualified(&storage, &scope, &parent, *id)));
+        assert_eq!(nod.qualify_sweep_day.read().unwrap(), closed[2]);
+        assert_eq!(nod.qualify_pending_day.read().unwrap(), 0);
+        closed[1]
+    });
+
+    let events: Vec<_> = provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::SweepDaySkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].sweep, crate::constants::QUALIFY_SWEEP);
+    assert_eq!(events[0].skippedDay, skipped);
+}
+
+/// Each currency is walked once a sweep, so two currencies each holding more
+/// undecided buckets than a slice may visit still let the sweep end.
+#[test]
+fn a_qualify_sweep_over_several_currencies_always_ends() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(840).unwrap();
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(840), 1)
+            .unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 2)
+            .unwrap();
+
+        let day = previous_date_key(timestamp_to_date_key(NOW));
+        let base = U256::from(1_000_000_000u64);
+        publish_vwap_on(&storage, 1, day, base);
+        publish_vwap_on(&storage, 2, day, base);
+        let bin = NodContract::price_to_bin(base).unwrap();
+        let count = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK + 1;
+        for iso in [840u16, 978] {
+            for n in 0..count {
+                let floor = base + U256::from(n);
+                assert_eq!(NodContract::price_to_bin(floor).unwrap(), bin);
+                let mut owner = [0u8; 20];
+                owner[16..18].copy_from_slice(&iso.to_be_bytes());
+                owner[18..20].copy_from_slice(&(n as u16).to_be_bytes());
+                seed_priced_bucket(&storage, &scope, &parent, Address::from(owner), iso, floor);
+            }
+        }
+
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
+            storage.clone(),
+        );
+        crate::hooks::scan_and_qualify(&ctx, &scope, &parent).unwrap();
+        for _ in 0..4 {
+            crate::hooks::run_qualify_slice(&ctx, &scope, &parent).unwrap();
+        }
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.qualify_sweep_day.read().unwrap(), 0, "the sweep closed");
     });
 }

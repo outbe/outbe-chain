@@ -1,6 +1,7 @@
 //! Daily call scan: force-calls qualified Nod buckets off the Oracle's
 //! finalized per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose
-//! notice period lapsed. Driven by the Cycle daily trigger.
+//! notice period lapsed. The Cycle daily trigger pins the closed UTC day and
+//! runs the first slice; later CycleTicks continue the same day.
 //!
 //! One pass over the dense callable-bucket index applies at most one transition
 //! per bucket, in lifecycle order:
@@ -32,6 +33,7 @@ use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    daily_sweep::{Scheduled, SweepDays},
     error::Result,
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key},
@@ -39,7 +41,10 @@ use outbe_primitives::{
 
 use crate::{
     api,
-    constants::{CALL_WINDOW, MAX_NOD_CALL_VISITS, MAX_NOD_FORFEITS_PER_RUN, SECS_PER_DAY},
+    constants::{
+        CALL_SWEEP, CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK, MAX_NOD_FORFEITS_PER_BLOCK,
+        SECS_PER_DAY,
+    },
     precompile::INod,
     schema::{CallTerms, NodContract},
 };
@@ -48,8 +53,8 @@ use crate::{
 /// `None` marks a day the pair published no reference price.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Runs the daily call scan. Returns the number of buckets called plus Nods
-/// forfeited.
+/// Schedule the day the Oracle has just finalized: open a Called sweep over it
+/// and run its first slice, or queue it behind the sweep still in flight.
 ///
 /// Never returns `Err` for missing market data: the Cycle dispatcher propagates
 /// a handler error out of the `CycleTick` system transaction, which fails the
@@ -60,27 +65,104 @@ pub fn scan_and_call(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<u32> {
+    let Some(last_closed_day) = closed_day(ctx)? else {
+        return Ok(0);
+    };
     let mut nod = NodContract::new(ctx.storage.clone());
-    let len = nod.callable_buckets.len()?;
-    if len == 0 {
+    if nod.call_sweep_day.read()? == 0 && nod.callable_buckets.len()? == 0 {
         return Ok(0);
     }
-    let oracle = OracleContract::new(ctx.storage.clone());
+    let days = SweepDays {
+        current: nod.call_sweep_day.read()?,
+        pending: nod.call_pending_day.read()?,
+    };
+    match days.schedule(last_closed_day) {
+        (next, Scheduled::Opened) => {
+            start_call_sweep(&nod, next)?;
+            run_call_slice(ctx, scope, parent)
+        }
+        (next, Scheduled::Queued) => {
+            nod.call_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            nod.call_pending_day.write(next.pending)?;
+            nod.emit(INod::SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: next.current,
+            })?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
 
-    // Most recent fully-closed UTC day. The call counts plain UTC days, so this
-    // is `timestamp_to_date_key`, NOT the UTC+14 `WorldwideDay` key.
+/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
+pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke - skip loudly instead of
-    // misreading an unfinalized day as one with no published price.
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    let finalized = OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
     if finalized < last_closed_day {
         tracing::warn!(
             target: "outbe::nod",
             last_closed_day,
             finalized,
-            "nod call scan: utc-day VWAP not finalized yet, skipping run"
+            "nod: utc-day VWAP not finalized yet, skipping the day's sweeps"
+        );
+        return Ok(None);
+    }
+    Ok(Some(last_closed_day))
+}
+
+/// Pin the sweep's current day and walk the callable list from the top.
+fn start_call_sweep(nod: &NodContract, days: SweepDays) -> Result<()> {
+    nod.call_sweep_day.write(days.current)?;
+    nod.call_pending_day.write(days.pending)?;
+    nod.call_scan_cursor.write(0)?;
+    Ok(())
+}
+
+fn finish_call_sweep(nod: &NodContract, pinned_day: u32) -> Result<()> {
+    let next = SweepDays {
+        current: pinned_day,
+        pending: nod.call_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
+        nod.call_sweep_day.write(0)
+    } else {
+        start_call_sweep(nod, next)
+    }
+}
+
+/// Advance an open sweep by one slice, pinned to the day it opened on so
+/// later blocks decide against the same prices. Returns how many buckets
+/// were called plus Nods forfeited.
+pub fn run_call_slice(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<u32> {
+    let mut nod = NodContract::new(ctx.storage.clone());
+    let pinned_day = nod.call_sweep_day.read()?;
+    if pinned_day == 0 {
+        return Ok(0);
+    }
+    let len = nod.callable_buckets.len()?;
+    if len == 0 {
+        finish_call_sweep(&nod, pinned_day)?;
+        return Ok(0);
+    }
+    let oracle = OracleContract::new(ctx.storage.clone());
+    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    if finalized < pinned_day {
+        tracing::warn!(
+            target: "outbe::nod",
+            pinned_day,
+            finalized,
+            "nod call scan: pinned utc-day VWAP not finalized, holding the sweep"
         );
         return Ok(0);
     }
@@ -106,7 +188,7 @@ pub fn scan_and_call(
     // the tail is already behind a descending cursor, so no live entry is
     // skipped and none is visited twice.
     let completed = loop {
-        if visited >= MAX_NOD_CALL_VISITS {
+        if visited >= MAX_NOD_CALL_VISITS_PER_BLOCK {
             break false;
         }
         if let Some(bucket_key) = nod.callable_buckets.get(cursor)? {
@@ -128,7 +210,7 @@ pub fn scan_and_call(
                     &oracle,
                     &mut windows,
                     terms.reference_currency,
-                    last_closed_day,
+                    pinned_day,
                 )?;
                 if issued_at != 0
                     && breached_enough(&windows[index].1, &terms, first_full_day(issued_at))
@@ -146,7 +228,7 @@ pub fn scan_and_call(
             } else if has_unpaid
                 && now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
             {
-                let budget = MAX_NOD_FORFEITS_PER_RUN.saturating_sub(forfeited);
+                let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
                 if budget > 0 {
                     let res = ctx.storage.with_checkpoint(|| {
                         forfeit_members(&ctx.storage, &mut nod, scope, parent, bucket_key, budget)
@@ -171,6 +253,9 @@ pub fn scan_and_call(
     };
     if next_cursor != initial_cursor {
         nod.call_scan_cursor.write(next_cursor)?;
+    }
+    if completed {
+        finish_call_sweep(&nod, pinned_day)?;
     }
     Ok(mutated)
 }

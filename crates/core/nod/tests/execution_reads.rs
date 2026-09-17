@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
-    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_RUN, hooks, precompile::INod, NodContract,
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, hooks, precompile::INod, NodContract,
     NodItemState, NodRepositoryReader,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
@@ -164,7 +164,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 &parent,
                 840,
                 body.floor_price_minor + U256::from(1),
-                MAX_BUCKET_QUALIFICATIONS_PER_RUN,
+                MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
             )
             .unwrap(),
             0
@@ -218,7 +218,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             &parent,
             840,
             U256::from(1299),
-            MAX_BUCKET_QUALIFICATIONS_PER_RUN,
+            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
 
@@ -311,11 +311,12 @@ fn idle_daily_scans_do_not_write_storage() {
         assert_eq!(NodContract::new(storage).callable_buckets.len().unwrap(), 1);
     });
     // One bucket is at the qualification floor; the other is qualified but
-    // below its call price. Neither unchanged scan should issue an SSTORE.
+    // below its call price. An idle CycleTick only continues in-flight sweeps,
+    // so neither unchanged scan should issue an SSTORE.
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+        hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
     });
     let (reads, writes) = provider.metered_storage_operations();
     assert!(reads > 0);
