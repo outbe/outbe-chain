@@ -84,6 +84,10 @@ contract EscrowAdapter is
         mapping(uint32 worldwideDay => mapping(address bidder => CommitBond)) commitBonds;
         /// @dev Recipient of finalized auction proceeds (the router routing them cross-chain).
         address proceedsRecipient;
+        /// @dev Assets rotated away from, keyed by the version they were active under.
+        mapping(uint8 version => AssetVersion) assetVersions;
+        /// @dev Version of the active asset held in `compact`, `paymentToken` and `lockId`.
+        uint8 currentAssetVersion;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -202,16 +206,16 @@ contract EscrowAdapter is
 
         EscrowAdapterStorage storage $ = _s();
 
-        // Block rotating the active payment token (or Compact) while locks are still in flight:
-        // existing locks reference the prior `paymentToken` and `lockId` via the global
-        // state, so swapping these out would route refunds/claims through the wrong asset.
+        // A rotation retires the active asset under its version: locks and bonds taken under it keep
+        // withdrawing from it, and the first deposit under the new token/Compact bootstraps its own lock.
         bool rotatingPaymentToken = address($.paymentToken) != address(0) && _paymentToken != address($.paymentToken);
         bool rotatingCompact = address($.compact) != address(0) && _compact != address($.compact);
         if (rotatingPaymentToken || rotatingCompact) {
-            // aderyn-fp-next-line(reentrancy-state-change)
-            uint256 outstanding = $.lockId == 0 ? 0 : IERC6909(address($.compact)).balanceOf(address(this), $.lockId);
-            if (outstanding != 0) revert LiveLocksOutstanding(outstanding);
-            // Reset lockId so the first deposit under the new token/Compact re-bootstraps the lock.
+            uint8 retired = $.currentAssetVersion;
+            $.assetVersions[retired] =
+                AssetVersion({compact: address($.compact), paymentToken: $.paymentToken, lockId: $.lockId});
+            $.currentAssetVersion = retired + 1;
+            emit AssetRetired(retired, address($.compact), address($.paymentToken), $.lockId);
             $.lockId = 0;
             // A new Compact needs its own allocator registration; drop the stale allocatorId/lockTag.
             if (rotatingCompact) {
@@ -321,7 +325,8 @@ contract EscrowAdapter is
         $.paymentToken.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
 
-        $.commitBonds[worldwideDay][bidder] = CommitBond({amount: amount, lockedAt: uint32(block.timestamp)});
+        $.commitBonds[worldwideDay][bidder] =
+            CommitBond({amount: amount, lockedAt: uint32(block.timestamp), assetVersion: $.currentAssetVersion});
         emit CommitBondLocked(worldwideDay, bidder, amount);
     }
 
@@ -348,15 +353,16 @@ contract EscrowAdapter is
     ///      CEI: the delete precedes both external calls; a re-claim reverts `CommitBondNotFound`.
     function _releaseCommitBond(uint32 worldwideDay, address bidder) internal {
         EscrowAdapterStorage storage $ = _s();
-        uint128 amount = $.commitBonds[worldwideDay][bidder].amount;
-        if (amount == 0) revert CommitBondNotFound();
+        CommitBond memory bond = $.commitBonds[worldwideDay][bidder];
+        if (bond.amount == 0) revert CommitBondNotFound();
+        uint128 amount = bond.amount;
 
         // Effects
         delete $.commitBonds[worldwideDay][bidder];
 
         // Interactions
-        _withdrawFromCompact(amount);
-        $.paymentToken.safeTransfer(bidder, amount);
+        _withdrawFromCompact(bond.assetVersion, amount);
+        _tokenOf(bond.assetVersion).safeTransfer(bidder, amount);
         emit CommitBondReleased(worldwideDay, bidder, amount);
     }
 
@@ -428,7 +434,7 @@ contract EscrowAdapter is
         if (totalPaid > 0) {
             address recipient = $.proceedsRecipient;
             if (recipient == address(0)) revert ProceedsRecipientNotSet();
-            $.paymentToken.safeTransfer(recipient, totalPaid);
+            _tokenOf($.auctionEscrowState[worldwideDay].assetVersion).safeTransfer(recipient, totalPaid);
         }
     }
 
@@ -458,6 +464,8 @@ contract EscrowAdapter is
 
         AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
         uint128 lockedAmount = lock.lockedAmount;
+        uint8 version = state.assetVersion;
+        IERC20 token = _tokenOf(version);
 
         if (state.finalized) {
             // Post-finalize: the bidder's instruction failed during finalization. Refund only the
@@ -471,8 +479,8 @@ contract EscrowAdapter is
                 // the lock is terminal with a full-principal refund - our fan-out was wrong, not theirs.
                 lock.status = LockStatus.Finalized;
                 state.totalLocked -= lockedAmount;
-                _withdrawFromCompact(lockedAmount);
-                $.paymentToken.safeTransfer(bidder, lockedAmount);
+                _withdrawFromCompact(version, lockedAmount);
+                token.safeTransfer(bidder, lockedAmount);
                 emit FundsRefunded(bytes32(0), worldwideDay, bidder, lockedAmount);
                 return;
             }
@@ -484,13 +492,14 @@ contract EscrowAdapter is
 
             lock.status = LockStatus.Finalized;
             state.totalLocked -= lockedAmount;
-            _withdrawFromCompact(lockedAmount);
+            _withdrawFromCompact(version, lockedAmount);
             if (refundAmount > 0) {
-                $.paymentToken.safeTransfer(bidder, refundAmount);
+                token.safeTransfer(bidder, refundAmount);
                 emit FundsRefunded(bytes32(0), worldwideDay, bidder, refundAmount);
             }
             if (burnAmount > 0) {
-                _burnProceeds(worldwideDay, bidder, burnAmount);
+                token.safeTransfer(BURN_ADDRESS, burnAmount);
+                emit ProceedsBurned(worldwideDay, bidder, burnAmount);
             }
         } else {
             // Never-finalized: the relayer never settled the series, so a full-principal refund is
@@ -501,8 +510,8 @@ contract EscrowAdapter is
             lock.status = LockStatus.Finalized;
             state.totalLocked -= lockedAmount;
 
-            _withdrawFromCompact(lockedAmount);
-            $.paymentToken.safeTransfer(bidder, lockedAmount);
+            _withdrawFromCompact(version, lockedAmount);
+            token.safeTransfer(bidder, lockedAmount);
             emit FundsRefunded(bytes32(0), worldwideDay, bidder, lockedAmount);
         }
     }
@@ -536,6 +545,20 @@ contract EscrowAdapter is
         return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
     }
 
+    /// @inheritdoc IEscrowAdapter
+    function currentAssetVersion() external view override returns (uint8) {
+        return _s().currentAssetVersion;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function getAssetVersion(uint8 version) external view override returns (AssetVersion memory) {
+        EscrowAdapterStorage storage $ = _s();
+        if (version == $.currentAssetVersion) {
+            return AssetVersion({compact: address($.compact), paymentToken: $.paymentToken, lockId: $.lockId});
+        }
+        return $.assetVersions[version];
+    }
+
     // --- Internal helpers ---
     /// @notice Validate lock inputs before any state write.
     /// @dev Rejects a zero `worldwideDay`, zero `bidder`, zero `amount`, and a bidder that already
@@ -565,6 +588,13 @@ contract EscrowAdapter is
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
     function _executeLock(uint32 worldwideDay, address bidder, uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
+        AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        // A day's locks share one asset, so its proceeds leave in one withdrawal.
+        uint8 version = $.currentAssetVersion;
+        if (state.lockCount != 0 && state.assetVersion != version) {
+            revert DayAssetRetired(worldwideDay, state.assetVersion);
+        }
+
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
         // writing. Per-call bidLocks / auctionEscrowState writes follow for locality and could
         // move above; nonReentrant on every outer entrypoint covers the deviation regardless.
@@ -582,8 +612,9 @@ contract EscrowAdapter is
         });
 
         // Update series escrow stats.
-        ++$.auctionEscrowState[worldwideDay].lockCount;
-        $.auctionEscrowState[worldwideDay].totalLocked += amount;
+        state.assetVersion = version;
+        ++state.lockCount;
+        state.totalLocked += amount;
 
         emit FundsLocked(worldwideDay, bidder, amount);
     }
@@ -625,21 +656,15 @@ contract EscrowAdapter is
         released = lockedAmount;
 
         // Interactions
-        _withdrawFromCompact(lockedAmount);
+        uint8 version = $.auctionEscrowState[worldwideDay].assetVersion;
+        _withdrawFromCompact(version, lockedAmount);
 
         if (refundedAmount > 0) {
-            $.paymentToken.safeTransfer(bidder, refundedAmount);
+            _tokenOf(version).safeTransfer(bidder, refundedAmount);
             emit FundsRefunded(receiveId, worldwideDay, bidder, refundedAmount);
         }
 
         // Paid portion stays in this contract; the caller routes it.
-    }
-
-    /// @dev Burn an undistributable winning portion: park it at the canonical dead address (the
-    ///      payment token exposes no burn of its own) and emit the burn marker.
-    function _burnProceeds(uint32 worldwideDay, address bidder, uint128 amount) internal {
-        _s().paymentToken.safeTransfer(BURN_ADDRESS, amount);
-        emit ProceedsBurned(worldwideDay, bidder, amount);
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).
@@ -656,16 +681,25 @@ contract EscrowAdapter is
         }
     }
 
-    /// @notice Withdraw tokens from The Compact via forced withdrawal.
-    /// @dev Reverts `NoDeposits` if `lockId` is unset and `ForcedWithdrawalFailed` if the reset
+    /// @notice Withdraw tokens from The Compact via forced withdrawal, out of the position `version` refers to.
+    /// @dev Reverts `NoDeposits` if that position never bootstrapped and `ForcedWithdrawalFailed` if the reset
     ///      period has not elapsed (The Compact returns false).
+    /// @param version Asset version the funds were deposited under.
     /// @param amount Amount to withdraw.
-    function _withdrawFromCompact(uint128 amount) internal {
+    function _withdrawFromCompact(uint8 version, uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
-        if ($.lockId == 0) revert NoDeposits();
-        // The Compact itself checks the reset period - if not ready, returns false.
-        bool success = $.compact.forcedWithdrawal($.lockId, address(this), amount);
+        (ITheCompact compactOf, uint256 idOf) = version == $.currentAssetVersion
+            ? ($.compact, $.lockId)
+            : (ITheCompact($.assetVersions[version].compact), $.assetVersions[version].lockId);
+        if (idOf == 0) revert NoDeposits();
+        bool success = compactOf.forcedWithdrawal(idOf, address(this), amount);
         if (!success) revert ForcedWithdrawalFailed();
+    }
+
+    /// @dev Payment token of the asset `version` refers to.
+    function _tokenOf(uint8 version) internal view returns (IERC20) {
+        EscrowAdapterStorage storage $ = _s();
+        return version == $.currentAssetVersion ? $.paymentToken : $.assetVersions[version].paymentToken;
     }
 
     /// @dev Build the lock tag for The Compact deposits.

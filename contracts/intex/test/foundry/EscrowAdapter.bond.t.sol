@@ -173,7 +173,7 @@ contract EscrowAdapterBondTest is Test {
     function test_ClaimAbandonedCommitBond_SurvivesAuctionRotation() public {
         _lockBond();
 
-        // Rotate the auction wiring (same compact/token, so no LiveLocksOutstanding guard).
+        // Rotate the auction wiring only; compact and token stay.
         address newAuction = address(0xA0C71012);
         vm.prank(admin);
         escrow.wire(newAuction, address(compact), address(paymentToken));
@@ -205,17 +205,11 @@ contract EscrowAdapterBondTest is Test {
 
     // --- shared-lockId accounting ---
 
-    /// @dev A live bond alone must register as an outstanding lock, so the wire() rotation
-    ///      guard on paymentToken/compact covers bonds without extra bookkeeping.
+    /// @dev A live bond alone registers as an outstanding lock under the shared lock id.
     function test_HasOutstandingLocks_CoversBonds() public {
         assertFalse(escrow.hasOutstandingLocks(), "clean slate");
         _lockBond();
         assertTrue(escrow.hasOutstandingLocks(), "bond counts as outstanding");
-
-        address otherToken = address(new MockERC20("X", "X", 18));
-        vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, BOND_AMOUNT));
-        escrow.wire(auction, address(compact), otherToken);
 
         vm.prank(auction);
         escrow.releaseCommitBond(worldwideDay1, bidder1);

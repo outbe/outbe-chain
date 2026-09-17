@@ -110,16 +110,6 @@ contract EscrowAdapterTest is Test {
         assertTrue(escrow.hasOutstandingLocks());
     }
 
-    function test_Wire_RevertsRotatingCompactWithLiveLocks() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        MockTheCompact compact2 = new MockTheCompact();
-        vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
-        escrow.wire(auction, address(compact2), address(paymentToken));
-    }
-
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
@@ -667,18 +657,6 @@ contract EscrowAdapterTest is Test {
     }
 
     // --- Payment Token Rotation Tests ---
-    function test_Wire_RotatePaymentToken_RejectedWithLiveLocks() public {
-        // Lock funds with the current paymentToken
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        // Rewire targeting a new token while locks are still in flight - must revert
-        MockWCOEN rotated = new MockWCOEN();
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
-        vm.prank(admin);
-        escrow.wire(auction, address(compact), address(rotated));
-    }
-
     function test_Wire_RotatePaymentToken_AllowedWhenNoLocks() public {
         // Swap active token when no locks are held.
         MockWCOEN rotated = new MockWCOEN();

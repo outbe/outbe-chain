@@ -39,6 +39,19 @@
     },
     {
       "type": "function",
+      "name": "currentAssetVersion",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "finalizeAuction",
       "inputs": [
         {
@@ -87,6 +100,42 @@
         }
       ],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getAssetVersion",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "asset",
+          "type": "tuple",
+          "internalType": "struct IEscrowAdapter.AssetVersion",
+          "components": [
+            {
+              "name": "compact",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "paymentToken",
+              "type": "address",
+              "internalType": "contract IERC20"
+            },
+            {
+              "name": "lockId",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -198,6 +247,11 @@
               "name": "lockedAt",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "assetVersion",
+              "type": "uint8",
+              "internalType": "uint8"
             }
           ]
         }
@@ -342,6 +396,37 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AssetRetired",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "compact",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "paymentToken",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "lockId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
     },
     {
       "type": "event",
@@ -676,19 +761,24 @@
     },
     {
       "type": "error",
-      "name": "ForcedWithdrawalFailed",
-      "inputs": []
+      "name": "DayAssetRetired",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "assetVersion",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
     },
     {
       "type": "error",
-      "name": "LiveLocksOutstanding",
-      "inputs": [
-        {
-          "name": "outstanding",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
+      "name": "ForcedWithdrawalFailed",
+      "inputs": []
     },
     {
       "type": "error",

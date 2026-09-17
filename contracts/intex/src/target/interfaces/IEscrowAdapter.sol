@@ -60,6 +60,8 @@ interface IEscrowAdapter {
         uint32 finalizedAt;
         /// @notice Whether the series escrow has been finalized.
         bool finalized;
+        /// @notice Asset version the day's locks were taken under; meaningful once `lockCount > 0`.
+        uint8 assetVersion;
     }
 
     /// @notice Commit-entry bond taken at `commitBid` and held until reveal/cancel/claim.
@@ -71,6 +73,19 @@ interface IEscrowAdapter {
         /// @notice Timestamp when the bond was locked (UNIX seconds). Anchors the
         ///         escrow-local `claimAbandonedCommitBond` safety window.
         uint32 lockedAt;
+        /// @notice Asset version the bond was taken under.
+        uint8 assetVersion;
+    }
+
+    /// @notice A payment token and Compact position the escrow rotated away from. Locks and bonds taken
+    ///         under it keep withdrawing from it.
+    struct AssetVersion {
+        /// @notice The Compact the position lives in.
+        address compact;
+        /// @notice Payment token the position holds.
+        IERC20 paymentToken;
+        /// @notice The Compact resource lock id of the position.
+        uint256 lockId;
     }
 
     // --- Events ---
@@ -142,6 +157,13 @@ interface IEscrowAdapter {
         address paymentTokenNew
     );
 
+    /// @notice Emitted when a rotation retires the active asset; locks and bonds taken under it keep using it.
+    /// @param version Version number the retired asset keeps.
+    /// @param compact The Compact the retired position lives in.
+    /// @param paymentToken Payment token of the retired position.
+    /// @param lockId Resource lock id of the retired position.
+    event AssetRetired(uint8 indexed version, address compact, address paymentToken, uint256 lockId);
+
     /// @notice Emitted when a single bidder's finalization step fails. The lock stays in
     ///         `Locked` status and is recovered by the bidder through `claimRefund`
     ///         (permissionless, after the post-finalize safety window).
@@ -193,11 +215,10 @@ interface IEscrowAdapter {
     error ForcedWithdrawalFailed();
     /// @notice No deposits made yet (lock id not set).
     error NoDeposits();
-    /// @notice Cannot rotate the active payment token (or Compact) while funds remain locked.
-    /// @dev The ERC6909 balance returned by The Compact is `uint256`; surfacing the full width
-    ///      avoids silent truncation in the revert payload if the balance ever exceeds `uint128`.
-    /// @param outstanding Total balance still held in The Compact for live locks.
-    error LiveLocksOutstanding(uint256 outstanding);
+    /// @notice A lock was offered for a day whose earlier locks sit under a retired asset.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param assetVersion Asset version the day is bound to.
+    error DayAssetRetired(uint32 worldwideDay, uint8 assetVersion);
     /// @notice Self-call helper invoked by an external caller (only `address(this)` is allowed).
     error NotSelf();
     /// @notice Finalization produced proceeds but no recipient is configured.
@@ -218,8 +239,8 @@ interface IEscrowAdapter {
     // --- Admin ---
 
     /// @notice Wire contract dependencies.
-    /// @dev After the first wiring, rotating `_paymentToken` or `_compact` reverts with
-    ///      `LiveLocksOutstanding` while any locked balance remains in The Compact.
+    /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version; locks and
+    ///      bonds taken under it keep withdrawing from it.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
     /// @param _paymentToken Active payment-token address.
@@ -319,4 +340,12 @@ interface IEscrowAdapter {
 
     /// @notice True while any lock is still live in The Compact under the active lock id.
     function hasOutstandingLocks() external view returns (bool outstanding);
+
+    /// @notice Version number of the active asset.
+    function currentAssetVersion() external view returns (uint8 version);
+
+    /// @notice The asset a version refers to; the active version reads the live wiring.
+    /// @param version Asset version.
+    /// @return asset The Compact, payment token and lock id of that version.
+    function getAssetVersion(uint8 version) external view returns (AssetVersion memory asset);
 }
