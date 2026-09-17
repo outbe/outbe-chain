@@ -119,10 +119,9 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
             .unwrap();
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.
-        OracleContract::new(handle.clone())
-            .reference_currencies
-            .push(840u16)
-            .unwrap();
+        let oracle = OracleContract::new(handle.clone());
+        oracle.reference_currencies.push(840u16).unwrap();
+        oracle.config_lookback_duration.write(86_400).unwrap();
         if let Some(rate) = rate {
             outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
@@ -1148,6 +1147,7 @@ fn an_expired_position_returns_its_remainder() {
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {
+        seed_vwap(storage, T_NOW - 60, six_decimal_unit());
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -1189,6 +1189,7 @@ fn issue_gem_position_unknown_source_rejects() {
 fn issue_merchant_gem_mints_issued_and_drains_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry below coen -> entry follows coen.
         let id = seed_and_send(
             storage,
@@ -1230,6 +1231,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry above coen, source floor above 1.08 * entry -> both dominate.
         let source_entry = U256::from(3u64) * six_decimal_unit();
         let source_floor = U256::from(5u64) * six_decimal_unit();
@@ -1299,5 +1301,86 @@ fn issue_merchant_gem_after_expiry_rejects() {
 
         let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("expired"));
+    });
+}
+
+fn seed_vwap(storage: &StorageHandle, at: u64, vwap: U256) {
+    OracleContract::new(storage.clone())
+        .write_snapshot(
+            at,
+            &[(outbe_oracle::api::DAY_TYPE_PAIR, vwap, six_decimal_unit())],
+        )
+        .unwrap();
+}
+
+fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
+    let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
+    let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+    gem_api::get_gem(storage, gem_id)
+        .unwrap()
+        .unwrap()
+        .entry_price_minor
+}
+
+#[test]
+fn issue_merchant_gem_prices_at_the_four_hour_vwap() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let vwap = U256::from(3u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, vwap);
+        let id = seed_and_send(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let gem_id =
+            runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.entry_price_minor, vwap);
+        assert_eq!(
+            item.floor_price_minor,
+            vwap * U256::from(108u64) / U256::from(100u64)
+        );
+        assert_eq!(
+            item.call_price_minor,
+            vwap * U256::from(228u64) / U256::from(100u64)
+        );
+    });
+}
+
+#[test]
+fn issue_merchant_gem_ignores_a_spot_above_the_four_hour_vwap() {
+    let rate = U256::from(5u64) * six_decimal_unit();
+    let vwap = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, vwap);
+        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_source_entry_dominates_the_four_hour_vwap() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let source_entry = U256::from(4u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, U256::from(3u64) * six_decimal_unit());
+        assert_eq!(merchant_entry_price(storage, source_entry), source_entry);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_rejects_an_empty_four_hour_window() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 4 * 3600 - 60, rate);
+        let id = seed_and_send(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
+        assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }

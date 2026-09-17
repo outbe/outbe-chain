@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::fresh_coen_rate_for;
+use outbe_oracle::api::{four_hour_vwap, fresh_coen_rate_for, AddressPair};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -225,8 +225,8 @@ pub fn issue_merchant_gem(
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
-    let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
-    let entry_price = coen_rate.max(record.source_entry_price);
+    let market_price = read_market_price(storage, record.reference_currency, now)?;
+    let entry_price = market_price.max(record.source_entry_price);
     compute_cost(entry_price, promis_load, 100)?;
     let terms = outbe_gem::config::read(storage)?;
     let floor_price = derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price);
@@ -538,18 +538,17 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-/// Looks up the COEN/`reference_currency` rate via Oracle's derived pair
-/// lookup. Propagates Oracle's typed missing/stale errors and maps an unusable
-/// zero rate to `OracleUnavailable`.
-fn read_reference_oracle_rate(
+/// Four-hour VWAP of COEN in `reference_currency`; an empty window maps to
+/// `OracleUnavailable`, so issuance pauses rather than pricing off another source.
+fn read_market_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
+    now: u64,
 ) -> Result<U256> {
-    let rate = fresh_coen_rate_for(storage.clone(), reference_currency)?;
-    if rate.is_zero() {
-        return Err(GemFactoryError::OracleUnavailable.into());
-    }
-    Ok(rate)
+    let pair = AddressPair::new_coen_to(reference_currency);
+    four_hour_vwap(storage.clone(), pair, now)?
+        .filter(|vwap| !vwap.is_zero())
+        .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 fn compute_params(
