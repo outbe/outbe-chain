@@ -480,7 +480,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
     let tag = format!("0x{head:x}");
     let mut tree = new_tree(chain_id)?;
     let mut from = 0u64;
-    // ponytail: scan all history, O(leaves) memory; cache the tree when pool size warrants it.
+    // NB: scan all history, O(leaves) memory; cache the tree when pool size warrants it.
     loop {
         let to = from.saturating_add(999).min(head);
         let logs = client

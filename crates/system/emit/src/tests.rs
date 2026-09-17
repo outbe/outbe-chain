@@ -1314,7 +1314,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     // mapping/buffer data slots, and nothing else — no leaves, right nodes,
     // or ladder entries outside those namespaces.
     let mut namespaces = std::collections::BTreeSet::new();
-    for ((address, slot), _value) in provider.storage.iter() {
+    for (address, slot) in provider.storage.keys() {
         if *address != EMIT_ADDRESS {
             continue;
         }

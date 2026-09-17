@@ -51,8 +51,7 @@ pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 ///
 /// Spending it only declines further voids; the pass continues so the call arm
 /// keeps its full [`MAX_CREDIS_DAILY_VISITS`] reach.
-// ponytail: a backlog larger than this drains at one budget per day. Raise it
-// once real sidecar latency is measured, or batch the enclave round-trips.
+// TODO: a backlog larger than this drains at one budget per day.
 pub(crate) const MAX_CREDIS_VOIDS_PER_RUN: u32 = 64;
 
 /// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.

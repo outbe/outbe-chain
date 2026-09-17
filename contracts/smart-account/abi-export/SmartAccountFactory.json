@@ -278,7 +278,7 @@
       {
         "name": "state",
         "type": "uint8",
-        "internalType": "enum ICca.State"
+        "internalType": "enum ICcaRegistry.State"
       }
     ]
   }

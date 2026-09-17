@@ -14,6 +14,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  udeps:
+    name: unused dependencies
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CARGO_HOME: /github/home/.cargo
+      SOURCE_DATE_EPOCH: "0"
+      RUSTUP_TOOLCHAIN: nightly-2026-09-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: taiki-e/install-action@cargo-udeps
+      - run: cargo udeps --locked --workspace --lib --examples --tests --benches
+
   cve-scan:
     name: CVE scan (Cargo.lock)
     runs-on: ubuntu-24.04
@@ -40,6 +63,7 @@ jobs:
 
   build:
     name: build & audit binaries
+    needs: udeps
     runs-on: testnet-release-sgx
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
@@ -49,7 +73,7 @@ jobs:
       - run: cargo test --verbose
       - name: CVE scan (binaries)
         run: |
-          find target/release -maxdepth 1 -type f -executable -name 'outbe-*' | while read bin; do
+          find target/release -maxdepth 1 -type f -executable -name 'outbe-*' | while IFS= read -r bin; do
             name=$(basename "$bin")
             cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --format sarif bin "$bin" > "audit-${name}.sarif"
           done

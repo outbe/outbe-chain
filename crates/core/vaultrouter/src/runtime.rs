@@ -420,7 +420,7 @@ pub(crate) fn rebalance(
     amount: U256,
     max_amount_to: U256,
 ) -> Result<U256> {
-    if !outbe_cca::api::is_active(&storage, caller)? {
+    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(VaultRouterError::CcaNotActive(caller).into());
     }
     if vault_from == vault_to {
@@ -616,7 +616,10 @@ fn erc20_transfer_from(
     amount: U256,
 ) -> Result<()> {
     let calldata = IERC20::transferFromCall { from, to, amount }.abi_encode();
-    storage.call(token, U256::ZERO, calldata.into())?;
+    let ret = storage.call(token, U256::ZERO, calldata.into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(VaultRouterError::TokenOperationFailed.into());
+    }
     Ok(())
 }
 

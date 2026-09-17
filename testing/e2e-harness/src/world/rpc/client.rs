@@ -326,8 +326,10 @@ pub(in crate::world::rpc) fn decode_rpc_data_words(
     }
     Some(
         bytes
-            .chunks_exact(32)
-            .map(U256::from_be_slice)
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .map(|word| U256::from_be_bytes(*word))
             .collect::<Vec<_>>(),
     )
 }

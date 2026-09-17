@@ -31,11 +31,19 @@ pub enum NodFactoryError {
     #[error("PayNote proof names owner {actual}, expected {expected}")]
     PayNoteOwnerMismatch { expected: Address, actual: Address },
 
-    #[error("PayNote proof carries asset {asset}, which is not registered for reference currency {reference_currency}")]
-    PayNoteAssetMismatch {
+    #[error(
+        "settlement asset {asset} is not registered for reference currency {reference_currency}"
+    )]
+    SettlementAssetMismatch {
         asset: Address,
         reference_currency: u16,
     },
+
+    #[error("ERC20 operation failed or returned malformed data")]
+    TokenOperationFailed,
+
+    #[error("ERC20 payment did not move the exact Nod cost")]
+    SettlementAmountMismatch,
 
     #[error("PayNote spends {covered}, nod cost is {required}")]
     PayNoteCostMismatch { covered: U256, required: U256 },

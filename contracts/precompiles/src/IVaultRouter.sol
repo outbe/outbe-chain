@@ -8,7 +8,8 @@ interface IVaultRouter {
         IntexCostAmount, // todo remove once implement PayNoteDeposit
         CredisCostAmount,
         GemCostAmount, // todo remove once implement PayNoteDeposit
-        PayNoteDeposit
+        PayNoteDeposit,
+        NodCostAmount
     }
 
     enum StablesTarget {
@@ -16,6 +17,7 @@ interface IVaultRouter {
         Credis
     }
 
+    error TokenOperationFailed();
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
     error InvalidReferenceCurrency();
