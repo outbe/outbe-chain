@@ -10,6 +10,7 @@ use outbe_primitives::math::{
 use crate::{
     constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
+    precompile::IGem,
     schema::{GemContract, GemData, GemState},
 };
 
@@ -195,7 +196,7 @@ impl GemContract<'_> {
 
         item.state = new_state as u8;
         self.gem_items.update(&item)?;
-        Ok(())
+        self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
     pub(crate) fn insert_qualified(
@@ -298,7 +299,8 @@ impl GemContract<'_> {
         self.push_called(
             gem_id,
             called_at + u64::from(item.call_notice_period_seconds),
-        )
+        )?;
+        self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {

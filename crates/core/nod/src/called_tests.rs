@@ -1348,3 +1348,46 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     assert_eq!(events[0].skippedDay, skipped);
     assert_eq!(events[0].inFlightDay, in_flight);
 }
+
+#[test]
+fn a_call_pass_announces_one_batch_metadata_update() {
+    use alloy_sol_types::SolEvent;
+
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        register(&storage, OTHER_ISO);
+        issue_qualified(&storage, &scope, &parent, Address::repeat_byte(0x11), ISO);
+        issue_qualified(
+            &storage,
+            &scope,
+            &parent,
+            Address::repeat_byte(0x22),
+            OTHER_ISO,
+        );
+        let at = START + 30 * DAY;
+        let latest = last_closed_day(at);
+        fill_days_for(&storage, ISO, latest, CALL_LOOKBACK_DAYS, above_call());
+        fill_days_for(
+            &storage,
+            OTHER_ISO,
+            latest,
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+
+        assert_eq!(scan(&storage, &scope, &parent, at), 2);
+        assert_eq!(scan(&storage, &scope, &parent, at + DAY), 0);
+    });
+
+    let batches = provider
+        .get_events(outbe_primitives::addresses::NOD_ADDRESS)
+        .iter()
+        .filter(|log| crate::precompile::INod::BatchMetadataUpdate::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(batches, 1);
+}

@@ -16,6 +16,7 @@ use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
     constants::{BIN_STEP_BP, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW},
     errors::NodError,
+    precompile::INod,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
@@ -379,7 +380,10 @@ impl NodContract<'_> {
             scope,
             current_bucket,
             BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-        )
+        )?;
+        self.emit(INod::MetadataUpdate {
+            _tokenId: item.nod_id.to_u256(),
+        })
     }
 
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {

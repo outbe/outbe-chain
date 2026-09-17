@@ -1729,3 +1729,29 @@ fn precompile_safe_transfer_with_data_reverts() {
         assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
     });
 }
+
+#[test]
+fn metadata_update_marks_each_lifecycle_transition() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        GemContract::new(storage.clone())
+            .mark_called(gem_id, T_NOW)
+            .unwrap();
+        api::set_state(&storage, gem_id, GemState::Settled).unwrap();
+        api::burn(&storage, gem_id).unwrap();
+        gem_id
+    });
+
+    let updates: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::MetadataUpdate::decode_log_data(log).ok())
+        .map(|event| event._tokenId)
+        .collect();
+    assert_eq!(updates, vec![gem_id; 3]);
+}

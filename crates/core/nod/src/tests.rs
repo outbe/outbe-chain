@@ -778,3 +778,61 @@ fn transfer_surface_is_soul_bound() {
         assert!(!INod::isApprovedForAllCall::abi_decode_returns(&out).unwrap());
     });
 }
+
+#[test]
+fn metadata_updates_follow_qualification_passes_and_settlement() {
+    use crate::precompile::INod;
+    use alloy_sol_types::SolEvent;
+
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let first = item(Address::repeat_byte(0x51), U256::from(500_000), USD);
+    let second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        for body in [&first, &second] {
+            api::add_nod(&storage, &scope, &parent, body, U256::from(5)).unwrap();
+        }
+        let context = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        let rate = U256::from(700_000);
+        let day = outbe_primitives::time::first_full_day(first.issued_at);
+        let budget = crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
+        let inspected =
+            hooks::qualify_buckets_with_rate(&context, &scope, &parent, USD, rate, day, budget)
+                .unwrap();
+        assert_eq!(inspected, 2);
+        hooks::qualify_buckets_with_rate(&context, &scope, &parent, USD, rate, day, budget)
+            .unwrap();
+
+        let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+        api::settle_nod(
+            &storage,
+            &scope,
+            api::load_item(&storage, &scope, &parent, first.nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+    });
+
+    let events = provider.get_events(outbe_primitives::addresses::NOD_ADDRESS);
+    let batches = events
+        .iter()
+        .filter(|log| INod::BatchMetadataUpdate::decode_log_data(log).is_ok())
+        .count();
+    let updates: Vec<U256> = events
+        .iter()
+        .filter_map(|log| INod::MetadataUpdate::decode_log_data(log).ok())
+        .map(|event| event._tokenId)
+        .collect();
+    assert_eq!(batches, 1);
+    assert_eq!(updates, vec![first.nod_id.to_u256()]);
+}

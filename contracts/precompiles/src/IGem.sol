@@ -44,6 +44,8 @@ interface IGem {
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
 
     // --- Events (emitted by the Gem precompile) ---
+    /// @notice ERC-4906: the metadata of `_tokenId` changed.
+    event MetadataUpdate(uint256 _tokenId);
     /// @notice Issued gem promoted to Qualified by the daily qualification sweep.
     event GemQualified(uint256 indexed gemId, uint64 qualifiedAt);
     /// @notice Qualified gem force-called by the daily Call scan.
