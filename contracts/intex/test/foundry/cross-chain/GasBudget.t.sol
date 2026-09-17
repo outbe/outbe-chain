@@ -500,26 +500,23 @@ contract AuctionGasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversRefundsAtTheirWidest() public {
-        uint256 bidders = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        uint256 winners = BridgeMsgCodec.MAX_REFUND_WINNERS;
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
+        escrow.setProceedsRecipient(address(router));
 
-        address[] memory who = new address[](bidders);
-        uint128[] memory refunded = new uint128[](bidders);
-        uint128[] memory paid = new uint128[](bidders);
-        for (uint256 i = 0; i < bidders; ++i) {
+        address[] memory who = new address[](winners);
+        for (uint256 i = 0; i < winners; ++i) {
             who[i] = address(uint160(0x5000 + i));
-            paymentToken.mint(who[i], 1000e6);
+            paymentToken.mint(who[i], 1e18);
             vm.prank(who[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1000e6, 1_000_000, 1);
-            refunded[i] = 1000e6;
-            paid[i] = 0;
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1e18, 1_000_000, 1);
         }
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, 600_000, 1e6, who, 0, 0));
 
         emit log_named_uint("refund_full_chunk", spent);
-        assertLt(spent, IntexGas.refund(bidders), "the widest refund chunk must fit the quote");
+        assertLt(spent, IntexGas.refund(winners), "the widest refund chunk must fit the quote");
     }
 
     function test_TheQuoteCoversAuctionResult() public {

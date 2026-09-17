@@ -8,6 +8,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
+import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
@@ -28,6 +29,8 @@ contract EscrowAdapterTest is Test {
     uint32 worldwideDay2 = 2;
 
     uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
+    uint128 constant BASIS = 1_000_000;
+    uint32 constant CLEARING_RATE = 600_000;
 
     /// @dev Stand-in for the inbound bridge message id that carries refund instructions. Threaded
     ///      through `finalizeAuction` into the emitted events.
@@ -243,60 +246,68 @@ contract EscrowAdapterTest is Test {
     }
 
     // --- FinalizeAuction Tests ---
-    function test_FinalizeAuction_FullRefund() public {
-        // Lock funds
+
+    /// @dev Lock a bid the way the auction sizes it, so the day's clearing terms can work out its payment.
+    function _lockBid(address bidder, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
+        amount = uint128(IntexUnits.escrowAmount(quantity, BASIS, bidRate));
+        paymentToken.mint(bidder, amount);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
-
-        // Finalize with full refund
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // Check bidder received refund
-        assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + LOCK_AMOUNT);
-
-        // Check auction status
-        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
-        assertTrue(hasLocks); // Count stays, but amount is 0
-        assertTrue(isFinalized);
-        assertEq(totalLocked, 0);
-        assertEq(_liveCompactBalance(), 0);
-
-        // Check lock status
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
-        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        escrow.lockFunds(worldwideDay1, bidder, amount, bidRate, quantity);
     }
 
-    // --- post-finalize abandon refund for omitted/mismatched bidders ---
+    function _paidAtClearing(uint16 quantity) internal pure returns (uint128) {
+        return uint128(IntexUnits.escrowAmount(quantity, BASIS, CLEARING_RATE));
+    }
 
-    // Finalize the series settling bidder2 only; bidder1 is omitted, left Locked with no split.
-    function _finalizeOmittingBidder1() internal {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1);
+    function _winners(address a) internal pure returns (address[] memory winners) {
+        winners = new address[](1);
+        winners[0] = a;
+    }
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+    function _winners(address a, address b) internal pure returns (address[] memory winners) {
+        winners = new address[](2);
+        winners[0] = a;
+        winners[1] = b;
+    }
+
+    function _finalize(address[] memory winners) internal returns (uint128) {
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        return escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
+    }
+
+    function test_FinalizeAuction_LoserIsLeftToClaim() public {
+        uint128 locked = _lockBid(bidder1, 500_000, 1);
+        uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
+
+        _finalize(new address[](0));
+
+        assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore, "nothing is pushed to a loser");
+        (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertTrue(hasLocks);
+        assertTrue(isFinalized);
+        assertEq(totalLocked, locked);
+        assertEq(_liveCompactBalance(), locked);
+
+        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
+    }
+
+    // --- a bidder the finalized day never named ---
+
+    // Finalize the day naming bidder2 only, who pays its whole lock; bidder1 lost and is left Locked.
+    function _finalizeOmittingBidder1() internal returns (uint128 locked1) {
+        locked1 = _lockBid(bidder1, 500_000, 1);
+        _lockBid(bidder2, CLEARING_RATE, 1);
+        _finalize(_winners(bidder2));
     }
 
     function test_OmittedBidder_RecoversFullPrincipal() public {
-        _finalizeOmittingBidder1();
+        uint128 locked = _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY() + 1);
-        escrow.claimRefund(worldwideDay1, bidder1); // permissionless
+        escrow.claimRefund(worldwideDay1, bidder1); // permissionless, and at once
 
-        assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
+        assertEq(paymentToken.balanceOf(bidder1), balBefore + locked, "full principal refunded");
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "lock deleted");
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
@@ -307,133 +318,99 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_FinalizeAuction_FullClaim() public {
-        // Lock funds
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
+        uint128 locked = _lockBid(bidder1, CLEARING_RATE, 3);
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
 
-        // Finalize with full claim (winning bid)
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
-
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, 0, LOCK_AMOUNT, 1);
-
-        vm.prank(bridger);
-        uint128 routed = escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, 0, locked, 1);
+        uint128 routed = _finalize(_winners(bidder1));
 
         // Proceeds handed to the configured recipient for cross-chain routing, not the caller.
-        assertEq(routed, LOCK_AMOUNT);
-        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + LOCK_AMOUNT);
+        assertEq(routed, locked);
+        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + locked);
         assertEq(paymentToken.balanceOf(bridger), 0);
 
-        // Check accounting cleared
+        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "nothing left to claim");
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
     }
 
     function test_FinalizeAuction_PartialRefundAndClaim() public {
-        // Lock funds
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
+        uint128 locked = _lockBid(bidder1, 900_000, 2);
+        uint128 paid = _paidAtClearing(2);
         uint256 bidderBalanceBefore = paymentToken.balanceOf(bidder1);
         uint256 recipientBalanceBefore = paymentToken.balanceOf(proceedsRecipient);
-        uint128 refundedAmount = LOCK_AMOUNT * 30 / 100; // 30% refund
-        uint128 paidAmount = LOCK_AMOUNT - refundedAmount; // 70% claim
-
-        // Finalize with partial refund and claim
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: refundedAmount, paidAmount: paidAmount
-        });
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, refundedAmount, paidAmount, 1);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, locked - paid, paid, 1);
+        _finalize(_winners(bidder1));
 
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + paid, "payment routed");
+        assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore, "the refund waits for its claim");
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Won));
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(totalLocked, locked - paid, "only the refund stays held");
 
-        // Bidder refunded their portion; proceeds handed to the configured recipient.
-        assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
-        assertEq(paymentToken.balanceOf(proceedsRecipient), recipientBalanceBefore + paidAmount);
+        vm.prank(outsider);
+        escrow.claimRefund(worldwideDay1, bidder1);
+
+        assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + locked - paid, "refund claimed at once");
+        (,, totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(totalLocked, 0);
+        assertEq(_liveCompactBalance(), 0);
     }
 
     function test_FinalizeAuction_MultipleBidders() public {
-        // Lock funds for multiple bidders
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2, 1_000_000, 1);
+        uint128 locked1 = _lockBid(bidder1, 900_000, 1);
+        uint128 locked2 = _lockBid(bidder2, 700_000, 4);
+        uint128 paid = _paidAtClearing(1) + _paidAtClearing(4);
 
-        // Finalize: bidder1 gets full refund, bidder2 gets a 50/50 split.
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-        instructions[1] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: LOCK_AMOUNT
-        });
-
-        // totalRefunded = LOCK_AMOUNT (b1) + LOCK_AMOUNT (b2) = 2*LOCK_AMOUNT
-        // totalPaid = 0 (b1) + LOCK_AMOUNT (b2) = LOCK_AMOUNT
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, LOCK_AMOUNT * 2, LOCK_AMOUNT, 2);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, locked1 + locked2 - paid, paid, 2);
+        _finalize(_winners(bidder1, bidder2));
 
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        escrow.claimRefund(worldwideDay1, bidder1);
+        escrow.claimRefund(worldwideDay1, bidder2);
 
-        // All escrow drained for the series.
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
         assertEq(_liveCompactBalance(), 0);
     }
 
-    function test_FinalizeAuction_EmptyInstructions() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+    function test_FinalizeAuction_EmptyChunkClosesTheDay() public {
+        uint128 locked = _lockBid(bidder1, 500_000, 1);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](0);
-
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "instructions"));
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        uint128 routed = escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, new address[](0), 0, 0, 0, 0, true);
+
+        assertEq(routed, 0);
+        (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertTrue(isFinalized, "a chain with no winners still closes its day");
+        assertEq(totalLocked, locked);
     }
 
     function test_FinalizeAuction_AlreadyFinalized() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        _lockBid(bidder1, 900_000, 1);
+        _finalize(_winners(bidder1));
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // Try to finalize again
+        address[] memory winners = _winners(bidder1);
         vm.expectRevert(IEscrowAdapter.AlreadyFinalized.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     function test_FinalizeAuction_ZeroBidder_EmitsBidderRefundFailed() public {
-        // A zero-address bidder fails inside the per-bidder try/catch and emits BidderRefundFailed;
-        // the outer call still succeeds (with zero totals because the single iteration failed).
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        // A zero-address winner holds no lock: it is skipped and the call still succeeds.
+        _lockBid(bidder1, 900_000, 1);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: address(0), refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, address(0), "");
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.BidderRefundFailed(
+            RECEIVE_ID, worldwideDay1, address(0), abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
+        );
+        _finalize(_winners(address(0)));
 
         // bidder1's lock is still recoverable by the bidder through claimRefund.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
@@ -441,68 +418,44 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_FinalizeAuction_LockNotActive_EmitsBidderRefundFailed() public {
-        // Series has zero locks: the single instruction's bidder has no active lock, so the
-        // per-bidder try/catch catches LockNotActive and emits BidderRefundFailed.
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-
-        vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.BidderRefundFailed(
+            RECEIVE_ID, worldwideDay1, bidder1, abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
+        );
+        _finalize(_winners(bidder1));
     }
 
     function test_FinalizeAuction_OneFailure_OthersSucceed() public {
-        // Two bidders: bidder1's instruction has an amount mismatch (fails), bidder2's is valid.
-        // Fail-safe loop: bidder1 emits BidderRefundFailed, bidder2 finalizes normally.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1);
+        // bidder1 bid under the clearing rate, so its payment would exceed its lock; bidder2 is a valid winner.
+        uint128 locked1 = _lockBid(bidder1, 500_000, 1);
+        uint128 locked2 = _lockBid(bidder2, 900_000, 1);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1,
-            refundedAmount: LOCK_AMOUNT / 2,
-            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch - will fail
-        });
-        instructions[1] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder2,
-            refundedAmount: LOCK_AMOUNT,
-            paidAmount: 0 // full refund, valid
-        });
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.BidderRefundFailed(
+            RECEIVE_ID,
+            worldwideDay1,
+            bidder1,
+            abi.encodeWithSelector(IEscrowAdapter.PaymentExceedsLock.selector, locked1, uint256(_paidAtClearing(1)))
+        );
+        _finalize(_winners(bidder1, bidder2));
 
-        uint256 bidder2BalanceBefore = paymentToken.balanceOf(bidder2); // after lockFunds crosschainBurn
-
-        vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // bidder1's lock unchanged (still Locked); bidder2's finalized + refunded.
         assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder2).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        assertEq(paymentToken.balanceOf(bidder2), bidder2BalanceBefore + LOCK_AMOUNT);
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder2).status), uint8(IEscrowAdapter.LockStatus.Won));
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(totalLocked, locked1 + locked2 - _paidAtClearing(1));
     }
 
-    function test_FinalizeAuction_AmountMismatch_EmitsBidderRefundFailed() public {
-        // A bidder whose refund + payout doesn't match the locked amount fails inside the per-bidder
-        // try/catch and emits BidderRefundFailed; the outer call still succeeds.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+    function test_FinalizeAuction_PaymentExceedsLock_EmitsBidderRefundFailed() public {
+        uint128 locked = _lockBid(bidder1, 500_000, 1);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1,
-            refundedAmount: LOCK_AMOUNT / 2,
-            paidAmount: LOCK_AMOUNT / 2 - 1 // Missing 1 unit
-        });
-
-        vm.expectEmit(true, true, true, false);
-        emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        vm.expectEmit(true, true, true, true);
+        emit IEscrowAdapter.BidderRefundFailed(
+            RECEIVE_ID,
+            worldwideDay1,
+            bidder1,
+            abi.encodeWithSelector(IEscrowAdapter.PaymentExceedsLock.selector, locked, uint256(_paidAtClearing(1)))
+        );
+        _finalize(_winners(bidder1));
 
         // Lock remains active for recovery.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
@@ -510,40 +463,28 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_FinalizeAuction_AllFail_EmitsFinalizationNoOp() public {
-        // Every instruction fails (here: amount mismatch on the only bidder) -> zero settled. The
-        // series is finalized but degenerate; FinalizationNoOp surfaces it instead of a silent no-op.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
+        _lockBid(bidder1, 500_000, 1);
 
         vm.expectEmit(true, false, false, true, address(escrow));
         emit IEscrowAdapter.FinalizationNoOp(worldwideDay1, 1);
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        _finalize(_winners(bidder1));
     }
 
     function test_FinalizeAuction_OnlyBridgeRole() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        _lockBid(bidder1, 900_000, 1);
+        address[] memory winners = _winners(bidder1);
 
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
         vm.expectRevert();
         vm.prank(auction);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     // --- IAllocator Tests ---
@@ -626,34 +567,21 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Events_FundsRefunded() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        uint128 locked = _lockBid(bidder1, 900_000, 1);
+        _finalize(_winners(bidder1));
 
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(RECEIVE_ID, worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        emit IEscrowAdapter.FundsRefunded(bytes32(0), worldwideDay1, bidder1, locked - _paidAtClearing(1));
+        escrow.claimRefund(worldwideDay1, bidder1);
     }
 
     function test_Events_AuctionEscrowFinalized() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: LOCK_AMOUNT / 2, paidAmount: LOCK_AMOUNT / 2
-        });
+        uint128 locked = _lockBid(bidder1, 800_000, 5);
+        uint128 paid = _paidAtClearing(5);
 
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, LOCK_AMOUNT / 2, LOCK_AMOUNT / 2, 1);
-
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
+        emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, locked - paid, paid, 1);
+        _finalize(_winners(bidder1));
     }
 
     // --- Payment Token Rotation Tests ---
@@ -748,89 +676,47 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
     }
 
-    function test_ClaimRefund_PostFinalize_GateAnchorsAtFinalizeNotLock() public {
-        // Lock, then finalize a day later with a failing instruction (BidderRefundFailed leaves
-        // lock Locked).
-        uint32 lockedAt = uint32(block.timestamp);
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        // via-ir CSEs TIMESTAMP across vm.warp, so derive finalizedAt instead of re-reading it.
-        uint32 finalizedAt = lockedAt + 1 days;
-        vm.warp(finalizedAt);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1,
-            refundedAmount: 0,
-            paidAmount: LOCK_AMOUNT - 1 // mismatch, fails inside try/catch
-        });
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        // The pre-finalize window (lockedAt + UNFINALIZED_REFUND_DELAY) has elapsed, but the
-        // series is finalized, so the finalizedAt-anchored post-finalize gate governs and blocks.
-        uint32 nowAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
-        uint32 claimableAt = finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY();
-        vm.warp(nowAt);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, nowAt));
-        escrow.claimRefund(worldwideDay1, bidder1);
-    }
-
-    /// @dev An amount-mismatch failure records no split, and nobody can reconstruct one, so the lock is
-    ///      terminal at the full principal: the fan-out was ours to get right, not the bidder's.
-    function test_ClaimRefund_PostFinalize_NoSplit_RefundsFullPrincipal() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
-        uint32 finalizedAt = uint32(block.timestamp);
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-
-        uint32 claimableAt = finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY();
-        vm.warp(claimableAt - 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
-        );
-        escrow.claimRefund(worldwideDay1, bidder1);
+    function test_ClaimRefund_FinalizedDay_NeedsNoDelay() public {
+        uint128 locked = _lockBid(bidder1, 500_000, 1);
+        _finalize(new address[](0));
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        vm.warp(claimableAt);
         escrow.claimRefund(worldwideDay1, bidder1);
 
-        assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, LOCK_AMOUNT, "full principal returned");
+        assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "claimed before the unfinalized delay");
+    }
+
+    /// @dev A winner the chunk had to skip keeps its whole lock, and the closed day owes it back in full.
+    function test_ClaimRefund_SkippedWinner_RefundsFullPrincipal() public {
+        uint128 locked = _lockBid(bidder1, 500_000, 1);
+        _finalize(_winners(bidder1));
+
+        uint256 balanceBefore = paymentToken.balanceOf(bidder1);
+        escrow.claimRefund(worldwideDay1, bidder1);
+
+        assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "full principal returned");
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, 0, "the day's total releases with it");
     }
 
     // --- message-id threading ---
 
-    /// @dev A single finalize call must stamp the same inbound bridge message id onto every fund-movement
-    ///      event it emits (FundsRefunded) and the summary (AuctionEscrowFinalized),
-    ///      so an indexer can attribute the whole batch to one cross-chain packet.
+    /// @dev A finalize call stamps its inbound bridge message id onto every event it emits, so an indexer can
+    ///      attribute the whole chunk to one cross-chain packet.
     function test_GuidThreading_AllFinalizeEvents_CarryPacketGuid() public {
         bytes32 packet = keccak256("inbound-packet-A");
+        uint128 locked = _lockBid(bidder2, 900_000, 1);
+        uint128 paid = _paidAtClearing(1);
+        address[] memory winners = _winners(bidder1, bidder2);
 
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1); // refunded bidder
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT, 1_000_000, 1); // paid (winning) bidder
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
-        instructions[1] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
-
-        // Both finalize events must carry `packet` as the indexed receiveId (topic1).
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsRefunded(packet, worldwideDay1, bidder1, LOCK_AMOUNT);
+        emit IEscrowAdapter.BidderRefundFailed(
+            packet, worldwideDay1, bidder1, abi.encodeWithSelector(IEscrowAdapter.LockNotActive.selector)
+        );
         vm.expectEmit(true, true, false, true);
-        emit IEscrowAdapter.AuctionEscrowFinalized(packet, worldwideDay1, LOCK_AMOUNT, LOCK_AMOUNT, 2);
+        emit IEscrowAdapter.AuctionEscrowFinalized(packet, worldwideDay1, locked - paid, paid, 2);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, packet, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, packet, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 }

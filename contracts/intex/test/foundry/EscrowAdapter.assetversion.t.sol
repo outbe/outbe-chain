@@ -87,11 +87,11 @@ contract EscrowAdapterAssetVersionTest is Test {
         escrow.wire(admin, COMPACT, address(tokenB));
         vm.warp(block.timestamp + 5 minutes);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](2);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({bidder: alice, refundedAmount: LOCK, paidAmount: 0});
-        instructions[1] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bob, refundedAmount: LOCK / 2, paidAmount: LOCK / 2});
-        escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), instructions, true);
+        address[] memory winners = new address[](1);
+        winners[0] = bob;
+        escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), winners, 0, 0, 500_000, 1000e6, true);
+        escrow.claimRefund(DAY_1, alice);
+        escrow.claimRefund(DAY_1, bob);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "loser refunded in the day's token");
         assertEq(tokenA.balanceOf(bob), LOCK / 2, "winner refunded in the day's token");

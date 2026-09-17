@@ -5,9 +5,9 @@ import {CrossChainTest} from "./helpers/CrossChainTest.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {ITheCompact} from "@contracts/vendor/the-compact/interfaces/ITheCompact.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
+import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
@@ -34,9 +34,13 @@ contract PullingTokenBridge {
 ///         `--isolate`.
 abstract contract RefundGasBase is CrossChainTest {
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
+    bytes32 internal constant ESCROW_STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20260501;
-    uint128 internal constant LOCK = 1000e18;
+    uint128 internal constant BASIS = 1000e6;
+    uint16 internal constant QUANTITY = 10;
+    uint32 internal constant BID_RATE = 900_000;
+    uint32 internal constant CLEARING_RATE = 600_000;
 
     EscrowAdapter internal escrow;
     IERC20 internal token;
@@ -56,14 +60,22 @@ abstract contract RefundGasBase is CrossChainTest {
         return address(uint160(0x5000 + i));
     }
 
+    function _winners(uint256 count) internal pure returns (address[] memory who) {
+        who = new address[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            who[i] = _bidder(i);
+        }
+    }
+
     /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance already in use.
-    function _lock(uint256 from, uint256 count, uint128 amount, uint128 held) internal {
+    function _lock(uint256 from, uint256 count, uint32 bidRate, uint128 held) internal {
+        uint128 amount = uint128(IntexUnits.escrowAmount(QUANTITY, BASIS, bidRate));
         for (uint256 i = from; i < from + count; ++i) {
             address who = _bidder(i);
             deal(address(token), who, uint256(amount) + held);
             vm.prank(who);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, who, amount, 1_000_000, 1);
+            escrow.lockFunds(DAY, who, amount, bidRate, QUANTITY);
         }
     }
 
@@ -71,15 +83,10 @@ abstract contract RefundGasBase is CrossChainTest {
         vm.warp(block.timestamp + 5 minutes);
     }
 
-    function _finalize(uint256 n, uint128 paid) internal returns (uint256 spent) {
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](n);
-        for (uint256 i = 0; i < n; ++i) {
-            instructions[i] = IEscrowAdapter.FinalizationInstruction({
-                bidder: _bidder(i), refundedAmount: LOCK - paid, paidAmount: paid
-            });
-        }
+    function _finalize(uint256 n) internal returns (uint256 spent) {
+        address[] memory winners = _winners(n);
         uint256 before = gasleft();
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), instructions, false);
+        escrow.finalizeAuction(DAY, bytes32(uint256(1)), winners, 0, 0, CLEARING_RATE, BASIS, false);
         spent = before - gasleft();
     }
 }
@@ -87,52 +94,52 @@ abstract contract RefundGasBase is CrossChainTest {
 contract RefundFinalizeGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 64, LOCK, 0);
+        _lock(0, 128, BID_RATE, 0);
         _elapseCompactResetPeriod();
     }
 
-    function test_Finalize1Loser() public {
-        emit log_named_uint("finalize_losers_1", _finalize(1, 0));
+    function test_Finalize1Winner() public {
+        emit log_named_uint("finalize_winners_1", _finalize(1));
     }
 
-    function test_Finalize2Losers() public {
-        emit log_named_uint("finalize_losers_2", _finalize(2, 0));
+    function test_Finalize2Winners() public {
+        emit log_named_uint("finalize_winners_2", _finalize(2));
     }
 
-    function test_Finalize8Losers() public {
-        emit log_named_uint("finalize_losers_8", _finalize(8, 0));
+    function test_Finalize8Winners() public {
+        emit log_named_uint("finalize_winners_8", _finalize(8));
     }
 
-    function test_Finalize32Losers() public {
-        emit log_named_uint("finalize_losers_32", _finalize(32, 0));
+    function test_Finalize32Winners() public {
+        emit log_named_uint("finalize_winners_32", _finalize(32));
     }
 
-    function test_Finalize64Losers() public {
-        emit log_named_uint("finalize_losers_64", _finalize(64, 0));
-    }
-
-    /// @dev Nothing to refund, so the per-bidder transfer is skipped and only the withdrawal remains.
     function test_Finalize64Winners() public {
-        emit log_named_uint("finalize_winners_64", _finalize(64, LOCK));
+        emit log_named_uint("finalize_winners_64", _finalize(64));
+    }
+
+    function test_Finalize128Winners() public {
+        emit log_named_uint("finalize_winners_128", _finalize(128));
     }
 }
 
-contract RefundFinalizeHeldBalanceGasTest is RefundGasBase {
+/// @dev Bids at the clearing rate pay their whole lock, so each lock is deleted instead of kept for a claim.
+contract RefundFinalizeWholeLockGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 64, LOCK, 1e18);
+        _lock(0, 128, CLEARING_RATE, 0);
         _elapseCompactResetPeriod();
     }
 
-    function test_Finalize64LosersHoldingTheToken() public {
-        emit log_named_uint("finalize_losers_64_held", _finalize(64, 0));
+    function test_Finalize128WinnersPayingTheirWholeLock() public {
+        emit log_named_uint("finalize_winners_128_whole_lock", _finalize(128));
     }
 }
 
 contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 1, LOCK, 0);
+        _lock(0, 1, BID_RATE, 0);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
     }
 
@@ -143,54 +150,57 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @dev Bidder 0 is left out of the finalization and bidder 1's instruction fails with its split recorded.
+/// @dev Bidders 0 and 1 won, bidder 1 already holding the token; bidder 2 lost; bidder 3 carries a split recorded
+///      before refunds became claims.
 contract RefundClaimFinalizedGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 1, LOCK, 0);
-        _lock(1, 1, LOCK + 1, 0);
+        _lock(0, 1, BID_RATE, 0);
+        _lock(1, 1, BID_RATE, 1e18);
+        _lock(2, 2, BID_RATE, 0);
         _elapseCompactResetPeriod();
 
-        vm.mockCallRevert(
-            COMPACT,
-            abi.encodeCall(ITheCompact.forcedWithdrawal, (escrow.lockId(), address(escrow), uint256(LOCK) + 1)),
-            ""
-        );
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: _bidder(1), refundedAmount: LOCK / 2 + 1, paidAmount: LOCK / 2
-        });
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), instructions, true);
-        vm.clearMockedCalls();
+        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(ESCROW_STORAGE_SLOT) + 5));
+        bytes32 splitWord = bytes32(uint256(keccak256(abi.encode(_bidder(3), dayMap))) + 1);
+        vm.store(address(escrow), splitWord, bytes32(uint256(1000e18) | (uint256(1) << 128)));
 
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
+        escrow.finalizeAuction(DAY, bytes32(uint256(1)), _winners(2), 0, 0, CLEARING_RATE, BASIS, true);
     }
 
-    function test_ClaimAsAnOmittedBidder() public {
+    function test_ClaimAsAWinner() public {
         uint256 before = gasleft();
         escrow.claimRefund(DAY, _bidder(0));
-        emit log_named_uint("claim_finalized_omitted", before - gasleft());
+        emit log_named_uint("claim_finalized_winner", before - gasleft());
+    }
+
+    function test_ClaimAsAWinnerHoldingTheToken() public {
+        uint256 before = gasleft();
+        escrow.claimRefund(DAY, _bidder(1));
+        emit log_named_uint("claim_finalized_winner_held", before - gasleft());
+    }
+
+    function test_ClaimAsALoser() public {
+        uint256 before = gasleft();
+        escrow.claimRefund(DAY, _bidder(2));
+        emit log_named_uint("claim_finalized_loser", before - gasleft());
     }
 
     function test_ClaimARecordedSplit() public {
         uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(1));
+        escrow.claimRefund(DAY, _bidder(3));
         emit log_named_uint("claim_finalized_split", before - gasleft());
     }
 }
 
-/// @notice A day of 200 bidders with 40 winners, as it reaches a target chain today: four chunks of 64, 64, 64
-///         and 8. The day costs the first chunk, two middle ones and the closing one.
-abstract contract RefundDayGasBase is RefundGasBase {
+/// @notice A day of 200 bidders reaching a target chain in one chunk that carries its winners, closes the day and
+///         routes its proceeds; the last winner is filled in part.
+contract RefundDayGasTest is RefundGasBase {
     uint256 internal constant BIDDERS = 200;
-    uint256 internal constant WINNERS = 40;
-    uint256 internal constant CHUNK = 64;
-    uint16 internal constant CHUNKS = 4;
 
     TargetRouter internal router;
     address internal originPeer = address(0x0B1);
 
-    function _setUpDay(uint16 chunksDelivered) internal {
+    function setUp() public {
         _setUpBridge();
         _setUpEscrow();
 
@@ -202,65 +212,35 @@ abstract contract RefundDayGasBase is RefundGasBase {
         escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
         vm.deal(address(router), 1 ether);
 
-        _lock(0, BIDDERS, LOCK, 0);
+        _lock(0, BIDDERS, BID_RATE, 0);
         _elapseCompactResetPeriod();
-
-        for (uint16 i = 0; i < chunksDelivered; ++i) {
-            _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(i));
-        }
     }
 
-    function _chunk(uint16 index) internal pure returns (bytes memory) {
-        uint256 start = uint256(index) * CHUNK;
-        uint256 end = start + CHUNK > BIDDERS ? BIDDERS : start + CHUNK;
-        address[] memory who = new address[](end - start);
-        uint128[] memory refunded = new uint128[](end - start);
-        uint128[] memory paid = new uint128[](end - start);
-        for (uint256 i = start; i < end; ++i) {
-            who[i - start] = _bidder(i);
-            paid[i - start] = i < WINNERS ? LOCK / 2 : 0;
-            refunded[i - start] = LOCK - paid[i - start];
-        }
-        return BridgeMsgCodec.encodeRefundInstructions(DAY, index, CHUNKS, who, refunded, paid);
-    }
-
-    function _deliverChunk(uint16 index) internal returns (uint256 spent) {
-        bytes memory packet = _chunk(index);
+    function _deliverChunk(uint16 winnerCount) internal returns (uint256 spent) {
+        uint16 partialIndex = winnerCount == 0 ? 0 : winnerCount - 1;
+        uint16 partialWon = winnerCount == 0 ? 0 : QUANTITY / 2;
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(
+            DAY, 0, 1, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
+        );
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         spent = before - gasleft();
-    }
-}
 
-contract RefundDayFirstChunkGasTest is RefundDayGasBase {
-    function setUp() public {
-        _setUpDay(0);
-    }
-
-    function test_TheFirstChunk() public {
-        emit log_named_uint("day_chunk_first_40w_24l", _deliverChunk(0));
-    }
-}
-
-contract RefundDayMiddleChunkGasTest is RefundDayGasBase {
-    function setUp() public {
-        _setUpDay(1);
-    }
-
-    function test_AMiddleChunk() public {
-        emit log_named_uint("day_chunk_middle_64l", _deliverChunk(1));
-    }
-}
-
-contract RefundDayClosingChunkGasTest is RefundDayGasBase {
-    function setUp() public {
-        _setUpDay(3);
-    }
-
-    function test_TheChunkThatClosesTheDay() public {
-        uint256 spent = _deliverChunk(3);
-        emit log_named_uint("day_chunk_closing_8l", spent);
         (, bool finalized,) = escrow.getAuctionStatus(DAY);
-        assertTrue(finalized, "the closing chunk finalizes the day");
+        assertTrue(finalized, "the only chunk closes the day");
+    }
+
+    function test_ADayWith40Winners() public {
+        emit log_named_uint("day_chunk_40w", _deliverChunk(40));
+    }
+
+    function test_AWidestChunkFitsItsQuote() public {
+        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_REFUND_WINNERS);
+        emit log_named_uint("day_chunk_128w", spent);
+        assertLt(spent, IntexGas.refund(BridgeMsgCodec.MAX_REFUND_WINNERS), "the widest chunk must fit its quote");
+    }
+
+    function test_AChainWithoutWinners() public {
+        emit log_named_uint("day_chunk_empty", _deliverChunk(0));
     }
 }

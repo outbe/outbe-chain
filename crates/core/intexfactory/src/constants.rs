@@ -74,9 +74,6 @@ pub const MAX_SERIES_PER_MESSAGE: usize = 8;
 /// recipient costs an issue on the destination.
 pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 24;
 
-/// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
-pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
-
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;

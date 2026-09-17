@@ -21,7 +21,7 @@ use crate::world::venue_probes;
 use crate::world::venue_probes::IAuctionStage;
 use crate::world::venue_probes::IProceedsRoute;
 #[cfg(feature = "ocomp-integration")]
-use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken};
+use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken, IRefundClaim};
 use crate::world::{origin_venue, World};
 
 const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
@@ -676,9 +676,10 @@ fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_
 #[then("each escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
     // Each chain settled its own bids, so each has to give back what it did
-    // not buy.
+    // not buy, and each bidder collects it.
     for side in venue_sides(world) {
         refunds_landed_on(world, &side);
+        claim_refunds_on(world, &side);
     }
     super::auction_expectations::assert_clearing(
         world,
@@ -686,6 +687,36 @@ fn escrow_refunds_the_rest(world: &mut World) {
         &world.state.auction_bidders,
         U256::from(BIDDER_ALLOWANCE),
     );
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn claim_refunds_on(world: &World, side: &VenueSide) {
+    let worldwide_day = settled_day(world);
+    for bidder in &world.state.auction_bidders {
+        let claimable = eth::read_call(
+            &side.url,
+            side.escrow,
+            &IRefundClaim::getClaimableRefundCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+        )
+        .expect("read what the bidder can claim");
+        if claimable.amount == 0 {
+            continue;
+        }
+        eth::send_call(
+            &side.url,
+            side.escrow,
+            &bidder.key,
+            &IRefundClaim::claimRefundCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+            None,
+        )
+        .expect("claim the bidder's refund");
+    }
 }
 
 #[cfg(feature = "ocomp-integration")]

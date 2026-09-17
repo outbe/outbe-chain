@@ -10,6 +10,8 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev `getClaimableRefund` must report exactly what `claimRefund` then pays, from exactly when it pays it.
 contract EscrowAdapterClaimableTest is Test {
+    bytes32 internal constant STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
+
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockWCOEN internal token;
@@ -22,6 +24,8 @@ contract EscrowAdapterClaimableTest is Test {
 
     uint32 internal constant DAY = 1;
     uint128 internal constant LOCK = 1000e18;
+    /// @dev One Intex at the full rate locks exactly `LOCK`.
+    uint128 internal constant BASIS = 1000e6;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, relayer);
@@ -46,17 +50,21 @@ contract EscrowAdapterClaimableTest is Test {
         escrow.lockFunds(DAY, who, LOCK, 1_000_000, 1);
     }
 
-    function _finalize(address who, uint128 refunded) internal {
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: who, refundedAmount: refunded, paidAmount: LOCK - refunded
-        });
+    function _finalize(address[] memory winners, uint64 clearingRate, bool completesDay) internal {
         vm.prank(relayer);
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), instructions, true);
+        escrow.finalizeAuction(DAY, bytes32(uint256(1)), winners, 0, 0, clearingRate, BASIS, completesDay);
     }
 
-    function _finalizedAt() internal view returns (uint32 at) {
-        (,, at,) = escrow.auctionEscrowState(DAY);
+    function _only(address who) internal pure returns (address[] memory winners) {
+        winners = new address[](1);
+        winners[0] = who;
+    }
+
+    /// @dev The split word of a lock written before refunds became claims.
+    function _recordLegacySplit(address who, uint128 refund) internal {
+        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
+        bytes32 splitWord = bytes32(uint256(keccak256(abi.encode(who, dayMap))) + 1);
+        vm.store(address(escrow), splitWord, bytes32(uint256(refund) | (uint256(1) << 128)));
     }
 
     /// @dev The view's amount is paid in full, not a wei earlier than its timestamp, and nothing is left after.
@@ -65,13 +73,15 @@ contract EscrowAdapterClaimableTest is Test {
         assertEq(amount, expectedAmount, "amount");
         assertEq(claimableAt, expectedAt, "claimable at");
 
-        vm.warp(claimableAt - 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
-        );
-        escrow.claimRefund(DAY, bidder);
+        if (claimableAt != 0) {
+            vm.warp(claimableAt - 1);
+            vm.expectRevert(
+                abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
+            );
+            escrow.claimRefund(DAY, bidder);
+            vm.warp(claimableAt);
+        }
 
-        vm.warp(claimableAt);
         uint256 before = token.balanceOf(bidder);
         escrow.claimRefund(DAY, bidder);
         assertEq(token.balanceOf(bidder) - before, amount, "the claim pays what the view reported");
@@ -91,20 +101,29 @@ contract EscrowAdapterClaimableTest is Test {
         _assertClaimMatchesView(LOCK, uint32(block.timestamp) + escrow.UNFINALIZED_REFUND_DELAY());
     }
 
-    function test_ABidderLeftOutOfAFinalizedDayOwesThePrincipal() public {
-        _finalize(other, LOCK);
-        _assertClaimMatchesView(LOCK, _finalizedAt() + escrow.POST_FINALIZE_REFUND_DELAY());
+    function test_ABidderLeftOutOfAFinalizedDayOwesThePrincipalAtOnce() public {
+        _finalize(_only(other), 1_000_000, true);
+        _assertClaimMatchesView(LOCK, 0);
+    }
+
+    function test_AWinnerOwesTheRestOfItsLockAtOnce() public {
+        _finalize(_only(bidder), 400_000, true);
+        _assertClaimMatchesView(LOCK - 400e18, 0);
+    }
+
+    function test_AWinnerDoesNotWaitForTheRestOfItsDay() public {
+        _finalize(_only(bidder), 400_000, false);
+        _assertClaimMatchesView(LOCK - 400e18, 0);
     }
 
     function test_ARecordedSplitOwesTheRecordedRefund() public {
-        compact.setForcedWithdrawalShouldFail(true);
-        _finalize(bidder, LOCK / 4);
-        compact.setForcedWithdrawalShouldFail(false);
-        _assertClaimMatchesView(LOCK / 4, _finalizedAt() + escrow.POST_FINALIZE_REFUND_DELAY());
+        _recordLegacySplit(bidder, LOCK / 4);
+        _finalize(new address[](0), 0, true);
+        _assertClaimMatchesView(LOCK / 4, 0);
     }
 
     function test_ASettledLockHasNothingToClaim() public {
-        _finalize(bidder, LOCK);
+        _finalize(_only(bidder), 1_000_000, true);
         (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(DAY, bidder);
         assertEq(amount, 0);
         assertEq(claimableAt, 0);

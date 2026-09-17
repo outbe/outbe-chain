@@ -11,7 +11,7 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Escrow stand-in that reports back exactly what the chunk it was handed paid.
+/// @dev Escrow stand-in that charges each winner in the chunk its basis.
 contract SummingEscrowAdapter {
     IERC20 public paymentToken;
 
@@ -19,14 +19,12 @@ contract SummingEscrowAdapter {
         paymentToken = token;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata instructions, bool)
+    function finalizeAuction(uint32, bytes32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
         external
         pure
         returns (uint128 totalPaid)
     {
-        for (uint256 i = 0; i < instructions.length; i++) {
-            totalPaid += instructions[i].paidAmount;
-        }
+        totalPaid = uint128(basis * winners.length);
     }
 
     function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
@@ -77,14 +75,10 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
     }
 
     function _deliverChunk(uint16 chunkIndex, uint16 totalChunks, uint128 paidAmount) internal {
-        address[] memory bidders = new address[](1);
-        uint128[] memory refunded = new uint128[](1);
-        uint128[] memory paid = new uint128[](1);
-        bidders[0] = address(uint160(uint256(0xB1D) + chunkIndex));
-        refunded[0] = 0;
-        paid[0] = paidAmount;
+        address[] memory winners = new address[](1);
+        winners[0] = address(uint160(uint256(0xB1D) + chunkIndex));
         bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, bidders, refunded, paid);
+            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 1_000_000, paidAmount, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 
@@ -137,35 +131,29 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
 
         address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
         for (uint256 i = 0; i < bidders.length; i++) {
-            token.mint(bidders[i], 1_000_000e6);
+            token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 100e6, 1_000_000, 1);
+            escrow.lockFunds(DAY, bidders[i], 1e18, 1_000_000, 1);
         }
 
-        _deliverChunkFor(bidders[0], 0, 2, 100e6);
-        _deliverChunkFor(bidders[1], 1, 2, 100e6);
+        _deliverChunkFor(bidders[0], 0, 2);
+        _deliverChunkFor(bidders[1], 1, 2);
 
+        assertTrue(escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Won, "first chunk settled");
         assertTrue(
-            escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Finalized, "first chunk settled"
-        );
-        assertTrue(
-            escrow.getBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Finalized, "second chunk settled too"
+            escrow.getBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Won, "second chunk settled too"
         );
     }
 
-    function _deliverChunkFor(address bidder, uint16 chunkIndex, uint16 totalChunks, uint128 paidAmount) internal {
-        address[] memory bidders = new address[](1);
-        uint128[] memory refunded = new uint128[](1);
-        uint128[] memory paid = new uint128[](1);
-        bidders[0] = bidder;
-        refunded[0] = 0;
-        paid[0] = paidAmount;
+    function _deliverChunkFor(address winner, uint16 chunkIndex, uint16 totalChunks) internal {
+        address[] memory winners = new address[](1);
+        winners[0] = winner;
         _deliver(
             OUTBE_CHAIN_ID,
             originSender,
             address(target),
-            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, bidders, refunded, paid)
+            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 500_000, 1e6, winners, 0, 0)
         );
     }
 }

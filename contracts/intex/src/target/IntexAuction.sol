@@ -9,6 +9,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
+import {IntexUnits} from "../shared/libs/IntexUnits.sol";
 import {IWhitelist, WhitelistUpdated, requireWhitelisted} from "@shared/Whitelist.sol";
 
 /// @title IntexAuction
@@ -34,9 +35,6 @@ contract IntexAuction is
     ///         On a green day the bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`
     ///         and is then reclaimable via `claimCommitBond`; reveal/cancel/red-day return it immediately.
     uint32 public constant UNREVEALED_BOND_LOCK_PERIOD = 24 hours;
-
-    /// @dev Native/WCOEN atomic units represented by one six-decimal protocol unit.
-    uint256 private constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
 
     /// @dev EIP-712 type hash for the revealed bid; the currency pair is part of the signed
     ///      struct, so a bidder cannot swap currencies between commit and reveal.
@@ -400,9 +398,7 @@ contract IntexAuction is
         // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
         // result exactly once into 18-decimal WCOEN before locking funds.
         // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
-        uint256 escrowBasis = a.params.promisLoadMinor;
-        uint256 lockAmount =
-            uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        uint256 lockAmount = IntexUnits.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.
@@ -436,7 +432,7 @@ contract IntexAuction is
         if (a.params.commitBondMinor > 0) {
             $.escrowContract.releaseCommitBond(worldwideDay, msg.sender);
         }
-        // Lock amount must equal the clearing side's computation bit-for-bit, else finalize reverts.
+        // A winner's payment is worked out with the same formula, so it never exceeds this lock.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
         $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
     }

@@ -156,26 +156,19 @@ contract BridgeMsgCodecHelpersTest is Test {
         harness.decodeBidsBatch(packet);
     }
 
-    // --- decodeRefundInstructions: parallel-array length mismatch ---
-    function test_decodeRefundInstructions_arrayLengthMismatch_reverts() public {
-        // The decoder cross-checks that bidders / refundedAmounts / paidAmounts have equal length.
-        address[] memory bidders = new address[](2);
-        bidders[0] = address(0xB1);
-        bidders[1] = address(0xB2);
-        uint64[] memory refundedAmounts = new uint64[](1); // mismatch
-        refundedAmounts[0] = 1;
-        uint64[] memory paidAmounts = new uint64[](2);
+    // --- decodeRefundInstructions: partial fill outside the winners ---
+    function test_decodeRefundInstructions_partialOutsideWinners_reverts() public {
+        // A hand-rolled body bypasses the encoder, so the decoder checks the partial index itself.
+        address[] memory winners = new address[](2);
+        winners[0] = address(0xB1);
+        winners[1] = address(0xB2);
 
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(2), uint16(1))
         );
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
         harness.decodeRefundInstructions(packet);
     }
 }

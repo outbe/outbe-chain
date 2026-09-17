@@ -73,19 +73,6 @@
     },
     {
       "type": "function",
-      "name": "POST_FINALIZE_REFUND_DELAY",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "RELAYER_ROLE",
       "inputs": [],
       "outputs": [
@@ -379,26 +366,29 @@
           "internalType": "bytes32"
         },
         {
-          "name": "instructions",
-          "type": "tuple[]",
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction[]",
-          "components": [
-            {
-              "name": "bidder",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "refundedAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "paidAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            }
-          ]
+          "name": "winners",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "partialWon",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "basis",
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "completesDay",
@@ -867,52 +857,6 @@
         }
       ],
       "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "processFinalizationOne",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "inst",
-          "type": "tuple",
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction",
-          "components": [
-            {
-              "name": "bidder",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "refundedAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "paidAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            }
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "released",
-          "type": "uint128",
-          "internalType": "uint128"
-        }
-      ],
-      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -1499,15 +1443,25 @@
     },
     {
       "type": "error",
-      "name": "AmountMismatch",
+      "name": "BidAlreadyLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ClaimAuthorizationUnsupported",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ClearingTermsMismatch",
       "inputs": [
         {
-          "name": "locked",
-          "type": "uint128",
-          "internalType": "uint128"
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
         },
         {
-          "name": "requested",
+          "name": "basis",
           "type": "uint128",
           "internalType": "uint128"
         }
@@ -1515,12 +1469,7 @@
     },
     {
       "type": "error",
-      "name": "BidAlreadyLocked",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ClaimAuthorizationUnsupported",
+      "name": "ClearingTermsMissing",
       "inputs": []
     },
     {
@@ -1613,8 +1562,35 @@
     },
     {
       "type": "error",
-      "name": "NotSelf",
-      "inputs": []
+      "name": "PartialFillNotPartial",
+      "inputs": [
+        {
+          "name": "won",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "quantity",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PaymentExceedsLock",
+      "inputs": [
+        {
+          "name": "locked",
+          "type": "uint128",
+          "internalType": "uint128"
+        },
+        {
+          "name": "paid",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
     },
     {
       "type": "error",

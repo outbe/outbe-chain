@@ -11,6 +11,7 @@ import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
+import {IntexUnits} from "../shared/libs/IntexUnits.sol";
 import {Scope} from "../vendor/the-compact/types/Scope.sol";
 import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
 
@@ -43,11 +44,6 @@ contract EscrowAdapter is
     ///         full principal, anchored at the lock's `lockedAt`. MUST exceed the longest
     ///         legitimate finalization latency (settlement window + cross-chain delivery).
     uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
-
-    /// @notice Settling window after `finalizeAuction` for a bidder whose instruction failed, anchored
-    ///         at `finalizedAt`. A day finalizes only once every chunk has landed, so a failed
-    ///         instruction is final: the wait is a cushion, not a window for anyone to act in.
-    uint32 public constant POST_FINALIZE_REFUND_DELAY = 72 hours;
 
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
@@ -88,6 +84,8 @@ contract EscrowAdapter is
         mapping(uint8 version => AssetVersion) assetVersions;
         /// @dev Version of the active asset held in `compact`, `paymentToken` and `lockId`.
         uint8 currentAssetVersion;
+        /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
+        mapping(uint32 worldwideDay => DayClearing) dayClearing;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -373,87 +371,90 @@ contract EscrowAdapter is
     function finalizeAuction(
         uint32 worldwideDay,
         bytes32 receiveId,
-        FinalizationInstruction[] calldata instructions,
+        address[] calldata winners,
+        uint16 partialIndex,
+        uint16 partialWon,
+        uint64 clearingRate,
+        uint128 basis,
         bool completesDay
     ) external override onlyRole(RELAYER_ROLE) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
-        // A closed day takes no more instructions; within an open one each bidder is
-        // guarded by its own lock leaving `Locked`.
-        if ($.auctionEscrowState[worldwideDay].finalized) {
-            revert AlreadyFinalized();
-        }
-        if (instructions.length == 0) revert ZeroValue("instructions");
-
-        // Effects before any external interaction. The completing set closes the day, which
-        // anchors the post-finalize `claimRefund` window (POST_FINALIZE_REFUND_DELAY).
+        AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        if (state.finalized) revert AlreadyFinalized();
         if (completesDay) {
-            $.auctionEscrowState[worldwideDay].finalized = true;
-            $.auctionEscrowState[worldwideDay].finalizedAt = uint32(block.timestamp);
+            state.finalized = true;
+            state.finalizedAt = uint32(block.timestamp);
         }
+        if (winners.length != 0) _recordClearing(worldwideDay, clearingRate, basis);
 
-        uint128 totalRefunded = 0;
-        uint128 totalReleased = 0;
-        uint32 bidsProcessed = 0;
-        uint32 bidsSettled = 0;
-
-        // Per-bidder try/catch: a single failed iteration emits BidderRefundFailed and the loop
-        // continues. The failed bidder's lock stays in `Locked` status (the inner revert rolls
-        // back its state writes) and is recovered by the bidder through claimRefund.
-        for (uint256 i = 0; i < instructions.length; ++i) {
-            FinalizationInstruction calldata inst = instructions[i];
-            try this.processFinalizationOne(worldwideDay, receiveId, inst) returns (uint128 released) {
-                totalRefunded += inst.refundedAmount;
-                totalPaid += inst.paidAmount;
-                totalReleased += released;
-                ++bidsSettled;
-            } catch (bytes memory reason) {
-                // Record the intended refund split (in the outer frame, since the failing inner
-                // call's writes roll back), but only if it is economically valid. A later
-                // claimRefund then pays exactly this, never the full principal. A mismatched split
-                // records nothing, so claimRefund stays blocked until the relayer retries.
-                BidLock storage failed = $.bidLocks[worldwideDay][inst.bidder];
-                if (
-                    failed.status == LockStatus.Locked
-                        && uint256(inst.refundedAmount) + inst.paidAmount == failed.lockedAmount
-                ) {
-                    failed.failedRefund = inst.refundedAmount;
-                    failed.splitRecorded = true;
-                }
-                emit BidderRefundFailed(receiveId, worldwideDay, inst.bidder, reason);
+        uint128 totalOwed = 0;
+        uint32 settled = 0;
+        for (uint256 i = 0; i < winners.length; ++i) {
+            address bidder = winners[i];
+            BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+            if (lock.status != LockStatus.Locked) {
+                emit BidderRefundFailed(receiveId, worldwideDay, bidder, abi.encodeWithSelector(LockNotActive.selector));
+                continue;
             }
-            ++bidsProcessed;
+            uint16 quantity = lock.quantity;
+            if (partialWon != 0 && i == partialIndex) {
+                if (partialWon >= quantity) {
+                    emit BidderRefundFailed(
+                        receiveId,
+                        worldwideDay,
+                        bidder,
+                        abi.encodeWithSelector(PartialFillNotPartial.selector, partialWon, quantity)
+                    );
+                    continue;
+                }
+                quantity = partialWon;
+            }
+            uint128 locked = lock.lockedAmount;
+            uint256 paid = IntexUnits.escrowAmount(quantity, basis, clearingRate);
+            if (paid > locked) {
+                emit BidderRefundFailed(
+                    receiveId, worldwideDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
+                );
+                continue;
+            }
+
+            // forge-lint: disable-next-line(unsafe-typecast) -- bounded by `locked` just above
+            totalPaid += uint128(paid);
+            if (paid == locked) {
+                delete $.bidLocks[worldwideDay][bidder];
+            } else {
+                // The claim works the payment out again from the lock, so it has to read the units actually won.
+                lock.status = LockStatus.Won;
+                lock.quantity = quantity;
+                // forge-lint: disable-next-line(unsafe-typecast) -- below `locked` just above
+                totalOwed += locked - uint128(paid);
+            }
+            ++settled;
         }
 
-        // One write for the chunk: the loop only counts locks it actually closed, so a failed instruction
-        // leaves the day's total untouched exactly as a per-bidder decrement would have.
-        if (totalReleased > 0) $.auctionEscrowState[worldwideDay].totalLocked -= totalReleased;
+        if (totalPaid > 0) state.totalLocked -= totalPaid;
+        emit AuctionEscrowFinalized(receiveId, worldwideDay, totalOwed, totalPaid, uint32(winners.length));
+        if (winners.length != 0 && settled == 0) emit FinalizationNoOp(worldwideDay, uint32(winners.length));
 
-        emit AuctionEscrowFinalized(receiveId, worldwideDay, totalRefunded, totalPaid, bidsProcessed);
-        // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
-        if (bidsSettled == 0) emit FinalizationNoOp(worldwideDay, bidsProcessed);
-
-        // Hand proceeds to the configured recipient (the messenger) for cross-chain routing.
         if (totalPaid > 0) {
             address recipient = $.proceedsRecipient;
             if (recipient == address(0)) revert ProceedsRecipientNotSet();
-            _tokenOf($.auctionEscrowState[worldwideDay].assetVersion).safeTransfer(recipient, totalPaid);
+            uint8 version = state.assetVersion;
+            _withdrawFromCompact(version, totalPaid);
+            _tokenOf(version).safeTransfer(recipient, totalPaid);
         }
     }
 
-    /// @notice Self-call helper for `finalizeAuction`'s per-bidder try/catch. Reverts on any
-    ///         non-self call. Not part of the public surface - bundled here because Solidity
-    ///         `try/catch` only works on external/public function calls.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param receiveId Inbound bridge message id threaded into the emitted events.
-    /// @param inst Finalization instruction for the single bidder being processed.
-    /// @return released The lock the instruction closed, for the caller to subtract from the day's total.
-    function processFinalizationOne(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst)
-        external
-        returns (uint128 released)
-    {
-        if (msg.sender != address(this)) revert NotSelf();
-        return
-            _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
+    /// @dev Record the day's clearing terms on its first chunk with winners, and hold every later one to them.
+    function _recordClearing(uint32 worldwideDay, uint64 clearingRate, uint128 basis) private {
+        if (clearingRate == 0 || basis == 0) revert ClearingTermsMissing();
+        DayClearing storage clearing = _s().dayClearing[worldwideDay];
+        if (clearing.basis == 0) {
+            clearing.clearingRate = clearingRate;
+            clearing.basis = basis;
+        } else if (clearing.clearingRate != clearingRate || clearing.basis != basis) {
+            revert ClearingTermsMismatch(clearingRate, basis);
+        }
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -462,42 +463,48 @@ contract EscrowAdapter is
 
         EscrowAdapterStorage storage $ = _s();
         BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        if (lock.status != LockStatus.Locked) revert LockNotActive();
+        LockStatus status = lock.status;
+        if (status != LockStatus.Locked && status != LockStatus.Won) revert LockNotActive();
 
         AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
-        (uint128 refund, uint32 claimableAt) = _claimable(state, lock);
+        (uint128 refund, uint32 claimableAt) = _claimable(worldwideDay, state, lock);
         if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
-        uint128 lockedAmount = lock.lockedAmount;
+        // A winner's payment already left with the day's proceeds; the rest of its lock is what is still held.
+        uint128 held = status == LockStatus.Won ? refund : lock.lockedAmount;
         uint8 version = state.assetVersion;
         delete $.bidLocks[worldwideDay][bidder];
-        state.totalLocked -= lockedAmount;
+        state.totalLocked -= held;
 
-        _withdrawFromCompact(version, lockedAmount);
+        _withdrawFromCompact(version, held);
         IERC20 token = _tokenOf(version);
         if (refund > 0) {
             token.safeTransfer(bidder, refund);
             emit FundsRefunded(bytes32(0), worldwideDay, bidder, refund);
         }
-        // The winning remainder of a recorded split: its proceeds were already routed on Outbe.
-        uint128 burn = lockedAmount - refund;
+        uint128 burn = held - refund;
         if (burn > 0) {
             token.safeTransfer(BURN_ADDRESS, burn);
             emit ProceedsBurned(worldwideDay, bidder, burn);
         }
     }
 
-    /// @dev What a live lock is owed and from when. A day that never finalized owes the full principal. On a
-    ///      finalized day a lock stays live only when its instruction failed or never came: the recorded split
-    ///      where the numbers added up, the full principal where they did not.
-    function _claimable(AuctionEscrowState storage state, BidLock storage lock)
+    /// @dev What a live lock is owed and from when. A winner is owed the rest of its lock at once. A bidder the
+    ///      finalized day never named lost and is owed its principal at once, or the refund portion of a split
+    ///      recorded before refunds became claims. A day that never finalized owes the principal after the delay.
+    function _claimable(uint32 worldwideDay, AuctionEscrowState storage state, BidLock storage lock)
         private
         view
         returns (uint128 refund, uint32 claimableAt)
     {
+        if (lock.status == LockStatus.Won) {
+            DayClearing storage clearing = _s().dayClearing[worldwideDay];
+            uint256 paid = IntexUnits.escrowAmount(lock.quantity, clearing.basis, clearing.clearingRate);
+            // forge-lint: disable-next-line(unsafe-typecast) -- a winner's payment stayed below its lock
+            return (lock.lockedAmount - uint128(paid), 0);
+        }
         if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_REFUND_DELAY);
-        return
-            (lock.splitRecorded ? lock.failedRefund : lock.lockedAmount, state.finalizedAt + POST_FINALIZE_REFUND_DELAY);
+        return (lock.splitRecorded ? lock.failedRefund : lock.lockedAmount, 0);
     }
 
     // --- Views ---
@@ -515,8 +522,8 @@ contract EscrowAdapter is
     {
         EscrowAdapterStorage storage $ = _s();
         BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        if (lock.status != LockStatus.Locked) return (0, 0);
-        return _claimable($.auctionEscrowState[worldwideDay], lock);
+        if (lock.status != LockStatus.Locked && lock.status != LockStatus.Won) return (0, 0);
+        return _claimable(worldwideDay, $.auctionEscrowState[worldwideDay], lock);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -618,54 +625,6 @@ contract EscrowAdapter is
         state.totalLocked += amount;
 
         emit FundsLocked(worldwideDay, bidder, amount);
-    }
-
-    /// @notice Process a single finalization instruction: validate the split, mark the lock
-    ///         `Finalized`, refund the bidder, and collect the paid portion for the caller to route.
-    /// @dev Reverts `AmountMismatch` when `refundedAmount + paidAmount != lockedAmount`.
-    /// @param receiveId Inbound bridge message id threaded into the emitted refund/payout events.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Bidder address.
-    /// @param refundedAmount Amount to refund to the bidder.
-    /// @param paidAmount Auction proceeds left in this contract for the caller to route.
-    /// @return released The lock the instruction closed. The caller decrements the day's total: the batch
-    ///         path accumulates and writes once after its loop, so a chunk pays one write rather than one
-    ///         per bidder.
-    function _processFinalizationInstruction(
-        bytes32 receiveId,
-        uint32 worldwideDay,
-        address bidder,
-        uint128 refundedAmount,
-        uint128 paidAmount
-    ) internal returns (uint128 released) {
-        if (bidder == address(0)) revert ZeroAddress("bidder");
-
-        EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        if (lock.status != LockStatus.Locked) revert LockNotActive();
-
-        // Validate the refund + payout split matches the locked amount. Sum in uint256 so a
-        // mismatch is surfaced rather than silently wrapping when the split exceeds the lock.
-        uint128 lockedAmount = lock.lockedAmount;
-        uint256 total = uint256(refundedAmount) + paidAmount;
-        if (total != lockedAmount) {
-            revert AmountMismatch(lockedAmount, uint128(total));
-        }
-
-        // CEI ok: state writes below precede every external call in this function.
-        lock.status = LockStatus.Finalized;
-        released = lockedAmount;
-
-        // Interactions
-        uint8 version = $.auctionEscrowState[worldwideDay].assetVersion;
-        _withdrawFromCompact(version, lockedAmount);
-
-        if (refundedAmount > 0) {
-            _tokenOf(version).safeTransfer(bidder, refundedAmount);
-            emit FundsRefunded(receiveId, worldwideDay, bidder, refundedAmount);
-        }
-
-        // Paid portion stays in this contract; the caller routes it.
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).

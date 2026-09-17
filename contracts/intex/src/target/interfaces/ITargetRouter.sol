@@ -60,7 +60,7 @@ interface ITargetRouter {
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param instructionsCount Number of finalization instructions.
+    /// @param instructionsCount Winners in the chunk.
     event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
     /// @notice Emitted when a mark-called message is received from Outbe.

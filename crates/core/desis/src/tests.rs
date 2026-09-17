@@ -2334,11 +2334,11 @@ fn escrow_basis_is_promis_load() {
 // --- Refund fan-out chunking ---
 
 #[test]
-fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
+fn a_chains_winners_ship_in_chunks_the_encoder_can_carry() {
     use crate::constants::{MAX_REFUND_CHUNKS, REFUND_CHUNK_LEN};
 
-    // A chain relays every bidder it took, winners and losers alike, so the set is
-    // bounded by bid intake rather than by supply.
+    // A chain whose bids all lost still takes one chunk, which closes its day.
+    assert_eq!(runtime::refund_chunk_count(0).unwrap(), 1);
     assert_eq!(runtime::refund_chunk_count(1).unwrap(), 1);
     assert_eq!(runtime::refund_chunk_count(REFUND_CHUNK_LEN).unwrap(), 1);
     assert_eq!(
@@ -2346,14 +2346,124 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
         2
     );
 
-    // Intake's own ceiling - 64 bids across 256 batches - is exactly what the
-    // arrival set can carry, and one bidder more is refused rather than truncated.
+    // The arrival set's ceiling; one winner more is refused rather than truncated.
     let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
         runtime::refund_chunk_count(ceiling).unwrap(),
         MAX_REFUND_CHUNKS
     );
     assert!(runtime::refund_chunk_count(ceiling + 1).is_err());
+}
+
+fn ranked_winners(chains: &[u32], partial: Option<usize>) -> crate::schema::ClearingResult {
+    crate::schema::ClearingResult {
+        winners: (0..chains.len()).map(|i| bidder(i as u8)).collect(),
+        winner_quantities: vec![U256::from(7); chains.len()],
+        winner_chains: chains.to_vec(),
+        partial_winner: partial,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_partial_fill_is_named_in_the_chunk_that_carries_it() {
+    use crate::constants::REFUND_CHUNK_LEN;
+
+    // Chain 20's winners sit between chain 10's, and the last one ranked is the partial fill.
+    let mut chains = vec![10u32; REFUND_CHUNK_LEN + 1];
+    chains.insert(3, 20);
+    chains.push(10);
+    let partial = chains.len() - 1;
+    let result = ranked_winners(&chains, Some(partial));
+
+    let chunks = runtime::refund_chunks(&result, 10).unwrap();
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0].winners.len(), REFUND_CHUNK_LEN);
+    assert!(
+        !chunks[0].winners.contains(&bidder(3)),
+        "another chain's winner"
+    );
+    assert_eq!((chunks[0].partial_index, chunks[0].partial_won), (0, 0));
+    assert_eq!(
+        chunks[1].winners,
+        vec![bidder((partial - 1) as u8), bidder(partial as u8)]
+    );
+    assert_eq!((chunks[1].partial_index, chunks[1].partial_won), (1, 7));
+
+    let other = runtime::refund_chunks(&result, 20).unwrap();
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].winners, vec![bidder(3)]);
+    assert_eq!((other[0].partial_index, other[0].partial_won), (0, 0));
+}
+
+#[test]
+fn a_chain_whose_bids_all_lost_gets_one_empty_chunk() {
+    let result = ranked_winners(&[10, 10], None);
+
+    let chunks = runtime::refund_chunks(&result, 20).unwrap();
+    assert_eq!(
+        chunks,
+        vec![runtime::RefundChunk {
+            winners: vec![],
+            partial_index: 0,
+            partial_won: 0,
+        }]
+    );
+}
+
+#[test]
+fn clearing_marks_the_bid_supply_ran_out_in() {
+    with_storage(|s| {
+        open_clearing(&s, 3);
+        let bid = |n: u8, rate: u32, quantity: u16| BidData {
+            bidder_address: bidder(n),
+            intex_bid_rate: rate,
+            timestamp: u32::from(n),
+            intex_quantity: quantity,
+            issuance_currency: REFERENCE_ISO,
+            reference_currency: REFERENCE_ISO,
+        };
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            vec![bid(0, 900_000, 2), bid(1, 800_000, 2), bid(2, 700_000, 1)],
+        )
+        .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 3);
+        let result = clear(&s);
+
+        assert_eq!(result.winners, vec![bidder(0), bidder(1)]);
+        assert_eq!(result.partial_winner, Some(1));
+        assert_eq!(result.winner_quantities[1], U256::from(1));
+    });
+}
+
+/// The same vectors pin the escrow's `IntexUnits.escrowAmount`.
+#[test]
+fn rate_lock_matches_the_escrow_vectors() {
+    assert_eq!(runtime::rate_lock(1, 1, 999_999), 0);
+    assert_eq!(runtime::rate_lock(3, 333_333, 1), 0);
+    assert_eq!(
+        runtime::rate_lock(7, 123_456_789, 987_654),
+        853_528_140 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+    );
+    assert_eq!(
+        runtime::rate_lock(2, 1_500_001, 333_333),
+        999_999 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+    );
+    assert_eq!(
+        runtime::rate_lock(40, 99_999_999, 600_001),
+        2_400_003_975 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+    );
+    assert_eq!(
+        runtime::rate_lock(65_535, 100_000_000_000, 1_000_000),
+        6_553_500_000_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+    );
 }
 
 // --- Days the oracle could not price ---
