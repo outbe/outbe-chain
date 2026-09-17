@@ -193,16 +193,16 @@ pub fn verify_receipts(
     let request = plan.request_budget_split();
     ensure(
         plan.nod()
-            .nod_gratis_consumed()
-            .checked_add(plan.carry_over().credited_unused_lysis())
-            == Some(request.lysis_budget),
-        "Lysis receipt budget conservation",
+            .lysis_allocation_minor()
+            .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
+            == Some(request.lysis_limit_minor),
+        "Lysis receipt limit conservation",
     )?;
     // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
     ensure(
         request
-            .lysis_budget
-            .checked_add(request.auction_base)
+            .lysis_limit_minor
+            .checked_add(request.desis_limit_minor)
             .is_some_and(|total| total <= request.day_limit),
         "Lysis receipt day conservation",
     )?;
@@ -256,8 +256,8 @@ fn verify_request_receipt(
             && receipt.wwd == expected.wwd
             && receipt.day_type == expected.day_type
             && receipt.day_limit == expected.day_limit
-            && receipt.lysis_budget == expected.lysis_budget
-            && receipt.auction_base == expected.auction_base
+            && receipt.lysis_limit_minor == expected.lysis_limit_minor
+            && receipt.desis_limit_minor == expected.desis_limit_minor
             && receipt.auction_entry_prices == expected.auction_entry_prices,
         "Lysis request receipt fields",
     )?;
@@ -269,8 +269,8 @@ fn verify_request_receipt(
         receipt.logical_anchor <= expected.logical_anchor,
         "Lysis request receipt logical anchor",
     )?;
-    let briefed_supply = if expected.day_type == DayType::Green {
-        expected.auction_base
+    let desis_limit_minor = if expected.day_type == DayType::Green {
+        expected.desis_limit_minor
     } else {
         U256::ZERO
     };
@@ -279,7 +279,7 @@ fn verify_request_receipt(
             == Some(desis_request_brief_hash(
                 expected.protocol_bundle_hash,
                 expected.wwd,
-                briefed_supply,
+                desis_limit_minor,
                 &expected.auction_entry_prices,
                 receipt.logical_anchor,
             )?),
@@ -300,7 +300,7 @@ fn verify_nod_receipt(
             && receipt.nod_count == expected.exact_counts().nod_count
             && receipt.nod_root == expected.nod_root()
             && receipt.nod_amount_total == expected.nod_amount_total()
-            && receipt.nod_gratis_consumed == expected.nod_gratis_consumed()
+            && receipt.lysis_allocation_minor == expected.lysis_allocation_minor()
             && receipt.issued_at == expected.issued_at(),
         "Lysis Nod receipt",
     )?;
@@ -311,7 +311,7 @@ fn verify_nod_receipt(
         nod_count: expected.exact_counts().nod_count,
         nod_root: expected.nod_root(),
         nod_amount_total: expected.nod_amount_total(),
-        nod_gratis_consumed: expected.nod_gratis_consumed(),
+        lysis_allocation_minor: expected.lysis_allocation_minor(),
         issued_at: expected.issued_at(),
     };
     receipt.validate_projection(&projection, limits)?;
@@ -393,17 +393,18 @@ fn verify_carry_over_receipt(
     let expected = plan.carry_over();
     ensure(
         receipt.source_wwd == expected.source_wwd()
-            && receipt.credited_unused_lysis == expected.credited_unused_lysis()
+            && receipt.credited_unused_lysis_limit_minor
+                == expected.credited_unused_lysis_limit_minor()
             && receipt
                 .before_value
-                .checked_add(receipt.credited_unused_lysis)
+                .checked_add(receipt.credited_unused_lysis_limit_minor)
                 == Some(receipt.after_value),
         "Lysis carry-over receipt",
     )?;
     let projection = CarryOverStateEventProjectionV1 {
         source_wwd: receipt.source_wwd,
         before_value: receipt.before_value,
-        credited_unused_lysis: receipt.credited_unused_lysis,
+        credited_unused_lysis_limit_minor: receipt.credited_unused_lysis_limit_minor,
         after_value: receipt.after_value,
     };
     receipt.validate_projection(&projection, limits)?;

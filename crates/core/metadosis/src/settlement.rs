@@ -22,9 +22,9 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MetadosisCalculation {
     pub(crate) gratis_demand: U256,
-    pub(crate) gratis_supply: U256,
-    pub(crate) gratis_allocation: U256,
-    pub(crate) auction_base: U256,
+    pub(crate) day_gratis_limit_minor: U256,
+    pub(crate) lysis_limit_minor: U256,
+    pub(crate) desis_limit_minor: U256,
 }
 
 impl MetadosisContract<'_> {
@@ -52,30 +52,30 @@ impl MetadosisContract<'_> {
             .ok_or_else(|| {
                 crate::errors::storage_corruption("Metadosis full-precision demand overflow".into())
             })?;
-        let mut supply = wwd_metadosis_limit;
+        let mut day_gratis_limit_minor = wwd_metadosis_limit;
         match wwd_type {
             WwdDayType::Green => {}
             WwdDayType::Red => {
                 demand /= U256::from(RED_DAY_REDUCTION_COEF);
-                supply /= U256::from(RED_DAY_REDUCTION_COEF);
+                day_gratis_limit_minor /= U256::from(RED_DAY_REDUCTION_COEF);
             }
             WwdDayType::Unknown => {
                 return Err(MetadosisError::UnknownWorldwideDayType.into());
             }
         }
-        let allocation = demand.min(supply);
+        let lysis_limit_minor = demand.min(day_gratis_limit_minor);
         // The day sells what it earned beyond the symbolic share, and the limit
         // only caps it: the headroom a weak day leaves is not issued at all.
-        let auction_base = tribute_nominal_total
+        let desis_limit_minor = tribute_nominal_total
             .min(wwd_metadosis_limit)
-            .checked_sub(allocation)
+            .checked_sub(lysis_limit_minor)
             .ok_or_else(|| {
                 crate::errors::storage_corruption(
-                    "Metadosis allocation exceeds the day's nominal".into(),
+                    "Metadosis Lysis Limit exceeds the day's nominal".into(),
                 )
             })?;
-        let split_total = allocation
-            .checked_add(auction_base)
+        let split_total = lysis_limit_minor
+            .checked_add(desis_limit_minor)
             .ok_or_else(|| crate::errors::storage_corruption("Metadosis split overflow".into()))?;
         if split_total > wwd_metadosis_limit {
             return Err(crate::errors::storage_corruption(
@@ -84,9 +84,9 @@ impl MetadosisContract<'_> {
         }
         Ok(MetadosisCalculation {
             gratis_demand: demand,
-            gratis_supply: supply,
-            gratis_allocation: allocation,
-            auction_base,
+            day_gratis_limit_minor,
+            lysis_limit_minor,
+            desis_limit_minor,
         })
     }
 }
@@ -156,7 +156,7 @@ pub(crate) fn process_ocomp_ready_candidate(
 
     let calculation =
         metadosis.calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?;
-    if calculation.gratis_allocation.is_zero() {
+    if calculation.lysis_limit_minor.is_zero() {
         return process_local_terminal_outcome(
             metadosis,
             ctx,
@@ -240,14 +240,14 @@ fn process_local_terminal_outcome(
             tribute_nominal_total,
             calculation,
         } => {
-            let auction_base = calculation.auction_base;
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, auction_base)?;
+            let desis_limit_minor = calculation.desis_limit_minor;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, desis_limit_minor)?;
             // The limit headroom above the day's own nominal is issued by nobody, so it stays on
             // the warehouse together with whatever the brief did not take.
             let returned = current
                 .metadosis_limit_amount
-                .checked_sub(calculation.gratis_allocation)
-                .and_then(|rest| rest.checked_sub(auction_base))
+                .checked_sub(calculation.lysis_limit_minor)
+                .and_then(|rest| rest.checked_sub(desis_limit_minor))
                 .and_then(|headroom| headroom.checked_add(to_promis))
                 .ok_or_else(|| {
                     crate::errors::storage_corruption(
@@ -260,7 +260,7 @@ fn process_local_terminal_outcome(
                 worldwideDay: wwd.into(),
                 tributeTotals: tribute_nominal_total,
                 dayGratisDemand: calculation.gratis_demand,
-                dayGratisLimit: calculation.gratis_supply,
+                dayGratisLimit: calculation.day_gratis_limit_minor,
                 dayGratisAllocation: U256::ZERO,
                 dayGratisAllocationRemainder: U256::ZERO,
                 netDayGratisAllocation: U256::ZERO,
@@ -277,41 +277,47 @@ fn dispatch_brief(
     metadosis: &mut MetadosisContract,
     dtype: WwdDayType,
     wwd: WorldwideDay,
-    supply: U256,
+    desis_limit_minor: U256,
 ) -> Result<U256> {
     let reference_prices = day_entry_prices(metadosis, ctx, wwd)?;
     // A day with nothing to sell is briefed as cancelled: an auction opened over
-    // zero supply would run its whole cross-chain cycle with no winner possible.
-    let is_green = dtype == WwdDayType::Green && !supply.is_zero();
-    let brief_supply = if is_green { supply } else { U256::ZERO };
+    // a zero limit would run its whole cross-chain cycle with no winner possible.
+    let is_green = dtype == WwdDayType::Green && !desis_limit_minor.is_zero();
+    let briefed_desis_limit_minor = if is_green {
+        desis_limit_minor
+    } else {
+        U256::ZERO
+    };
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
         wwd,
-        brief_supply,
+        briefed_desis_limit_minor,
         reference_prices,
         is_green,
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,
     )?;
     match receipt {
-        outbe_desis::api::AuctionBriefReceipt::Accepted => {
-            supply.checked_sub(brief_supply).ok_or_else(|| {
+        outbe_desis::api::AuctionBriefReceipt::Accepted => desis_limit_minor
+            .checked_sub(briefed_desis_limit_minor)
+            .ok_or_else(|| {
                 crate::errors::storage_corruption(
-                    "accepted Desis brief exceeds Metadosis routing supply".into(),
+                    "accepted Desis brief exceeds the Metadosis routing limit".into(),
                 )
-            })
-        }
+            }),
         outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
             reason: outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain,
-            supply: rejected_supply,
+            desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,
         } => {
-            if rejected_supply != brief_supply || rejected_supply <= max_accepted {
+            if rejected_desis_limit_minor != briefed_desis_limit_minor
+                || rejected_desis_limit_minor <= max_accepted
+            {
                 return Err(crate::errors::storage_corruption(
-                    "Desis rejection receipt does not match the dispatched supply".into(),
+                    "Desis rejection receipt does not match the dispatched limit".into(),
                 ));
             }
-            Ok(rejected_supply)
+            Ok(rejected_desis_limit_minor)
         }
     }
 }

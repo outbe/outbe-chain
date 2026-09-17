@@ -101,8 +101,8 @@ pub fn verify_result(
             pending_nonce: intent.pending_nonce,
             day_type: intent.frozen_metadosis_values.day_type,
             day_limit: intent.frozen_metadosis_values.day_limit,
-            lysis_budget: intent.frozen_metadosis_values.lysis_budget,
-            auction_base: intent.frozen_metadosis_values.auction_base,
+            lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
+            desis_limit_minor: intent.frozen_metadosis_values.desis_limit_minor,
             auction_entry_prices: intent.frozen_metadosis_values.auction_entry_prices.clone(),
             logical_anchor: intent.logical_evaluation_time,
         },
@@ -113,7 +113,7 @@ pub fn verify_result(
             output_manifest_root: result.roots.output_manifest_root,
             exact_counts: result.counts.clone(),
             nod_amount_total: result.conservation.nod_cost_total,
-            nod_gratis_consumed: result.conservation.nod_gratis_consumed,
+            lysis_allocation_minor: result.conservation.lysis_allocation_minor,
             issued_at: intent.logical_evaluation_time,
         }),
         contributors: contributor_apply(
@@ -128,7 +128,7 @@ pub fn verify_result(
             result.conservation.tribute_nominal_total,
             RETIRED_TRIBUTE_GENERATION_V1,
         ),
-        carry_over: carry_over_apply(intent.wwd, result.conservation.unused_lysis),
+        carry_over: carry_over_apply(intent.wwd, result.conservation.unused_lysis_limit_minor),
     }
     .into())
 }

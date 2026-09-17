@@ -248,7 +248,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
 }
 
 #[then("the offer is rejected and tribute supply stays zero")]
-fn offer_rejected_supply_zero(world: &mut World) {
+fn offer_rejected_desis_limit_minor_zero(world: &mut World) {
     let tx_hash = world
         .state
         .l2_rejected_offer_tx_hash

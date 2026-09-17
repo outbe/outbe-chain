@@ -160,7 +160,7 @@ struct CapacityRecoveredGenerationObservationV1 {
     nod_count: u32,
     bucket_count: u32,
     nod_amount_total: U256,
-    nod_gratis_consumed: U256,
+    lysis_allocation_minor: U256,
     issued_at: u64,
     result_evidence_hash: B256,
     block_number: u64,
@@ -319,7 +319,9 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
                     nod_count: historical_replay.recovered_generation.nod_count,
                     bucket_count: historical_replay.recovered_generation.bucket_count,
                     nod_amount_total: historical_replay.recovered_generation.nod_amount_total,
-                    nod_gratis_consumed: historical_replay.recovered_generation.nod_gratis_consumed,
+                    lysis_allocation_minor: historical_replay
+                        .recovered_generation
+                        .lysis_allocation_minor,
                     issued_at: historical_replay.recovered_generation.issued_at,
                     result_evidence_hash: historical_replay
                         .recovered_generation
@@ -623,7 +625,7 @@ mod tests {
                             "nod_count": 257,
                             "bucket_count": 1,
                             "nod_amount_total": U256::from(100),
-                            "nod_gratis_consumed": U256::ZERO,
+                            "lysis_allocation_minor": U256::ZERO,
                             "issued_at": 1,
                             "result_evidence_hash": B256::repeat_byte(11),
                             "block_number": 40,

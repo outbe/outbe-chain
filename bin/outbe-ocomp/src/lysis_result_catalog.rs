@@ -611,7 +611,7 @@ fn require_chunk_summary(
                 })
         },
     )?;
-    let nod_gratis_consumed = chunk.ordered_nod_actions.iter().try_fold(
+    let lysis_allocation_minor = chunk.ordered_nod_actions.iter().try_fold(
         alloy_primitives::U256::ZERO,
         |total, action| {
             total
@@ -633,7 +633,7 @@ fn require_chunk_summary(
     )?;
     if summary.nod_actions != nod_actions
         || summary.contributor_actions != contributor_actions
-        || summary.nod_gratis_consumed != nod_gratis_consumed
+        || summary.lysis_allocation_minor != lysis_allocation_minor
         || summary.nod_cost_total != nod_cost_total
     {
         return Err(

@@ -406,7 +406,7 @@ fn delayed_voting_open_preserves_the_single_job_until_its_deadline() {
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
     let (intent_id, record) = live_intent(&mut provider, fixture.wwd);
-    let retained_lysis_budget = record.intent.frozen_metadosis_values.lysis_budget;
+    let retained_lysis_limit_minor = record.intent.frozen_metadosis_values.lysis_limit_minor;
 
     let finality_height = fixture.block_number + 2;
     let certified = outbe_primitives::storage::MetadosisCertifiedFinalityBinding::new(
@@ -453,7 +453,7 @@ fn delayed_voting_open_preserves_the_single_job_until_its_deadline() {
     )
     .expect("the same job expires at its immutable deadline");
 
-    assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_budget);
+    assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_limit_minor);
     assert_expired_job(&mut provider, intent_id);
 }
 
@@ -463,7 +463,7 @@ fn skipped_awaiting_finality_deadline_expires_the_single_job() {
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
     let (intent_id, record) = live_intent(&mut provider, fixture.wwd);
-    let retained_lysis_budget = record.intent.frozen_metadosis_values.lysis_budget;
+    let retained_lysis_limit_minor = record.intent.frozen_metadosis_values.lysis_limit_minor;
     let carry_over_before = U256::from(17);
     StorageHandle::enter(&mut provider, |storage| {
         PromisLimitContract::new(storage)
@@ -484,7 +484,7 @@ fn skipped_awaiting_finality_deadline_expires_the_single_job() {
     assert_failed_day_recovery(
         &mut provider,
         &fixture,
-        carry_over_before + retained_lysis_budget,
+        carry_over_before + retained_lysis_limit_minor,
     );
     assert_expired_job(&mut provider, intent_id);
 
@@ -517,7 +517,7 @@ fn skipped_response_deadline_expires_job_and_retains_closed_vote_accountability(
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
     let (intent_id, record) = live_intent(&mut provider, fixture.wwd);
-    let retained_lysis_budget = record.intent.frozen_metadosis_values.lysis_budget;
+    let retained_lysis_limit_minor = record.intent.frozen_metadosis_values.lysis_limit_minor;
 
     let finality_height = fixture.block_number + 2;
     let certified = outbe_primitives::storage::MetadosisCertifiedFinalityBinding::new(
@@ -559,7 +559,7 @@ fn skipped_response_deadline_expires_job_and_retains_closed_vote_accountability(
     )
     .expect("missed response deadline expires the single job");
 
-    assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_budget);
+    assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_limit_minor);
     let expired = assert_expired_job(&mut provider, intent_id);
     let job_id = expired.finalized.expect("finalized expired job").job_id;
     StorageHandle::enter(&mut provider, |storage| {

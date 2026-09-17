@@ -147,7 +147,7 @@ fn seed_projection(
                 nod_count: population.actions.len() as u32,
                 bucket_count: 1,
                 nod_amount_total: U256::from(10_000),
-                nod_gratis_consumed: U256::from(10_000),
+                lysis_allocation_minor: U256::from(10_000),
                 issued_at: 1_600_000_000,
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
@@ -164,8 +164,8 @@ fn seed_projection(
                 .write(&worldwide_day, projection.metadata_word())?;
             nod.ocomp_nod_amount_total
                 .write(&worldwide_day, projection.nod_amount_total)?;
-            nod.ocomp_nod_gratis_consumed
-                .write(&worldwide_day, projection.nod_gratis_consumed)?;
+            nod.ocomp_lysis_allocation_minor
+                .write(&worldwide_day, projection.lysis_allocation_minor)?;
             nod.ocomp_materialization_job_id
                 .write(&worldwide_day, projection.job_id)?;
             nod.ocomp_materialization_protocol_bundle_hash
@@ -210,7 +210,7 @@ fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
             );
             assert_eq!(nod.ocomp_nod_amount_total.read(&worldwide_day)?, U256::ZERO);
             assert_eq!(
-                nod.ocomp_nod_gratis_consumed.read(&worldwide_day)?,
+                nod.ocomp_lysis_allocation_minor.read(&worldwide_day)?,
                 U256::ZERO
             );
             assert_eq!(

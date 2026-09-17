@@ -101,9 +101,9 @@ pub fn finalized_job_spec(
             previous_vwap: nominal,
             current_vwap: nominal,
             gratis_demand: U256::ZERO,
-            gratis_supply: U256::ZERO,
-            lysis_budget: nominal,
-            auction_base: U256::ZERO,
+            day_gratis_limit_minor: U256::ZERO,
+            lysis_limit_minor: nominal,
+            desis_limit_minor: U256::ZERO,
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: nominal,

@@ -521,7 +521,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a supply-less brief; a day with no tributes issues nothing,
+        // A red day is recorded as a brief with no limit; a day with no tributes issues nothing,
         // so its whole limit goes back to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -531,7 +531,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
 
@@ -567,7 +567,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
         assert_eq!(
@@ -588,7 +588,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_briefs_no_supply_however_large_the_limit() {
+fn green_empty_day_briefs_nothing_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
@@ -606,7 +606,10 @@ fn green_empty_day_briefs_no_supply_however_large_the_limit() {
             outbe_desis::AuctionStage::Briefed
         );
         assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
-        assert_eq!(desis.pending_supply_promis.read(&wwd).unwrap(), U256::ZERO);
+        assert_eq!(
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -661,12 +664,12 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
 }
 
 #[test]
-fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
+fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
         let nominal = U256::from(1_000);
-        // A red day divides supply by RED_DAY_REDUCTION_COEF. This non-zero
-        // day limit therefore produces an exact zero Lysis allocation.
+        // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
+        // non-zero day limit therefore produces an exact zero Lysis Limit.
         let day_limit = U256::from(2);
         let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -695,7 +698,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
         assert_eq!(
@@ -759,7 +762,7 @@ fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
 }
 
 #[test]
-fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
+fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
@@ -801,7 +804,7 @@ fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
         );
         assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
-            desis.pending_supply_promis.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
         );
 
@@ -872,7 +875,7 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
 
         // A cold oracle prices nothing, and the empty table is load-bearing: it
         // is how Desis is told the day is unpriced, so it cancels the auction and
-        // refunds the supply instead of opening one at a zero entry price.
+        // refunds the limit instead of opening one at a zero entry price.
         assert!(
             crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
                 .unwrap()

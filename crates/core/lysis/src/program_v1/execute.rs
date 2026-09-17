@@ -32,7 +32,7 @@ pub(crate) struct ProgramExecutionV1 {
     first_leagues: Vec<u16>,
     fractions: BTreeMap<u16, U256>,
     total_nominal: U256,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
     logical_evaluation_time: u64,
     next_ordinal: usize,
     remaining: U256,
@@ -79,7 +79,7 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
         input.worldwide_day,
         tributes,
         first_leagues,
-        input.gratis_allocation,
+        input.lysis_limit_minor,
         input.logical_evaluation_time,
     )?;
 
@@ -117,7 +117,7 @@ pub(crate) fn prepare(
     worldwide_day: WorldwideDay,
     tributes: Vec<TributeInputV1>,
     first_leagues: Vec<u16>,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
     logical_evaluation_time: u64,
 ) -> Result<ProgramExecutionV1, ProgramErrorV1> {
     if tributes.is_empty() {
@@ -151,17 +151,17 @@ pub(crate) fn prepare(
         &nominal_amounts,
         &first_leagues,
         total_nominal,
-        gratis_allocation,
+        lysis_limit_minor,
     )?;
     Ok(ProgramExecutionV1 {
         tributes,
         first_leagues,
         fractions,
         total_nominal,
-        gratis_allocation,
+        lysis_limit_minor,
         logical_evaluation_time,
         next_ordinal: 0,
-        remaining: gratis_allocation,
+        remaining: lysis_limit_minor,
         nod_actions: Vec::new(),
         contributors: BTreeMap::new(),
         observations,
@@ -169,7 +169,7 @@ pub(crate) fn prepare(
 }
 
 impl ProgramExecutionV1 {
-    /// Compute and budget-check the next Gratis load before external observations.
+    /// Compute and limit-check the next Gratis load before external observations.
     pub(crate) fn quote_next(&self) -> Result<PendingNodV1, ProgramErrorV1> {
         let ordinal = self.next_ordinal;
         let tribute = self
@@ -284,8 +284,8 @@ impl ProgramExecutionV1 {
                 .map(|tribute| tribute.tribute_id)
                 .collect(),
             total_nominal: self.total_nominal,
-            gratis_allocation: self.gratis_allocation,
-            remaining_gratis: self.remaining,
+            lysis_limit_minor: self.lysis_limit_minor,
+            remaining_lysis_limit_minor: self.remaining,
             league_fractions: self
                 .fractions
                 .iter()
@@ -312,7 +312,7 @@ pub(crate) fn compute_fraction_map(
     nominal_amounts: &[U256],
     tribute_fis: &[u16],
     total_interest: U256,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
     let mut fi_groups = BTreeMap::<u16, (u32, U256)>::new();
     for (ordinal, &league) in tribute_fis.iter().enumerate() {
@@ -332,7 +332,7 @@ pub(crate) fn compute_fraction_map(
         &fi_groups,
         u32::try_from(nominal_amounts.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
 }
 
@@ -340,7 +340,7 @@ pub(crate) fn compute_fraction_map_from_groups(
     fi_groups: &BTreeMap<u16, (u32, U256)>,
     tribute_count: u32,
     total_interest: U256,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
     let sorted_fis = fi_groups.keys().copied().collect::<Vec<_>>();
     let mut shares = Vec::with_capacity(sorted_fis.len());
@@ -367,7 +367,7 @@ pub(crate) fn compute_fraction_map_from_groups(
                     })?;
         }
     }
-    let f = scaled_floor(gratis_allocation, SCALE, total_interest)?;
+    let f = scaled_floor(lysis_limit_minor, SCALE, total_interest)?;
     let fmax = f
         .checked_mul(U256::from(2_u8))
         .ok_or_else(|| ProgramErrorV1::Arithmetic {
@@ -403,9 +403,9 @@ pub(crate) fn compute_fraction_map_from_groups(
                 })
         },
     )?;
-    if projected > gratis_allocation {
+    if projected > lysis_limit_minor {
         for fraction in &mut fractions {
-            *fraction = scaled_floor(*fraction, gratis_allocation, projected)?;
+            *fraction = scaled_floor(*fraction, lysis_limit_minor, projected)?;
         }
     }
     Ok(sorted_fis.into_iter().zip(fractions).collect())
@@ -515,13 +515,13 @@ pub(crate) fn compute_fraction_hash_map(
     nominal_amounts: &[U256],
     tribute_fis: &[u16],
     total_interest: U256,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<HashMap<u16, U256>, ProgramErrorV1> {
     compute_fraction_map(
         nominal_amounts,
         tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .map(|fractions| fractions.into_iter().collect())
 }

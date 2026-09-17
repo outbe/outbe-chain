@@ -16,9 +16,12 @@ pub enum MetadosisError {
     VwapMustBeNonZero,
 
     #[error(
-        "invalid OCOMP budget split: lysis budget {lysis_budget} exceeds day limit {day_limit}"
+        "invalid OCOMP budget split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
     )]
-    InvalidOcompBudgetSplit { day_limit: U256, lysis_budget: U256 },
+    InvalidOcompBudgetSplit {
+        day_limit: U256,
+        lysis_limit_minor: U256,
+    },
 
     #[error("existing OCOMP request budget receipt does not match the immutable day split")]
     OcompBudgetReceiptMismatch,

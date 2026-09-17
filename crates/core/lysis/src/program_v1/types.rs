@@ -67,7 +67,7 @@ pub struct ObservedTributeV1 {
 pub struct ProgramInputV1 {
     pub worldwide_day: WorldwideDay,
     pub logical_evaluation_time: u64,
-    pub gratis_allocation: U256,
+    pub lysis_limit_minor: U256,
     pub tributes: Vec<ObservedTributeV1>,
 }
 
@@ -131,8 +131,8 @@ pub struct LeagueFractionV1 {
 pub struct ProgramResultV1 {
     pub tribute_ids: Vec<WwdEntityId>,
     pub total_nominal: U256,
-    pub gratis_allocation: U256,
-    pub remaining_gratis: U256,
+    pub lysis_limit_minor: U256,
+    pub remaining_lysis_limit_minor: U256,
     pub league_fractions: Vec<LeagueFractionV1>,
     pub nod_actions: Vec<NodActionV1>,
     pub contributors: Vec<ContributorActionV1>,

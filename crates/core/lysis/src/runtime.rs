@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 pub struct LysisResult {
     pub nod_ids: Vec<WwdEntityId>,
     pub tribute_ids: Vec<WwdEntityId>,
-    pub remaining_gratis: U256,
+    pub remaining_lysis_limit_minor: U256,
 }
 
 /// Executes lysis for a given worldwide day with the specified gratis allocation.
@@ -32,11 +32,11 @@ pub fn lysis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<LysisResult> {
     storage
         .clone()
-        .with_checkpoint(|| lysis_inner(storage, scope, parent, wwd, gratis_allocation))
+        .with_checkpoint(|| lysis_inner(storage, scope, parent, wwd, lysis_limit_minor))
 }
 
 fn lysis_inner(
@@ -44,7 +44,7 @@ fn lysis_inner(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
     let mut tributes = load_day_tributes(storage.clone(), scope, parent, wwd)?;
@@ -52,7 +52,7 @@ fn lysis_inner(
         return Ok(LysisResult {
             nod_ids: vec![],
             tribute_ids: vec![],
-            remaining_gratis: gratis_allocation,
+            remaining_lysis_limit_minor: lysis_limit_minor,
         });
     }
 
@@ -80,7 +80,7 @@ fn lysis_inner(
     }
     let now = storage.timestamp()?.to::<u64>();
     let mut execution =
-        program_v1::prepare(wwd, tribute_inputs, first_leagues, gratis_allocation, now)
+        program_v1::prepare(wwd, tribute_inputs, first_leagues, lysis_limit_minor, now)
             .map_err(program_error)?;
     let entry_prices = freeze_entry_price_snapshot(storage.clone(), wwd, now)?;
 
@@ -141,7 +141,7 @@ fn lysis_inner(
     Ok(LysisResult {
         nod_ids,
         tribute_ids: result.tribute_ids,
-        remaining_gratis: result.remaining_gratis,
+        remaining_lysis_limit_minor: result.remaining_lysis_limit_minor,
     })
 }
 
@@ -198,13 +198,13 @@ pub(crate) fn compute_fi_fraction_map(
     nominal_amounts: &[U256],
     tribute_fis: &[u16],
     total_interest: U256,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<std::collections::HashMap<u16, U256>> {
     program_v1::compute_fraction_hash_map(
         nominal_amounts,
         tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .map_err(program_error)
 }

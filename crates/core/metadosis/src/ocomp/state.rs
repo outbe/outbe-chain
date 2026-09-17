@@ -80,7 +80,7 @@ pub enum JobFsmCommand {
         at_height: u64,
         deadline_height: u64,
         intent_id: B256,
-        lysis_budget: U256,
+        lysis_limit_minor: U256,
         request_budget_receipt_hash: B256,
     },
     OpenVoting {
@@ -114,7 +114,7 @@ pub struct JobFsmProjection {
     pub live_intent_id: Option<B256>,
     pub deadline_height: Option<u64>,
     pub terminal_records: u16,
-    pub retained_lysis_budget: Option<U256>,
+    pub retained_lysis_limit_minor: Option<U256>,
 }
 
 /// Immutable evidence retained while an expiry transition is committed.
@@ -124,14 +124,14 @@ pub struct TerminalAttempt {
     pub pending_nonce: u64,
     pub terminal_height: u64,
     pub terminal_time: u64,
-    pub retained_lysis_budget: U256,
+    pub retained_lysis_limit_minor: U256,
 }
 
 /// Canonical persistence projection of the immutable request-phase effect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetainedRequestEffectSnapshot {
     pub effect_nonce: u64,
-    pub lysis_budget: U256,
+    pub lysis_limit_minor: U256,
     pub receipt_hash: B256,
 }
 
@@ -164,7 +164,7 @@ pub struct JobFsmSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RetainedRequestEffect {
     effect_nonce: u64,
-    lysis_budget: U256,
+    lysis_limit_minor: U256,
     receipt_hash: B256,
 }
 
@@ -374,7 +374,7 @@ impl JobFsmState {
                 at_height,
                 deadline_height,
                 intent_id,
-                lysis_budget,
+                lysis_limit_minor,
                 request_budget_receipt_hash,
             } => {
                 let ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
@@ -398,7 +398,7 @@ impl JobFsmState {
                 let retained_effect = match ready.retained_effect {
                     None => RetainedRequestEffect {
                         effect_nonce: ready.pending_nonce,
-                        lysis_budget,
+                        lysis_limit_minor,
                         receipt_hash: request_budget_receipt_hash,
                     },
                     Some(_) => return Err(JobFsmError::InvalidRequestEffect),
@@ -468,7 +468,7 @@ impl JobFsmState {
             pending_nonce: live.pending_nonce,
             terminal_height: at_height,
             terminal_time: at_time,
-            retained_lysis_budget: live.retained_effect.lysis_budget,
+            retained_lysis_limit_minor: live.retained_effect.lysis_limit_minor,
         });
         self.live = None;
         Ok(())
@@ -543,7 +543,9 @@ impl JobFsmState {
                 live_intent_id: None,
                 deadline_height: None,
                 terminal_records,
-                retained_lysis_budget: ready.retained_effect.map(|effect| effect.lysis_budget),
+                retained_lysis_limit_minor: ready
+                    .retained_effect
+                    .map(|effect| effect.lysis_limit_minor),
             },
             (None, Some(live)) => JobFsmProjection {
                 worldwide_day: self.worldwide_day,
@@ -553,7 +555,7 @@ impl JobFsmState {
                 live_intent_id: Some(live.intent_id),
                 deadline_height: live.deadline_height,
                 terminal_records,
-                retained_lysis_budget: Some(live.retained_effect.lysis_budget),
+                retained_lysis_limit_minor: Some(live.retained_effect.lysis_limit_minor),
             },
             (None, None) if self.terminal.len() == 1 => {
                 let terminal = self.terminal[0];
@@ -565,7 +567,7 @@ impl JobFsmState {
                     live_intent_id: None,
                     deadline_height: None,
                     terminal_records,
-                    retained_lysis_budget: Some(terminal.retained_lysis_budget),
+                    retained_lysis_limit_minor: Some(terminal.retained_lysis_limit_minor),
                 }
             }
             _ => unreachable!("validated OCOMP FSM phase cardinality"),
@@ -582,7 +584,7 @@ impl From<RetainedRequestEffectSnapshot> for RetainedRequestEffect {
     fn from(snapshot: RetainedRequestEffectSnapshot) -> Self {
         Self {
             effect_nonce: snapshot.effect_nonce,
-            lysis_budget: snapshot.lysis_budget,
+            lysis_limit_minor: snapshot.lysis_limit_minor,
             receipt_hash: snapshot.receipt_hash,
         }
     }
@@ -592,7 +594,7 @@ impl From<RetainedRequestEffect> for RetainedRequestEffectSnapshot {
     fn from(effect: RetainedRequestEffect) -> Self {
         Self {
             effect_nonce: effect.effect_nonce,
-            lysis_budget: effect.lysis_budget,
+            lysis_limit_minor: effect.lysis_limit_minor,
             receipt_hash: effect.receipt_hash,
         }
     }
@@ -610,7 +612,7 @@ mod tests {
                 at_height: 10,
                 deadline_height: 74,
                 intent_id: B256::repeat_byte(0x11),
-                lysis_budget: U256::from(900),
+                lysis_limit_minor: U256::from(900),
                 request_budget_receipt_hash: B256::repeat_byte(0x22),
             })
             .unwrap();
@@ -626,7 +628,7 @@ mod tests {
         assert_eq!(projection.pending_nonce, 0);
         assert_eq!(projection.next_check_height, None);
         assert_eq!(projection.live_intent_id, None);
-        assert_eq!(projection.retained_lysis_budget, Some(U256::from(900)));
+        assert_eq!(projection.retained_lysis_limit_minor, Some(U256::from(900)));
         assert_eq!(projection.terminal_records, 1);
         assert_eq!(
             state.terminal_attempts(),
@@ -635,7 +637,7 @@ mod tests {
                 pending_nonce: 0,
                 terminal_height: 74,
                 terminal_time: 1_800,
-                retained_lysis_budget: U256::from(900),
+                retained_lysis_limit_minor: U256::from(900),
             }]
         );
     }
