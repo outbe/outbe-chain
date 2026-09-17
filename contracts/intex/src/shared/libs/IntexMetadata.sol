@@ -33,7 +33,7 @@ library IntexMetadata {
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
-            "{\"name\":\"Intex Series ",
+            "{\"name\":\"Intex ",
             displayId,
             settled ? " - Settled" : "",
             "\",\"description\":\"",
@@ -151,7 +151,7 @@ library IntexMetadata {
             "<svg width=\"600\" height=\"600\" xmlns=\"http://www.w3.org/2000/svg\">",
             "<rect width=\"600\" height=\"600\" fill=\"#1a1a1a\" rx=\"20\"/>",
             "<rect x=\"15\" y=\"15\" width=\"570\" height=\"570\" fill=\"none\" stroke=\"#444\" stroke-width=\"2\" rx=\"15\"/>",
-            "<text x=\"300\" y=\"70\" font-family=\"sans-serif\" font-size=\"32\" font-weight=\"bold\" fill=\"#fff\" text-anchor=\"middle\">INTEX SERIES</text>",
+            "<text x=\"300\" y=\"70\" font-family=\"sans-serif\" font-size=\"32\" font-weight=\"bold\" fill=\"#fff\" text-anchor=\"middle\">INTEX</text>",
             "<text x=\"300\" y=\"110\" font-family=\"sans-serif\" font-size=\"24\" font-weight=\"600\" fill=\"#cbd5f5\" text-anchor=\"middle\">",
             displayId,
             "</text>",
@@ -172,13 +172,12 @@ library IntexMetadata {
     function _svgData(IIntexNFT1155.SeriesData memory data, bool settled) private pure returns (string memory) {
         string memory rows = string.concat(
             _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 265),
-            _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
-            _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 355),
-            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), 400)
+            _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
+            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), 355)
         );
         if (!settled && data.calledAt != 0) {
             uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
-            rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), 445));
+            rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), 400));
         }
         return rows;
     }

@@ -60,7 +60,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
-        _assertContains(json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), "\","));
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
         _assertContains(json, string.concat("\"description\":\"", IntexMetadata.DESCRIPTION, "\""));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
@@ -152,9 +152,7 @@ contract IntexNFT1155MetadataTest is Test {
         token.settleIntex(SERIES_ID, user, user2, 3);
 
         bytes memory json = _json(sTok);
-        _assertContains(
-            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
-        );
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
@@ -167,9 +165,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_SettledToken_RendersBeforeAnySettle() public view {
         bytes memory json = _json(sTok);
-        _assertContains(
-            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
-        );
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
     }
 
@@ -193,7 +189,7 @@ contract IntexNFT1155MetadataTest is Test {
         data.referenceCurrency = 840;
         data.issuedAt = 1;
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data));
-        _assertContains(json, "\"name\":\"Intex Series 20260622-949-U\",");
+        _assertContains(json, "\"name\":\"Intex 20260622-949-U\",");
     }
 
     function test_contractURI_CollectionDocument() public view {
@@ -205,11 +201,12 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_svg_FormatsHumanValues() public view {
         bytes memory svg = _json(iTok).decodeSvg();
-        assertTrue(svg.contains("INTEX SERIES"), "header");
+        assertTrue(svg.contains(">INTEX</text>"), "header");
         assertTrue(svg.contains(bytes(abi.encodePacked(SERIES_ID))), "composite id");
         assertTrue(svg.contains(">1</text>"), "entry price");
         assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
+        assertFalse(svg.contains("Floor Price"), "floor price lives in the attributes only");
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 
