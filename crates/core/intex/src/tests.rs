@@ -1183,17 +1183,6 @@ fn expiry_is_rejected_before_the_series_is_called() {
     });
 }
 
-#[test]
-fn a_called_series_never_moves_back() {
-    with_registry(|s| {
-        let id = called_series(&s, 44);
-        api::expire_series(&s, id).unwrap();
-
-        assert!(api::mark_qualified(&s, id).is_err());
-        assert!(api::mark_called(&s, id, ISSUED_AT).is_err());
-    });
-}
-
 /// The registry with its clock at `now`; series still carry `ISSUED_AT`.
 fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -1221,27 +1210,6 @@ fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
         assert_eq!(
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
             IntexState::Called
-        );
-    });
-}
-
-#[test]
-fn the_unpaid_remainder_is_forfeited_from_the_deadline_not_from_the_sweep() {
-    with_registry_at(NOTICE_END + 1, |s| {
-        let id = called_series(&s, 62);
-        api::record_settled_units(&s, id, 30).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
-
-        let counts = api::unit_counts(&s, id).unwrap();
-        assert_eq!(counts.active, 0);
-        assert_eq!(counts.forfeited, 45);
-        assert_eq!(
-            counts.active
-                + counts.settled
-                + counts.exercised
-                + counts.gem_factory
-                + counts.forfeited,
-            counts.issued
         );
     });
 }

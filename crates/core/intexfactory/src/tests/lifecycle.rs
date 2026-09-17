@@ -633,51 +633,11 @@ mod call_sweep {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
-
-            let day = WorldwideDay::new(20260101);
-            let trigger = U256::from(TRIGGER);
-            let mut members = Vec::new();
-            for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
-                let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
-                let params = outbe_intex::CreateSeriesParams {
-                    series_id,
-                    worldwide_day: day,
-                    issued_units: count,
-                    promis_load_minor: 1_000_000_000_000_000_000,
-                    entry_price_minor: trigger,
-                    floor_price_minor: trigger,
-                    call_price_minor: trigger,
-                    call_trigger: outbe_intex::IntexCallTrigger {
-                        call_window_seconds: WINDOW_DAYS * DAY as u32,
-                        call_threshold_seconds: 21 * DAY as u32,
-                        call_notice_period_seconds: 7 * DAY as u32,
-                    },
-                    issued_at: ISSUED_AT,
-                    issuance_currency: issuance,
-                    reference_currency: REFERENCE_ISO,
-                };
-                outbe_intex::api::create_series(&s, params).unwrap();
-                outbe_intex::api::mark_qualified(&s, series_id).unwrap();
-                members.push(series_id);
-            }
-            IntexFactoryContract::new(s.clone())
-                .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
-                .unwrap();
-
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let (_, deadline) = called_two_member_group(&s, scan_ts);
             sweep_at(&s, due(deadline));
 
-            assert_eq!(
-                unallocated(&s),
-                U256::from(140u64) * U256::from(1_000_000_000_000_000_000u128)
-            );
-            assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .called_group_count
-                    .read(&IntexFactoryContract::scoped(REFERENCE_ISO, 20260101))
-                    .unwrap(),
-                0
-            );
+            assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
         });
     }
 
