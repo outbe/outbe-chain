@@ -5,9 +5,9 @@ pragma solidity ^0.8.0;
 interface IVaultRouter {
     enum StablesSource {
         Unknown,
-        IntexCostAmount, // todo remove once implement PayNoteDeposit
+        IntexCostAmount,
         CredisCostAmount,
-        GemCostAmount, // todo remove once implement PayNoteDeposit
+        GemCostAmount,
         PayNoteDeposit,
         NodCostAmount
     }
