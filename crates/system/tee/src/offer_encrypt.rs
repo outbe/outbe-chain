@@ -70,7 +70,7 @@ pub fn canary_offer_json(worldwide_day: u32) -> String {
 }
 
 /// HKDF-SHA256 extract+expand to 32 bytes (matches the enclave).
-fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], String> {
+pub(crate) fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], String> {
     use ring::hkdf;
     struct Len32;
     impl hkdf::KeyType for Len32 {
@@ -90,7 +90,7 @@ fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], String>
 }
 
 /// ChaCha20Poly1305 AEAD encrypt with empty AAD (matches the enclave).
-fn chacha20poly1305_encrypt(
+pub(crate) fn chacha20poly1305_encrypt(
     key: &[u8; 32],
     nonce: &[u8; 12],
     plaintext: &[u8],

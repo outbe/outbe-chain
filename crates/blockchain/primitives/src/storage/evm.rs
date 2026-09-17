@@ -150,6 +150,17 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         Ok(self.internals.tload(address, key))
     }
 
+    fn pledge_journal_word(&mut self, index: u64, word: u16) -> Result<U256> {
+        let value = self
+            .internals
+            .sload(
+                crate::addresses::GRATIS_ADDRESS,
+                super::pledge_journal_slot(index, word)?,
+            )
+            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+        Ok(value.data)
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         // EIP-2929 SSTORE_RESET; Outbe has no refund model, so every write
         // is billed at the reset price (no SSTORE_SET distinction).
@@ -183,6 +194,10 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
 
     fn gas_used(&self) -> u64 {
         self.gas.used()
+    }
+
+    fn gas_remaining(&self) -> u64 {
+        self.gas.remaining()
     }
 
     fn gas_refunded(&self) -> i64 {

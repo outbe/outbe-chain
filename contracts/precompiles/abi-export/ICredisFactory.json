@@ -1,32 +1,22 @@
 [
   {
     "type": "function",
-    "name": "requestCredis",
+    "name": "issueCredis",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "ownerSA",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "pledgeHandle",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "spendAuth",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "internalType": "uint16"
+        "name": "encryptedUseAuth",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -88,8 +78,14 @@
   },
   {
     "type": "event",
-    "name": "CredisRequested",
+    "name": "CredisIssued",
     "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "smartAccount",
         "type": "address",

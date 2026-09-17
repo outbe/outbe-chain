@@ -61,8 +61,8 @@ fn err(msg: impl Into<String>) -> TeeError {
 /// `active` is a LIFO stack of acquisitions `(size, acquired_at)`; `sold` an
 /// append-only log `(size, acquired_at, sold_at)`. Semantics are a 1:1 port of
 /// the historical on-chain `FidelityContract::cohort_in/cohort_out`.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct CohortState {
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CohortState {
     qualified_start: u64,
     active: Vec<(U256, u64)>,
     sold: Vec<(U256, u64, u64)>,
@@ -153,7 +153,7 @@ impl CohortState {
 
     /// ACQUISITION: push a new active cohort. Returns `Some(timestamp)` when
     /// this is the account's first qualified acquisition.
-    fn cohort_in(&mut self, amount: U256, timestamp: u64) -> Option<u64> {
+    pub(crate) fn cohort_in(&mut self, amount: U256, timestamp: u64) -> Option<u64> {
         if amount.is_zero() {
             return None;
         }
@@ -171,7 +171,7 @@ impl CohortState {
     /// is split proportionally - the sold slice keeps the ORIGINAL
     /// `acquired_at`, the remainder stays active. Clamps when the stack runs
     /// out (mirrors the on-chain defensive clamp).
-    fn cohort_out(&mut self, amount: U256, timestamp: u64) {
+    pub(crate) fn cohort_out(&mut self, amount: U256, timestamp: u64) {
         let mut remaining = amount;
         while !remaining.is_zero() {
             let Some((size, acquired_at)) = self.active.last().copied() else {
@@ -210,7 +210,11 @@ impl CohortState {
 
     /// `(rcfi, efficiency, league)` at `timestamp`. `first_qualified_start = 0`
     /// means no account has qualified (league floor).
-    fn evaluate(&self, timestamp: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
+    pub(crate) fn evaluate(
+        &self,
+        timestamp: u64,
+        first_qualified_start: u64,
+    ) -> Result<(U256, U256, u16)> {
         let (rcfi, efficiency, _) = self.rcfi_triple(timestamp)?;
         let max = if first_qualified_start == 0 {
             U256::ZERO

@@ -24,6 +24,8 @@ mod metrics;
 pub mod native_qvl;
 pub mod node_host;
 pub mod offer_encrypt;
+pub mod pledge_ledger;
+pub mod pledgenote;
 pub mod protocol;
 pub mod quote;
 pub mod release_dcap_artifacts;

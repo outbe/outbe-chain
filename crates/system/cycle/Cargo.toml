@@ -24,6 +24,7 @@ outbe-desis.workspace = true
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
 outbe-credisfactory.workspace = true
+outbe-vaultrouter.workspace = true
 outbe-nod.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

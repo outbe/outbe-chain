@@ -86,6 +86,7 @@ async function submit(
   gas: bigint,
   wait: boolean,
   value = 0n,
+  includeLogs = false,
 ) {
   const entry = resolveContract(contract);
   const hash = await sendTx(ctx, entry, method, args, gas, value);
@@ -98,10 +99,22 @@ async function submit(
     status: r.status,
     blockNumber: r.blockNumber.toString(),
     gasUsed: r.gasUsed.toString(),
+    ...(includeLogs ? { logs: r.logs.map(({ address, topics, data }) => ({ address, topics, data })) } : {}),
   });
 }
 
 export function registerSignTools(server: McpServer, ctx: Ctx): void {
+  const encrypted = z.string().regex(HEX).describe("Encrypted request prepared offline; never supply owner keys or a decrypted note");
+  server.tool("pledge_note_create", "Reserve stablecoins for 900 seconds and create a private PledgeNote. Use an independent relayer account. Returns encrypted receipt logs.",
+    { request: encrypted, wait: z.boolean().optional() },
+    handler(async ({ request, wait }) => submit(ctx, "gratisfactory", "createPledgeNote", [request], GAS_OFFER, wait ?? true, 0n, true)));
+  server.tool("pledge_note_cancel", "Cancel an unused PledgeNote and restore Gratis. Failed original-vault refunds remain queued for retry.",
+    { encrypted_auth: encrypted, wait: z.boolean().optional() },
+    handler(async ({ encrypted_auth, wait }) => submit(ctx, "gratisfactory", "cancelPledgeNote", [encrypted_auth], GAS_OFFER, wait ?? true, 0n, true)));
+  server.tool("credis_issue", "Consume an encrypted PledgeNote authorization and deliver its reserved stablecoins to a deployed smart account. Sender must be an active CCA.",
+    { owner_sa: addr, encrypted_auth: encrypted, stake_raw: z.string().regex(/^(0|[1-9][0-9]*)$/).describe("Exact native COEN stake in raw 18-decimal units"), wait: z.boolean().optional() },
+    handler(async ({ owner_sa, encrypted_auth, stake_raw, wait }) => submit(ctx, "credisfactory", "issueCredis", [owner_sa, encrypted_auth], GAS_OFFER, wait ?? true, BigInt(stake_raw), true)));
+
   // --- tribute_offer (encrypts to the live offer key, byte-identical to enclave)
   server.tool(
     "tribute_offer",

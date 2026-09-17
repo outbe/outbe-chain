@@ -28,6 +28,7 @@ pub enum TriggerId {
     CredisCallDaily = 7,
     NodCallDaily = 8,
     GemPositionDaily = 9,
+    PledgeReservationSweep = 10,
 }
 
 impl TriggerId {
@@ -78,6 +79,7 @@ pub enum TriggerHandler {
     CredisCallDaily,
     NodDaily,
     GemPositionDaily,
+    PledgeReservationSweep,
 }
 
 impl TriggerHandler {
@@ -97,6 +99,11 @@ impl TriggerHandler {
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
+            Self::PledgeReservationSweep => outbe_vaultrouter::api::sweep_expired_pledges(
+                &ctx.storage,
+                outbe_vaultrouter::runtime::MAX_RESERVATION_SWEEP_VISITS,
+            )
+            .map(|_| ()),
         }
     }
 }
@@ -146,7 +153,7 @@ const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -260,10 +267,19 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: false,
             handler: TriggerHandler::GemPositionDaily,
         },
+        TriggerSpec {
+            id: TriggerId::PledgeReservationSweep.as_u32(),
+            label: "pledge_reservation_sweep",
+            period_seconds: outbe_vaultrouter::runtime::RESERVATION_SWEEP_PERIOD_SECS,
+            start_offset_seconds: 0,
+            requires_accounting_window: false,
+            coalesces_backlog: true,
+            handler: TriggerHandler::PledgeReservationSweep,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 

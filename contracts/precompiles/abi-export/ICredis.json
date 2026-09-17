@@ -108,9 +108,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "collateralHandle",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",
@@ -257,9 +257,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "collateralHandle",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",
@@ -373,9 +373,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "collateralHandle",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "principal",

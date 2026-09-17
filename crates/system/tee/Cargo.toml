@@ -34,6 +34,7 @@ sha2.workspace = true
 time = { workspace = true, features = ["parsing"], optional = true }
 
 [features]
+test-utils = []
 # Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
 # enclave.
 native-dcap = [

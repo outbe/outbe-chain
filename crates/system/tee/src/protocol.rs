@@ -845,6 +845,12 @@ pub enum EnclaveRequest {
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     },
+    ApplyPledgeLedger {
+        request: Box<crate::pledgenote::Request>,
+    },
+    ReplayPledgeLedger {
+        request: Box<crate::pledgenote::ReplayRequest>,
+    },
 }
 
 impl EnclaveRequest {
@@ -852,6 +858,8 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::ApplyPledgeLedger { .. } => "apply_pledge_ledger",
+            Self::ReplayPledgeLedger { .. } => "replay_pledge_ledger",
             Self::GetQuote { .. } => "get_quote",
             Self::GetInitializationChallenge => "get_initialization_challenge",
             Self::Initialize { .. } => "initialize",
@@ -912,6 +920,7 @@ impl EnclaveRequest {
     /// exhaustive match forces every future variant to make this choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
+            Self::ApplyPledgeLedger { .. } | Self::ReplayPledgeLedger { .. } => true,
             Self::GetQuote { .. }
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
@@ -1316,6 +1325,9 @@ pub enum EnclaveResponse {
     },
     GramineDirectDevOnboardingArtifactIngestedV1 {
         tribute_offer_public: [u8; 32],
+    },
+    PledgeLedger {
+        response: Box<crate::pledgenote::Response>,
     },
 }
 

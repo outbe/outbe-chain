@@ -324,13 +324,35 @@ fn settle_and_mine(
     if !matches!(settled.status, SubCallStatus::Success) {
         return settled;
     }
-    let op_nonce = view(
+    use outbe_tee::pledgenote::{self, OwnerAction, PrivateRequest};
+    let modify_key = derive_modify_key(&test_enclave::state_key(), ALICE1).unwrap();
+    let chain_id = B256::from(U256::from(CHAIN_ID));
+    let action = OwnerAction::Query;
+    let mac = pledgenote::owner_mac(&modify_key, chain_id, ALICE1, 0, &action).unwrap();
+    let envelope = pledgenote::encrypt_request(
+        outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::PLEDGE_OFFER_SECRET),
+        &PrivateRequest::Owner {
+            chain_id,
+            account: ALICE1,
+            nonce: 0,
+            action,
+            mac,
+        },
+    )
+    .unwrap();
+    let encrypted = view(
         ctx,
         scope,
         GRATIS_ADDRESS,
-        IGratis::opNonceOfCall { account: ALICE1 },
+        IGratis::queryCall {
+            encryptedRequest: envelope.into(),
+        },
     );
-    let modify_key = derive_modify_key(&test_enclave::state_key(), ALICE1).unwrap();
+    let view_key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), ALICE1).unwrap();
+    let op_nonce = pledgenote::decrypt_receipt(&view_key, &encrypted)
+        .unwrap()
+        .next_nonce;
     let mac = modify_mac(
         &modify_key,
         ALICE1,

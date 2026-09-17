@@ -296,6 +296,17 @@ pub trait PrecompileStorageProvider {
     /// Performs an SLOAD operation (persistent storage read).
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
 
+    /// Reconstruct a local confidential-ledger cache from its globally ordered
+    /// journal. This is node recovery work, not transaction gas: warm and cold
+    /// enclaves must produce identical gas. The address and record width are
+    /// fixed; this capability cannot request account-keyed private records.
+    fn pledge_journal_word(&mut self, index: u64, word: u16) -> Result<U256> {
+        self.sload(
+            crate::addresses::GRATIS_ADDRESS,
+            pledge_journal_slot(index, word)?,
+        )
+    }
+
     /// Performs a TLOAD operation (transient storage read).
     fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
 
@@ -316,6 +327,11 @@ pub trait PrecompileStorageProvider {
 
     /// Returns the gas used so far.
     fn gas_used(&self) -> u64;
+
+    /// Remaining execution gas. Providers without metering have no gas ceiling.
+    fn gas_remaining(&self) -> u64 {
+        u64::MAX
+    }
 
     /// Returns the gas refunded so far.
     fn gas_refunded(&self) -> i64;
@@ -367,6 +383,19 @@ pub trait PrecompileStorageProvider {
 /// Storage operations for a given (contract) address.
 ///
 /// Abstracts over persistent storage (SLOAD/SSTORE) and transient storage (TLOAD/TSTORE).
+pub fn pledge_journal_slot(index: u64, word: u16) -> Result<U256> {
+    // A journal record is 4144 bytes, stored in exactly 130 EVM words.
+    if word >= 130 {
+        return Err(crate::error::PrecompileError::Fatal(
+            "invalid pledge journal word".into(),
+        ));
+    }
+    let mut bytes = b"outbe/pledgenote/journal-slot/v1".to_vec();
+    bytes.extend_from_slice(&index.to_be_bytes());
+    bytes.extend_from_slice(&word.to_be_bytes());
+    Ok(U256::from_be_bytes(alloy_primitives::keccak256(bytes).0))
+}
+
 pub trait StorageOpsTrait {
     /// Stores a value at the provided slot.
     fn store(&mut self, slot: U256, value: U256) -> Result<()>;

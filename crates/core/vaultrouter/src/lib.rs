@@ -9,6 +9,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 mod sol_ext;
+mod state;
 
 pub use schema::VaultRouterContract;
 

@@ -37,7 +37,7 @@ impl CredisState {
     }
 }
 
-/// Position record. Keyed by `position_id = keccak256(pledge_handle || smart_account)`.
+/// Position record keyed by an independently derived enclave Credis ID.
 ///
 /// Every term - both currency codes included - is sealed at opening and never
 /// changes afterwards; only `outstanding`, `collateral_locked`,
@@ -61,19 +61,15 @@ pub struct Position {
     #[attribute(order = 2)]
     pub asset: Address,
 
-    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
+    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), pinned at quote creation.
     /// Denominates the position and keys its policy rate. NOT the call
     /// threshold anchor - see [`Self::reference_currency`].
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// The pledger EOA sealed under the enclave state key (`nonce || ct`, produced by
-    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `smart_account`; settlement and the void recover the plaintext EOA
-    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
-    /// cohort. Never a plaintext address on-chain.
+    /// Opaque allocation key; only the enclave can resolve its original owner.
     #[attribute(order = 4)]
-    pub eoa_ct: Vec<u8>,
+    pub collateral_handle: B256,
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]
@@ -98,7 +94,7 @@ pub struct Position {
     pub policy_rate: U256,
 
     /// `P0` - COEN price in the position's **reference** currency (scale `1e6`),
-    /// snapshotted at origination. The threshold geometry is measured here, not
+    /// snapshotted at quote creation. The threshold geometry is measured here, not
     /// in the issuance currency the position is denominated in.
     #[attribute(order = 10)]
     pub entry_price: U256,
@@ -217,14 +213,6 @@ pub struct CredisContract {
 }
 
 impl CredisContract<'_> {
-    /// position_id derivation: `keccak256(pledge_handle || smart_account)`.
-    pub fn position_id(handle_id: U256, smart_account: Address) -> U256 {
-        let mut buf = [0u8; 52];
-        buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
-        buf[32..52].copy_from_slice(smart_account.as_slice());
-        U256::from_be_bytes(keccak256(buf).0)
-    }
-
     /// Composite key for per-address position index: `keccak256(addr ++ idx_be32)`.
     pub fn address_index_key(account: Address, index: u32) -> B256 {
         let mut buf = [0u8; 24];

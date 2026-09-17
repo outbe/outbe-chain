@@ -29,9 +29,18 @@ import ITributeFactory from "../../contracts/precompiles/abi-export/ITributeFact
 import IValidatorSet from "../../contracts/precompiles/abi-export/IValidatorSet.json";
 import IZeroFee from "../../contracts/precompiles/abi-export/IZeroFee.json";
 
+import ICredisFactory from "../../contracts/precompiles/abi-export/ICredisFactory.json";
+
+import IGratisFactory from "../../contracts/precompiles/abi-export/IGratisFactory.json";
+
+import IVaultRouter from "../../contracts/precompiles/abi-export/IVaultRouter.json";
+
 const asAbi = (json: unknown): Abi => json as Abi;
 
 export const PRECOMPILE_ABI = {
+  IVaultRouter: asAbi(IVaultRouter),
+  IGratisFactory: asAbi(IGratisFactory),
+  ICredisFactory: asAbi(ICredisFactory),
   IAgentReward: asAbi(IAgentReward),
   ICredis: asAbi(ICredis),
   IFidelity: asAbi(IFidelity),

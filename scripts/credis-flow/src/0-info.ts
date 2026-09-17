@@ -1,3 +1,4 @@
+import { queryGratis } from "./pledgenote.js";
 import { ethers, toBigInt, Wallet } from "ethers";
 import {
   IGratis__factory,
@@ -25,12 +26,8 @@ import {
 } from "./utils.js";
 import {
   deriveGratisKeys,
-  decryptBalance,
-  decryptPledged,
-  signFidelityQueryAuth,
   type GratisKeys,
 } from "./confidential.js";
-import { listTickets } from "./ticket.js";
 
 const SALT = 0n;
 
@@ -128,96 +125,16 @@ async function printUserInfo(
   keys: GratisKeys | null,
   wallet: Wallet | null,
 ) {
-  const [nativeBalance, erc20Balance, gratisBlob, pledgedBlob, pledgedTotal] = await Promise.all([
-    provider.getBalance(userAddress),
-    token.balanceOf(userAddress),
-    gratis.balanceOf(userAddress),
-    gratis.pledgedOf(userAddress),
-    gratis.pledgedTotalSupply(),
+  const [nativeBalance, erc20Balance, pledgedTotal] = await Promise.all([
+    provider.getBalance(userAddress), token.balanceOf(userAddress), gratis.pledgedTotalSupply(),
   ]);
-
-  const showGratis = keys
-    ? formatTokenMeta(decryptBalance(keys.viewKey, userAddress, gratisBlob), gratisMeta)
-    : `${gratisBlob} (ciphertext - need view key)`;
-  const showPledged = keys
-    ? formatTokenMeta(decryptPledged(keys.viewKey, userAddress, pledgedBlob), gratisMeta)
-    : `${pledgedBlob} (ciphertext - need view key)`;
-
-  // Pending pledges live in enclave-encrypted PledgeLockTickets (not readable with the
-  // view key) and are NOT yet in `pledgedOf` - that ledger fills only at requestCredis.
-  // The local ticket JSON is the only client-visible source, so sum this chain's tickets
-  // that haven't been consumed into a credis position yet (no positionId).
-  const { chainId } = await provider.getNetwork();
-  const pending = listTickets()
-    .filter((t) => !t.ticket.positionId && t.ticket.chainId === chainId.toString())
-    .reduce((sum, t) => sum + BigInt(t.ticket.amount), 0n);
-
-  const fid = await fetchFidelity(provider, fidelity, wallet);
-
+  const receipt = keys ? await queryGratis(provider, keys, userAddress) : null;
   console.log(`\n=== User: ${userAddress} ===`);
-  console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
-  console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
-  console.log(`  Gratis balance:  ${showGratis}   ${keys ? "(decrypted with view key)" : ""}`);
-  console.log(`  Active pledged:  ${showPledged} (credited to the pledged ledger at requestCredis)`);
-  console.log(`  Pending pledged: ${formatTokenMeta(pending, gratisMeta)} (local tickets not yet requested)`);
-  console.log(`  Pledged total:   ${formatTokenMeta(pledgedTotal, gratisMeta)} (system-wide, plaintext aggregate)`);
-  console.log(`  Fidelity index:  ${fid.index}`);
-  console.log(`  League:          ${fid.league}`);
-}
-
-/** Mirror of `outbe_fidelity_math::league_from_rcfi` (1..=4096, saturating). */
-function leagueFromRcfi(rcfi: bigint, maxRcfi: bigint, minLeague: bigint, maxLeague: bigint): bigint {
-  if (maxRcfi === 0n) return minLeague;
-  const slot = (rcfi * maxLeague) / maxRcfi;
-  const capped = slot < maxLeague - 1n ? slot : maxLeague - 1n;
-  return minLeague + capped;
-}
-
-/**
- * Read the EOA's Fidelity Index (RCFI) and derive its league. The cohort ledger
- * is TEE-encrypted, so the index read needs an owner-signed, expiring
- * authorization (the same account key); without USER_PRIVATE_KEY only the
- * plaintext league bounds/max are available. League is derived client-side from
- * the index vs the plaintext synthetic maximum - no separate on-chain read.
- */
-async function fetchFidelity(
-  provider: ethers.JsonRpcProvider,
-  fidelity: ReturnType<typeof IFidelity__factory.connect>,
-  wallet: Wallet | null,
-): Promise<{ index: string; league: string }> {
-  let decimals: bigint, minLeague: bigint, maxLeague: bigint, maxRcfi: bigint, now: bigint;
-  try {
-    const block = await provider.getBlock("latest");
-    now = BigInt(block?.timestamp ?? 0);
-    [decimals, minLeague, maxLeague, maxRcfi] = await Promise.all([
-      fidelity.decimals().then((d) => BigInt(d)),
-      fidelity.minLeague().then((l) => BigInt(l)),
-      fidelity.maxLeague().then((l) => BigInt(l)),
-      fidelity.maxFidelityIndexAt(now),
-    ]);
-  } catch (e) {
-    return { index: `(unavailable: ${(e as Error).message})`, league: "N/A" };
-  }
-
-  if (!wallet) {
-    return { index: "(need USER_PRIVATE_KEY to sign the query authorization)", league: "N/A" };
-  }
-
-  try {
-    const { chainId } = await provider.getNetwork();
-    const expiry = now + 3600n; // authorize a 1-hour window past the current block
-    const signature = await signFidelityQueryAuth(wallet, chainId, userAddress, expiry);
-    // Evaluate the index at the same `now` as the synthetic max above, so the
-    // derived league is exact (the auth message doesn't bind the query time).
-    const rcfi = await fidelity.getFidelityIndexAt(userAddress, now, expiry, signature);
-    const league = leagueFromRcfi(rcfi, maxRcfi, minLeague, maxLeague);
-    return {
-      index: `${ethers.formatUnits(rcfi, Number(decimals))} decayed-days (raw ${rcfi})`,
-      league: `${league} / ${maxLeague}`,
-    };
-  } catch (e) {
-    return { index: `(query failed: ${(e as Error).message})`, league: "N/A" };
-  }
+  console.log(`Native: ${formatCoen(nativeBalance)} COEN; ERC20: ${formatTokenMeta(erc20Balance, erc20Meta)}`);
+  console.log(`Private Gratis: ${receipt ? formatTokenMeta(BigInt(receipt.balance), gratisMeta) : "owner authorization required"}`);
+  console.log(`Private pledged (pending + active): ${receipt ? formatTokenMeta(BigInt(receipt.pledged), gratisMeta) : "owner authorization required"}`);
+  console.log(`Pledged total: ${formatTokenMeta(pledgedTotal, gratisMeta)}`);
+  console.log(`Fidelity: ${receipt?.rcfi ?? "private"}; league: ${receipt?.league ?? "private"}`);
 }
 
 async function printSmartAccountInfo(

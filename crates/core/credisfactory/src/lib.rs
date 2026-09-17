@@ -1,17 +1,9 @@
-//! Credis factory precompile (`0x1009`). Orchestrates the credis lifecycle on
-//! top of the confidential Gratis token:
+//! Credis factory precompile (`0x1009`).
 //!
-//! - `requestCredis` consumes a confidential Gratis pledge-lock ticket (pledge
-//!   handle + spend authorization) via [`outbe_gratis`], opens an [`outbe_credis`]
-//!   position bound to the smart account (storing the pledger EOA), crediting the
-//!   collateral into the pledger's own pledged ledger, and delivers the stablecoin
-//!   loan via the vault sub-call.
-//! - `settle` applies a payment interest-first and releases the principal-proportional
-//!   share of collateral from the pledger's pledged ledger back to its balance.
-//! - [`called`] is the daily Cycle-triggered price-path scan: it calls positions
-//!   whose breach window filled and voids the remainder of called positions whose
-//!   settlement window has lapsed, burning the unpaid share of the collateral into
-//!   the Promis Reserve.
+//! `issueCredis` consumes a private PledgeNote, opens a position with an opaque
+//! collateral handle, and delivers reserved stablecoins plus the CCA's COEN stake.
+//! `settle` repays interest first and releases proportional collateral inside the
+//! enclave. [`called`] scans prices and forfeits unpaid collateral after notice.
 
 pub mod called;
 pub mod errors;

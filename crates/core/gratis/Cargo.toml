@@ -18,6 +18,7 @@ alloy-sol-types.workspace = true
 outbe-tee-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Gratis' own unit tests run the confidential path against the in-process engine.
@@ -28,7 +29,7 @@ default = []
 test-utils = ["outbe-primitives/test-utils"]
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Gratis path (mirrors gratispool's old `test-helpers`).
-test-enclave = ["dep:outbe-tee-enclave"]
+test-enclave = ["dep:outbe-tee-enclave", "outbe-tee/test-utils"]
 
 [lints]
 workspace = true

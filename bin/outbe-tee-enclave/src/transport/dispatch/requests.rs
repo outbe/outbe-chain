@@ -48,6 +48,38 @@ pub(in crate::transport) fn dispatch_with_initialization(
         quote_generator,
     } = context;
     match req {
+        EnclaveRequest::ApplyPledgeLedger { request } => {
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error { message: "pledge ledger requires resident group key".into() };
+            };
+            let result = (|| -> Result<_, String> {
+                if request.context.chain_id != chain_id { return Err("pledge ledger chain mismatch".into()); }
+                let key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0).map_err(|e| e.to_string())?;
+                let mut response = crate::pledgenote::dispatch(&key, derived.secret(), &request)?;
+                response.attestation = keys.sign_attestation(&outbe_tee::pledgenote::attestation_preimage(response.inputs_hash, &response.reply)?).to_vec();
+                Ok(response)
+            })();
+            match result {
+                Ok(response) => EnclaveResponse::PledgeLedger { response: Box::new(response) },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        },
+        EnclaveRequest::ReplayPledgeLedger { request } => {
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error { message: "pledge ledger requires resident group key".into() };
+            };
+            let result = (|| -> Result<_, String> {
+                if request.chain_id != chain_id { return Err("pledge replay chain mismatch".into()); }
+                let key = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0).map_err(|e| e.to_string())?;
+                let mut response = crate::pledgenote::replay(&key, derived.secret(), &request)?;
+                response.attestation = keys.sign_attestation(&outbe_tee::pledgenote::attestation_preimage(response.inputs_hash, &response.reply)?).to_vec();
+                Ok(response)
+            })();
+            match result {
+                Ok(response) => EnclaveResponse::PledgeLedger { response: Box::new(response) },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        },
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }

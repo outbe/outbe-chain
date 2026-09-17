@@ -5,7 +5,7 @@ use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_promis::enclave_client::test_enclave as promis_enclave;
-use outbe_tee::protocol::{FidelityCohortOp, GratisOp, ModifyAuth, PromisOp};
+use outbe_tee::protocol::{GratisOp, ModifyAuth, PromisOp};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -152,25 +152,14 @@ impl BenchmarkScenario for ConfidentialScenario {
                 outbe_gratis::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())
                     .map_err(|error| error.to_string())
             }
-            ConfidentialPath::GratisWithFidelity => {
-                let section = outbe_fidelity::api::cohort_section(
-                    storage.clone(),
-                    ACCOUNT,
-                    FidelityCohortOp::In,
-                    T_NOW,
-                )
-                .map_err(|error| error.to_string())?;
-                let outcome = outbe_gratis::api::mint_with_fidelity(
-                    storage.clone(),
-                    ACCOUNT,
-                    U256::from(AMOUNT),
-                    gratis_auth(),
-                    section,
-                )
-                .map_err(|error| error.to_string())?;
-                outbe_fidelity::api::apply_fidelity_outcome(storage, ACCOUNT, &outcome)
-                    .map_err(|error| error.to_string())
-            }
+            ConfidentialPath::GratisWithFidelity => outbe_gratis::api::mint_with_fidelity(
+                storage,
+                ACCOUNT,
+                U256::from(AMOUNT),
+                gratis_auth(),
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
             ConfidentialPath::Gratisfactory => {
                 outbe_gratisfactory::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())
                     .map_err(|error| error.to_string())
@@ -209,17 +198,7 @@ impl BenchmarkScenario for ConfidentialScenario {
                     outbe_tee_enclave::promis::decrypt_balance(&key, ACCOUNT, &blob)
                         .map_err(|error| error.to_string())?
                 }
-                _ => {
-                    let key = outbe_tee_enclave::gratis::derive_view_key(
-                        &gratis_enclave::state_key(),
-                        ACCOUNT,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    let blob = outbe_gratis::api::balance_ct(storage, ACCOUNT)
-                        .map_err(|error| error.to_string())?;
-                    outbe_tee_enclave::gratis::decrypt_balance(&key, ACCOUNT, &blob)
-                        .map_err(|error| error.to_string())?
-                }
+                _ => gratis_enclave::query(&storage, ACCOUNT).balance,
             };
             Ok::<_, String>((balance, fidelity_applied))
         })?;

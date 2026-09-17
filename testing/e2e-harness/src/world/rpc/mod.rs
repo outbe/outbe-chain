@@ -35,7 +35,7 @@ use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IGratis, INodFactory, IPromisLimit};
+use crate::internal::eth::{IDesis, INodFactory, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,

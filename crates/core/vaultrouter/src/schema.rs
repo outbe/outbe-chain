@@ -107,6 +107,41 @@ pub struct VaultRouterContract {
     /// slot 25: vault -> ISO-4217 code captured at registration time.
     #[attribute(order = 22)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
+
+    #[attribute(order = 23)]
+    pub reservation_assets: outbe_primitives::storage::dsl::Map<B256, Address>,
+    #[attribute(order = 24)]
+    pub reservation_amounts: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 25)]
+    pub reservation_vaults: outbe_primitives::storage::dsl::Map<B256, Address>,
+    #[attribute(order = 26)]
+    pub reservation_deadlines: outbe_primitives::storage::dsl::Map<B256, u64>,
+    /// 0: never created; 1: held; 2: refund pending; 3: closed (replay tombstone).
+    #[attribute(order = 27)]
+    pub reservation_statuses: outbe_primitives::storage::dsl::Map<B256, u8>,
+    #[attribute(order = 28)]
+    pub reserved_totals: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 29)]
+    pub vault_reservations: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 30)]
+    pub reservation_expiries: outbe_primitives::storage::dsl::Deque<B256>,
+    #[attribute(order = 31)]
+    pub reservation_retries: outbe_primitives::storage::dsl::Deque<B256>,
+    #[attribute(order = 32)]
+    pub reservation_retry_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 33)]
+    pub reservation_busy: outbe_primitives::storage::dsl::Value<bool>,
+    #[attribute(order = 34)]
+    pub reservation_retry_turn: outbe_primitives::storage::dsl::Value<bool>,
+}
+
+/// Custody record. The source main account and confidential note ID never enter this record.
+pub(crate) struct Reservation {
+    pub asset: Address,
+    pub amount: U256,
+    pub vault: Address,
+    pub valid_until: u64,
+    pub status: u8,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

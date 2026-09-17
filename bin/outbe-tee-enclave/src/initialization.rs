@@ -651,6 +651,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
+        | EnclaveRequest::ApplyPledgeLedger { .. }
+        | EnclaveRequest::ReplayPledgeLedger { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
         | EnclaveRequest::ApplyFidelityCohortOp { .. }
         | EnclaveRequest::SnapshotFidelityLeagues { .. }

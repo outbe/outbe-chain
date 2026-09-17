@@ -23,6 +23,194 @@ use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{IVaultV2, IERC20};
 
 const CHAIN_ID: u64 = 1;
+
+fn held_reservation(storage: &StorageHandle<'_>, id: B256, deadline: u64) {
+    VaultRouterContract::new(storage.clone())
+        .insert_reservation(
+            id,
+            &crate::schema::Reservation {
+                asset: asset(),
+                vault: vault(),
+                amount: U256::from(100),
+                valid_until: deadline,
+                status: crate::state::HELD,
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn reservations_enforce_factory_authority_deadline_and_exact_terms() {
+    use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, GRATIS_FACTORY_ADDRESS};
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(1000));
+    StorageHandle::enter(&mut provider, |storage| {
+        let id = B256::repeat_byte(1);
+        assert!(runtime::reserve(
+            storage.clone(),
+            stranger(),
+            id,
+            asset(),
+            U256::from(100),
+            1900
+        )
+        .is_err());
+        assert!(runtime::reserve(
+            storage.clone(),
+            GRATIS_FACTORY_ADDRESS,
+            id,
+            asset(),
+            U256::from(100),
+            1901
+        )
+        .is_err());
+        held_reservation(&storage, id, 999);
+        assert!(runtime::release_reservation(
+            storage.clone(),
+            stranger(),
+            id,
+            asset(),
+            U256::from(100),
+            receiver()
+        )
+        .is_err());
+        let error = runtime::release_reservation(
+            storage.clone(),
+            CREDIS_FACTORY_ADDRESS,
+            id,
+            asset(),
+            U256::from(100),
+            receiver(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("expired"));
+        assert!(runtime::release_reservation(
+            storage.clone(),
+            CREDIS_FACTORY_ADDRESS,
+            id,
+            asset(),
+            U256::from(101),
+            receiver()
+        )
+        .is_err());
+        let contract = VaultRouterContract::new(storage);
+        assert_eq!(
+            contract.reservation_statuses.read(&id).unwrap(),
+            crate::state::HELD
+        );
+        assert_eq!(
+            contract.reserved_totals.read(&asset()).unwrap(),
+            U256::from(100)
+        );
+    });
+}
+
+#[test]
+fn refund_failure_is_durable_and_expiry_is_strict() {
+    use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_sub_call_stub();
+    provider.set_timestamp(U256::from(1000));
+    // A vault returning an invalid address is a deterministic contract failure.
+    provider.stub_sub_call_at(asset(), word(U256::from(100)));
+    let id = B256::repeat_byte(2);
+    StorageHandle::enter(&mut provider, |storage| {
+        held_reservation(&storage, id, 1000);
+        assert_eq!(
+            runtime::sweep_expired_reservations(&storage, 256).unwrap(),
+            0
+        );
+        runtime::cancel_reservation(storage.clone(), GRATIS_FACTORY_ADDRESS, id).unwrap();
+        runtime::cancel_reservation(storage.clone(), GRATIS_FACTORY_ADDRESS, id).unwrap();
+        let contract = VaultRouterContract::new(storage.clone());
+        assert_eq!(
+            contract.reservation_statuses.read(&id).unwrap(),
+            crate::state::REFUND_PENDING
+        );
+        assert_eq!(contract.reservation_retries.len().unwrap(), 1);
+        assert_eq!(contract.reservation_retry_at.read(&id).unwrap(), 1300);
+        assert_eq!(contract.reservation_vaults.read(&id).unwrap(), vault());
+        assert_eq!(
+            contract.reserved_totals.read(&asset()).unwrap(),
+            U256::from(100)
+        );
+        set_owner(&storage, owner());
+        assert!(runtime::remove_vault(storage.clone(), owner(), vault()).is_err());
+    });
+    provider.set_timestamp(U256::from(1300));
+    StorageHandle::enter(&mut provider, |storage| {
+        // One retry and one expiry tombstone, each counted as a visit.
+        assert_eq!(runtime::sweep_expired_reservations(&storage, 1).unwrap(), 1);
+        assert_eq!(runtime::sweep_expired_reservations(&storage, 1).unwrap(), 1);
+        let contract = VaultRouterContract::new(storage);
+        assert_eq!(contract.reservation_retries.len().unwrap(), 1);
+        assert_eq!(contract.reservation_retry_at.read(&id).unwrap(), 1600);
+        assert_eq!(contract.reservation_vaults.read(&id).unwrap(), vault());
+    });
+}
+
+#[test]
+fn cold_backend_error_rolls_back_sweep_and_low_gas_defers_refund() {
+    use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(1001));
+    let id = B256::repeat_byte(3);
+    StorageHandle::enter(&mut provider, |storage| {
+        held_reservation(&storage, id, 1000);
+        assert!(runtime::sweep_expired_reservations(&storage, 256).is_err());
+        let contract = VaultRouterContract::new(storage);
+        assert_eq!(
+            contract.reservation_statuses.read(&id).unwrap(),
+            crate::state::HELD
+        );
+        assert_eq!(contract.reservation_expiries.len().unwrap(), 1);
+        assert!(!contract.reservation_busy.read().unwrap());
+    });
+    provider.set_gas_limit(500_000);
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::cancel_reservation(storage.clone(), GRATIS_FACTORY_ADDRESS, id).unwrap();
+        let contract = VaultRouterContract::new(storage);
+        assert_eq!(
+            contract.reservation_statuses.read(&id).unwrap(),
+            crate::state::REFUND_PENDING
+        );
+        assert_eq!(contract.reservation_retries.len().unwrap(), 1);
+    });
+}
+
+#[test]
+fn reservation_timestamp_does_not_truncate_and_tombstone_visits_are_bounded() {
+    use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(u64::MAX) + U256::from(1));
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(runtime::reserve(
+            storage,
+            GRATIS_FACTORY_ADDRESS,
+            B256::repeat_byte(4),
+            asset(),
+            U256::from(100),
+            900
+        )
+        .is_err());
+    });
+    provider.set_timestamp(U256::from(2000));
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = VaultRouterContract::new(storage.clone());
+        for i in 0..300u64 {
+            contract
+                .reservation_expiries
+                .push_back(B256::from(U256::from(i)))
+                .unwrap();
+        }
+        let visited = runtime::sweep_expired_reservations(&storage, u32::MAX).unwrap();
+        assert!(visited > 0 && visited <= 256);
+        assert_eq!(
+            contract.reservation_expiries.len().unwrap(),
+            300 - u64::from(visited)
+        );
+    });
+}
 const USD_ISO_CODE: u16 = 840;
 
 fn owner() -> Address {

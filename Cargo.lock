@@ -8470,6 +8470,7 @@ dependencies = [
  "outbe-rewards",
  "outbe-tribute",
  "outbe-validatorset",
+ "outbe-vaultrouter",
  "proptest",
  "tracing",
 ]
@@ -8907,6 +8908,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 

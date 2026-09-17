@@ -720,8 +720,43 @@ pub(crate) fn derive_account_keys(
 }
 
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
-    derive_account_keys(url, key, outbe_tee::protocol::Ledger::Gratis).map(|keys| keys.modify)
+pub(crate) fn query_gratis(
+    url: &str,
+    account: Address,
+    keys: &ConfidentialAccountKeys,
+) -> Result<outbe_tee::pledgenote::Receipt> {
+    use outbe_tee::pledgenote::*;
+    let chain = B256::from(U256::from(
+        chain_id(url).ok_or_else(|| eyre!("read chain ID"))?,
+    ));
+    let public = read_call(
+        url,
+        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+    )
+    .ok_or_else(|| eyre!("read offer public key"))?;
+    let action = OwnerAction::Query;
+    let mac = owner_mac(&keys.modify, chain, account, 0, &action).map_err(|e| eyre!(e))?;
+    let encrypted = encrypt_request(
+        public.to_be_bytes(),
+        &PrivateRequest::Owner {
+            chain_id: chain,
+            account,
+            nonce: 0,
+            action,
+            mac,
+        },
+    )
+    .map_err(|e| eyre!(e))?;
+    let bytes = read_call(
+        url,
+        crate::internal::addresses::GRATIS_ADDR,
+        &IGratis::queryCall {
+            encryptedRequest: encrypted.into(),
+        },
+    )
+    .ok_or_else(|| eyre!("query Gratis receipt"))?;
+    decrypt_receipt(&keys.view, &bytes).map_err(|e| eyre!(e))
 }
 
 /// Broadcast one already signed public transaction without reconstructing or

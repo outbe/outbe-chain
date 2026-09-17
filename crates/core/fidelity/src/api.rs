@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::{FidelityCohortOp, FidelityOpOutcome, FidelityOpSection};
+pub use outbe_tee::protocol::FidelityCohortOp;
 
 use crate::schema::FidelityContract;
 
@@ -55,29 +55,4 @@ pub fn snapshot_leagues(
     owners: &[Address],
 ) -> Result<Vec<(Address, u16)>> {
     FidelityContract::new(storage).snapshot_leagues(timestamp, owners)
-}
-
-// --- Folded-op helpers (co-located cohort ops inside a gratis round-trip) ---
-
-/// Build the fidelity cohort section to fold into a co-located gratis op
-/// (reads `account`'s current cohort blob + the global anchor from storage).
-/// `In` for an acquisition, `Out` for a sale, `Probe` for a read-only league.
-pub fn cohort_section(
-    storage: StorageHandle<'_>,
-    account: Address,
-    op: FidelityCohortOp,
-    timestamp: u64,
-) -> Result<FidelityOpSection> {
-    FidelityContract::new(storage).cohort_section(account, op, timestamp)
-}
-
-/// Persist the fidelity outcome returned by a folded gratis op (writes the new
-/// cohort ciphertext and, on first acquisition, the global anchor). A probe
-/// outcome is a no-op.
-pub fn apply_fidelity_outcome(
-    storage: StorageHandle<'_>,
-    account: Address,
-    outcome: &FidelityOpOutcome,
-) -> Result<()> {
-    FidelityContract::new(storage).apply_outcome(account, outcome)
 }

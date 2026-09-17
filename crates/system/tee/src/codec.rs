@@ -78,6 +78,28 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     #[test]
+    fn maximum_pledge_replay_batch_fits_noise_frame() {
+        use crate::pledgenote::*;
+        let request = EnclaveRequest::ReplayPledgeLedger {
+            request: Box::new(ReplayRequest {
+                chain_id: alloy_primitives::B256::repeat_byte(1),
+                parent: Head {
+                    sequence: u64::MAX,
+                    root: alloy_primitives::B256::repeat_byte(2),
+                },
+                reset: false,
+                entries: vec![vec![255; 32 + JOURNAL_PLAINTEXT_BYTES + 16]; REPLAY_BATCH_ENTRIES],
+            }),
+        };
+        let encoded = encode_request(&request).unwrap();
+        assert!(
+            encoded.len() + 16 < 65_535,
+            "Noise message includes a 16-byte authentication tag"
+        );
+        assert_eq!(decode_request(&encoded).unwrap(), request);
+    }
+
+    #[test]
     fn frame_roundtrip() {
         let body = vec![1u8, 2, 3, 4, 5];
         let mut buf = Vec::new();
