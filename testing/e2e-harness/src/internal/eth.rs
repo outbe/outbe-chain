@@ -667,7 +667,6 @@ pub(crate) fn derive_account_keys(
     let ledger_name = match ledger {
         Ledger::Gratis => "Gratis",
         Ledger::Promis => "Promis",
-        Ledger::Fidelity => "Fidelity",
     };
     let response = raw_json_result(
         url,

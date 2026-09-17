@@ -1,18 +1,6 @@
-//! Domain-parameterized confidential-amount core, shared by the Gratis and Promis
-//! enclave engines.
-//!
-//! Every ledger that stores per-account amounts as ciphertext
-//! (`version(8, big-endian) || AEAD-ct`) and gates writes with a modify-key HMAC
-//! reuses these primitives. A [`Domain`] supplies the HKDF `info` labels + the
-//! modify-preimage tag, so two ledgers derive **cryptographically independent**
-//! keys from the same resident group signature. Every function is a pure transform
-//! of its inputs + the resident state key, so every validator's enclave produces
-//! byte-identical ciphertext (consensus determinism).
-//!
-//! This is pure code-motion of the key-derivation / amount-AEAD / modify-MAC
-//! primitives that previously lived inline in `gratis.rs`; the `GRATIS` domain
-//! reproduces those byte layouts exactly (guarded by the `gratis.rs` known-answer
-//! vectors).
+//! Shared Gratis/Promis key derivation and authorization primitives.
+//! Promis also uses the versioned amount encryption here; Gratis state is held
+//! in the unified PledgeLedger and returned through encrypted receipts.
 
 use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
@@ -22,9 +10,7 @@ use outbe_tee::protocol::Ledger;
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
 
-/// Balance amount-slot field tag folded into the nonce derivation. Shared: every
-/// ledger's primary balance uses tag `0` (higher tags - e.g. Gratis pledged/eoa -
-/// are ledger-local).
+/// Promis balance field tag folded into its nonce derivation.
 pub const FIELD_BALANCE: u8 = 0;
 
 /// Amount blob length: `version(8, BE) || ChaCha20Poly1305(U256 32B) (+16B tag)` =
@@ -63,26 +49,12 @@ pub const PROMIS: Domain = Domain {
     modify_tag: b"outbe/promis/modify/v1",
 };
 
-/// Fidelity domain separators - keys are independent from Gratis's and
-/// Promis's. Encrypts the per-account cohort ledger (a variable-length record
-/// blob, see [`Domain::write_blob`]), not a single amount. The modify labels
-/// are reserved but unused: cohort ops are chain-initiated (they ride inside
-/// the co-located Gratis op), so there is no user-held modify capability.
-pub const FIDELITY: Domain = Domain {
-    state_info: b"outbe/fidelity/state-key/v1/",
-    view_info: b"outbe/fidelity/view-key/v1",
-    modify_info: b"outbe/fidelity/modify-key/v1",
-    nonce_info: b"outbe/fidelity/nonce/v1",
-    modify_tag: b"outbe/fidelity/modify/v1",
-};
-
 /// The confidential domain for a wire-level [`Ledger`] (used by the off-chain
 /// `DeriveAccountKeys` dispatch to pick view/modify key derivation by ledger).
 pub fn domain_for(ledger: Ledger) -> &'static Domain {
     match ledger {
         Ledger::Gratis => &GRATIS,
         Ledger::Promis => &PROMIS,
-        Ledger::Fidelity => &FIDELITY,
     }
 }
 
@@ -170,56 +142,6 @@ impl Domain {
             AMOUNT_BLOB_LEN,
             "amount blob must be a fixed {AMOUNT_BLOB_LEN} bytes"
         );
-        Ok(blob)
-    }
-
-    /// Decrypt a `version || ct` variable-length record blob (the
-    /// [`Domain::read_amount`] analogue for non-amount payloads, e.g. the
-    /// Fidelity cohort ledger). An empty blob is a fresh slot (version 0,
-    /// empty plaintext). The caller owns the plaintext layout.
-    pub fn read_blob(
-        &self,
-        view_key: &[u8; 32],
-        account: Address,
-        field: u8,
-        blob: &[u8],
-    ) -> Result<(u64, Vec<u8>)> {
-        if blob.is_empty() {
-            return Ok((0, Vec::new()));
-        }
-        if blob.len() < 8 {
-            return Err(TeeError::DecryptFailed);
-        }
-        let mut vbytes = [0u8; 8];
-        vbytes.copy_from_slice(&blob[..8]);
-        let version = u64::from_be_bytes(vbytes);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.slot_nonce(view_key, &ikm, version)?;
-        let pt = chacha20poly1305_decrypt(view_key, &nonce, &blob[8..])?;
-        Ok((version, pt))
-    }
-
-    /// Encrypt a variable-length record plaintext into a fresh `version+1 || ct`
-    /// blob (the [`Domain::write_amount`] analogue for non-amount payloads).
-    /// Unlike amounts, the ciphertext length follows the plaintext length -
-    /// callers that must not leak record cardinality pad the plaintext to a
-    /// deterministic bucket before calling.
-    pub fn write_blob(
-        &self,
-        view_key: &[u8; 32],
-        account: Address,
-        field: u8,
-        prev_version: u64,
-        plaintext: &[u8],
-    ) -> Result<Vec<u8>> {
-        let version = prev_version.saturating_add(1);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.slot_nonce(view_key, &ikm, version)?;
-        let ct = chacha20poly1305_encrypt(view_key, &nonce, plaintext)?;
-        let mut blob = version.to_be_bytes().to_vec();
-        blob.extend_from_slice(&ct);
         Ok(blob)
     }
 

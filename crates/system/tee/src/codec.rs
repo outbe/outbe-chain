@@ -14,8 +14,8 @@
 //! JSON number array (~4x under `serde_json`), and alloy `U256`/`Address`/`B256`
 //! serialize as raw bytes (non-human-readable serde) instead of hex strings, so
 //! many more offers fit under the 64 KiB Noise frame per `ProcessTributeOfferBatch`.
-//! Both binaries are built from this crate, so encoder and decoder always agree;
-//! the chain is from-genesis, so there is no legacy wire to stay compatible with.
+//! Request/response variant indices are stable across binary revisions. Retired
+//! operations retain reserved indices and cannot execute.
 
 use std::io::{Read, Write};
 
@@ -92,11 +92,65 @@ mod tests {
             }),
         };
         let encoded = encode_request(&request).unwrap();
+        assert_eq!(encoded[0], 38, "ReplayPledgeLedger wire index");
         assert!(
             encoded.len() + 16 < 65_535,
             "Noise message includes a 16-byte authentication tag"
         );
         assert_eq!(decode_request(&encoded).unwrap(), request);
+    }
+
+    #[test]
+    fn retired_ledger_tags_do_not_shift_active_wire_operations() {
+        use crate::pledgenote::{Command, Context, Head, Reply, Request, Response, SCHEMA_VERSION};
+        use crate::protocol::{GratisOp, Ledger};
+        use alloy_primitives::B256;
+
+        for (tag, request) in [
+            (27, EnclaveRequest::ReservedGratisOp),
+            (30, EnclaveRequest::ReservedFidelityCohortOp),
+            (31, EnclaveRequest::ReservedFidelitySnapshot),
+            (32, EnclaveRequest::ReservedFidelityQuery),
+        ] {
+            assert_eq!(encode_request(&request).unwrap(), vec![tag]);
+            assert_eq!(decode_request(&[tag]).unwrap(), request);
+            assert!(!request.is_idempotent());
+        }
+        let request = EnclaveRequest::ApplyPledgeLedger {
+            request: Box::new(Request {
+                schema: SCHEMA_VERSION,
+                parent: Head::default(),
+                context: Context {
+                    chain_id: B256::ZERO,
+                    genesis_hash: B256::ZERO,
+                    block_number: 0,
+                    timestamp: 0,
+                },
+                command: Command::Query {
+                    envelope: Vec::new(),
+                },
+            }),
+        };
+        let encoded = encode_request(&request).unwrap();
+        assert_eq!(encoded[0], 37);
+        assert_eq!(decode_request(&encoded).unwrap(), request);
+        let response = EnclaveResponse::PledgeLedger {
+            response: Box::new(Response {
+                inputs_hash: B256::ZERO,
+                reply: Reply::NeedsReplay,
+                attestation: Vec::new(),
+            }),
+        };
+        let encoded = encode_response(&response).unwrap();
+        assert_eq!(encoded[0], 35);
+        assert_eq!(decode_response(&encoded).unwrap(), response);
+        assert_eq!(encode_request(&EnclaveRequest::Health).unwrap(), vec![33]);
+        assert_eq!(postcard::to_allocvec(&GratisOp::Mint).unwrap(), vec![0]);
+        assert_eq!(postcard::to_allocvec(&GratisOp::Burn).unwrap(), vec![1]);
+        for retired in 2..=7 {
+            assert!(postcard::from_bytes::<GratisOp>(&[retired]).is_err());
+        }
+        assert!(postcard::from_bytes::<Ledger>(&[2]).is_err());
     }
 
     #[test]

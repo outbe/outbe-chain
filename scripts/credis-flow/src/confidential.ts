@@ -1,8 +1,8 @@
-// Client-side crypto for the confidential (TEE-encrypted) Gratis token.
+// Client-side key delivery and mint/burn authorization for Gratis and Promis.
 //
 // Byte-for-byte mirror of the enclave engine
 // (`bin/outbe-tee-enclave/src/{gratis.rs,crypto.rs}` + the HKDF/label constants
-// in `crates/system/tee/src/lib.rs`). Any divergence means a balance won't
+// in the shared confidential core). Any divergence means a receipt/balance won't
 // decrypt or a write authorization is rejected, so keep these in lockstep.
 //
 // Crypto primitives use Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256,
@@ -12,18 +12,10 @@ import { createHash, createHmac, hkdfSync, createDecipheriv } from "node:crypto"
 import { x25519 } from "@noble/curves/ed25519";
 import { ethers } from "ethers";
 
-// GratisOp discriminants - MUST match `outbe_tee::protocol::GratisOp` order.
-// Only Mint/Burn/Pledge/Unpledge are client-authorized; the rest are chain-driven
-// (credis) and listed so the discriminants stay aligned with the Rust enum.
+// Mint/burn authorization tags for PledgeLedger; match Rust GratisOp.
 export enum GratisOp {
   Mint = 0,
   Burn = 1,
-  Pledge = 2,
-  Unpledge = 3,
-  ConsumePledge = 4,
-  ReleaseToEoa = 5,
-  BurnPledged = 6,
-  RevealOwner = 7,
 }
 
 // PromisOp discriminants - MUST match `outbe_tee::protocol::PromisOp` order.
@@ -132,11 +124,11 @@ function chachaDecrypt(key: Uint8Array, nonce: Uint8Array, ctWithTag: Uint8Array
 }
 
 // ---------------------------------------------------------------------------
-// Key delivery - outbe_deriveGratisKeys RPC
+// Key delivery - outbe_deriveKeys RPC
 // ---------------------------------------------------------------------------
 
 export interface GratisKeys {
-  viewKey: Uint8Array; // decrypts this account's balance/pledged ciphertext
+  viewKey: Uint8Array; // decrypts Gratis receipts or Promis balance ciphertext
   modifyKey: Uint8Array; // authorizes writes (never decrypts)
 }
 
@@ -193,7 +185,7 @@ export function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
 }
 
 // ---------------------------------------------------------------------------
-// Balance / pledged decryption (view key, client-side)
+// Promis balance decryption (view key, client-side)
 // ---------------------------------------------------------------------------
 
 function decryptField(

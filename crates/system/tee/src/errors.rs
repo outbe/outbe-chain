@@ -32,17 +32,11 @@ pub enum TransportError {
     #[error("offer attestation signature invalid: {0}")]
     TributeOfferAttestation(String),
 
-    #[error("gratis-op attestation signature invalid: {0}")]
-    GratisOpAttestation(String),
-
     #[error("promis-op attestation signature invalid: {0}")]
     PromisOpAttestation(String),
 
     #[error("DCAP verification channel invalid: {0}")]
     DcapVerification(String),
-
-    #[error("fidelity attestation signature invalid: {0}")]
-    FidelityAttestation(String),
 
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
@@ -90,10 +84,8 @@ impl TransportError {
             Self::Handshake(_) => "handshake",
             Self::Attestation(_) => "attestation",
             Self::TributeOfferAttestation(_) => "tribute_offer_attestation",
-            Self::GratisOpAttestation(_) => "gratis_op_attestation",
             Self::PromisOpAttestation(_) => "promis_op_attestation",
             Self::DcapVerification(_) => "dcap_verification",
-            Self::FidelityAttestation(_) => "fidelity_attestation",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
             Self::IdentityMismatch(_) => "identity_mismatch",

@@ -650,15 +650,15 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
-        | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPledgeLedger { .. }
         | EnclaveRequest::ReplayPledgeLedger { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
-        | EnclaveRequest::ApplyFidelityCohortOp { .. }
-        | EnclaveRequest::SnapshotFidelityLeagues { .. }
-        | EnclaveRequest::QueryFidelityIndex { .. }
         | EnclaveRequest::DeriveAccountKeys { .. } => CommandClass::Ready,
-        EnclaveRequest::GetQuote { .. }
+        EnclaveRequest::ReservedGratisOp
+        | EnclaveRequest::ReservedFidelityCohortOp
+        | EnclaveRequest::ReservedFidelitySnapshot
+        | EnclaveRequest::ReservedFidelityQuery
+        | EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }
         | EnclaveRequest::OpenSession
@@ -1428,5 +1428,17 @@ mod tests {
         assert_eq!(purpose_bound, CommandClass::KeylessOnboardingArtifact);
         assert!(command_allowed_for_environment(purpose_bound, false, false).is_ok());
         assert!(command_allowed_for_environment(purpose_bound, true, false).is_err());
+    }
+
+    #[test]
+    fn retired_ledger_operations_are_never_authorized() {
+        for request in [
+            EnclaveRequest::ReservedGratisOp,
+            EnclaveRequest::ReservedFidelityCohortOp,
+            EnclaveRequest::ReservedFidelitySnapshot,
+            EnclaveRequest::ReservedFidelityQuery,
+        ] {
+            assert!(matches!(command_class(&request), CommandClass::Never));
+        }
     }
 }

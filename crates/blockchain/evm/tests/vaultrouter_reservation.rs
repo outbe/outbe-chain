@@ -379,6 +379,12 @@ fn pledge_setup() -> (TestContext, Vec<u8>) {
         storage
             .increase_balance(CCA, U256::from(1_000_000_000_000_000u64))
             .unwrap();
+        // Register the originating agent with real custody for its bond.
+        let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
+        storage
+            .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(storage.clone(), CCA, bond, "test CCA".into()).unwrap();
         let quote = Quote {
             asset: ASSET,
             principal_minor: U256::from(100),

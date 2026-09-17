@@ -514,7 +514,6 @@ impl Ledger {
                 }
             }
             FidelityCohortOp::Out => account.cohorts.cohort_out(amount, now),
-            FidelityCohortOp::Probe => {}
         }
     }
 
@@ -677,7 +676,7 @@ impl Ledger {
                 auth,
                 fidelity,
             } => {
-                if !matches!(op, GratisOp::Mint | GratisOp::Burn) || amount.is_zero() {
+                if amount.is_zero() {
                     return Err("invalid gratis command".into());
                 }
                 let modify = Zeroizing::new(
