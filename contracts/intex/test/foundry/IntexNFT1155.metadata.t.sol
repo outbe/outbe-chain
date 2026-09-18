@@ -61,7 +61,10 @@ contract IntexNFT1155MetadataTest is Test {
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
-        _assertContains(json, string.concat("\"description\":\"", IntexMetadata.DESCRIPTION, "\""));
+        _assertContains(
+            json,
+            "\"description\":\"Unsettled units of Intex series 20260622-USD-U from the Worldwide Day 20260622 auction."
+        );
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
@@ -93,6 +96,7 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("QUALIFIED"), "badge text");
         assertTrue(svg.contains("#16a34a"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
     }
 
     function test_uri_Called_AddsCallTimestamps() public {
@@ -156,11 +160,13 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
+        _assertContains(json, "\"description\":\"Settled units of Intex series 20260622-USD-U.");
         assertFalse(json.contains("Series State"), "lifecycle is final for the Settled class");
         assertFalse(json.contains("\"Called At\""), "no call rows on Settled");
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("SETTLED"), "badge text");
         assertTrue(svg.contains("#a855f7"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
     }
 
     function test_uri_SettledToken_RendersBeforeAnySettle() public view {
@@ -195,7 +201,8 @@ contract IntexNFT1155MetadataTest is Test {
     function test_contractURI_CollectionDocument() public view {
         bytes memory json = MetadataTestLib.decodeJsonDataUri(token.contractURI());
         assertEq(
-            string(json), string.concat("{\"name\":\"Intex\",\"description\":\"", IntexMetadata.DESCRIPTION, "\"}")
+            string(json),
+            string.concat("{\"name\":\"Intex\",\"description\":\"", IntexMetadata.COLLECTION_DESCRIPTION, "\"}")
         );
     }
 
@@ -206,7 +213,10 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains(">1</text>"), "entry price");
         assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
-        assertFalse(svg.contains("Floor Price"), "floor price lives in the attributes only");
+        assertTrue(svg.contains(">1.08</text>"), "floor price while issued");
+        assertTrue(svg.indexOf(">Promis Load</text>") < svg.indexOf(">Entry Price</text>"), "load leads the card");
+        assertTrue(svg.indexOf(">Entry Price</text>") < svg.indexOf(">Floor Price</text>"), "floor follows entry");
+        assertTrue(svg.indexOf(">Floor Price</text>") < svg.indexOf(">Call Price</text>"), "call closes the prices");
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 
