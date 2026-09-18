@@ -189,7 +189,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &eth::IGratis::opNonceOfCall { account: owner },
     )
     .expect("owner mint nonce");
-    let pow = find_pow_nonce(id.to_u256());
+    let pow = find_nod_pow_nonce(id.to_u256(), owner);
     let pair_chain_id = chain_id_b256(world);
     // This is a valid MAC for the payer's own account, never the Nod owner's.
     let wrong_mac = outbe_tee_enclave::gratis::modify_mac(

@@ -195,7 +195,7 @@ impl Rpc {
         }
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
-            .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
+            .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, owner, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
         let op_nonce = eth::read_call(
             &self.url(port),

@@ -974,7 +974,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_pow_nonce(U256::from_be_slice(&nod_id));
+    let pow = find_nod_pow_nonce(U256::from_be_slice(&nod_id), owner);
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -1452,6 +1452,20 @@ pub(crate) fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
         .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
+}
+
+pub(crate) fn find_nod_pow_nonce(id: U256, owner: Address) -> u64 {
+    (0_u64..100_000)
+        .find(|nonce| {
+            outbe_common::pow::validate_mining_pow(
+                id,
+                owner,
+                outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,
+                *nonce,
+            )
+            .is_ok()
+        })
+        .expect("bounded Nod PoW nonce")
 }
 
 pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {

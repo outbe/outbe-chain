@@ -347,7 +347,9 @@ fn settle_and_mine(
         B256::from(U256::from(CHAIN_ID)),
     );
     let nonce = (0_u64..1_000_000)
-        .find(|candidate| outbe_nodfactory::runtime::validate_pow(nod_id, *candidate).is_ok())
+        .find(|candidate| {
+            outbe_nodfactory::runtime::validate_pow(nod_id, ALICE1, *candidate).is_ok()
+        })
         .expect("every nod id has a PoW nonce in the bounded search");
     call(
         ctx,

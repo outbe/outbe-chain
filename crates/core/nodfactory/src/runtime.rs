@@ -265,8 +265,8 @@ pub fn mine_gratis(
     if !item.body().is_settled {
         return Err(NodFactoryError::NodNotSettled.into());
     }
-    validate_pow(nod_id, nonce)?;
     let owner = item.body().owner;
+    validate_pow(nod_id, owner, nonce)?;
     let gratis_load_minor = item.body().gratis_load_minor;
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, scope, item, bucket)?;
@@ -341,7 +341,7 @@ fn discharge_cost(
             expected: terms.owner_reference,
             actual: claim.owner,
         }
-            .into());
+        .into());
     }
 
     let currency = accept_payment_asset(
@@ -505,15 +505,27 @@ pub fn quote_settlement(
     ))
 }
 
-/// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
-/// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: WwdEntityId, nonce: u64) -> Result<()> {
-    pow::validate_pow(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
+/// PoW gate for `mine_gratis`. The preimage is
+/// `nodId || owner || miningSequence=0 || nonce`; the caller is not in it.
+pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
+    pow::validate_mining_pow(
+        nod_id.to_u256(),
+        owner,
+        pow::SINGLE_EXERCISE_SEQUENCE,
+        nonce,
+    )
+    .map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// Shared PoW hash over `nod_id.to_be_bytes::<32>() || nonce.to_be_bytes()`.
-pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: u64) -> [u8; 32] {
-    pow::compute_pow_hash(nod_id.to_u256(), nonce)
+/// SHA256 over `nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8`
+/// with `miningSequence = 0`.
+pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8; 32] {
+    pow::compute_mining_pow_hash(
+        nod_id.to_u256(),
+        owner,
+        pow::SINGLE_EXERCISE_SEQUENCE,
+        nonce,
+    )
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

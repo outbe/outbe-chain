@@ -640,7 +640,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world
         .settle(nod_id, population.actions[0].owner, &paynote_proof)
         .unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     assert_eq!(
         world
             .enter(|storage, scope, parent| {
