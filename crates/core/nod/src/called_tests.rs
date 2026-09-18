@@ -1420,12 +1420,12 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     assert_eq!(events[0].inFlightDay, in_flight);
 }
 
-/// A18.1 / A18.7: Promis Limit moves by the unpaid loads, not by reaching
+/// Promis Limit moves by the unpaid loads, not by reaching
 /// Forfeited or emitting `NodForfeited`. A paid-but-unexercised member is
 /// not credited. If `add_to_total_unallocated` were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
-fn a18_forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
+fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let scope = ExecutionScope::new();
