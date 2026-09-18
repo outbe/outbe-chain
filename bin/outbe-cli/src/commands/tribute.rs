@@ -4,7 +4,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
-use outbe_l2_zk_canonical::{CircuitStatus, Claim};
+use outbe_l2_zk_canonical::claims::tribute::PUBLIC_INPUT_COUNT;
+use outbe_l2_zk_canonical::{combined_len, Claim};
 use outbe_primitives::time::WorldwideDay;
 use serde_json::Value;
 
@@ -92,7 +93,7 @@ pub enum TributeCmd {
         #[arg(long)]
         zk_merkle_root: String,
         /// Combined Tribute proof bytes (`0x`-hex), including its four public
-        /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
+        /// inputs. Verifies under the circuit version registered for `--l2-chain-id`.
         /// Required; `0x` is accepted only for a deliberate negative
         /// transaction, which the node then rejects.
         #[arg(long)]
@@ -316,7 +317,7 @@ async fn offer(
     let zk_proof = decode_hex_bytes(zk_proof, "--zk-proof")?;
     let has_zk_proof = !zk_proof.is_empty();
     let (l2_chain_id, circuit_version) =
-        circuit_selector(client, creator, has_zk_proof, l2_chain_id, circuit_version).await?;
+        circuit_selector(client, creator, &zk_proof, l2_chain_id, circuit_version).await?;
     let signature = decode_hex_bytes(signature, "--signature")?;
     let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id", has_zk_proof)?;
     let su_hash = offer_hex32(su_hash, "--su-hash", has_zk_proof)?;
@@ -426,21 +427,27 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
 
 /// Resolve the `(chainId, version)` circuit selector carried by `offerTribute`.
 ///
-/// A combined proof does not carry its verification key, so the default with a
-/// proof and no explicit selector is the newest active tribute circuit
-/// registered for the caller's L2 chain (the table is ascending by version).
-/// Without a proof the selectors default to `0`/empty
-/// and no registry read is needed. Explicit values - including ones the node
-/// will reject - are passed through unchanged: registration and enablement
-/// remain the node's checks.
+/// Without a proof the selectors default to `0`/empty and no registry read is
+/// needed. Explicit values - including ones the node will reject - are passed
+/// through unchanged: whether a version is registered stays the node's check.
+///
+/// With a proof and no explicit version, the version is derived from the proof
+/// rather than guessed. A combined proof does not name its verification key,
+/// but its length is a function of that key's circuit size, so the registered
+/// keys whose length matches are the only candidates. Exactly one candidate is
+/// the answer; anything else is an error naming what to pass, because picking
+/// the wrong key here produces an on-chain verification revert rather than a
+/// message the caller can act on. Status is deliberately not a filter: the node
+/// verifies `deprecated` keys too, so a proof minted under one must still be
+/// offerable.
 async fn circuit_selector(
     client: &(impl Rpc + Sync),
     caller: Address,
-    has_proof: bool,
+    proof: &[u8],
     l2_chain_id: Option<u32>,
     circuit_version: Option<&str>,
 ) -> Result<(u32, String)> {
-    if !has_proof {
+    if proof.is_empty() {
         return Ok((
             l2_chain_id.unwrap_or(0),
             circuit_version.unwrap_or_default().to_owned(),
@@ -458,30 +465,44 @@ async fn circuit_selector(
                 u64::from(chain_id),
                 Claim::Tribute,
             );
-            newest_active(keys.iter().map(|key| (key.version(), key.status())))
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "no active tribute circuit registered for L2 chain {chain_id}; \
-                         pass --circuit-version"
-                    )
-                })?
-                .to_owned()
+            let candidates = keys.iter().filter_map(|key| {
+                combined_len(key.vk_bytes(), PUBLIC_INPUT_COUNT)
+                    .ok()
+                    .map(|len| (key.version(), len))
+            });
+            version_for_proof_len(candidates, proof.len(), chain_id)?
         }
     };
     Ok((chain_id, version))
 }
 
-/// Last `Active` entry of an ascending-by-version table, or `None`.
+/// The one `(version, combined_len)` candidate that accepts a `proof_len`-byte
+/// proof, or an error naming what the caller must pass instead.
 ///
-/// Split out from [`circuit_selector`] because the compiled-in registry holds
-/// exactly one entry, so the rule is untestable through it; the pairs are what
-/// the rule actually reads off an `L2Key`.
-fn newest_active<'a>(
-    keys: impl DoubleEndedIterator<Item = (&'a str, CircuitStatus)>,
-) -> Option<&'a str> {
-    keys.rev()
-        .find(|(_, status)| *status == CircuitStatus::Active)
+/// Takes the pairs rather than the keys because `L2Key` has no constructor and
+/// the compiled-in registry holds a single entry, so the ambiguous and no-match
+/// arms are unreachable through it; the pairs are what the rule reads off a key.
+fn version_for_proof_len<'a>(
+    candidates: impl Iterator<Item = (&'a str, usize)>,
+    proof_len: usize,
+    chain_id: u32,
+) -> Result<String> {
+    let matching: Vec<&str> = candidates
+        .filter(|(_, len)| *len == proof_len)
         .map(|(version, _)| version)
+        .collect();
+    match matching.as_slice() {
+        [version] => Ok((*version).to_owned()),
+        [] => Err(eyre::eyre!(
+            "no tribute circuit registered for L2 chain {chain_id} takes a \
+             {proof_len}-byte proof; pass --circuit-version"
+        )),
+        several => Err(eyre::eyre!(
+            "a {proof_len}-byte proof fits several tribute circuits registered \
+             for L2 chain {chain_id} ({}); pass --circuit-version",
+            several.join(", ")
+        )),
+    }
 }
 
 /// The caller's registered L2 chain id, read from the L2Registry (0xEE0E).
@@ -666,6 +687,19 @@ mod tests {
         }
     }
 
+    /// A stand-in proof of exactly the length the registered key implies, so
+    /// the selector derives a version from it the way a real one would.
+    fn sized_proof() -> Vec<u8> {
+        let vk = outbe_l2registry::api::vk_for(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            0xdead,
+            Claim::Tribute,
+            "1.0.0",
+        )
+        .expect("the test L2 registers the fixture circuit version");
+        vec![0u8; combined_len(vk, PUBLIC_INPUT_COUNT).expect("combined length under the key")]
+    }
+
     #[tokio::test]
     async fn offer_without_a_proof_sends_the_empty_circuit_selector() {
         let caller = address!("0x1111111111111111111111111111111111111111");
@@ -675,7 +709,7 @@ mod tests {
             (Some(7), None, (7, "")),
             (None, Some("custom"), (0, "custom")),
         ] {
-            let selector = circuit_selector(&MockRpc::default(), caller, false, chain_id, version)
+            let selector = circuit_selector(&MockRpc::default(), caller, &[], chain_id, version)
                 .await
                 .unwrap();
             assert_eq!(selector, (expected.0, expected.1.to_owned()));
@@ -686,7 +720,7 @@ mod tests {
     async fn proof_defaults_to_the_caller_registered_l2_and_its_canonical_version() {
         let caller = address!("0x1111111111111111111111111111111111111111");
         let registered = l2_registry_mock(0xdead);
-        let selector = circuit_selector(&registered, caller, true, None, None)
+        let selector = circuit_selector(&registered, caller, &sized_proof(), None, None)
             .await
             .unwrap();
         assert_eq!(selector, (0xdead, "1.0.0".to_owned()));
@@ -698,14 +732,14 @@ mod tests {
         // A default mock fails every eth_call: explicit selectors need no RPC.
         let offline = MockRpc::default();
         assert_eq!(
-            circuit_selector(&offline, caller, true, Some(7), Some("9.9.9"))
+            circuit_selector(&offline, caller, &sized_proof(), Some(7), Some("9.9.9"))
                 .await
                 .unwrap(),
             (7, "9.9.9".to_owned())
         );
         // An explicit empty version must not be replaced by the default.
         assert_eq!(
-            circuit_selector(&offline, caller, true, Some(7), Some(""))
+            circuit_selector(&offline, caller, &sized_proof(), Some(7), Some(""))
                 .await
                 .unwrap(),
             (7, String::new())
@@ -713,13 +747,13 @@ mod tests {
         // Each selector defaults independently of the other.
         let registered = l2_registry_mock(0xdead);
         assert_eq!(
-            circuit_selector(&registered, caller, true, None, Some("1.0.0"))
+            circuit_selector(&registered, caller, &sized_proof(), None, Some("1.0.0"))
                 .await
                 .unwrap(),
             (0xdead, "1.0.0".to_owned())
         );
         assert_eq!(
-            circuit_selector(&registered, caller, true, Some(0xdead), None)
+            circuit_selector(&registered, caller, &sized_proof(), Some(0xdead), None)
                 .await
                 .unwrap(),
             (0xdead, "1.0.0".to_owned())
@@ -731,14 +765,14 @@ mod tests {
         let caller = address!("0x1111111111111111111111111111111111111111");
         let unregistered = l2_registry_mock(0);
         assert!(
-            circuit_selector(&unregistered, caller, true, None, None)
+            circuit_selector(&unregistered, caller, &sized_proof(), None, None)
                 .await
                 .is_err(),
             "an unregistered caller must not fall back to chain 0"
         );
         let oversize = l2_registry_mock(u64::from(u32::MAX) + 1);
         assert!(
-            circuit_selector(&oversize, caller, true, None, None)
+            circuit_selector(&oversize, caller, &sized_proof(), None, None)
                 .await
                 .is_err(),
             "a chain id wider than uint32 must not be truncated"
@@ -748,7 +782,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            circuit_selector(&non_development, caller, true, Some(999), None)
+            circuit_selector(&non_development, caller, &sized_proof(), Some(999), None)
                 .await
                 .is_err(),
             "a chain with no registered tribute circuit has no default version"
@@ -839,37 +873,49 @@ mod tests {
     fn offer_cli_rejects_legacy_amount_atto_flag() {
         assert!(TributeHarness::try_parse_from(offer_argv(&["--amount-atto", "0"])).is_err());
     }
-}
 
-#[cfg(test)]
-mod circuit_version_tests {
-    use super::newest_active;
-    use outbe_l2_zk_canonical::CircuitStatus::{Active, Deprecated, Revoked};
+    const LEN: usize = 8_900;
 
-    fn pick(keys: &[(&'static str, outbe_l2_zk_canonical::CircuitStatus)]) -> Option<&'static str> {
-        newest_active(keys.iter().copied())
+    /// One candidate of the right length is the answer, whatever its status:
+    /// the node verifies `deprecated` keys, so a proof minted under one must
+    /// still be offerable without naming it.
+    #[test]
+    fn one_candidate_of_the_right_length_is_the_answer() {
+        let picked = version_for_proof_len([("1.0.0", LEN)].into_iter(), LEN, 0xdead).unwrap();
+        assert_eq!(picked, "1.0.0");
+        let picked = version_for_proof_len(
+            [("1.0.0", LEN), ("2.0.0", LEN + 384)].into_iter(),
+            LEN,
+            0xdead,
+        )
+        .unwrap();
+        assert_eq!(picked, "1.0.0");
     }
 
-    /// The default is the newest *active* version, not the newest version and
-    /// not the first one: a deprecated or revoked tail must be skipped over.
+    /// Two circuits of the same size cannot be told apart from the proof, and
+    /// guessing would revert on chain instead of here. Both are named.
     #[test]
-    fn default_version_is_the_last_active_entry() {
-        assert_eq!(pick(&[("1.0.0", Active)]), Some("1.0.0"));
-        assert_eq!(pick(&[("1.0.0", Active), ("2.0.0", Active)]), Some("2.0.0"));
-        assert_eq!(
-            pick(&[("1.0.0", Active), ("2.0.0", Deprecated)]),
-            Some("1.0.0")
+    fn an_ambiguous_length_is_an_error_naming_the_candidates() {
+        let error =
+            version_for_proof_len([("1.0.0", LEN), ("2.0.0", LEN)].into_iter(), LEN, 0xdead)
+                .expect_err("an ambiguous proof length must not be guessed");
+        let message = error.to_string();
+        assert!(
+            message.contains("1.0.0") && message.contains("2.0.0"),
+            "{message}"
         );
-        assert_eq!(
-            pick(&[
-                ("1.0.0", Deprecated),
-                ("2.0.0", Active),
-                ("3.0.0", Revoked),
-                ("4.0.0", Deprecated),
-            ]),
-            Some("2.0.0")
-        );
-        assert_eq!(pick(&[]), None);
-        assert_eq!(pick(&[("1.0.0", Deprecated), ("2.0.0", Revoked)]), None);
+        assert!(message.contains("--circuit-version"), "{message}");
+    }
+
+    #[test]
+    fn no_candidate_of_that_length_is_an_error() {
+        let error = version_for_proof_len([("1.0.0", LEN)].into_iter(), LEN + 32, 0xdead)
+            .expect_err("a proof no registered key accepts must be rejected");
+        assert!(error.to_string().contains("--circuit-version"));
+    }
+
+    #[test]
+    fn an_empty_registry_is_an_error() {
+        assert!(version_for_proof_len([].into_iter(), LEN, 0xdead).is_err());
     }
 }

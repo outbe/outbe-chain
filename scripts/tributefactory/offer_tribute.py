@@ -237,7 +237,7 @@ def main() -> None:
     parser.add_argument(
         "--version",
         required=True,
-        help="Exact circuit version enabled for that chain, e.g. 1.0.0",
+        help="Exact circuit version registered for that chain, e.g. 1.0.0",
     )
     parser.add_argument(
         "--tribute-draft-id",

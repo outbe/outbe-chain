@@ -56,7 +56,7 @@ const circuitChainId = z
 const circuitVersion = z
   .string()
   .min(1)
-  .describe('exact circuit version enabled for that L2 chain, e.g. "1.0.0"');
+  .describe('exact circuit version registered for that L2 chain, e.g. "1.0.0"');
 const tributeDraftId = z
   .string()
   .regex(HEX32, "tribute_draft_id must be exactly 32 bytes of 0x-hex")
@@ -198,7 +198,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
           excludeFromIntex,
           zk_proof as Hex,
           l2_chain_id, // chainId the proof verifies under
-          circuit_version, // exact enabled circuit version for that chain
+          circuit_version, // exact registered circuit version for that chain
           "0x" as Hex, // zkPublicKey - the combined proof carries its own
           zk_merkle_root as Hex,
           signature as Hex,

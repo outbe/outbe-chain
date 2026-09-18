@@ -231,7 +231,7 @@ def main() -> None:
                     help="L2 chain id the proof verifies under; must be the caller's "
                          "registered L2")
     ap.add_argument("--version", required=True,
-                    help="exact circuit version enabled for that chain, e.g. 1.0.0")
+                    help="exact circuit version registered for that chain, e.g. 1.0.0")
     ap.add_argument("--tribute-draft-id", required=True, type=hex32_arg,
                     help="32-byte TributeDraft id the proof and the caller's L2 "
                          "attestation bind (0x-hex)")
