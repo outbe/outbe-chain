@@ -8,7 +8,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
-import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
@@ -249,14 +249,14 @@ contract EscrowAdapterTest is Test {
 
     /// @dev Lock a bid the way the auction sizes it, so the day's clearing terms can work out its payment.
     function _lockBid(address bidder, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
-        amount = uint128(IntexUnits.escrowAmount(quantity, BASIS, bidRate));
+        amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
         paymentToken.mint(bidder, amount);
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder, amount, bidRate, quantity);
     }
 
     function _paidAtClearing(uint16 quantity) internal pure returns (uint128) {
-        return uint128(IntexUnits.escrowAmount(quantity, BASIS, CLEARING_RATE));
+        return uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, CLEARING_RATE));
     }
 
     function _winners(address a) internal pure returns (address[] memory winners) {

@@ -9,7 +9,6 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
-import {IntexUnits} from "../shared/libs/IntexUnits.sol";
 import {IWhitelist, WhitelistUpdated, requireWhitelisted} from "@shared/Whitelist.sol";
 
 /// @title IntexAuction
@@ -395,7 +394,7 @@ contract IntexAuction is
         // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
         // result exactly once into 18-decimal WCOEN before locking funds.
         // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
-        uint256 lockAmount = IntexUnits.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
+        uint256 lockAmount = BridgeMsgCodec.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.

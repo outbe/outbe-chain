@@ -7,7 +7,6 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
-import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
@@ -120,7 +119,7 @@ abstract contract RefundGasBase is CrossChainTest {
 
     /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance already in use.
     function _lock(uint256 from, uint256 count, uint32 bidRate, uint128 held) internal {
-        uint128 amount = uint128(IntexUnits.escrowAmount(QUANTITY, BASIS, bidRate));
+        uint128 amount = uint128(BridgeMsgCodec.escrowAmount(QUANTITY, BASIS, bidRate));
         for (uint256 i = from; i < from + count; ++i) {
             address who = _bidder(i);
             deal(address(token), who, uint256(amount) + held);

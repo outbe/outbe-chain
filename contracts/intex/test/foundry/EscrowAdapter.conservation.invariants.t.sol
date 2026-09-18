@@ -6,7 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
@@ -46,7 +46,7 @@ contract EscrowConservationHandler is Test {
     function lock(uint256 seriesSeed, uint256 bidderSeed, uint256 rateSeed, uint256 quantitySeed) external {
         uint32 bidRate = uint32(bound(rateSeed, 1, 1_000_000));
         uint16 quantity = uint16(bound(quantitySeed, 1, 1_000));
-        uint128 amount = uint128(IntexUnits.escrowAmount(quantity, BASIS, bidRate));
+        uint128 amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
         vm.prank(auction);
         try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount, bidRate, quantity) {} catch {}
     }
@@ -169,7 +169,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
                 if (l.status == IEscrowAdapter.LockStatus.Locked) {
                     held += l.lockedAmount;
                 } else if (l.status == IEscrowAdapter.LockStatus.Won) {
-                    held += l.lockedAmount - IntexUnits.escrowAmount(l.quantity, BASIS, CLEARING_RATE);
+                    held += l.lockedAmount - BridgeMsgCodec.escrowAmount(l.quantity, BASIS, CLEARING_RATE);
                 }
             }
             (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);

@@ -11,7 +11,7 @@ import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
-import {IntexUnits} from "../shared/libs/IntexUnits.sol";
+import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {Scope} from "../vendor/the-compact/types/Scope.sol";
 import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
 
@@ -413,7 +413,7 @@ contract EscrowAdapter is
                 quantity = partialWon;
             }
             uint128 locked = lock.lockedAmount;
-            uint256 paid = IntexUnits.escrowAmount(quantity, basis, clearingRate);
+            uint256 paid = BridgeMsgCodec.escrowAmount(quantity, basis, clearingRate);
             if (paid > locked) {
                 emit BidderRefundFailed(
                     receiveId, worldwideDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
@@ -502,7 +502,7 @@ contract EscrowAdapter is
     {
         if (lock.status == LockStatus.Won) {
             DayClearing storage clearing = _s().dayClearing[worldwideDay];
-            uint256 paid = IntexUnits.escrowAmount(lock.quantity, clearing.basis, clearing.clearingRate);
+            uint256 paid = BridgeMsgCodec.escrowAmount(lock.quantity, clearing.basis, clearing.clearingRate);
             // forge-lint: disable-next-line(unsafe-typecast) -- a winner's payment stayed below its lock
             return (lock.lockedAmount - uint128(paid), 0);
         }
