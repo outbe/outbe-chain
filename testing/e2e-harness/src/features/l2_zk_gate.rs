@@ -2,8 +2,8 @@
 //!
 //! The harness plays the L2 network: it registers the operator's EOA through
 //! validator governance under a deterministic fixture key, and every offer must
-//! carry a real FullProof under the circuit version enabled for the registered
-//! L2 chain whose root is signed with exactly that registered key.
+//! carry a real tribute proof under the circuit version enabled for the
+//! registered L2 chain whose root is signed with exactly that registered key.
 
 use alloy_primitives::{Address, B256};
 use cucumber::{then, when};
@@ -59,31 +59,42 @@ fn offer_proof(
 /// Mix one statement's public inputs with another statement's proof words, so
 /// the result is well formed but cryptographically invalid for its statement.
 fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk) -> Vec<u8> {
-    use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::full_proof::{decode_public_inputs, PUBLIC_INPUT_COUNT};
-    use outbe_zk_canonical::noir::full_proof::FullProof;
+    use outbe_l2_zk_canonical::claims::tribute::{decode_public_inputs, PUBLIC_INPUT_COUNT};
+    use outbe_l2_zk_canonical::{l2_keys, Claim};
+    use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 
     let original = original.proof.clone();
     let donor = donor.proof.clone();
     std::thread::spawn(move || {
-        let public = decode_public_inputs(&original).expect("original public inputs");
-        let other = decode_public_inputs(&donor).expect("donor public inputs");
+        let vk = l2_keys(L2_CHAIN_ID, Claim::Tribute)
+            .iter()
+            .find(|key| key.version() == l2_fixture::FIXTURE_CIRCUIT_VERSION)
+            .expect("the gate scenario's chain is bound to the fixture circuit version")
+            .vk_bytes();
+        let bb = Barretenberg::default();
+        let public = decode_public_inputs(&original, vk).expect("original public inputs");
+        let other = decode_public_inputs(&donor, vk).expect("donor public inputs");
         assert_ne!(
             public, other,
             "proof donor must represent a different statement"
         );
-        assert!(verify_circuit::<FullProof>(&original).expect("original proof verification"));
-        assert!(verify_circuit::<FullProof>(&donor).expect("donor proof verification"));
+        assert!(bb
+            .verify_combined(vk, &original)
+            .expect("original proof verification"));
+        assert!(bb
+            .verify_combined(vk, &donor)
+            .expect("donor proof verification"));
         let prefix = 4 + PUBLIC_INPUT_COUNT * 32;
         let mut tampered = original;
         tampered[prefix..].copy_from_slice(&donor[prefix..]);
         assert_ne!(tampered, donor, "mixed proof must differ from its donor");
         assert_eq!(
-            decode_public_inputs(&tampered).expect("tampered public inputs"),
+            decode_public_inputs(&tampered, vk).expect("tampered public inputs"),
             public
         );
         assert!(
-            !verify_circuit::<FullProof>(&tampered).expect("well-formed mixed proof verification"),
+            !bb.verify_combined(vk, &tampered)
+                .expect("well-formed mixed proof verification"),
             "mixed proof must fail cryptographic verification"
         );
         tampered
@@ -179,12 +190,14 @@ fn submit_proven_offer(world: &mut World, tag: &str) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("the operator submits a valid FullProof offer for one encrypted tribute")]
-fn offer_with_valid_full_proof(world: &mut World) {
+#[when("the operator submits a valid tribute proof offer for one encrypted tribute")]
+fn offer_with_valid_tribute_proof(world: &mut World) {
     submit_proven_offer(world, "zk-gate-valid");
 }
 
-#[when("the operator proves a signed tampered proof is rejected then submits the valid FullProof")]
+#[when(
+    "the operator proves a signed tampered proof is rejected then submits the valid tribute proof"
+)]
 fn offer_with_valid_zk_proof(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let worldwide_day = wwd.parse::<u64>().expect("worldwide-day number");
@@ -271,11 +284,12 @@ mod tests {
     #[test]
     fn scenario_uses_the_preexisting_circuit_binding() {
         assert_eq!(L2_CHAIN_ID_SELECTOR, L2_CHAIN_ID as u32);
-        let bound = outbe_zk_canonical::l2_circuits(L2_CHAIN_ID);
+        let bound =
+            outbe_l2_zk_canonical::l2_keys(L2_CHAIN_ID, outbe_l2_zk_canonical::Claim::Tribute);
         assert!(
             bound
                 .iter()
-                .any(|entry| entry.version == l2_fixture::FIXTURE_CIRCUIT_VERSION),
+                .any(|key| key.version() == l2_fixture::FIXTURE_CIRCUIT_VERSION),
             "the gate scenario's chain must be bound to the fixture circuit version"
         );
         assert_eq!(

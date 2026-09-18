@@ -22,8 +22,7 @@ use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_paynote::test_support as paynote_support;
 
 use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime, sol_ext::IERC20};
-use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
+use outbe_zk_core::codec::field_to_be_bytes;
 
 /// The chain ID `World`'s storage provider reports; PayNote folds it into
 /// every commitment, so fixtures must be built under the same one.
@@ -226,7 +225,7 @@ impl World {
             spend_amount,
         );
         paynote_support::seed_pool(&mut self.provider, CHAIN_ID, &[fixture.commitment]);
-        let nullifier = B256::from_slice(&OutbeV1::field_to_be_bytes(&fixture.public.nullifier));
+        let nullifier = B256::from_slice(&field_to_be_bytes(&fixture.public.nullifier));
         (fixture.proof, nullifier)
     }
 

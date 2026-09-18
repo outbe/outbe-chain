@@ -3,17 +3,19 @@ use outbe_agentreward::AgentRewardContract;
 use outbe_compressed_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
+use outbe_l2_zk_canonical::claims::tribute::{
+    alloy::PublicInputs as TributePublicInputs, decode_public_inputs,
+};
+use outbe_l2_zk_canonical::Claim;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
-use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
 use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
 };
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
-use outbe_zk_canonical::full_proof::alloy::PublicInputs as FullProofPublicInputs;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -173,8 +175,9 @@ impl TributeFactoryContract<'_> {
         }
 
         let zk_context = Some(TributeZkContext {
-            derived_owner: public.derived_owner,
+            derived_owner: public.owner,
             chain_id: host_chain_id,
+            l2_chain_id: u64::from(l2_chain_id),
         });
 
         // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
@@ -292,60 +295,35 @@ fn resolve_verification_key(
     l2_chain_id: u32,
     version: &str,
 ) -> Result<&'static [u8]> {
-    let binding = outbe_l2registry::api::l2_circuits(host_chain_id, u64::from(l2_chain_id))
+    // One lookup: an L2 key carries the bytes L1 verifies with, and
+    // `outbe-l2-zk-canonical`'s build script asserts the manifest's proof
+    // system at compile time, so there is nothing left to cross-check here.
+    outbe_l2registry::api::l2_keys(host_chain_id, u64::from(l2_chain_id), Claim::Tribute)
         .iter()
-        .find(|entry| entry.version == version)
-        .ok_or_else(|| TributeFactoryError::UnknownCircuitVersion {
-            chain_id: l2_chain_id,
-            version: version.to_owned(),
-        })?;
-    let circuit = outbe_zk_canonical::noir::CIRCUIT_REGISTRY
-        .iter()
-        .find(|entry| {
-            entry.circuit_hash == binding.circuit_hash && entry.version == binding.version
-        })
+        .find(|key| key.version() == version)
+        .map(|key| key.vk_bytes())
         .ok_or_else(|| {
-            PrecompileError::Fatal(
-                "L2 circuit binding has no canonical verification metadata".into(),
-            )
-        })?;
-    if circuit.proof_system != "bb-keccak-v1" {
-        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
-    }
-    Ok(circuit.vk_bytes)
+            TributeFactoryError::UnknownCircuitVersion {
+                chain_id: l2_chain_id,
+                version: version.to_owned(),
+            }
+            .into()
+        })
 }
 
-fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<FullProofPublicInputs> {
-    // bb-keccak-v1 VK: log circuit size, public count (including eight
-    // pairing-accumulator words), offset, then 28 two-word commitments.
-    // The key comes from the exact registered L2 circuit version. Retain
-    // bb-keccak-v1 layout checks before calling the backend.
-    if verification_key.len() != 59 * 32 {
-        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
-    }
-    let log_n = read_u64_be_padded(&verification_key[..32])
-        .filter(|size| (1..=28).contains(size))
-        .ok_or(TributeFactoryError::UnsupportedZkCircuit)?;
-    if read_u64_be_padded(&verification_key[32..64]) != Some(4 + 8) {
-        return Err(TributeFactoryError::UnsupportedZkCircuit.into());
-    }
-    // UltraKeccakZK: DefaultIO + Oink + Sumcheck + Shplemini.
-    let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
-    let [derived_owner, nft_hash, binding_hash, merkle_root] =
-        decode_public_words::<4>(proof, combined_len)
-            .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
-    Ok(FullProofPublicInputs {
-        derived_owner: B256::from(derived_owner),
-        nft_hash: B256::from(nft_hash),
-        binding_hash: B256::from(binding_hash),
-        merkle_root: B256::from(merkle_root),
-    })
+fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<TributePublicInputs> {
+    // The claim's generated decoder derives the combined length from the key
+    // header (59 words, log_n range, declared public count) and rejects
+    // non-canonical field words, so one decoder serves every registered key.
+    decode_public_inputs(proof, verification_key)
+        .and_then(TributePublicInputs::try_from)
+        .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()).into())
 }
 
 fn validate_zk_result(
     zk_proof: &[u8],
     verification_key: &[u8],
-    public: FullProofPublicInputs,
+    public: TributePublicInputs,
     expected: Option<&outbe_tee::protocol::TributeZkExpectedHashes>,
 ) -> Result<()> {
     let expected = expected.ok_or(TributeFactoryError::ZkPublicInputMismatch {
@@ -445,34 +423,39 @@ pub(crate) fn validate_agent_reward_addresses(
 #[cfg(test)]
 mod zk_result_tests {
     use super::*;
+    use outbe_l2_zk_canonical::claims::tribute::PUBLIC_INPUT_COUNT;
     use outbe_tee::protocol::TributeZkExpectedHashes;
-    use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
-    fn verification_key() -> &'static [u8] {
-        resolve_verification_key(outbe_primitives::chain::DEVNET_CHAIN_ID, 0xdead, "1.1.0").unwrap()
+    fn combined_len() -> usize {
+        outbe_l2_zk_canonical::combined_len(verification_key(), PUBLIC_INPUT_COUNT).unwrap()
     }
 
-    fn public_inputs() -> FullProofPublicInputs {
-        FullProofPublicInputs {
-            derived_owner: B256::repeat_byte(1),
+    fn verification_key() -> &'static [u8] {
+        resolve_verification_key(outbe_primitives::chain::DEVNET_CHAIN_ID, 0xdead, "1.0.0").unwrap()
+    }
+
+    fn public_inputs() -> TributePublicInputs {
+        TributePublicInputs {
+            owner: B256::repeat_byte(1),
             nft_hash: B256::repeat_byte(2),
             binding_hash: B256::repeat_byte(3),
             merkle_root: B256::repeat_byte(4),
         }
     }
 
-    fn dummy_proof(public: FullProofPublicInputs) -> Vec<u8> {
-        let mut proof = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
+    fn dummy_proof(public: TributePublicInputs) -> Vec<u8> {
+        let combined_len = combined_len();
+        let mut proof = Vec::with_capacity(combined_len);
         proof.extend_from_slice(&4u32.to_be_bytes());
         for word in [
-            public.derived_owner,
+            public.owner,
             public.nft_hash,
             public.binding_hash,
             public.merkle_root,
         ] {
             proof.extend_from_slice(word.as_slice());
         }
-        proof.resize(FULL_PROOF_COMBINED_LEN, 0);
+        proof.resize(combined_len, 0);
         proof
     }
 
@@ -543,19 +526,19 @@ mod zk_result_tests {
             19_280_501,
         ] {
             assert_eq!(
-                resolve_verification_key(host_chain_id, 57_005, "1.1.0").unwrap(),
+                resolve_verification_key(host_chain_id, 57_005, "1.0.0").unwrap(),
                 verification_key(),
             );
         }
         assert_eq!(
-            resolve_verification_key(DEVNET_CHAIN_ID, 0xE2E1_0000, "1.1.0").unwrap(),
+            resolve_verification_key(DEVNET_CHAIN_ID, 0xE2E1_0000, "1.0.0").unwrap(),
             verification_key(),
         );
         for (host_chain_id, l2_chain_id, version) in [
-            (DEVNET_CHAIN_ID, 0, "1.1.0"),
-            (MAINNET_CHAIN_ID, 4242, "1.1.0"),
-            (TESTNET_CHAIN_ID, 0xE2E1_0000, "1.1.0"),
-            (19_280_501, 0xE2E1_0000, "1.1.0"),
+            (DEVNET_CHAIN_ID, 0, "1.0.0"),
+            (MAINNET_CHAIN_ID, 4242, "1.0.0"),
+            (TESTNET_CHAIN_ID, 0xE2E1_0000, "1.0.0"),
+            (19_280_501, 0xE2E1_0000, "1.0.0"),
             (DEVNET_CHAIN_ID, 0xdead, ""),
             (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {
@@ -590,7 +573,7 @@ mod zk_result_tests {
     fn registered_circuit_verifies_real_proof_and_rejects_changed_statement() {
         outbe_zk_backend::barretenberg::init_crs().unwrap();
         let proof = include_bytes!(
-            "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
+            "../../../../testing/protocol-benchmarks/fixtures/tribute_offer_proof.bin"
         );
         let public = decode_zk_public_inputs(proof, verification_key()).unwrap();
         let expected = TributeZkExpectedHashes {

@@ -84,7 +84,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
 dependencies = [
  "crypto-common 0.1.7",
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -1984,7 +1984,7 @@ version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -2002,7 +2002,7 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -2625,7 +2625,7 @@ dependencies = [
  "bs58",
  "const-hex",
  "digest 0.10.7",
- "generic-array 0.14.7",
+ "generic-array",
  "ripemd 0.1.3",
  "serde",
  "sha2 0.10.9",
@@ -3430,7 +3430,7 @@ version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
  "rand_core 0.6.4",
  "subtle",
  "zeroize",
@@ -3458,7 +3458,7 @@ version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
  "rand_core 0.6.4",
  "typenum",
 ]
@@ -3981,7 +3981,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3dd60d1080a57a05ab032377049e0591415d2b31afd7028356dbf3cc6dcb066"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -4226,7 +4226,7 @@ dependencies = [
  "crypto-bigint 0.5.5",
  "digest 0.10.7",
  "ff 0.13.1",
- "generic-array 0.14.7",
+ "generic-array",
  "group 0.13.0",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
@@ -4813,16 +4813,6 @@ dependencies = [
  "typenum",
  "version_check",
  "zeroize",
-]
-
-[[package]]
-name = "generic-array"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb130435a959a8d525e6bca66ff6c40981a300ee96d70e3ef56f046556d614a3"
-dependencies = [
- "rustversion",
- "typenum",
 ]
 
 [[package]]
@@ -6330,7 +6320,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "block-padding 0.3.3",
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -8313,16 +8303,17 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-consensus",
+ "outbe-l2-zk-canonical",
  "outbe-l2registry",
  "outbe-operator",
  "outbe-paynote",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-rpc",
  "outbe-tee",
  "outbe-zerofee",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "outbe-zk-core",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -8552,6 +8543,8 @@ dependencies = [
  "outbe-consensus",
  "outbe-evm",
  "outbe-fidelity",
+ "outbe-l2-demo",
+ "outbe-l2-zk-canonical",
  "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
@@ -8565,14 +8558,13 @@ dependencies = [
  "outbe-oracle",
  "outbe-paynote",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-radicle 0.1.0",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "outbe-zk-core",
  "radicle",
  "rand 0.10.2",
  "rand 0.8.6",
@@ -8615,9 +8607,9 @@ dependencies = [
  "ark-ff 0.6.0",
  "outbe-macros",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "outbe-zk-core",
  "thiserror 2.0.18",
 ]
 
@@ -8737,7 +8729,6 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-protocol",
  "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -8758,6 +8749,7 @@ dependencies = [
  "outbe-zerofee",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "outbe-zk-core",
  "proptest",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -8973,6 +8965,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-l2-demo"
+version = "0.11.0"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
+dependencies = [
+ "alloy-primitives",
+ "ark-bn254",
+ "ark-std 0.6.0",
+ "base64 0.22.1",
+ "outbe-l2-zk-canonical",
+ "outbe-zk-backend",
+ "outbe-zk-core",
+ "serde_json",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "outbe-l2-zk-canonical"
+version = "0.11.0"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
+dependencies = [
+ "alloy-primitives",
+ "ark-bn254",
+ "hex-literal",
+ "outbe-zk-core",
+ "serde_json",
+ "tiny-keccak",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "outbe-l2registry"
 version = "0.1.0"
 dependencies = [
@@ -8983,10 +9005,10 @@ dependencies = [
  "commonware-cryptography",
  "commonware-math",
  "hex",
+ "outbe-l2-zk-canonical",
  "outbe-macros",
  "outbe-primitives",
  "outbe-vote",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9189,11 +9211,11 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-paynote",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-validatorset",
  "outbe-vaultrouter",
+ "outbe-zk-core",
  "revm",
  "thiserror 2.0.18",
 ]
@@ -9370,10 +9392,10 @@ dependencies = [
  "outbe-macros",
  "outbe-paynote",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-vaultrouter",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "outbe-zk-core",
  "thiserror 2.0.18",
 ]
 
@@ -9467,25 +9489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-protocol"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
-dependencies = [
- "alloy-primitives",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-grumpkin",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "blake2 0.10.6",
- "generic-array 1.4.2",
- "outbe-poseidon",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
 name = "outbe-protocol-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -9507,6 +9510,8 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-intex",
  "outbe-intexfactory",
+ "outbe-l2-demo",
+ "outbe-l2-zk-canonical",
  "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
@@ -9516,8 +9521,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-stablecoin",
  "outbe-stablecoinfactory",
  "outbe-tee",
@@ -9527,7 +9530,7 @@ dependencies = [
  "outbe-validatorset",
  "outbe-vaultrouter",
  "outbe-zk-backend",
- "outbe-zk-canonical",
+ "outbe-zk-core",
  "rand 0.10.2",
  "rand 0.8.6",
  "revm",
@@ -9536,16 +9539,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "x25519-dalek 2.0.1",
-]
-
-[[package]]
-name = "outbe-protocol-derive"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -9813,10 +9806,9 @@ dependencies = [
  "k256 0.13.4",
  "outbe-consensus",
  "outbe-fidelity-math",
+ "outbe-l2-zk-canonical",
  "outbe-poseidon",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-tee",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -9882,18 +9874,17 @@ dependencies = [
  "hex",
  "outbe-agentreward",
  "outbe-compressed-entities",
+ "outbe-l2-zk-canonical",
  "outbe-l2registry",
  "outbe-lysis",
  "outbe-macros",
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -10033,7 +10024,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
 dependencies = [
  "acir",
  "acvm",
@@ -10043,7 +10034,7 @@ dependencies = [
  "base64 0.22.1",
  "bn254_blackbox_solver",
  "flate2",
- "outbe-protocol",
+ "outbe-zk-core",
  "reqwest 0.13.2",
  "sha2 0.10.9",
 ]
@@ -10051,7 +10042,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -10059,11 +10050,39 @@ dependencies = [
  "ark-std 0.6.0",
  "base64 0.22.1",
  "hex-literal",
- "outbe-protocol",
+ "outbe-zk-core",
  "serde_json",
  "thiserror 2.0.18",
  "tiny-keccak",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "outbe-zk-core"
+version = "0.11.0"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
+dependencies = [
+ "alloy-primitives",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-grumpkin",
+ "ark-std 0.6.0",
+ "blake2 0.10.6",
+ "outbe-poseidon",
+ "outbe-zk-core-derive",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "outbe-zk-core-derive"
+version = "0.11.0"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=9f07348f2e9242becc1381d7f94be262ec0480bd#9f07348f2e9242becc1381d7f94be262ec0480bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -15121,7 +15140,7 @@ checksum = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc"
 dependencies = [
  "base16ct 0.2.0",
  "der 0.7.10",
- "generic-array 0.14.7",
+ "generic-array",
  "pkcs8 0.10.2",
  "serdect 0.2.0",
  "subtle",

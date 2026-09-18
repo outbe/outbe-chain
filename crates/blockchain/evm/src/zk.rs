@@ -7,8 +7,8 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::dispatch::reject_value;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::protocol::zkproof::decode_verify_call;
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
+use outbe_zk_core::zkproof::decode_verify_call;
 use tracing::trace;
 
 pub use outbe_primitives::storage::gas::ZK_VERIFY_GAS;

@@ -3,11 +3,18 @@ pragma solidity ^0.8.30;
 
 interface ITributeFactory {
     // The caller need not be a registered L2 operator.
-    // `chainId` selects a registered L2 and `version` selects an exact
-    // circuit binding. Devnet may use its development binding stub; verification is real.
-    // `zkProof` uses bb-keccak-v1 with four public inputs in order:
-    // derived_owner, nft_hash, binding_hash, merkle_root. The hashes must retain
-    // the TributeDraft and caller/L1-chain binding semantics checked by the enclave.
+    // `chainId` selects a registered L2 and `version` selects one compiled-in
+    // verification key registered for (`chainId`, tribute); there is no runtime
+    // key registration. Devnet may use its development binding stub;
+    // verification is real.
+    // `zkProof` uses bb-keccak-v1 with the tribute claim's four public inputs
+    // in order: owner, nft_hash, binding_hash, merkle_root
+    // (claims/tribute/abi.json in outbe-l2-zk-canonical).
+    // `binding_hash` = poseidon2([1, sender, draft_id_lo128, draft_id_hi128,
+    // hostChainId, chainId]) - it binds the proof to the caller, the draft,
+    // this host chain AND the L2 named by `chainId`, so a proof made for one L2
+    // does not verify as another's even under a byte-identical circuit; the
+    // enclave recomputes it from the decrypted draft.
     // `zkPublicKey` remains ignored; the root-signing key comes from L2Registry.
     //
     // `signature` is the L2 committee's compressed BLS MinSig signature in G1

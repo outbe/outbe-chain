@@ -154,9 +154,23 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         Rejection::InvalidProof => {
             assert_eq!(call.zkMerkleRoot.len(), 32);
             assert_eq!(call.signature.len(), 48);
+            // The proof's size is a property of the key the call names, not a
+            // constant: look the key up exactly as the node does.
+            let vk = outbe_l2_zk_canonical::l2_keys(
+                u64::from(call.chainId),
+                outbe_l2_zk_canonical::Claim::Tribute,
+            )
+            .iter()
+            .find(|key| key.version() == call.version)
+            .expect("the offered circuit version is registered")
+            .vk_bytes();
             assert_eq!(
                 call.zkProof.len(),
-                outbe_zk_canonical::full_proof::COMBINED_LEN
+                outbe_l2_zk_canonical::combined_len(
+                    vk,
+                    outbe_l2_zk_canonical::claims::tribute::PUBLIC_INPUT_COUNT
+                )
+                .expect("combined length under the registered key")
             );
         }
         Rejection::UnregisteredNetwork => {

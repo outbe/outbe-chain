@@ -33,7 +33,7 @@ const zkProof = z
   .string()
   .regex(HEX, "zk_proof must be 0x-prefixed hex")
   .describe(
-    "combined FullProof bytes (0x-hex): 4-byte public-input word count, public inputs, then proof",
+    "combined tribute proof bytes (0x-hex): 4-byte public-input word count, public inputs, then proof",
   );
 const zkMerkleRoot = z
   .string()
@@ -56,7 +56,7 @@ const circuitChainId = z
 const circuitVersion = z
   .string()
   .min(1)
-  .describe('exact circuit version enabled for that L2 chain, e.g. "1.1.0"');
+  .describe('exact circuit version enabled for that L2 chain, e.g. "1.0.0"');
 const tributeDraftId = z
   .string()
   .regex(HEX32, "tribute_draft_id must be exactly 32 bytes of 0x-hex")

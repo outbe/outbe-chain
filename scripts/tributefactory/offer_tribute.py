@@ -28,7 +28,7 @@ Example:
     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
     --rpc-url http://127.0.0.1:8545 \
     --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
-    --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+    --signature 0x<BLS_SIG> --chain-id 57005 --version 1.0.0 \
     --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH> --amount-base 100
 """
 
@@ -212,7 +212,7 @@ def main() -> None:
         "--zk-proof",
         required=True,
         type=hex_bytes_arg,
-        help="Combined FullProof bytes (0x-hex): 4-byte public-input word count, public "
+        help="Combined tribute proof bytes (0x-hex): 4-byte public-input word count, public "
         "inputs, proof; 0x is a deliberate negative offer the node rejects",
     )
     parser.add_argument(
@@ -237,7 +237,7 @@ def main() -> None:
     parser.add_argument(
         "--version",
         required=True,
-        help="Exact circuit version enabled for that chain, e.g. 1.1.0",
+        help="Exact circuit version enabled for that chain, e.g. 1.0.0",
     )
     parser.add_argument(
         "--tribute-draft-id",

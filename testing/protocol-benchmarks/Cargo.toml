@@ -33,8 +33,9 @@ outbe-nodfactory.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] }
-outbe-protocol.workspace = true
-outbe-protocol-derive.workspace = true
+outbe-l2-demo.workspace = true
+outbe-l2-zk-canonical = { workspace = true, features = ["l2-keys"] }
+outbe-zk-core.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true
 outbe-tee.workspace = true
@@ -44,7 +45,6 @@ outbe-tributefactory = { workspace = true, features = ["bench-utils"] }
 outbe-vaultrouter.workspace = true
 outbe-validatorset.workspace = true
 outbe-zk-backend.workspace = true
-outbe-zk-canonical.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true
 revm.workspace = true

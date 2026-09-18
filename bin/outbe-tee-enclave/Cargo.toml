@@ -85,10 +85,19 @@ outbe-fidelity-math.workspace = true
 # Poseidon-BN254 (same Circom parameters as `outbe-evm::zk` and the wallet) for
 # in-enclave `tribute_id` derivation. We depend on the lightweight Poseidon
 # stack directly - NOT `outbe-zk-backend`, which pulls a heavy Barretenberg C++
-# FFI inappropriate for the enclave.
+# FFI inappropriate for the enclave. `outbe-l2-zk-canonical` is the
+# enclave-safe half of the gate: it depends on neither `outbe-zk-canonical`
+# nor `outbe-zk-backend`, by design, so the MRENCLAVE build graph does not
+# gain barretenberg.
 outbe-poseidon.workspace = true
-outbe-protocol.workspace = true
-outbe-protocol-derive.workspace = true
+# Claim only, no registry. The enclave folds `TributeDraftClaim` and `binding`;
+# it never verifies a proof, so it has no use for `l2_keys`. Default features
+# would compile in one `circuit.vk` per registered L2, and every registration
+# would then change these bytes and re-measure MRENCLAVE - an attestation
+# rotation for an event the enclave has no part in. The workspace dependency
+# already carries `default-features = false` (cargo ignores it here otherwise);
+# this line restates it because this crate is the reason it is set there.
+outbe-l2-zk-canonical = { workspace = true, default-features = false }
 ark-bn254.workspace = true
 ark-ff.workspace = true
 

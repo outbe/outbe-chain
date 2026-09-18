@@ -8,7 +8,7 @@
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature
 //! over `zkMerkleRoot` for `TributeFactory.offerTribute`, independent of the caller.
 //!
-//! [`api::l2_circuits`] uses explicit deployment bindings outside Devnet.
+//! [`api::l2_keys`] uses explicit deployment bindings outside Devnet.
 //! Devnet may use a frozen development binding for unbound L2s without
 //! changing signature or proof verification.
 

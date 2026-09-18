@@ -269,10 +269,20 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0", features = ["alloy"] }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0" }
+outbe-zk-core = { git = "https://github.com/psonet/outbe-circuits.git", rev = "9f07348f2e9242becc1381d7f94be262ec0480bd", features = ["alloy"] }
+# `default-features = false` here, not in the enclave's manifest: cargo ignores
+# a member's `default-features = false` when the workspace dependency does not
+# set it. Off, this is the claim half — `TributeDraftClaim`, `binding`, the
+# generated `PublicInputs` and decoder — which is all the enclave needs and all
+# it may have: the `l2-keys` registry embeds one `circuit.vk` per registered L2,
+# so compiling it into the enclave would re-measure MRENCLAVE on every L2
+# registration and force an attestation rotation for an event the enclave has no
+# part in. Verifiers (tributefactory, l2registry, the CLI, the harnesses) add
+# `features = ["l2-keys"]` at their own dependency line.
+outbe-l2-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "9f07348f2e9242becc1381d7f94be262ec0480bd", default-features = false }
+outbe-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "9f07348f2e9242becc1381d7f94be262ec0480bd", features = ["alloy"] }
+outbe-zk-backend = { git = "https://github.com/psonet/outbe-circuits.git", rev = "9f07348f2e9242becc1381d7f94be262ec0480bd" }
+outbe-l2-demo = { git = "https://github.com/psonet/outbe-circuits.git", rev = "9f07348f2e9242becc1381d7f94be262ec0480bd" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

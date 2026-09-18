@@ -4,8 +4,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
+use outbe_l2_zk_canonical::{CircuitStatus, Claim};
 use outbe_primitives::time::WorldwideDay;
-use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
 use serde_json::Value;
 
 use crate::abi::{
@@ -102,9 +102,9 @@ pub enum TributeCmd {
         /// registered chain id when `--zk-proof` is non-empty.
         #[arg(long)]
         l2_chain_id: Option<u32>,
-        /// Exact circuit version enabled for `--l2-chain-id`. Defaults, when
-        /// `--zk-proof` is non-empty, to the enabled version whose verification
-        /// key is the canonical FullProof's.
+        /// Exact circuit version registered for `--l2-chain-id`. Defaults, when
+        /// `--zk-proof` is non-empty, to the newest active tribute circuit
+        /// registered for that chain.
         #[arg(long)]
         circuit_version: Option<String>,
         /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
@@ -426,10 +426,10 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
 
 /// Resolve the `(chainId, version)` circuit selector carried by `offerTribute`.
 ///
-/// A combined proof does not carry its verification key, so the canonical
-/// default with a proof and no explicit selector is the version enabled for the
-/// caller's registered L2 chain whose verification key hashes to
-/// [`FullProof::VK_HASH`]. Without a proof the selectors default to `0`/empty
+/// A combined proof does not carry its verification key, so the default with a
+/// proof and no explicit selector is the newest active tribute circuit
+/// registered for the caller's L2 chain (the table is ascending by version).
+/// Without a proof the selectors default to `0`/empty
 /// and no registry read is needed. Explicit values - including ones the node
 /// will reject - are passed through unchanged: registration and enablement
 /// remain the node's checks.
@@ -453,19 +453,35 @@ async fn circuit_selector(
     let version = match circuit_version {
         Some(version) => version.to_owned(),
         None => {
-            outbe_l2registry::api::l2_circuits(client.eth_chain_id().await?, u64::from(chain_id))
-                .iter()
-                .find(|entry| entry.vk_hash == FullProof::VK_HASH)
-                .map(|entry| entry.version.to_owned())
+            let keys = outbe_l2registry::api::l2_keys(
+                client.eth_chain_id().await?,
+                u64::from(chain_id),
+                Claim::Tribute,
+            );
+            newest_active(keys.iter().map(|key| (key.version(), key.status())))
                 .ok_or_else(|| {
                     eyre::eyre!(
-                        "no circuit version enabled for L2 chain {chain_id} matches the canonical \
-                 FullProof verification key; pass --circuit-version"
+                        "no active tribute circuit registered for L2 chain {chain_id}; \
+                         pass --circuit-version"
                     )
                 })?
+                .to_owned()
         }
     };
     Ok((chain_id, version))
+}
+
+/// Last `Active` entry of an ascending-by-version table, or `None`.
+///
+/// Split out from [`circuit_selector`] because the compiled-in registry holds
+/// exactly one entry, so the rule is untestable through it; the pairs are what
+/// the rule actually reads off an `L2Key`.
+fn newest_active<'a>(
+    keys: impl DoubleEndedIterator<Item = (&'a str, CircuitStatus)>,
+) -> Option<&'a str> {
+    keys.rev()
+        .find(|(_, status)| *status == CircuitStatus::Active)
+        .map(|(version, _)| version)
 }
 
 /// The caller's registered L2 chain id, read from the L2Registry (0xEE0E).
@@ -673,7 +689,7 @@ mod tests {
         let selector = circuit_selector(&registered, caller, true, None, None)
             .await
             .unwrap();
-        assert_eq!(selector, (0xdead, "1.1.0".to_owned()));
+        assert_eq!(selector, (0xdead, "1.0.0".to_owned()));
     }
 
     #[tokio::test]
@@ -697,16 +713,16 @@ mod tests {
         // Each selector defaults independently of the other.
         let registered = l2_registry_mock(0xdead);
         assert_eq!(
-            circuit_selector(&registered, caller, true, None, Some("1.1.0"))
+            circuit_selector(&registered, caller, true, None, Some("1.0.0"))
                 .await
                 .unwrap(),
-            (0xdead, "1.1.0".to_owned())
+            (0xdead, "1.0.0".to_owned())
         );
         assert_eq!(
             circuit_selector(&registered, caller, true, Some(0xdead), None)
                 .await
                 .unwrap(),
-            (0xdead, "1.1.0".to_owned())
+            (0xdead, "1.0.0".to_owned())
         );
     }
 
@@ -735,7 +751,7 @@ mod tests {
             circuit_selector(&non_development, caller, true, Some(999), None)
                 .await
                 .is_err(),
-            "a chain with no canonical FullProof binding has no default version"
+            "a chain with no registered tribute circuit has no default version"
         );
     }
 
@@ -822,5 +838,38 @@ mod tests {
     #[test]
     fn offer_cli_rejects_legacy_amount_atto_flag() {
         assert!(TributeHarness::try_parse_from(offer_argv(&["--amount-atto", "0"])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod circuit_version_tests {
+    use super::newest_active;
+    use outbe_l2_zk_canonical::CircuitStatus::{Active, Deprecated, Revoked};
+
+    fn pick(keys: &[(&'static str, outbe_l2_zk_canonical::CircuitStatus)]) -> Option<&'static str> {
+        newest_active(keys.iter().copied())
+    }
+
+    /// The default is the newest *active* version, not the newest version and
+    /// not the first one: a deprecated or revoked tail must be skipped over.
+    #[test]
+    fn default_version_is_the_last_active_entry() {
+        assert_eq!(pick(&[("1.0.0", Active)]), Some("1.0.0"));
+        assert_eq!(pick(&[("1.0.0", Active), ("2.0.0", Active)]), Some("2.0.0"));
+        assert_eq!(
+            pick(&[("1.0.0", Active), ("2.0.0", Deprecated)]),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            pick(&[
+                ("1.0.0", Deprecated),
+                ("2.0.0", Active),
+                ("3.0.0", Revoked),
+                ("4.0.0", Deprecated),
+            ]),
+            Some("2.0.0")
+        );
+        assert_eq!(pick(&[]), None);
+        assert_eq!(pick(&[("1.0.0", Deprecated), ("2.0.0", Revoked)]), None);
     }
 }

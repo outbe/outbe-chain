@@ -375,7 +375,7 @@ test("MCP tribute_offer submits the caller's proof, root, signature and circuit 
     zk_merkle_root: merkleRoot,
     signature,
     l2_chain_id: 57005,
-    circuit_version: "1.1.0",
+    circuit_version: "1.0.0",
     tribute_draft_id: `0x${"12".repeat(32)}`,
     su_hashes: [`0x${"34".repeat(32)}`],
     wait: false,
@@ -389,7 +389,7 @@ test("MCP tribute_offer submits the caller's proof, root, signature and circuit 
   });
   assert.equal(args?.[7], proof, "zkProof");
   assert.equal(args?.[8], 57005, "chainId");
-  assert.equal(args?.[9], "1.1.0", "version");
+  assert.equal(args?.[9], "1.0.0", "version");
   assert.equal(args?.[11], merkleRoot, "zkMerkleRoot");
   assert.equal(args?.[12], signature, "signature");
 });

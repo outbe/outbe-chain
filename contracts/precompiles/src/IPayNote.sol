@@ -10,7 +10,7 @@ pragma solidity ^0.8.0;
 /// are prohibited, so Merkle membership attests both the asset and the amount.
 ///
 /// Spending is deliberately **not** on this interface. It consumes a frozen
-/// `outbe.paynote`, version 1.1.0, UltraHonkKeccak proof and is exposed only as
+/// `outbe.paynote`, version 1.2.0, UltraHonkKeccak proof and is exposed only as
 /// the in-process Rust API `outbe_paynote::api::consume`, for integration by
 /// other precompile modules.
 interface IPayNote {

@@ -1,6 +1,6 @@
 //! Fixture material for the L2Registry zk gate that every positive Tribute
 //! offer path shares: the deterministic root-signing key of a fixture L2
-//! network, one real `FullProof` builder bound to a single offer statement, and
+//! network, one real tribute proof bound to a single offer statement, and
 //! the unique draft/SU identifiers an offer needs.
 //!
 //! ZK verification is mandatory, so a fixture operator can only offer with a
@@ -9,6 +9,10 @@
 //! chain. Keeping all of that in one module is what makes the small governed
 //! fixtures, the genesis-seeded bulk owners, and the specialized `0xdead`
 //! scenario provably use the same key and the same proving recipe.
+//!
+//! The claim, the binding formula and the prover all come from the circuits
+//! repo (`outbe-l2-zk-canonical` + its reference L2, `outbe-l2-demo`); the
+//! harness declares no entity of its own.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,17 +26,16 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_protocol::primitive::signature::SignatureScheme;
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::protocol::key::{NftSecret, Signer};
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::{Codec, OutbeV1, Suite};
-use outbe_protocol_derive::Entity;
+use outbe_l2_demo::{empty_tree, prove_tribute, TributeDemo};
+use outbe_l2_zk_canonical::claims::tribute::{
+    binding, public_words, TributeDraftClaim, PUBLIC_INPUT_COUNT,
+};
+use outbe_l2_zk_canonical::{combined_len, encode_combined_proof, Claim};
 use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
-use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
-use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk_core::codec::field_to_b256;
+use outbe_zk_core::hash::derive_owner;
+use outbe_zk_core::keys::{keypair, NftSecret, Signer};
+use outbe_zk_core::zk::ProofGenerator;
 use rand::{rngs::StdRng, SeedableRng};
 
 /// Must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`. Kept as a
@@ -41,34 +44,11 @@ use rand::{rngs::StdRng, SeedableRng};
 pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
 /// Frozen circuit version declared for the basic test L2 57005.
-pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.1.0";
+pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.0.0";
 
 /// The `uint32` circuit selector argument of `offerTribute`.
 pub(crate) fn circuit_selector(l2_chain_id: u64) -> u32 {
     u32::try_from(l2_chain_id).expect("sandbox L2 chain id fits the uint32 offer selector")
-}
-
-/// The TributeDraft an offer commits to. This mirrors the enclave's
-/// `TributeDraftClaim` field for field (`base` is the whole-unit amount and
-/// `atto` the raw six-decimal remainder) so the proof's `nft_hash` is the hash
-/// the enclave recomputes from the decrypted payload and the cleartext day and
-/// currency.
-#[derive(Entity)]
-struct TributeDraftClaim {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
 }
 
 /// One offer's circuit selector and zk calldata fields. The proof, its Merkle
@@ -186,11 +166,11 @@ pub(crate) fn offer_identifiers(tag: &str, caller: Address, worldwide_day: u32) 
 
 /// Prove one Tribute offer statement and sign its Merkle root.
 ///
-/// This is the single proving recipe the harness uses: the witness is the
-/// TributeDraftCommitment claim above against the (empty) perpetual commitment
-/// tree, and the combined proof carries the four public inputs the node decodes.
-/// Barretenberg's prover is process-global and serialized internally, so
-/// concurrent callers queue rather than race.
+/// This is the single proving recipe the harness uses: the canonical
+/// `TributeDraftClaim` against the (empty) perpetual commitment tree, proven
+/// with the reference L2's prover, and the combined proof carrying the four
+/// public inputs the node decodes. Barretenberg's prover is process-global and
+/// serialized internally, so concurrent callers queue rather than race.
 pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> TributeOfferZk {
     let TributeOfferStatement {
         host_chain_id,
@@ -204,16 +184,20 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
         su_hash,
     } = statement;
     let base = parse_amount(amount_base, "amount_base");
-    let atto = parse_amount(amount_micro, "amount_micro");
+    let micro = parse_amount(amount_micro, "amount_micro");
 
-    // Use the same host-chain-gated binding lookup as offer admission.
-    assert!(
-        outbe_l2registry::api::l2_circuits(host_chain_id, l2_chain_id)
-            .iter()
-            .any(|entry| entry.version == FIXTURE_CIRCUIT_VERSION),
-        "L2 chain {l2_chain_id:#x} has no circuit binding for {FIXTURE_CIRCUIT_VERSION} \
-         on host {host_chain_id}; the development stub requires the Devnet host"
-    );
+    // Use the same host-chain-gated key lookup as offer admission; the proof is
+    // encoded under exactly the key the node will verify it with.
+    let vk = outbe_l2registry::api::l2_keys(host_chain_id, l2_chain_id, Claim::Tribute)
+        .iter()
+        .find(|key| key.version() == FIXTURE_CIRCUIT_VERSION)
+        .unwrap_or_else(|| {
+            panic!(
+                "L2 chain {l2_chain_id:#x} has no circuit binding for {FIXTURE_CIRCUIT_VERSION} \
+                 on host {host_chain_id}; the development stub requires the Devnet host"
+            )
+        })
+        .vk_bytes();
 
     // CRS setup uses a blocking download/read path. Generate on a plain thread
     // rather than inside cucumber's Tokio runtime.
@@ -222,46 +206,44 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
         init_crs().expect("pinned CRS initializes for e2e proof generation");
 
         let mut rng = StdRng::from_seed([9; 32]);
-        let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut rng);
+        let (secret, public_key) = keypair(&mut rng);
         let nonce = Fr::rand(&mut rng);
-        let derived_owner = OutbeV1::derive_owner(&public_key, nonce).expect("derive owner");
-        let draft = TributeDraftClaim {
+        let owner = derive_owner(&public_key, nonce).expect("derive owner");
+        let claim = TributeDraftClaim {
             id: draft_id,
-            derived_owner: B256::from(field_bytes(&derived_owner)),
+            owner: field_to_b256(&owner).expect("owner is a canonical field element"),
             worldwide_day,
             currency: tribute_currency,
             base,
-            atto,
+            micro,
             su_ids: vec![su_hash],
         };
-        let binding = OutbeV1::binding(&caller.into_array(), draft_id.as_ref(), host_chain_id)
-            .expect("derive offer binding");
+        // The L2 chain id is the sixth binding element: the offer's registered
+        // chain, which is what the factory hands the enclave to recompute with.
+        let binding_hash = binding(
+            &caller.into_array(),
+            &draft_id.0,
+            host_chain_id,
+            l2_chain_id,
+        )
+        .expect("derive offer binding");
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).expect("draft signer");
-        let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
+        let path = empty_tree()
             .expect("empty commitment tree")
             .empty_inclusion_path(0);
-        let (witness, public) = draft
-            .derive_full_witness(&mut rng, &signer, binding, &path)
-            .expect("derive full-proof witness");
-        let proof = ProofGenerator::<OutbeV1, FullProof>::generate(
-            &Barretenberg::default(),
-            &witness,
-            &public,
-        )
-        .expect("generate the offer FullProof");
+        let (witness, public) = prove_tribute(&mut rng, &claim, &signer, binding_hash, &path)
+            .expect("derive the tribute witness");
+        let proof =
+            ProofGenerator::<TributeDemo>::generate(&Barretenberg::default(), &witness, &public)
+                .expect("generate the offer proof");
 
-        let public_inputs = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
-        assert_eq!(public_inputs.len(), 4);
-        let merkle_root = field_bytes(&public_inputs[3]);
-        let mut combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
-        combined.extend_from_slice(&(public_inputs.len() as u32).to_be_bytes());
-        for value in public_inputs {
-            combined.extend_from_slice(&field_bytes(&value));
-        }
-        for field in proof.proof {
-            combined.extend_from_slice(&field);
-        }
-        assert_eq!(combined.len(), FULL_PROOF_COMBINED_LEN);
+        let merkle_root = field_bytes(&public.merkle_root);
+        let combined = encode_combined_proof(&public_words(&public), &proof.proof, vk)
+            .expect("encode the combined proof");
+        assert_eq!(
+            combined.len(),
+            combined_len(vk, PUBLIC_INPUT_COUNT).expect("combined length under the registered key")
+        );
 
         TributeOfferZk {
             tribute_draft_id_hex: format!("0x{}", hex::encode(draft_id)),
@@ -278,7 +260,7 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
     // Proving is serialized by Barretenberg's process-global prover, so the
     // capacity population's wall time is dominated by this step; report it.
     eprintln!(
-        "E2E_TRIBUTE_PROOF caller={caller:#x} l2_chain_id={l2_chain_id} host_chain_id={host_chain_id} wwd={worldwide_day} currency={tribute_currency} base={base} micro={atto} proving_ms={}",
+        "E2E_TRIBUTE_PROOF caller={caller:#x} l2_chain_id={l2_chain_id} host_chain_id={host_chain_id} wwd={worldwide_day} currency={tribute_currency} base={base} micro={micro} proving_ms={}",
         started.elapsed().as_millis(),
     );
     zk
@@ -292,9 +274,9 @@ fn parse_amount(value: &str, what: &'static str) -> u64 {
 }
 
 fn field_bytes(field: &Fr) -> [u8; 32] {
-    OutbeV1::field_to_be_bytes(field)
-        .try_into()
-        .expect("BN254 field encoding is 32 bytes")
+    field_to_b256(field)
+        .expect("BN254 field encodes as a 32-byte word")
+        .0
 }
 
 #[cfg(test)]
@@ -348,7 +330,7 @@ mod tests {
         assert_ne!(first.1, second.1, "SU hashes must not repeat");
         assert_ne!(first.0, first.1);
         for id in [first.0, first.1, second.0, second.1] {
-            outbe_protocol::codec::field_from_be_bytes_canonical::<Fr>(
+            outbe_zk_core::codec::field_from_be_bytes_canonical(
                 id.as_slice(),
                 "fixture identifier",
             )
@@ -357,12 +339,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "generates and verifies a real Barretenberg FullProof"]
-    fn proven_offer_is_a_valid_full_proof_for_its_statement() {
-        use outbe_zk_backend::barretenberg::verify_circuit;
-        use outbe_zk_canonical::full_proof::{
-            alloy::PublicInputs, decode_public_inputs as decode_full_proof_public_inputs,
-        };
+    #[ignore = "generates and verifies a real Barretenberg tribute proof"]
+    fn proven_offer_is_a_valid_proof_for_its_statement() {
+        use outbe_l2_zk_canonical::claims::tribute::{alloy::PublicInputs, decode_public_inputs};
+        use outbe_l2_zk_canonical::l2_keys;
+        use outbe_zk_backend::barretenberg::RawVerifier;
 
         let caller = Address::repeat_byte(0x44);
         let (draft_id, su_hash) = offer_identifiers("test", caller, 20_260_729);
@@ -377,12 +358,15 @@ mod tests {
             draft_id,
             su_hash,
         });
+        let vk = l2_keys(57_005, Claim::Tribute)[0].vk_bytes();
         let proof = hex::decode(zk.proof_hex().trim_start_matches("0x")).expect("proof hex");
-        let public: PublicInputs = decode_full_proof_public_inputs(&proof)
+        let public: PublicInputs = decode_public_inputs(&proof, vk)
             .expect("public inputs decode")
             .try_into()
             .expect("Alloy public inputs");
-        assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
+        assert!(Barretenberg::default()
+            .verify_combined(vk, &proof)
+            .expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, zk.merkle_root);
         assert_eq!(zk.l2_chain_id, circuit_selector(57_005));
         assert_eq!(zk.circuit_version, FIXTURE_CIRCUIT_VERSION);

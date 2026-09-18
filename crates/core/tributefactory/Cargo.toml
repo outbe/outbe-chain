@@ -18,9 +18,8 @@ outbe-agentreward.workspace = true
 outbe-oracle.workspace = true
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true
-outbe-protocol.workspace = true
+outbe-l2-zk-canonical = { workspace = true, features = ["l2-keys"] }
 outbe-zk-backend.workspace = true
-outbe-zk-canonical.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 hex.workspace = true

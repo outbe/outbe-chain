@@ -206,6 +206,7 @@ mod tests {
         TributeZkContext {
             derived_owner: B256::from([0x01; 32]),
             chain_id: 19_280_501,
+            l2_chain_id: 57_005,
         }
     }
 
@@ -440,8 +441,12 @@ mod tests {
         assert_ne!(original, different_owner);
 
         offer.zk_context.as_mut().unwrap().chain_id += 1;
-        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
         assert_ne!(different_owner, different_chain);
+
+        offer.zk_context.as_mut().unwrap().l2_chain_id += 1;
+        let different_l2 = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        assert_ne!(different_chain, different_l2);
     }
 
     /// A host that hands over a zero price must not reach the division in

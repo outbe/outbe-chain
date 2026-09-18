@@ -16667,7 +16667,7 @@
         }
       ],
       "artifacts": {
-        "full_proof": "keccak256:0x7f57acdf3d550502515c28e3c466857c784559876403fe31a015f2dfe59b8855"
+        "tribute_proof": "keccak256:0x3324786542746add8ceec64129ff19a810ad77c75d84a0355db6b2c17f3988dd"
       }
     }
   }

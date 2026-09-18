@@ -96,7 +96,12 @@ pub struct EncryptedTributeOffer {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeZkContext {
     pub derived_owner: B256,
+    /// Host (L1) chain id, from the local execution context.
     pub chain_id: u64,
+    /// L2 chain id the offer selected, from the `offerTribute` calldata.
+    /// `binding_hash` folds it as a sixth preimage element, so a proof minted
+    /// for one L2 does not verify as another's.
+    pub l2_chain_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1027,6 +1032,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
                 buf.push(1);
                 buf.extend_from_slice(context.derived_owner.as_slice());
                 buf.extend_from_slice(&context.chain_id.to_be_bytes());
+                buf.extend_from_slice(&context.l2_chain_id.to_be_bytes());
             }
             None => buf.push(0),
         }

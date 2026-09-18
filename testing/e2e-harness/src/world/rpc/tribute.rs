@@ -341,7 +341,7 @@ impl Rpc {
         );
     }
 
-    /// Prove one real `FullProof` offer for `caller`'s registered L2 fixture
+    /// Prove one real tribute offer proof for `caller`'s registered L2 fixture
     /// network: the proof is bound to `caller`, this chain's id, the offer's
     /// day, currency, amounts and draft, and its Merkle root is signed with the
     /// key that network registered.

@@ -5,13 +5,11 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::Codec as _;
-use outbe_protocol::FieldElement as _;
-use outbe_zk_canonical::{
-    emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
-    full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
+use outbe_zk_canonical::emit_mint::{
+    PROOF_WORDS as EMIT_MINT_PROOF_WORDS, PUBLIC_INPUT_COUNT as EMIT_MINT_PUBLIC_INPUT_COUNT,
 };
+use outbe_zk_core::codec::{field_to_b256, u256_limbs_be};
+use outbe_zk_core::FieldElement as _;
 
 use crate::zk::{
     dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas, poseidon_hash,
@@ -152,23 +150,20 @@ fn abi_encode(circuit_hash: &[u8; 32], proof: &[u8]) -> Vec<u8> {
     out
 }
 
-fn combined_full_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 32 * (4 + proof_words));
-    out.extend_from_slice(&4u32.to_be_bytes());
-    for public_input in public_inputs {
-        out.extend_from_slice(&public_input);
-    }
-    out.resize(out.len() + proof_words * 32, 0);
+fn combined_well_framed_proof(public_input_count: usize, proof_words: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32 * (public_input_count + proof_words));
+    out.extend_from_slice(&(public_input_count as u32).to_be_bytes());
+    out.resize(4 + (public_input_count + proof_words) * 32, 0);
     out
 }
 
 #[test]
-fn full_proof_with_invalid_curve_points_returns_backend_error() {
-    use outbe_zk_canonical::noir::full_proof::FullProof;
+fn registered_circuit_with_invalid_curve_points_returns_backend_error() {
+    use outbe_zk_canonical::noir::emit_mint::EmitMint;
     use outbe_zk_canonical::CircuitId as _;
 
-    let proof = combined_full_proof([[0u8; 32]; 4], FULL_PROOF_PROOF_WORDS);
-    let input = abi_encode(&FullProof::CIRCUIT_HASH, &proof);
+    let proof = combined_well_framed_proof(EMIT_MINT_PUBLIC_INPUT_COUNT, EMIT_MINT_PROOF_WORDS);
+    let input = abi_encode(&EmitMint::CIRCUIT_HASH, &proof);
     assert!(matches!(
         zk_verify(&input),
         Err(PrecompileError::Revert(message))
@@ -290,12 +285,11 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 /// changed, binding the combined wire to the frozen circuit identity.
 #[test]
 fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
-    use outbe_protocol::protocol::zk::ProofGenerator;
-    use outbe_protocol::OutbeV1;
     use outbe_zk_backend::barretenberg::Barretenberg;
     use outbe_zk_canonical::emit_mint::{hash::*, Field};
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
     use outbe_zk_canonical::CircuitId as _;
+    use outbe_zk_core::zk::ProofGenerator;
 
     assert_eq!(EmitMint::VERSION, "1.5.0");
     assert_eq!(
@@ -347,15 +341,14 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         auth_path: path,
     };
     let backend = Barretenberg::default();
-    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
+    let proof = ProofGenerator::<EmitMint>::generate(&backend, &witness, &public)
         .expect("emit mint proof generation");
 
     assert_eq!(proof.proof.len(), EMIT_MINT_PROOF_WORDS);
     let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
     combined.extend_from_slice(&8u32.to_be_bytes());
-    for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
-    {
-        combined.extend_from_slice(OutbeV1::field_to_b256(&word).unwrap().as_slice());
+    for word in <EmitMint as outbe_zk_core::zk::Circuit>::public_inputs(&public) {
+        combined.extend_from_slice(field_to_b256(&word).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

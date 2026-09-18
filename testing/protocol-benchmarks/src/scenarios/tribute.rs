@@ -6,8 +6,8 @@
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
 //! canonical enclave offer processor in-process. Issuance is ZK-only, so the
-//! single scenario uses the frozen FullProof fixture, a registered L2, and a
-//! valid BLS MinSig signature over the proof's Merkle root.
+//! single scenario uses the frozen tribute proof fixture, a registered L2, and
+//! a valid BLS MinSig signature over the proof's Merkle root.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -26,6 +26,12 @@ use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody,
 };
+use outbe_l2_demo::{empty_tree, prove_tribute, TributeDemo};
+use outbe_l2_zk_canonical::claims::tribute::{
+    alloy::PublicInputs as TributePublicInputs, binding, decode_public_inputs, public_words,
+    TributeDraftClaim, PUBLIC_INPUT_COUNT,
+};
+use outbe_l2_zk_canonical::{combined_len, encode_combined_proof, l2_keys, Claim};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -48,12 +54,6 @@ use outbe_primitives::{
     },
     time::date_key_to_utc_timestamp,
 };
-use outbe_protocol::primitive::signature::SignatureScheme;
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::protocol::key::{NftSecret, Signer};
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::{Codec, OutbeV1, Suite};
-use outbe_protocol_derive::Entity;
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
@@ -61,15 +61,11 @@ use outbe_tee_enclave::{
 };
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
-use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
-use outbe_zk_canonical::full_proof::{
-    alloy::PublicInputs as FullProofPublicInputs,
-    decode_public_inputs as decode_full_proof_public_inputs,
-    COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
-};
-use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk_backend::barretenberg::{init_crs, Barretenberg, RawVerifier};
+use outbe_zk_core::codec::field_to_b256;
+use outbe_zk_core::hash::derive_owner;
+use outbe_zk_core::keys::{keypair, NftSecret, Signer};
+use outbe_zk_core::zk::ProofGenerator;
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -88,9 +84,9 @@ const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 /// L2 chain id the bench registers and selects; it is the ABI `uint32` selector
 /// and the registry key, so a single type keeps both in sync.
 const L2_CHAIN_ID: u32 = 0xdead;
-/// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry;
-/// the frozen FullProof fixture verifies under it.
-const L2_CIRCUIT_VERSION: &str = "1.1.0";
+/// Circuit version registered for `L2_CHAIN_ID`; the frozen fixture proof
+/// verifies under its key.
+const L2_CIRCUIT_VERSION: &str = "1.0.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
 const REWARD_UTC_DAY: u32 = 20_260_825;
@@ -107,7 +103,7 @@ const CE_FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = 55_000;
 const CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
 const CE_FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 = 25_000;
 const CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
-const FIXED_FULL_PROOF_V1: &[u8] = include_bytes!("../../fixtures/tribute_full_proof_v1.bin");
+const FROZEN_TRIBUTE_PROOF: &[u8] = include_bytes!("../../fixtures/tribute_offer_proof.bin");
 
 mod abi {
     use super::*;
@@ -129,24 +125,6 @@ mod abi {
             bytes signature
         ) external returns (uint256 tributeId);
     }
-}
-
-#[derive(Entity)]
-struct TributeDraftFixture {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
 }
 
 struct NoParentBodies;
@@ -174,7 +152,7 @@ struct Fixture {
     nonce: Bytes,
     ephemeral_pubkey: U256,
     proof: Bytes,
-    public_inputs: FullProofPublicInputs,
+    public_inputs: TributePublicInputs,
     l2_public_key: Vec<u8>,
     signature: Bytes,
     crs_init_ms: f64,
@@ -193,12 +171,6 @@ struct GateMeasurement {
     wall_ms: f64,
 }
 
-fn field_bytes(field: &Fr) -> [u8; 32] {
-    OutbeV1::field_to_be_bytes(field)
-        .try_into()
-        .expect("BN254 field encoding is 32 bytes")
-}
-
 fn build_payload() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "creator": format!("{CALLER:?}"),
@@ -210,6 +182,47 @@ fn build_payload() -> Vec<u8> {
         "sra_addresses": [],
     }))
     .expect("benchmark JSON is serializable")
+}
+
+/// The verification key chain 57005 registers for the fixture's circuit
+/// version — the same bytes the tribute factory hands barretenberg.
+fn fixture_vk() -> &'static [u8] {
+    l2_keys(u64::from(L2_CHAIN_ID), Claim::Tribute)
+        .iter()
+        .find(|key| key.version() == L2_CIRCUIT_VERSION)
+        .expect("the benchmark's L2 registers the fixture circuit version")
+        .vk_bytes()
+}
+
+/// The deterministic claim, signer and binding the frozen fixture was proven
+/// from. Shared by `build_fixture` (which asserts the frozen proof's public
+/// words still match) and by the regeneration test that writes the file.
+fn fixture_statement() -> (TributeDraftClaim, Signer, Fr, StdRng) {
+    let mut rng = StdRng::from_seed([9; 32]);
+    let (secret, public_key) = keypair(&mut rng);
+    let owner_nonce = Fr::rand(&mut rng);
+    let owner = derive_owner(&public_key, owner_nonce).unwrap();
+    let draft_id = B256::with_last_byte(0x11);
+    let claim = TributeDraftClaim {
+        id: draft_id,
+        owner: field_to_b256(&owner).unwrap(),
+        worldwide_day: u64::from(TARGET_WWD.value()),
+        currency: 840,
+        base: 100,
+        micro: 0,
+        su_ids: vec![SU_HASH],
+    };
+    // Six preimage elements: the L2 chain id is folded alongside the host, so
+    // this proof is not replayable as another L2's.
+    let binding_hash = binding(
+        &CALLER.into_array(),
+        &draft_id.0,
+        CHAIN_ID,
+        u64::from(L2_CHAIN_ID),
+    )
+    .unwrap();
+    let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
+    (claim, signer, binding_hash, rng)
 }
 
 fn build_fixture() -> Fixture {
@@ -231,68 +244,48 @@ fn build_fixture() -> Fixture {
     )
     .expect("deterministic offer encryption succeeds");
 
-    let mut proof_rng = StdRng::from_seed([9; 32]);
-    let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut proof_rng);
-    let owner_nonce = Fr::rand(&mut proof_rng);
-    let derived_owner = OutbeV1::derive_owner(&public_key, owner_nonce).unwrap();
-    let draft_id = B256::with_last_byte(0x11);
-    let draft = TributeDraftFixture {
-        id: draft_id,
-        derived_owner: B256::from(field_bytes(&derived_owner)),
-        worldwide_day: u64::from(TARGET_WWD.value()),
-        currency: 840,
-        base: 100,
-        atto: 0,
-        su_ids: vec![SU_HASH],
-    };
-    let binding = OutbeV1::binding(&CALLER.into_array(), draft_id.as_ref(), CHAIN_ID).unwrap();
-    let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
+    let vk = fixture_vk();
+    let (claim, signer, binding_hash, mut proof_rng) = fixture_statement();
 
     let proof_started = Instant::now();
-    let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
-        .unwrap()
-        .empty_inclusion_path(0);
-    let (witness, public) = draft
-        .derive_full_witness(&mut proof_rng, &signer, binding, &path)
-        .unwrap();
+    let path = empty_tree().unwrap().empty_inclusion_path(0);
+    let (witness, public) =
+        prove_tribute(&mut proof_rng, &claim, &signer, binding_hash, &path).unwrap();
     let generated_proof =
-        ProofGenerator::<OutbeV1, FullProof>::generate(&Barretenberg::default(), &witness, &public)
+        ProofGenerator::<TributeDemo>::generate(&Barretenberg::default(), &witness, &public)
             .unwrap();
     let proof_generation_ms = proof_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let public_fields = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
-    let mut generated_combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
-    generated_combined.extend_from_slice(&(public_fields.len() as u32).to_be_bytes());
-    for value in public_fields {
-        generated_combined.extend_from_slice(&field_bytes(&value));
-    }
-    for field in generated_proof.proof {
-        generated_combined.extend_from_slice(&field);
-    }
-    assert_eq!(generated_combined.len(), FULL_PROOF_COMBINED_LEN);
-    let generated_public_inputs: FullProofPublicInputs =
-        decode_full_proof_public_inputs(&generated_combined)
+    let generated_combined =
+        encode_combined_proof(&public_words(&public), &generated_proof.proof, vk).unwrap();
+    assert_eq!(
+        generated_combined.len(),
+        combined_len(vk, PUBLIC_INPUT_COUNT).unwrap()
+    );
+    let generated_public_inputs: TributePublicInputs =
+        decode_public_inputs(&generated_combined, vk)
             .unwrap()
             .try_into()
             .unwrap();
-    assert!(verify_circuit::<FullProof>(&generated_combined).unwrap());
+    let bb = Barretenberg::default();
+    assert!(bb.verify_combined(vk, &generated_combined).unwrap());
 
     assert_eq!(
-        FIXED_FULL_PROOF_V1.len(),
-        FULL_PROOF_COMBINED_LEN,
-        "versioned benchmark proof has the wrong size"
+        FROZEN_TRIBUTE_PROOF.len(),
+        combined_len(vk, PUBLIC_INPUT_COUNT).unwrap(),
+        "frozen benchmark proof has the wrong size"
     );
-    let public_inputs: FullProofPublicInputs = decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1)
+    let public_inputs: TributePublicInputs = decode_public_inputs(FROZEN_TRIBUTE_PROOF, vk)
         .unwrap()
         .try_into()
         .unwrap();
     assert!(
-        verify_circuit::<FullProof>(FIXED_FULL_PROOF_V1).unwrap(),
-        "versioned benchmark proof no longer verifies"
+        bb.verify_combined(vk, FROZEN_TRIBUTE_PROOF).unwrap(),
+        "frozen benchmark proof no longer verifies"
     );
     assert_eq!(
         generated_public_inputs, public_inputs,
-        "versioned benchmark proof public inputs drifted from the deterministic witness"
+        "frozen benchmark proof public inputs drifted from the deterministic witness"
     );
 
     let mut bls_rng =
@@ -311,7 +304,7 @@ fn build_fixture() -> Fixture {
         cipher_text: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeral_pubkey: U256::from_be_bytes(ephemeral_pubkey),
-        proof: Bytes::copy_from_slice(FIXED_FULL_PROOF_V1),
+        proof: Bytes::copy_from_slice(FROZEN_TRIBUTE_PROOF),
         public_inputs,
         l2_public_key: l2_public_key.encode().to_vec(),
         signature: signature.into(),
@@ -496,9 +489,12 @@ fn measure_pairing_ms(input: &[u8]) -> f64 {
 }
 
 fn measure_verify_ms(proof: &[u8]) -> f64 {
+    let vk = fixture_vk();
     let started = Instant::now();
-    decode_full_proof_public_inputs(black_box(proof)).unwrap();
-    assert!(verify_circuit::<FullProof>(black_box(proof)).unwrap());
+    decode_public_inputs(black_box(proof), vk).unwrap();
+    assert!(Barretenberg::default()
+        .verify_combined(vk, black_box(proof))
+        .unwrap());
     started.elapsed().as_secs_f64() * 1_000.0
 }
 
@@ -761,7 +757,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             .with_postcondition("tribute.created", "true")
             .with_postcondition("tribute.id", tribute_id.to_string())
             .with_artifact(
-                "full_proof",
+                "tribute_proof",
                 format!(
                     "keccak256:{:#x}",
                     alloy_primitives::keccak256(&fixture.proof)
@@ -778,7 +774,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         fixture.cipher_text.len().to_string(),
     );
     observation.postconditions.insert(
-        "fixture.full_proof_bytes".to_owned(),
+        "fixture.proof_bytes".to_owned(),
         fixture.proof.len().to_string(),
     );
     Ok(observation)
@@ -947,4 +943,60 @@ fn gas_component(report: &ScenarioReport, key: &str) -> Option<u64> {
         .iter()
         .find(|component| component.key == key)
         .map(|component| component.gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rewrite `fixtures/tribute_offer_proof.bin` from the deterministic
+    /// statement in [`fixture_statement`].
+    ///
+    /// Barretenberg's proof words are not reproducible run to run — only the
+    /// four public words are, which is why the file is frozen and only those
+    /// are compared. Run this when the claim, the binding formula or the
+    /// registered key changes:
+    ///
+    /// ```text
+    /// cargo test -p outbe-protocol-benchmarks --lib -- --ignored \
+    ///     regenerate_frozen_tribute_proof_fixture --nocapture
+    /// ```
+    #[test]
+    #[ignore = "proves with the pinned Barretenberg CRS and rewrites the fixture"]
+    fn regenerate_frozen_tribute_proof_fixture() {
+        init_crs().expect("pinned CRS initializes");
+        let vk = fixture_vk();
+        let (claim, signer, binding_hash, mut rng) = fixture_statement();
+        let path = empty_tree().unwrap().empty_inclusion_path(0);
+        let (witness, public) = prove_tribute(&mut rng, &claim, &signer, binding_hash, &path)
+            .expect("derive the tribute witness");
+        let proof =
+            ProofGenerator::<TributeDemo>::generate(&Barretenberg::default(), &witness, &public)
+                .expect("generate the fixture proof");
+        let combined = encode_combined_proof(&public_words(&public), &proof.proof, vk)
+            .expect("encode the combined proof");
+        assert_eq!(
+            combined.len(),
+            combined_len(vk, PUBLIC_INPUT_COUNT).unwrap()
+        );
+        assert!(Barretenberg::default()
+            .verify_combined(vk, &combined)
+            .expect("the regenerated proof verifies under the registered key"));
+
+        let decoded: TributePublicInputs = decode_public_inputs(&combined, vk)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        println!("owner        {:#x}", decoded.owner);
+        println!("nft_hash     {:#x}", decoded.nft_hash);
+        println!("binding_hash {:#x}", decoded.binding_hash);
+        println!("merkle_root  {:#x}", decoded.merkle_root);
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/tribute_offer_proof.bin"
+        );
+        std::fs::write(path, &combined).expect("write the frozen fixture");
+        println!("wrote {} bytes to {path}", combined.len());
+    }
 }
