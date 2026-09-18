@@ -36,7 +36,7 @@ wire_struct! {
         pub floor_price_minor: U256,
         pub gratis_load_minor: U256,
         pub entry_price_minor: U256,
-        pub cost_amount_minor: U256,
+        pub settlement_cost_minor: U256,
         pub issuance_currency: u16,
         pub reference_currency: u16,
         pub issued_at: u64,
@@ -151,6 +151,10 @@ wire_struct! {
 }
 
 wire_struct! {
+    /// Capacity totals use protocol units (1,000,000 per whole COEN).
+    /// Lysis allocation is the sum of issued Nod loads; adding its unused limit
+    /// reconciles to the frozen Lysis limit. The Desis limit is an auction ceiling,
+    /// not the allocation into live Intex issuance.
     pub struct ConservationTotalsV1 {
         pub tribute_nominal_total: U256,
         pub eligible_nominal_total: U256,
@@ -476,23 +480,23 @@ impl LysisResultV1 {
             .lysis_limit_minor
             .checked_add(self.conservation.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "day budget conservation",
+                what: "day limit conservation",
             })?;
         // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
         require(
             split_sum <= self.conservation.day_limit,
-            "day budget conservation",
+            "day limit conservation",
         )?;
         let lysis_sum = self
             .conservation
             .lysis_allocation_minor
             .checked_add(self.conservation.unused_lysis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "Lysis budget conservation",
+                what: "Lysis limit conservation",
             })?;
         require(
             lysis_sum == self.conservation.lysis_limit_minor,
-            "Lysis budget conservation",
+            "Lysis limit conservation",
         )?;
         require(
             self.conservation.carry_over_credit == self.unused_lysis_limit_minor

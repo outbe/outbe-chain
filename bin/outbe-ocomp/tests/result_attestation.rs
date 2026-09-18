@@ -70,7 +70,7 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: hash(45),
+            request_limit_split_receipt_hash: hash(45),
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,

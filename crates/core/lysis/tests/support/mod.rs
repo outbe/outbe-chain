@@ -8,7 +8,7 @@ use outbe_ocomp_protocol::{
         TributeInputBindingV1,
     },
     profile::poc_schema_limits,
-    receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
+    receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
     registry::HashDomain,
     result::{
         lysis_v1_empty_semantic_event_root, ActivationPayloadV1, CarryOverCreditActionV1,
@@ -25,7 +25,7 @@ pub struct ActivationFixtureV1 {
     pub intent: JobIntentV1,
     pub payload: ActivationPayloadV1,
     pub result: LysisResultV1,
-    pub request_receipt: RequestBudgetSplitReceiptV1,
+    pub request_receipt: RequestLimitSplitReceiptV1,
 }
 
 pub fn hash(byte: u8) -> B256 {
@@ -63,7 +63,7 @@ pub fn recommit_result(result: &mut LysisResultV1, limits: &SchemaLimits) {
     .unwrap();
 }
 
-fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
+fn request_receipt(day_type: DayType) -> RequestLimitSplitReceiptV1 {
     let protocol_bundle_hash = hash(41);
     let wwd = 7;
     let desis_limit_minor = U256::from(40);
@@ -75,7 +75,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
     }];
     let logical_anchor = 1_000;
     let green = day_type == DayType::Green;
-    RequestBudgetSplitReceiptV1 {
+    RequestLimitSplitReceiptV1 {
         protocol_bundle_hash,
         wwd,
         pending_nonce: 0,
@@ -84,9 +84,9 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
         lysis_limit_minor: U256::from(60),
         desis_limit_minor,
         destination: if green {
-            BudgetSplitDestination::DesisAuction
+            LimitSplitDestination::DesisAuction
         } else {
-            BudgetSplitDestination::CarryOver
+            LimitSplitDestination::CarryOver
         },
         desis_brief_hash: Some(
             desis_request_brief_hash(
@@ -135,7 +135,7 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: request_receipt_hash,
+            request_limit_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,

@@ -66,6 +66,35 @@
   },
   {
     "type": "function",
+    "name": "quoteSettlement",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "settlementCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "payableUnits",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "settleNod",
     "inputs": [
       {
@@ -171,7 +200,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "nodGratisConsumed",
+        "name": "lysisAllocationMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -288,7 +317,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "costAmountMinor",
+        "name": "settlementCostMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

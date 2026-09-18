@@ -62,7 +62,7 @@ pub const fn transition_rules() -> &'static [JobFsmTransitionRule] {
     &JOB_FSM_TRANSITION_RULES
 }
 
-/// Whether request processing must apply the request-phase budget effect or
+/// Whether request processing must apply the request-phase limit effect or
 /// only validate the already-authoritative receipt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestEffectMode {
@@ -81,7 +81,7 @@ pub enum JobFsmCommand {
         deadline_height: u64,
         intent_id: B256,
         lysis_limit_minor: U256,
-        request_budget_receipt_hash: B256,
+        request_limit_receipt_hash: B256,
     },
     OpenVoting {
         at_height: u64,
@@ -221,8 +221,8 @@ pub enum JobFsmError {
     ExpiryRequiresDeadline,
     #[error("OCOMP intent id is the reserved zero hash")]
     ZeroIntentId,
-    #[error("OCOMP request budget receipt hash is the reserved zero hash")]
-    ZeroRequestBudgetReceiptHash,
+    #[error("OCOMP request limit receipt hash is the reserved zero hash")]
+    ZeroRequestLimitReceiptHash,
     #[error("OCOMP deadline {deadline_height} must follow request height {request_height}")]
     InvalidDeadline {
         request_height: u64,
@@ -260,7 +260,7 @@ impl JobFsmState {
     }
 
     /// Restores persisted lifecycle state and fails closed on any
-    /// status/index/budget inconsistency.
+    /// status/index/limit inconsistency.
     pub fn restore(snapshot: JobFsmSnapshot) -> Result<Self, JobFsmError> {
         let state = Self {
             worldwide_day: snapshot.worldwide_day,
@@ -375,7 +375,7 @@ impl JobFsmState {
                 deadline_height,
                 intent_id,
                 lysis_limit_minor,
-                request_budget_receipt_hash,
+                request_limit_receipt_hash,
             } => {
                 let ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
                 if at_height < ready.next_check_height {
@@ -386,8 +386,8 @@ impl JobFsmState {
                 if intent_id.is_zero() {
                     return Err(JobFsmError::ZeroIntentId);
                 }
-                if request_budget_receipt_hash.is_zero() {
-                    return Err(JobFsmError::ZeroRequestBudgetReceiptHash);
+                if request_limit_receipt_hash.is_zero() {
+                    return Err(JobFsmError::ZeroRequestLimitReceiptHash);
                 }
                 if deadline_height <= at_height {
                     return Err(JobFsmError::InvalidDeadline {
@@ -399,7 +399,7 @@ impl JobFsmState {
                     None => RetainedRequestEffect {
                         effect_nonce: ready.pending_nonce,
                         lysis_limit_minor,
-                        receipt_hash: request_budget_receipt_hash,
+                        receipt_hash: request_limit_receipt_hash,
                     },
                     Some(_) => return Err(JobFsmError::InvalidRequestEffect),
                 };
@@ -487,7 +487,7 @@ impl JobFsmState {
         }
     }
 
-    /// Runs the production invariant checker over every status/index/budget
+    /// Runs the production invariant checker over every status/index/limit
     /// equivalence represented by this bounded state.
     pub fn validate(&self) -> Result<(), JobFsmError> {
         let phase = self.phase()?;
@@ -613,7 +613,7 @@ mod tests {
                 deadline_height: 74,
                 intent_id: B256::repeat_byte(0x11),
                 lysis_limit_minor: U256::from(900),
-                request_budget_receipt_hash: B256::repeat_byte(0x22),
+                request_limit_receipt_hash: B256::repeat_byte(0x22),
             })
             .unwrap();
 

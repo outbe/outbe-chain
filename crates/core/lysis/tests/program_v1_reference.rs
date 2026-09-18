@@ -166,7 +166,7 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
                 "floor_price": action.floor_price_minor.to_string(),
                 "gratis_load": action.gratis_load_minor.to_string(),
                 "entry_price": action.entry_price_minor.to_string(),
-                "cost": action.cost_amount_minor.to_string(),
+                "cost": action.settlement_cost_minor.to_string(),
                 "issuance_currency": action.issuance_currency,
                 "reference_currency": action.reference_currency,
                 "issued_at": action.issued_at,

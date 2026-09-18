@@ -9,7 +9,30 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::{NodBucketState, NodContract, NodItemState};
+use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
+
+/// Derives the current entitlement state without waiting for sweep cleanup.
+/// Paid entitlements survive expiry; the settlement deadline is inclusive.
+#[must_use]
+pub fn effective_state(
+    item: &NodItemState,
+    bucket: &NodBucketState,
+    called_at: u64,
+    deadline: u64,
+    now: U256,
+) -> EffectiveState {
+    if item.is_settled {
+        EffectiveState::Settled
+    } else if called_at != 0 && now > U256::from(deadline) {
+        EffectiveState::Forfeited
+    } else if called_at != 0 {
+        EffectiveState::Called
+    } else if bucket.is_qualified {
+        EffectiveState::Qualified
+    } else {
+        EffectiveState::Issued
+    }
+}
 
 /// Frozen entry prices, or `None` before the snapshot has been captured.
 pub fn entry_price_snapshot(
@@ -28,21 +51,23 @@ pub fn store_entry_price_snapshot(
     NodContract::new(storage).store_entry_price_snapshot(day, prices)
 }
 
-/// The Nod's cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+/// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+/// Price and cost use six-decimal reference-currency precision; the load uses
+/// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
 /// Derived rather than stored — the entry price lives on the Nod's bucket and
 /// the load on the Nod itself, and lysis mints the Nod from exactly this
 /// formula.
-pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
+pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
     checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not
 /// called at all.
 ///
-/// Reads the notice period the bucket sealed when it qualified, so retuning the
+/// Reads the notice period the bucket sealed at issuance, so retuning the
 /// constant cannot move the deadline of a bucket that is already called. A
-/// bucket armed before the terms existed carries a zero notice, which is treated
+/// bucket issued before the terms existed carries a zero notice, which is treated
 /// as "no deadline" rather than "already lapsed".
 pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<u64> {
     let nod = NodContract::new(storage.clone());

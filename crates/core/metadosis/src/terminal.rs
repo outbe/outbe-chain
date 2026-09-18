@@ -154,7 +154,7 @@ pub(crate) fn fail_worldwide_day(
     let mut metadosis = MetadosisContract::new(storage.clone());
     let limits = poc_schema_limits();
     let unused_limit = metadosis
-        .request_budget_receipt(worldwide_day, &limits)?
+        .request_limit_receipt(worldwide_day, &limits)?
         .map_or(current.metadosis_limit_amount, |receipt| {
             receipt.lysis_limit_minor
         });
@@ -201,9 +201,9 @@ pub(crate) fn fail_worldwide_day(
         tributeTotals: tribute.forfeited_nominal,
         dayGratisDemand: U256::ZERO,
         dayGratisLimit: U256::ZERO,
-        dayGratisAllocation: U256::ZERO,
-        dayGratisAllocationRemainder: U256::ZERO,
-        netDayGratisAllocation: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         dayMetadosisLimitRemainder: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,
@@ -285,9 +285,9 @@ pub(crate) fn fail_expired_ocomp_day(
         tributeTotals: tribute.forfeited_nominal,
         dayGratisDemand: U256::ZERO,
         dayGratisLimit: U256::ZERO,
-        dayGratisAllocation: U256::ZERO,
-        dayGratisAllocationRemainder: U256::ZERO,
-        netDayGratisAllocation: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         dayMetadosisLimitRemainder: unused_limit,
         status: "FAILED".into(),
         blockNumber: block_number,

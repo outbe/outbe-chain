@@ -363,7 +363,7 @@ fn failure_before_request_split_returns_the_full_formed_day_limit() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert!(metadosis
-            .request_budget_receipt(fixture.wwd, &poc_schema_limits())
+            .request_limit_receipt(fixture.wwd, &poc_schema_limits())
             .unwrap()
             .is_none());
         assert_eq!(metadosis.terminal_intent_count(fixture.wwd).unwrap(), 0);

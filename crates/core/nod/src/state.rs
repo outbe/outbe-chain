@@ -14,10 +14,38 @@ use std::collections::BTreeMap;
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
-    constants::BIN_STEP_BP,
+    constants::{BIN_STEP_BP, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW},
     errors::NodError,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
+
+/// `entry × (100 + CALL_RATE_PCT) / 100` plus the four call constants.
+///
+/// `None` when entry is zero: a zero call price would fire on the first scan.
+/// The constants are read exactly here. Every later check reads the bucket's
+/// sealed copy, so a retune cannot re-term an already-issued Nod.
+pub(crate) fn derived_call_terms(
+    entry_price_minor: U256,
+    reference_currency: u16,
+) -> Result<Option<CallTerms>> {
+    if entry_price_minor.is_zero() {
+        return Ok(None);
+    }
+    let call_price = entry_price_minor
+        .checked_mul(U256::from(100 + CALL_RATE_PCT))
+        .ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
+        })?
+        / U256::from(100u64);
+    Ok(Some(CallTerms {
+        call_price,
+        reference_currency,
+        call_rate: CALL_RATE_PCT,
+        call_window: CALL_WINDOW,
+        call_threshold: CALL_THRESHOLD,
+        call_notice_period: CALL_NOTICE_PERIOD,
+    }))
+}
 
 impl NodContract<'_> {
     pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
@@ -232,11 +260,17 @@ impl NodContract<'_> {
                 };
                 self.bucket_worldwide_day
                     .write(&item.bucket_key, item.worldwide_day)?;
+                self.callable_bucket_issued_at
+                    .write(&item.bucket_key, item.issued_at)?;
                 self.insert_unqualified(
                     item.bucket_key,
                     item.floor_price_minor,
                     item.reference_currency,
                 )?;
+                if let Some(terms) = derived_call_terms(entry_price_minor, item.reference_currency)?
+                {
+                    self.seal_bucket_call_terms(item.bucket_key, terms)?;
+                }
                 Some(bucket)
             }
         };
@@ -296,6 +330,7 @@ impl NodContract<'_> {
         delete(self.storage_handle(), scope, current_item)?;
         if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
+            self.callable_bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage_handle(), scope, current_bucket)
@@ -513,23 +548,14 @@ impl NodContract<'_> {
 
     // --- Callable-bucket index ----------------------------------------------
 
-    /// Arms a freshly qualified bucket for the daily call scan, sealing the terms
-    /// it will be called and forfeited under so the scan never has to load a
-    /// bucket body - or read a constant - to decide.
-    ///
-    /// Qualification is the arm point rather than issuance because the bucket
-    /// body is a compressed entity: the call clock cannot start before this
-    /// call, so terms fixed here cover the whole callable life of the bucket.
-    /// This is where the call price has always been snapshotted; the rest of the
-    /// terms now travel with it.
-    pub(crate) fn insert_callable_bucket(
+    /// Writes the call terms a new bucket sealed at issuance. Later Nods that
+    /// join the same bucket inherit this copy. Qualification only lists the
+    /// bucket; it never reads the constants again.
+    pub(crate) fn seal_bucket_call_terms(
         &mut self,
         bucket_key: B256,
         terms: CallTerms,
     ) -> Result<()> {
-        let index = self.callable_buckets.len()?;
-        self.callable_buckets.push(bucket_key)?;
-        self.callable_bucket_index.write(&bucket_key, index)?;
         self.callable_bucket_call_price
             .write(&bucket_key, terms.call_price)?;
         self.callable_bucket_currency
@@ -545,7 +571,16 @@ impl NodContract<'_> {
         self.widen_max_call_window(terms.reference_currency, terms.call_window)
     }
 
-    /// Reads back the terms [`Self::insert_callable_bucket`] sealed.
+    /// Arms a freshly qualified bucket for the daily call scan. Terms were
+    /// sealed at issuance; this only puts the bucket on the dense list the
+    /// scan walks.
+    pub(crate) fn insert_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        let index = self.callable_buckets.len()?;
+        self.callable_buckets.push(bucket_key)?;
+        self.callable_bucket_index.write(&bucket_key, index)
+    }
+
+    /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
     pub(crate) fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
             call_price: self.callable_bucket_call_price.read(&bucket_key)?,
@@ -604,6 +639,7 @@ impl NodContract<'_> {
         self.callable_bucket_call_window.clear(&bucket_key)?;
         self.callable_bucket_call_threshold.clear(&bucket_key)?;
         self.callable_bucket_call_notice_period.clear(&bucket_key)?;
+        self.callable_bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }

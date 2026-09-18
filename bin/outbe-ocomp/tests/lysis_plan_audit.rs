@@ -387,7 +387,7 @@ fn synthetic_fixture_with_options(
                             floor_price_minor: U256::ZERO,
                             gratis_load_minor: U256::from(1),
                             entry_price_minor: U256::ZERO,
-                            cost_amount_minor: if result_fault
+                            settlement_cost_minor: if result_fault
                                 == ResultCatalogFault::AlternateResultChunk
                                 && index == 0
                                 && local == 0
@@ -444,7 +444,7 @@ fn synthetic_fixture_with_options(
                         total.checked_add(tribute.nominal_amount_minor).unwrap()
                     });
                 let nod_cost_total = actions.iter().fold(U256::ZERO, |total, action| {
-                    total.checked_add(action.cost_amount_minor).unwrap()
+                    total.checked_add(action.settlement_cost_minor).unwrap()
                 });
                 let mut summary = RootReduceSummaryV1 {
                     protocol_bundle_hash: bundle_hash,

@@ -234,7 +234,7 @@ pub(super) fn assert_no_ocomp_job(
         .unwrap());
     assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
     assert!(metadosis
-        .request_budget_receipt(wwd, &limits)
+        .request_limit_receipt(wwd, &limits)
         .unwrap()
         .is_none());
     assert!(metadosis

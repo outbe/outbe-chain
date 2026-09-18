@@ -5,7 +5,7 @@ use outbe_ocomp_protocol::{
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, CarryOverReceiptV1,
         CarryOverStateEventProjectionV1, ContributorReceiptV1, ContributorStateEventProjectionV1,
-        EffectBindingV1, NodBatchReceiptV1, NodStateEventProjectionV1, RequestBudgetSplitReceiptV1,
+        EffectBindingV1, NodBatchReceiptV1, NodStateEventProjectionV1, RequestLimitSplitReceiptV1,
         TributeReceiptV1, TributeStateEventProjectionV1,
     },
     registry::HashDomain,
@@ -26,7 +26,7 @@ pub struct LysisOwnerReceiptsV1 {
 #[derive(Debug, Eq, PartialEq)]
 pub struct VerifiedLysisReceiptsV1 {
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
+    request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
     contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
@@ -43,7 +43,7 @@ pub struct VerifiedLysisReceiptsV1 {
 pub struct LysisTerminalPermitV1<'permit, 'frame> {
     capability: &'permit mut CertifiedLysisActivation<'frame>,
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
+    request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
     contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
@@ -64,8 +64,8 @@ impl LysisTerminalPermitV1<'_, '_> {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
     #[must_use]
@@ -114,8 +114,8 @@ impl VerifiedLysisReceiptsV1 {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
     #[must_use]
@@ -166,7 +166,7 @@ impl VerifiedLysisReceiptsV1 {
         Ok(LysisTerminalPermitV1 {
             capability,
             binding: self.binding.clone(),
-            request_budget_split_receipt_hash: self.request_budget_split_receipt_hash,
+            request_limit_split_receipt_hash: self.request_limit_split_receipt_hash,
             nod_receipt_hash: self.nod_receipt_hash,
             contributor_receipt_hash: self.contributor_receipt_hash,
             tribute_receipt_hash: self.tribute_receipt_hash,
@@ -179,7 +179,7 @@ impl VerifiedLysisReceiptsV1 {
 
 pub fn verify_receipts(
     plan: &LysisApplyPlanV1,
-    request_receipt: &RequestBudgetSplitReceiptV1,
+    request_receipt: &RequestLimitSplitReceiptV1,
     receipts: &LysisOwnerReceiptsV1,
     limits: &SchemaLimits,
 ) -> Result<VerifiedLysisReceiptsV1, ProtocolError> {
@@ -190,7 +190,7 @@ pub fn verify_receipts(
     verify_tribute_receipt(plan, &receipts.tribute, limits)?;
     verify_carry_over_receipt(plan, &receipts.carry_over, limits)?;
 
-    let request = plan.request_budget_split();
+    let request = plan.request_limit_split();
     ensure(
         plan.nod()
             .lysis_allocation_minor()
@@ -230,7 +230,7 @@ pub fn verify_receipts(
 
     Ok(VerifiedLysisReceiptsV1 {
         binding: plan.binding().clone(),
-        request_budget_split_receipt_hash: plan.request_budget_split_receipt_hash(),
+        request_limit_split_receipt_hash: plan.request_limit_split_receipt_hash(),
         nod_receipt_hash,
         contributor_receipt_hash,
         tribute_receipt_hash,
@@ -242,15 +242,15 @@ pub fn verify_receipts(
 
 fn verify_request_receipt(
     plan: &LysisApplyPlanV1,
-    receipt: &RequestBudgetSplitReceiptV1,
+    receipt: &RequestLimitSplitReceiptV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     receipt.validate_semantics()?;
     ensure(
-        receipt.receipt_hash(limits)? == plan.request_budget_split_receipt_hash(),
+        receipt.receipt_hash(limits)? == plan.request_limit_split_receipt_hash(),
         "Lysis request receipt hash",
     )?;
-    let expected = plan.request_budget_split();
+    let expected = plan.request_limit_split();
     ensure(
         receipt.protocol_bundle_hash == expected.protocol_bundle_hash
             && receipt.wwd == expected.wwd

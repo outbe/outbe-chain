@@ -9,7 +9,7 @@ use outbe_ocomp_protocol::{
 
 use super::apply_plan::{
     carry_over_apply, contributor_apply, nod_apply, tribute_apply, LysisApplyPlanPartsV1,
-    LysisApplyPlanV1, NodGenerationApplyPartsV1, RequestBudgetSplitApplyV1,
+    LysisApplyPlanV1, NodGenerationApplyPartsV1, RequestLimitSplitApplyV1,
 };
 
 const RETIRED_TRIBUTE_GENERATION_V1: u64 = 1;
@@ -92,10 +92,10 @@ pub fn verify_result(
     Ok(LysisApplyPlanPartsV1 {
         call_core,
         binding,
-        request_budget_split_receipt_hash: intent
+        request_limit_split_receipt_hash: intent
             .frozen_metadosis_values
-            .request_budget_split_receipt_hash,
-        request_budget_split: RequestBudgetSplitApplyV1 {
+            .request_limit_split_receipt_hash,
+        request_limit_split: RequestLimitSplitApplyV1 {
             protocol_bundle_hash: intent.protocol_bundle_hash,
             wwd: intent.wwd,
             pending_nonce: intent.pending_nonce,

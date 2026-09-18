@@ -912,7 +912,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     }
     let body = qualified_body.expect("nonempty validator committee");
     assert!(
-        !body.costAmountMinor.is_zero(),
+        !body.settlementCostMinor.is_zero(),
         "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
@@ -929,7 +929,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &key,
         owner,
         fixture.asset,
-        body.costAmountMinor,
+        body.settlementCostMinor,
     );
     assert_eq!(
         eth::read_call(
@@ -939,7 +939,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(body.costAmountMinor),
+        Some(body.settlementCostMinor),
         "reserve vault did not receive exact Nod cost at deposit time"
     );
 
@@ -974,7 +974,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_pow_nonce(U256::from_be_slice(&nod_id));
+    let pow = find_nod_pow_nonce(U256::from_be_slice(&nod_id), owner);
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -1039,7 +1039,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
-        hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,
+        hex::encode(&nod_id), fixture.asset, fixture.vault, body.settlementCostMinor,
         body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
     );
 }
@@ -1452,6 +1452,20 @@ pub(crate) fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
         .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
+}
+
+pub(crate) fn find_nod_pow_nonce(id: U256, owner: Address) -> u64 {
+    (0_u64..100_000)
+        .find(|nonce| {
+            outbe_common::pow::validate_mining_pow(
+                id,
+                owner,
+                outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,
+                *nonce,
+            )
+            .is_ok()
+        })
+        .expect("bounded Nod PoW nonce")
 }
 
 pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {

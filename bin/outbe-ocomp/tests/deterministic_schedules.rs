@@ -692,7 +692,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: B256::repeat_byte(0x55),
+            request_limit_split_receipt_hash: B256::repeat_byte(0x55),
         },
         logical_evaluation_height: 1,
         logical_evaluation_time: 1_784_765_900,

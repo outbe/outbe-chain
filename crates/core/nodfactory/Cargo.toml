@@ -13,6 +13,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultrouter.workspace = true
+outbe-oracle.workspace = true
 outbe-paynote.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-validatorset.workspace = true

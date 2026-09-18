@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     intent::intent_storage_key,
-    receipts::RequestBudgetSplitReceiptV1,
+    receipts::RequestLimitSplitReceiptV1,
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     vote::OcompVoteAccountabilityV1,
     SchemaLimits,
@@ -26,17 +26,17 @@ use super::{
 };
 
 impl MetadosisContract<'_> {
-    pub(crate) fn request_budget_receipt(
+    pub(crate) fn request_limit_receipt(
         &self,
         wwd: WorldwideDay,
         limits: &SchemaLimits,
-    ) -> Result<Option<RequestBudgetSplitReceiptV1>> {
-        let bytes = self.ocomp_request_budget_receipts.get_bytes(&wwd);
+    ) -> Result<Option<RequestLimitSplitReceiptV1>> {
+        let bytes = self.ocomp_request_limit_receipts.get_bytes(&wwd);
         read_canonical_optional(
             &bytes,
             max_canonical_object_bytes(limits)?,
-            |encoded| RequestBudgetSplitReceiptV1::decode_canonical(encoded, limits),
-            "OCOMP request budget receipt",
+            |encoded| RequestLimitSplitReceiptV1::decode_canonical(encoded, limits),
+            "OCOMP request limit receipt",
         )
     }
 
@@ -201,7 +201,7 @@ impl MetadosisContract<'_> {
             ));
         }
 
-        let receipt = self.request_budget_receipt(projection.worldwide_day, limits)?;
+        let receipt = self.request_limit_receipt(projection.worldwide_day, limits)?;
         match projection.retained_lysis_limit_minor {
             None if receipt.is_none() && projection.pending_nonce == 0 => {}
             Some(lysis_limit_minor) => {
@@ -225,7 +225,7 @@ impl MetadosisContract<'_> {
                     || expected_hash != retained.receipt_hash
                 {
                     return Err(storage_corruption_message(
-                        "OCOMP budget receipt/state mismatch",
+                        "OCOMP limit receipt/state mismatch",
                     ));
                 }
             }

@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_credis::constants::{CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, SECS_PER_DAY};
+use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS, SECS_PER_DAY};
 use outbe_credis::{CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
@@ -236,13 +236,13 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
 
         // Scatter the full slack of below-call days through the window. The rule
         // counts breach days rather than requiring a run, so their position must
-        // not matter: exactly `CALL_BREACH_DAYS` still calls.
-        let slack = CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS;
+        // not matter: exactly `CALL_THRESHOLD_DAYS` still calls.
+        let slack = CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS;
         let stride = (CALL_LOOKBACK_DAYS - 1) / slack;
         for i in 0..slack {
             let offset = i * stride + 1;
             // Guards the boundary: a below-call day placed past the window would
-            // silently leave more than `CALL_BREACH_DAYS` breaches standing and
+            // silently leave more than `CALL_THRESHOLD_DAYS` breaches standing and
             // make this test stop probing the threshold.
             assert!(
                 offset < CALL_LOOKBACK_DAYS,
@@ -266,7 +266,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // One more below-call day than the window can absorb.
-        let below = CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS + 1;
+        let below = CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS + 1;
         for i in 0..below {
             set_vwap(&storage, day_back(at, i + 1), below_call());
         }
@@ -294,7 +294,7 @@ fn missing_days_do_not_count_as_breaches() {
         // Publish one day short of the threshold and leave the rest of the window
         // unpublished. section 11.3's placeholder: a day with no reference price is not
         // a breach, so it can only delay a call.
-        for i in 0..CALL_BREACH_DAYS - 1 {
+        for i in 0..CALL_THRESHOLD_DAYS - 1 {
             set_vwap(&storage, day_back(at, i), above_call());
         }
         // The watermark must still cover the window, or the run would skip.
@@ -305,7 +305,11 @@ fn missing_days_do_not_count_as_breaches() {
 
         // Filling one more published day reaches the threshold, even though the
         // rest of the window still has no price at all.
-        set_vwap(&storage, day_back(at, CALL_BREACH_DAYS - 1), above_call());
+        set_vwap(
+            &storage,
+            day_back(at, CALL_THRESHOLD_DAYS - 1),
+            above_call(),
+        );
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
     });

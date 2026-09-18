@@ -110,7 +110,7 @@ pub fn finalized_job_spec(
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: day - 1,
             }],
-            request_budget_split_receipt_hash: hash(seed.wrapping_add(8)),
+            request_limit_split_receipt_hash: hash(seed.wrapping_add(8)),
         },
         logical_evaluation_height: cursor,
         logical_evaluation_time: cursor,

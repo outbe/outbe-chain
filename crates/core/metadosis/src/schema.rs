@@ -267,9 +267,9 @@ pub struct MetadosisContract {
         outbe_primitives::storage::types::StorageBytes,
     >,
 
-    /// Immutable request-phase budget receipt, keyed by WorldwideDay.
+    /// Immutable request-phase limit receipt, keyed by WorldwideDay.
     #[attribute(order = 9)]
-    pub ocomp_request_budget_receipts: outbe_primitives::storage::types::Mapping<
+    pub ocomp_request_limit_receipts: outbe_primitives::storage::types::Mapping<
         WorldwideDayKey,
         outbe_primitives::storage::types::StorageBytes,
     >,

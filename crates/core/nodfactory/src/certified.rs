@@ -189,7 +189,7 @@ pub fn install_certified_generation(
                 bucketRoot: input.roots.bucket_root,
                 outputManifestRoot: input.roots.output_manifest_root,
                 nodAmountTotal: input.nod_amount_total,
-                nodGratisConsumed: input.lysis_allocation_minor,
+                lysisAllocationMinor: input.lysis_allocation_minor,
                 issuedAt: input.issued_at,
                 stateEventDigest: state_event_digest,
             }
@@ -627,7 +627,10 @@ mod tests {
             input.roots.output_manifest_root
         );
         assert_eq!(event.data.nodAmountTotal, input.nod_amount_total);
-        assert_eq!(event.data.nodGratisConsumed, input.lysis_allocation_minor);
+        assert_eq!(
+            event.data.lysisAllocationMinor,
+            input.lysis_allocation_minor
+        );
         assert_eq!(event.data.issuedAt, input.issued_at);
         assert_eq!(event.data.stateEventDigest, receipt.state_event_digest);
     }

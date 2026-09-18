@@ -771,7 +771,7 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
             record
                 .intent
                 .frozen_metadosis_values
-                .request_budget_split_receipt_hash,
+                .request_limit_split_receipt_hash,
             B256::ZERO
         );
         // The brief waits for the Lysis deadline, so the request leaves Desis untouched.

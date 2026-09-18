@@ -6,7 +6,7 @@ use outbe_ocomp_protocol::{
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::CapacityProfileV1,
-    receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
+    receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
     state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
 };
 use outbe_primitives::time::WorldwideDay;
@@ -179,9 +179,9 @@ fn outer_transition(contract: &MetadosisContract<'_>, event: OuterWwdEvent) -> O
     crate::commit::plan_outer_transition_for_test_fixture(contract, WWD, event).unwrap()
 }
 
-fn receipt() -> RequestBudgetSplitReceiptV1 {
+fn receipt() -> RequestLimitSplitReceiptV1 {
     let protocol_bundle_hash = B256::repeat_byte(0x41);
-    RequestBudgetSplitReceiptV1 {
+    RequestLimitSplitReceiptV1 {
         protocol_bundle_hash,
         wwd: WWD.value(),
         pending_nonce: 0,
@@ -189,7 +189,7 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
         day_limit: DAY_LIMIT,
         lysis_limit_minor: LYSIS_LIMIT,
         desis_limit_minor: DESIS_LIMIT,
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
                 protocol_bundle_hash,
@@ -249,7 +249,7 @@ fn intent(
             lysis_limit_minor: LYSIS_LIMIT,
             desis_limit_minor: DESIS_LIMIT,
             auction_entry_prices: entry_prices(),
-            request_budget_split_receipt_hash: receipt_hash,
+            request_limit_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: request_height,
         logical_evaluation_time: REQUEST_TIME,
@@ -448,7 +448,7 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
         assert_eq!(pending_projection.phase, DayPhase::OffchainPending);
         assert_eq!(pending_projection.live_intent_id, Some(first_intent_id));
         assert_eq!(
-            contract.request_budget_receipt(WWD, &limits).unwrap(),
+            contract.request_limit_receipt(WWD, &limits).unwrap(),
             Some(receipt.clone())
         );
         let live_record = contract
@@ -708,7 +708,7 @@ fn canonical_storage_reads_fail_closed_when_the_declared_byte_cap_overflows() {
             contract
                 .read_pre_admission_envelope(WWD, &limits)
                 .map(|_| ()),
-            contract.request_budget_receipt(WWD, &limits).map(|_| ()),
+            contract.request_limit_receipt(WWD, &limits).map(|_| ()),
             contract
                 .ocomp_job_record(B256::repeat_byte(0x91), &limits)
                 .map(|_| ()),

@@ -24,8 +24,8 @@ contract NodSettlement {
 
     function asset() external pure returns (address) { return ASSET; }
 
-    // Any accidental metadata lookup fails the settlement test.
-    function decimals() external pure returns (uint8) { revert("NO_CONVERSIONS"); }
+    function isoCode() external pure returns (uint16) { return 840; }
+    function decimals() external pure returns (uint8) { return 6; }
 
     function approve(address spender, uint256 amount) external returns (bool) {
         if (mode == 2 && msg.sender == FACTORY) return false;

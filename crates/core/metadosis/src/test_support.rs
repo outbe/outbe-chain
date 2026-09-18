@@ -64,7 +64,7 @@ pub fn fresh_devnet_sentinel_is_pristine(
             .get_bytes(&sentinel_day)
             .is_empty()?
         && contract
-            .ocomp_request_budget_receipts
+            .ocomp_request_limit_receipts
             .get_bytes(&sentinel_day)
             .is_empty()?
         && contract

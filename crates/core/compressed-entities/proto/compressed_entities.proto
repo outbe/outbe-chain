@@ -27,7 +27,8 @@ message NodItemBody {
   uint32 league_id = 5;
   bytes floor_price_minor = 6;
   bytes bucket_key = 7;
-  bytes cost_amount_minor = 8;
+  // Fixed reference-currency cost at six-decimal precision, not asset atomic units.
+  bytes settlement_cost_minor = 8;
   uint32 issuance_currency = 9;
   uint32 reference_currency = 10;
   uint64 issued_at = 11;
