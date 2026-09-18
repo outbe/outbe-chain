@@ -8967,7 +8967,7 @@ dependencies = [
 [[package]]
 name = "outbe-l2-demo"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -8983,7 +8983,7 @@ dependencies = [
 [[package]]
 name = "outbe-l2-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -10024,7 +10024,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "acir",
  "acvm",
@@ -10042,7 +10042,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -10058,7 +10058,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-core"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -10076,7 +10076,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-core-derive"
 version = "0.11.0"
-source = "git+https://github.com/psonet/outbe-circuits.git?rev=2b56b1f8b39d0136667f467b28e2dfac785db593#2b56b1f8b39d0136667f467b28e2dfac785db593"
+source = "git+https://github.com/psonet/outbe-circuits.git?rev=4e39043#4e39043df33a6922b34a4e40f86b2d2946fddec4"
 dependencies = [
  "proc-macro2",
  "quote",
