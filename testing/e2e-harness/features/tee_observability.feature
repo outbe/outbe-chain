@@ -1,4 +1,4 @@
-@tee @min-validators-4
+@tee @sgx-no-attest @sudo @min-validators-4
 Feature: TEE enclave observability and session identity
   # The enclave sidecar is a synchronous protocol component: every validator
   # decrypts tribute offers through it inside block execution. This feature
@@ -10,9 +10,11 @@ Feature: TEE enclave observability and session identity
   #   - an enclave-sidecar restart that preserves the sealed identity is
   #     survivable WITHOUT restarting the validator (session reconnect with
   #     identity re-validation);
-  #   - an enclave that comes back with DIFFERENT keys is refused permanently
-  #     (fail-closed revocation), visible in the canary state - never silently
-  #     adopted.
+  #   - a live, initialized enclave with DIFFERENT keys cannot authenticate to
+  #     the running node; repeated fresh probes never adopt it;
+  #   - restoring the original seal recovers the retryable production session
+  #     without restarting the node. Development-session permanent revocation
+  #     is a separate transport contract.
   # Membership/onboarding stays with validator_lifecycle; the permanent
   # attested-key restart contract stays with tee_onboarding.
 
@@ -25,3 +27,6 @@ Feature: TEE enclave observability and session identity
     Then validator-1's enclave session reconnects without a node restart
     When validator-1's enclave restarts with a fresh identity
     Then validator-1 reports a refused enclave session while the rest stay ready
+    When validator-1's original sealed enclave identity is restored
+    Then validator-1's enclave session reconnects without a node restart
+    And the committee finalizes fresh blocks after enclave identity recovery

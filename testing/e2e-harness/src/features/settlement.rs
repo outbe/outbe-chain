@@ -1,5 +1,8 @@
 //! Release E2E evidence for the existing Gem and Nod settlement/redemption paths.
 
+#[path = "settlement_nod.rs"]
+mod erc20_nod;
+
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -787,7 +790,7 @@ fn native_balance_at(url: &str, owner: Address, height: u64) -> U256 {
     serde_json::from_value(value).expect("native balance must decode")
 }
 
-fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
+pub(crate) fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
     receipt: &serde_json::Value,
     emitter: Address,
     event: &E,
