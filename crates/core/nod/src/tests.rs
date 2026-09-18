@@ -838,8 +838,16 @@ fn metadata_updates_follow_qualification_passes_and_settlement() {
         .filter_map(|log| INod::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    let day = U256::from(first.worldwide_day.value()) << 224;
-    assert_eq!(batches, vec![(day, day | (U256::MAX >> 32))]);
+    assert_eq!(batches.len(), 1);
+    let (from, to) = batches[0];
+    let day_of = |id: U256| WwdEntityId::from(id).worldwide_day().value();
+    let day = first.worldwide_day.value();
+    assert_eq!((day_of(from), day_of(to)), (day, day));
+    assert_eq!(
+        (day_of(from - U256::from(1)), day_of(to + U256::from(1))),
+        (day - 1, day + 1)
+    );
+    assert!(from <= first.nod_id.to_u256() && first.nod_id.to_u256() <= to);
     assert_eq!(updates, vec![first.nod_id.to_u256()]);
 }
 

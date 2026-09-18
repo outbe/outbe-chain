@@ -49,13 +49,14 @@ pub(crate) fn derived_call_terms(
 }
 
 impl NodContract<'_> {
-    /// A Nod id carries its Worldwide Day in the top four bytes, so each day is one id range.
+    /// A Nod id carries its Worldwide Day as a prefix, so each day is one id range.
     pub(crate) fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
         for &day in days {
-            let from = U256::from(day) << 224;
+            let day = WorldwideDay::new(day);
             self.emit(INod::BatchMetadataUpdate {
-                _fromTokenId: from,
-                _toTokenId: from | (U256::MAX >> 32),
+                _fromTokenId: WwdEntityId::from_day_and_digest(day, B256::ZERO).to_u256(),
+                _toTokenId: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xff))
+                    .to_u256(),
             })?;
         }
         Ok(())

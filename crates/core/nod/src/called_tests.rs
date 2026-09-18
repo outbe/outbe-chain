@@ -1390,8 +1390,14 @@ fn a_call_pass_announces_one_batch_metadata_update() {
         .filter_map(|log| crate::precompile::INod::BatchMetadataUpdate::decode_log_data(log).ok())
         .map(|event| (event._fromTokenId, event._toTokenId))
         .collect();
-    let day = U256::from(WWD) << 224;
-    assert_eq!(batches, vec![(day, day | (U256::MAX >> 32))]);
+    assert_eq!(batches.len(), 1);
+    let (from, to) = batches[0];
+    let day_of = |id: U256| WwdEntityId::from(id).worldwide_day().value();
+    assert_eq!((day_of(from), day_of(to)), (WWD, WWD));
+    assert_eq!(
+        (day_of(from - U256::from(1)), day_of(to + U256::from(1))),
+        (WWD - 1, WWD + 1)
+    );
 }
 
 #[test]
