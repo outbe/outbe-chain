@@ -213,6 +213,7 @@ fn is_scalar_like_type(ty: &Type) -> bool {
     matches!(
         last_type_ident(ty).as_deref(),
         Some("u8")
+            | Some("u16")
             | Some("u32")
             | Some("u64")
             | Some("bool")

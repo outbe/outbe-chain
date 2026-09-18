@@ -9,7 +9,7 @@ interface IGratisFactory {
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     /// `pledgeHandle` is the confidential record id presented later at
-    /// `requestCredis`. NOTE: both amounts are public (calldata / event); only
+    /// `issueCredis`. NOTE: both amounts are public (calldata / event); only
     /// cumulative balances are encrypted (see the gratis amount-privacy TODO).
     event GratisPledged(
         address indexed account,
@@ -26,7 +26,7 @@ interface IGratisFactory {
     /// @notice Pledge enough gratis to collateralize `amountStables` of credit in
     ///         `asset`. The gratis cost is derived on-chain from the oracle rate and
     ///         sealed into the pledge ticket together with the asset and the rate, so
-    ///         `requestCredis` disburses exactly `amountStables` without re-pricing.
+    ///         `issueCredis` disburses exactly `amountStables` without re-pricing.
     ///         Authorized by the caller's Gratis modify key:
     ///         `mac = HMAC(modifyKey, op-preimage over amountStables)` where `opNonce`
     ///         MUST equal the caller's current on-chain gratis op-nonce (fetch via

@@ -17,6 +17,15 @@ interface IVaultRouter {
         Credis
     }
 
+    struct StablesReservation {
+        address asset;
+        uint256 amount;
+        address smartAccount;
+        address cca;
+        address vault;
+        uint64 expiresAt;
+    }
+
     error TokenOperationFailed();
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
@@ -35,6 +44,12 @@ interface IVaultRouter {
     error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
     error UnsupportedAssetDecimals(uint8 decimals);
     error CcaNotActive(address cca);
+    error ReservationExists(uint256 id);
+    error ReservationNotFound(uint256 id);
+    error ReservationExpired(uint256 id);
+    error ReservationAccountMismatch();
+    error ReservationInsufficient(uint256 available, uint256 required);
+    error InvalidReservationAmount();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -68,6 +83,20 @@ interface IVaultRouter {
         uint256 burnedShares,
         uint256 assetsDeposited,
         uint256 mintedShares
+    );
+
+    event ReservationCreated(
+        uint256 indexed id,
+        address indexed smartAccount,
+        address indexed cca,
+        address asset,
+        address vault,
+        uint256 amount,
+        uint64 expiresAt
+    );
+    event ReservationReleased(uint256 indexed id, address indexed asset, address indexed receiver, uint256 amount);
+    event ReservationReturned(
+        uint256 indexed id, address indexed asset, address indexed vault, uint256 amount, uint256 mintedShares
     );
 
     /// @notice Returns the number of assets.
@@ -161,4 +190,30 @@ interface IVaultRouter {
         external
         view
         returns (address assetFrom, address assetTo, uint256 amountTo);
+
+    /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
+    ///         `amount` of `asset` — the same predicate `withdraw` and `reserveStables`
+    ///         enforce. Returns false rather than reverting when `asset` has no vault.
+    function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
+
+    /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
+    ///         router's custody for `smartAccount`, guaranteeing it can later be
+    ///         delivered for 15 minutes. Caller must be an active CCA.
+    function reserveStables(address smartAccount, address asset, uint256 amount)
+        external
+        returns (uint256 reservationId);
+
+    /// @notice Delivers `amount` of a reservation to `receiver` (a token bundle) and
+    ///         returns any unused remainder to the origin vault. Caller must be a
+    ///         registered liquidity target. `receiver` must be the reserved smart
+    ///         account. Reverts if the reservation is missing, expired, or too small.
+    function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
+
+    /// @notice Deposits an unused reservation back into its origin vault and deletes it.
+    ///         The originating CCA may call at any time; after expiry anyone may.
+    ///         Idempotent — an `id` holding nothing returns 0 instead of reverting.
+    function returnReservation(uint256 id) external returns (uint256 mintedShares);
+
+    /// @notice The reservation held under `id`, or a zeroed struct if none.
+    function reservationOf(uint256 id) external view returns (StablesReservation memory reservation);
 }

@@ -17,7 +17,7 @@ use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::IERC20;
 
 // ---------------------------------------------------------------------------
-// request_credis
+// issue_credis
 // ---------------------------------------------------------------------------
 
 /// Consumes a confidential Gratis pledge (identified by `pledge_handle` +
@@ -36,7 +36,7 @@ use crate::sol_ext::IERC20;
 /// currency and the call price derives from it. Anchoring to the issuance currency reuses
 /// the rate sealed into the ticket, so nothing about such a position moves between pledge
 /// and origination; a cross-currency anchor has no sealed quote and is read now, which
-/// means a delayed `requestCredis` moves its call threshold, though never its loan. The
+/// means a delayed `issueCredis` moves its call threshold, though never its loan. The
 /// policy rate is pinned here too, off the ISSUANCE currency - it belongs to the debt, not
 /// to the threshold.
 ///
@@ -44,13 +44,15 @@ use crate::sol_ext::IERC20;
 /// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position -
 /// authorization to spend the pledge is `spend_auth`, verified inside the enclave.
 /// Returns `(position_id, amount_stables)`.
-pub fn request_credis(
+#[allow(clippy::too_many_arguments)]
+pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     smart_account: Address,
     pledge_handle: B256,
     spend_auth: [u8; 32],
     reference_currency: u16,
+    reservation_id: U256,
     stake: U256,
 ) -> Result<(U256, U256)> {
     if smart_account.is_zero() {
@@ -74,6 +76,20 @@ pub fn request_credis(
     // by the caller.
     let current_time = storage.timestamp()?.to::<u64>();
 
+    let reservation = outbe_vaultrouter::api::reservation_of(&storage, reservation_id)?;
+    if reservation.asset.is_zero() {
+        return Err(CredisFactoryError::ReservationNotFound.into());
+    }
+    if reservation.cca != caller {
+        return Err(CredisFactoryError::ReservationCcaMismatch.into());
+    }
+    if reservation.smart_account != smart_account {
+        return Err(CredisFactoryError::ReservationAccountMismatch.into());
+    }
+    if current_time > reservation.expires_at {
+        return Err(CredisFactoryError::ReservationExpired.into());
+    }
+
     // Consume the pledge ticket (the enclave verifies `spend_auth` binds it to
     // `smart_account`, so a mempool copy cannot redirect the loan). The collateral
     // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
@@ -88,6 +104,12 @@ pub fn request_credis(
     let asset = terms.asset;
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
+    }
+    if asset != reservation.asset {
+        return Err(CredisFactoryError::ReservationAssetMismatch.into());
+    }
+    if terms.stables_amount > reservation.amount {
+        return Err(CredisFactoryError::ReservationInsufficient.into());
     }
 
     // The CCA matches the borrower's six-decimal GRATIS collateral one for one in
@@ -142,12 +164,18 @@ pub fn request_credis(
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, smart_account, stake)?;
     }
 
-    // Withdraw the matching stablecoin from the vault to the smart account.
-    outbe_vaultrouter::api::withdraw(&storage, asset, terms.stables_amount, smart_account)?;
+    // Deliver the pledged credit from the CCA's prior reservation. Any unused
+    // remainder goes back to the origin vault inside `releaseReservation`.
+    outbe_vaultrouter::api::release_reservation(
+        &storage,
+        reservation_id,
+        smart_account,
+        terms.stables_amount,
+    )?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisRequested {
+        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
             smartAccount: smart_account,
             cca: caller,
             amount: terms.stables_amount,
