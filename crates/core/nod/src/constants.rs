@@ -32,21 +32,22 @@ pub const SECS_PER_DAY: u32 = 24 * 3600;
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 
-/// Breach days within the lookback window that arm a call. A day at or below the
-/// call price, and a day with no published price, both simply fail to count, so
-/// the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either.
-pub const CALL_BREACH_DAYS: u32 = 21;
+/// Qualifying days within the lookback window that arm a call. A day at or
+/// below the call price, and a day with no published price, both simply fail
+/// to count, so the window absorbs up to
+/// `CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS` of either.
+pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
 /// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window`
 /// seals at issuance, matching `GemData::call_window`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
-/// [`CALL_BREACH_DAYS`] in seconds - the encoding
+/// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding
 /// `callable_bucket_call_threshold` seals at issuance, matching
 /// `GemData::call_threshold`.
-pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
+pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
-/// Seconds after `called_at` within which the owner must settle and mine. Once
+/// Seconds after `called_at` within which the owner must settle. Once
 /// elapsed the bucket's remaining Nods are forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 

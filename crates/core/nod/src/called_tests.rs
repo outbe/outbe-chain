@@ -22,8 +22,8 @@ use outbe_primitives::{
 use crate::{
     api,
     constants::{
-        CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP,
-        CALL_THRESHOLD, CALL_WINDOW, SECS_PER_DAY,
+        CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP, CALL_THRESHOLD,
+        CALL_THRESHOLD_DAYS, CALL_WINDOW, SECS_PER_DAY,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -466,7 +466,7 @@ fn a_called_bucket_with_a_zero_notice_period_is_never_forfeited() {
             item.bucket_key,
             ISO,
             CALL_LOOKBACK_DAYS,
-            CALL_BREACH_DAYS,
+            CALL_THRESHOLD_DAYS,
             0,
         );
         let long_after = at + 365 * DAY;
@@ -542,7 +542,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
-        fill_days(storage, latest, CALL_BREACH_DAYS - 1, above_call());
+        fill_days(storage, latest, CALL_THRESHOLD_DAYS - 1, above_call());
 
         assert_eq!(scan(storage, scope, parent, at), 0);
         assert_eq!(called_at(storage, item.bucket_key), 0);
@@ -559,7 +559,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
 
         // Scatter exactly the slack (28 - 21 = 7) below-call days through the
         // window; the count, not a streak, is what decides.
-        let slack = CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS;
+        let slack = CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS;
         let mut day = latest;
         let mut dropped = 0;
         let mut offset = 0;
@@ -596,7 +596,7 @@ fn missing_days_do_not_count_as_breaches() {
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         // Only one day short of the threshold is published; the rest are absent.
-        fill_days(storage, latest, CALL_BREACH_DAYS - 1, above_call());
+        fill_days(storage, latest, CALL_THRESHOLD_DAYS - 1, above_call());
         finalize_through(storage, at);
 
         assert_eq!(scan(storage, scope, parent, at), 0);
@@ -631,7 +631,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let scan_at = START + 30 * DAY;
     let latest = last_closed_day(scan_at);
     let mut oldest_breach = latest;
-    for _ in 1..CALL_BREACH_DAYS {
+    for _ in 1..CALL_THRESHOLD_DAYS {
         oldest_breach = previous_date_key(oldest_breach);
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
@@ -652,7 +652,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
                 ),
             );
             fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
-            fill_days(storage, latest, CALL_BREACH_DAYS, above_call());
+            fill_days(storage, latest, CALL_THRESHOLD_DAYS, above_call());
             assert_eq!(
                 scan(storage, scope, parent, scan_at),
                 expected,
@@ -690,7 +690,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
             ),
         );
         let issuance_utc_day = timestamp_to_date_key(START);
-        fill_days(storage, issuance_utc_day, CALL_BREACH_DAYS, above_call());
+        fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
         let scan_at = date_key_to_utc_timestamp(first_full_day(START));
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scope, parent, scan_at), 0);
@@ -1273,7 +1273,7 @@ fn a_running_call_sweep_keeps_its_day() {
         let later_day = last_closed_day(later);
 
         fill_days(storage, later_day, CALL_LOOKBACK_DAYS, below_call());
-        fill_days(storage, day, CALL_BREACH_DAYS, above_call());
+        fill_days(storage, day, CALL_THRESHOLD_DAYS, above_call());
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(day).unwrap();

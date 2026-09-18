@@ -16,7 +16,7 @@ pub enum MetadosisError {
     VwapMustBeNonZero,
 
     #[error(
-        "invalid OCOMP budget split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
+        "invalid OCOMP limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
     )]
     InvalidOcompLimitSplit {
         day_limit: U256,
