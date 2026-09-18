@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let data = IIntexFactory::settleIntexCall {
+        let data = IIntexFactory::settleIntexWithPayNoteCall {
             seriesId: sid(7).into(),
             intexOwner: owner(),
             amount: U256::from(1),
@@ -140,5 +140,22 @@ fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
         assert_eq!(f.config_profile.slot(), U256::from(10));
+    });
+}
+
+/// The sweep reads the router before it acts, so a router that answers nothing (or is not there at
+/// all) has to leave the block alone rather than fail it.
+#[test]
+fn the_parked_sweep_is_a_no_op_without_a_router() {
+    with_factory(|s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            s.clone(),
+        );
+        crate::parked::drain(&ctx).expect("a silent router is not a failed block");
+
+        let factory = IntexFactoryContract::new(s.clone());
+        assert_eq!(factory.parked_message_cursor.read().unwrap(), 0);
+        assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 0);
     });
 }

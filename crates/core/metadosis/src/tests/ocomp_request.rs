@@ -297,8 +297,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        let desis_supply_before = DesisContract::new(storage.clone())
-            .pending_supply_promis
+        let desis_limit_before = DesisContract::new(storage.clone())
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap();
         let finality_recorded_height = block_number + 2;
@@ -354,10 +354,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         let terminal = metadosis
             .ocomp_job_record(intent_id, &poc_schema_limits())
@@ -376,10 +376,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(
@@ -1434,7 +1434,7 @@ fn request_observables(
             .read(&wwd)
             .unwrap(),
         desis_supply: DesisContract::new(storage.clone())
-            .pending_supply_promis
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
@@ -1551,7 +1551,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
 
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
             U256::ZERO,

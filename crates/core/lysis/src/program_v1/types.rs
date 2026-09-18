@@ -132,7 +132,7 @@ pub struct ProgramResultV1 {
     pub tribute_ids: Vec<WwdEntityId>,
     pub total_nominal: U256,
     pub lysis_limit_minor: U256,
-    pub remaining_gratis: U256,
+    pub remaining_lysis_limit_minor: U256,
     pub league_fractions: Vec<LeagueFractionV1>,
     pub nod_actions: Vec<NodActionV1>,
     pub contributors: Vec<ContributorActionV1>,

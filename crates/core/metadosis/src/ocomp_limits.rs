@@ -132,7 +132,7 @@ pub(crate) fn apply_fresh_request_limit_effect(
     Ok(receipt)
 }
 
-/// Draw the day's Desis limit from the accumulator and brief Desis with it.
+/// Draw the day's Desis Limit from the accumulator and brief Desis with it.
 ///
 /// Called once Lysis has closed, so the accumulator already holds what Lysis returned and a day
 /// whose Lysis never completed never opens an auction.
@@ -155,7 +155,7 @@ pub(crate) fn apply_auction_brief(
                 return Err(MetadosisError::OcompLimitReceiptMismatch.into());
             }
         }
-        let actual = outbe_desis::ocomp_limits::apply_request_desis_limit_minor(
+        let actual = outbe_desis::ocomp_budget::apply_request_desis_limit(
             storage.clone(),
             receipt.protocol_bundle_hash,
             receipt.wwd.into(),
@@ -175,17 +175,20 @@ fn expected_receipt(
     request: &RequestLimitEffect,
     split: RequestLimitSplit,
     effect_nonce: u64,
-) -> Result<RequestLimitSplitReceiptV1> {
-    let (destination, briefed_supply) = match request.day_type {
-        DayType::Green => (LimitSplitDestination::DesisAuction, split.desis_limit_minor),
-        DayType::Red => (LimitSplitDestination::CarryOver, U256::ZERO),
+) -> Result<RequestBudgetSplitReceiptV1> {
+    let (destination, desis_limit_minor) = match request.day_type {
+        DayType::Green => (
+            BudgetSplitDestination::DesisAuction,
+            split.desis_limit_minor,
+        ),
+        DayType::Red => (BudgetSplitDestination::CarryOver, U256::ZERO),
     };
     let carry_over_credit = split.carry_over_credit;
     let desis_brief_hash = Some(
         desis_request_brief_hash(
             request.protocol_bundle_hash,
             request.wwd,
-            briefed_supply,
+            desis_limit_minor,
             &request.auction_entry_prices,
             request.logical_anchor,
         )

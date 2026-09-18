@@ -10,7 +10,7 @@ use outbe_primitives::time::WorldwideDay;
 const WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 const REQUEST_HEIGHT: u64 = 40;
 const DEADLINE_HEIGHT: u64 = 104;
-const LYSIS_LIMIT_MINOR: U256 = U256::from_limbs([700, 0, 0, 0]);
+const LYSIS_LIMIT: U256 = U256::from_limbs([700, 0, 0, 0]);
 const RECEIPT_HASH: B256 = B256::repeat_byte(0x51);
 const INTENT: B256 = B256::repeat_byte(0x61);
 fn requested_state() -> JobFsmState {
@@ -20,8 +20,8 @@ fn requested_state() -> JobFsmState {
             at_height: REQUEST_HEIGHT,
             deadline_height: DEADLINE_HEIGHT,
             intent_id: INTENT,
-            lysis_limit_minor: LYSIS_LIMIT_MINOR,
-            request_limit_receipt_hash: RECEIPT_HASH,
+            lysis_limit_minor: LYSIS_LIMIT,
+            request_budget_receipt_hash: RECEIPT_HASH,
         })
         .unwrap();
     state
@@ -40,8 +40,8 @@ fn fresh_job_has_exactly_one_request_effect() {
             at_height: REQUEST_HEIGHT,
             deadline_height: DEADLINE_HEIGHT,
             intent_id: INTENT,
-            lysis_limit_minor: LYSIS_LIMIT_MINOR,
-            request_limit_receipt_hash: RECEIPT_HASH,
+            lysis_limit_minor: LYSIS_LIMIT,
+            request_budget_receipt_hash: RECEIPT_HASH,
         })
         .unwrap();
 
@@ -77,18 +77,15 @@ fn expiry_is_exclusive_and_absorbing_without_successor_job() {
     assert_eq!(projection.live_intent_id, None);
     assert_eq!(projection.deadline_height, None);
     assert_eq!(projection.terminal_records, 1);
-    assert_eq!(
-        projection.retained_lysis_limit_minor,
-        Some(LYSIS_LIMIT_MINOR)
-    );
+    assert_eq!(projection.retained_lysis_limit_minor, Some(LYSIS_LIMIT));
 
     for command in [
         JobFsmCommand::Request {
             at_height: DEADLINE_HEIGHT + 1,
             deadline_height: DEADLINE_HEIGHT + 65,
             intent_id: B256::repeat_byte(0x62),
-            lysis_limit_minor: LYSIS_LIMIT_MINOR,
-            request_limit_receipt_hash: RECEIPT_HASH,
+            lysis_limit_minor: LYSIS_LIMIT,
+            request_budget_receipt_hash: RECEIPT_HASH,
         },
         JobFsmCommand::Expire {
             at_height: DEADLINE_HEIGHT + 1,

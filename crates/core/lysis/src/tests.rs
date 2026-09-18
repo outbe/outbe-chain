@@ -417,7 +417,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     let nominal = coen(100u64);
     let total_nominal = nominal * U256::from(DENSE_TRIBUTE_COUNT);
     let lysis_limit_minor = total_nominal / U256::from(10u64);
-    let entry_price = U256::from(500_000u64);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -429,7 +429,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         begin_block(storage.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         for token_id in 1..=DENSE_TRIBUTE_COUNT {
@@ -501,7 +501,10 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         assert!(!item.gratis_load_minor.is_zero());
         issued_gratis += item.gratis_load_minor;
     }
-    assert_eq!(issued_gratis + result.remaining_gratis, lysis_limit_minor);
+    assert_eq!(
+        issued_gratis + result.remaining_lysis_limit_minor,
+        lysis_limit_minor
+    );
 }
 
 #[test]
@@ -767,18 +770,18 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 }
 
 // ---------------------------------------------------------------------------
-// Scale invariant: settlement_cost_minor must be in 10^6-minor units, not 10^12
+// Scale invariant: cost_amount_minor must be in 10^6-minor units, not 10^12
 // ---------------------------------------------------------------------------
 
 /// Regression test for the scale-mismatch bug in `lysis::runtime`. Both
-/// `entry_price_minor` (an oracle VWAP at 10^6 scale) and `gratis_load`
+/// `cost_of_gratis_minor` (an oracle VWAP at 10^6 scale) and `gratis_load`
 /// (a token amount at 10^6 minor scale) are six-decimal U256 values. Their
 /// product lives in 10^12 and must be divided by SCALE once to land in
 /// minor units. The contract is documented at
 /// `crates/core/nod/src/schema.rs:6-7`:
-///   `settlement_cost_minor = entry_price_minor * gratis_load_minor / SIX_DECIMAL_SCALE`
+///   `cost_amount_minor = cost_of_gratis_minor * gratis_load_minor / SIX_DECIMAL_SCALE`
 ///
-/// Pre-fix: `lysis::runtime` computed `entry_price_minor * gratis_load`
+/// Pre-fix: `lysis::runtime` computed `cost_of_gratis_minor * gratis_load`
 /// without the divisor, producing a value ~10^6x too large that was stored
 /// on-chain and emitted to the `NodIssued` event. This was silent because
 /// `settle_mine_payment` is a no-op today, but every nominal-scale consumer
@@ -798,7 +801,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     let owner = address!("0x1111111111111111111111111111111111111111");
     // 100 COEN nominal, $0.5 oracle VWAP.
     let nominal = coen(100u64);
-    let entry_price = U256::from(500_000u64);
+    let cost_of_gratis = U256::from(500_000u64);
 
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
@@ -810,9 +813,15 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         begin_block(s.clone(), &scope).unwrap();
         // Register COEN/840 and seed its current price and four-hour VWAP.
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        seed_entry_prices(&s, T_NOW, 840, entry_price / U256::from(2), entry_price);
+        seed_entry_prices(
+            &s,
+            T_NOW,
+            840,
+            cost_of_gratis / U256::from(2),
+            cost_of_gratis,
+        );
         let frozen = crate::api::freeze_entry_price_snapshot(s.clone(), wwd, T_NOW).unwrap();
-        assert_eq!(frozen.get(&840), Some(&entry_price));
+        assert_eq!(frozen.get(&840), Some(&cost_of_gratis));
         // Issuance must use the snapshot even when a subsequent live VWAP query would fail.
         OracleContract::new(s.clone())
             .config_lookback_duration
@@ -877,7 +886,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
                 },
                 first_league: crate::program_v1::ObservationValueV1::Value(league_id),
                 second_league: crate::program_v1::ObservationValueV1::Value(league_id),
-                entry_price_minor: crate::program_v1::ObservationValueV1::Value(entry_price),
+                entry_price_minor: crate::program_v1::ObservationValueV1::Value(cost_of_gratis),
                 nod_target_available: true,
             }],
         })
@@ -912,21 +921,21 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
 
     // The cost is derived from the bucket entry price and the load, never
     // stored: this pins that derivation to what lysis itself computed.
-    let cost = outbe_nod::api::settlement_cost_minor(
+    let cost = outbe_nod::api::cost_amount_minor(
         expected_action.entry_price_minor,
         item.gratis_load_minor,
     )
     .expect("derive the Nod cost");
-    assert_eq!(cost, expected_action.settlement_cost_minor);
+    assert_eq!(cost, expected_action.cost_amount_minor);
 
-    let expected = entry_price * item.gratis_load_minor / SIX_DECIMAL_SCALE;
+    let expected = cost_of_gratis * item.gratis_load_minor / SIX_DECIMAL_SCALE;
     assert_eq!(
         cost,
         expected,
         "the Nod cost must use the WWD VWAP below the active S-curve and equal \
-         entry_price * gratis_load / SIX_DECIMAL_SCALE; \
+         cost_of_gratis * gratis_load / SIX_DECIMAL_SCALE; \
          pre-fix value (missing /SCALE) would be {}",
-        entry_price * item.gratis_load_minor
+        cost_of_gratis * item.gratis_load_minor
     );
 
     let upper_bound = coen(1_000u64);
@@ -1130,7 +1139,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     const T_NOW: u64 = 1_700_000_000;
     let owner = address!("0x2222222222222222222222222222222222222222");
     let nominal = coen(100u64);
-    let entry_price = U256::from(500_000u64);
+    let cost_of_gratis = U256::from(500_000u64);
 
     // Scarce: allocation is only 4% of nominal -> deficit (4%) is BELOW the 8% floor.
     let lysis_limit_minor = nominal * U256::from(4u64) / U256::from(100u64);
@@ -1145,7 +1154,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        seed_entry_prices(&s, T_NOW, 840, entry_price, entry_price);
+        seed_entry_prices(&s, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         let mut tribute = TributeContract::new(s.clone());
         tribute.unseal_day(wwd).unwrap();
@@ -1177,7 +1186,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
 
         assert!(
-            result.remaining_gratis.is_zero(),
+            result.remaining_lysis_limit_minor.is_zero(),
             "the full scarce allocation must be consumed"
         );
         end_block(s, &scope).unwrap();
@@ -1203,7 +1212,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
 fn lysis_records_contributors_aggregated_by_owner() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260526);
-    let entry_price = U256::from(500_000u64);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -1216,7 +1225,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         // Oracle: register ISO 840 -> COEN/840 and seed current price and four-hour VWAP.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         // Distinct owners: lysis derives nod_id from (owner, day), so an owner
         // can have at most one processed tribute per day.
@@ -1279,7 +1288,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
 fn lysis_omits_excluded_owners_from_contributor_map() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260526);
-    let entry_price = U256::from(500_000u64);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -1291,7 +1300,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         begin_block(storage.clone(), &scope).unwrap();
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+        seed_entry_prices(&storage, T_NOW, 840, cost_of_gratis, cost_of_gratis);
 
         let owner_a = gas_audit_address(1);
         let owner_b = gas_audit_address(2);

@@ -113,11 +113,11 @@ pub struct Forfeited {
     pub promis_load_minor: U256,
 }
 
-/// `Called -> Expired`. Every unit still unsettled and not sent to the Gem Factory is forfeited, and
-/// its load is the caller's to return to the pool.
+/// The units a called series forfeits and their load, for the caller to return to the pool.
+/// Writes nothing, so returning that load exactly once is the caller's job.
 pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
-    let mut registry = IntexContract::new(storage.clone());
-    let mut record = registry.load_series(series_id)?;
+    let registry = IntexContract::new(storage.clone());
+    let record = registry.load_series(series_id)?;
     if record.lifecycle_state()? != IntexState::Called {
         return Err(IntexError::InvalidState {
             expected: IntexState::Called as u8,
@@ -137,12 +137,9 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
 
-    record.state = IntexState::Expired as u8;
-    let promis_load_minor = record.promis_load_minor;
-    registry.update_series_record(&record)?;
     Ok(Forfeited {
         units: forfeited,
-        promis_load_minor,
+        promis_load_minor: record.promis_load_minor,
     })
 }
 
@@ -281,7 +278,8 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
         .and_then(|left| left.checked_sub(exercised))
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
-    let expired = record.lifecycle_state()? == IntexState::Expired;
+    let now = storage.timestamp()?.to::<u64>();
+    let expired = record.effective_state(now)? == IntexState::Expired;
     Ok(UnitCounts {
         issued: record.issued_units,
         active: if expired { 0 } else { unpaid },

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
@@ -171,7 +172,9 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionStageClearing_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageClearing{value: 0.1 ether}(WORLDWIDE_DAY);
+        originRouter.sendAuctionStageClearing{value: 0.1 ether}(
+            WORLDWIDE_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING
+        );
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
@@ -281,68 +284,6 @@ contract OriginRouterTest is CrossChainTest {
     // --- Role Constants Tests ---
     function test_role_constants() public view {
         assertEq(originRouter.DESIS_ROLE(), keccak256("DESIS_ROLE"));
-    }
-
-    // --- Quote Tests ---
-    function test_quoteSendAuctionStageStart() public view {
-        uint256 fee = originRouter.quoteSendAuctionStageStart(_baseStageStartParams());
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendAuctionStageClearing() public view {
-        uint256 fee = originRouter.quoteSendAuctionStageClearing(WORLDWIDE_DAY);
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendAuctionResult() public view {
-        // (dstChainId, worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount)
-        uint256 fee = originRouter.quoteSendAuctionResult(BNB_CHAIN_ID, WORLDWIDE_DAY, 500, 75e6, 42);
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendIssuanceInstructions() public view {
-        address[] memory recipients = new address[](2);
-        uint256[] memory quantities = new uint256[](2);
-
-        recipients[0] = address(0x1);
-        recipients[1] = address(0x2);
-        quantities[0] = 10;
-        quantities[1] = 20;
-
-        uint256 fee = originRouter.quoteSendIssuanceInstructions(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams(recipients, quantities)
-        );
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendRefundInstructions() public view {
-        address[] memory bidders = new address[](2);
-        uint128[] memory refundedAmounts = new uint128[](2);
-        uint128[] memory paidAmounts = new uint128[](2);
-
-        bidders[0] = address(0x1);
-        bidders[1] = address(0x2);
-        refundedAmounts[0] = 100e6;
-        refundedAmounts[1] = 200e6;
-        paidAmounts[0] = 50e6;
-        paidAmounts[1] = 75e6;
-
-        uint256 fee = originRouter.quoteSendRefundInstructions(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
-        );
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendMarkCalled() public view {
-        uint256 fee =
-            originRouter.quoteSendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
-
-        assertEq(fee, 0.001 ether);
     }
 
     // --- ERC165 Tests ---

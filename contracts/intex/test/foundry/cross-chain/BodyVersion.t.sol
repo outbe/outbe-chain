@@ -39,8 +39,14 @@ contract BodyVersionTest is Test {
 
         encoded = BridgeMsgCodec.encodeAuctionStageClearing(1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageClearing.version");
+
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, "stageClearing.msgType");
         assertEq(encoded.length, 6, "stageClearing.length");
+
+        encoded = BridgeMsgCodec.encodeBidsRemaining(1, 2, 3, 4);
+        assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsRemaining.version");
+        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_REMAINING, "bidsRemaining.msgType");
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_BIDS_REMAINING, "bidsRemaining.length");
 
         encoded = BridgeMsgCodec.encodeAuctionResult(1, 7, 5e6, 3);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "auctionResult.version");

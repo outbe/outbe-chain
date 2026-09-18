@@ -16,12 +16,13 @@ use outbe_intexfactory::schema::IssuanceParams;
 use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
-    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
-    MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_DEADBAND_BPS,
-    PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
-    SETTLEMENT_WINDOW_SECONDS,
+    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BIDS_PER_CHUNK, CLEARING_BID_GAS,
+    CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS,
+    COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN, DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND,
+    IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO,
+    PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
+    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -34,8 +35,8 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Validate every technical prerequisite before the API may classify an
-/// oversized supply as the sole committed business rejection. Returns the
+/// Validate every technical prerequisite before the API may classify
+/// an oversized Desis Limit as the sole committed business rejection. Returns the
 /// schedule anchor: the midnight of `now`, or the next one when too little of
 /// the commit window would remain.
 pub(crate) fn preflight_brief(
@@ -70,7 +71,7 @@ pub(crate) fn preflight_brief(
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
-    supply_promis: u128,
+    desis_limit_minor: u128,
     reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     anchor: u32,
@@ -84,8 +85,8 @@ pub(crate) fn record_preflighted_brief(
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
-        .pending_supply_promis
-        .write(&worldwide_day, U256::from(supply_promis))?;
+        .pending_desis_limit_minor
+        .write(&worldwide_day, U256::from(desis_limit_minor))?;
     contract
         .brief_green
         .write(&worldwide_day, u8::from(is_green))?;
@@ -411,7 +412,7 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
                 contract.emit(IDesis::AuctionOverdue {
                     worldwideDay: worldwide_day.into(),
                 })?;
-                refund_unsold_supply(storage, &mut contract, worldwide_day)?;
+                refund_unused_desis_limit(storage, &mut contract, worldwide_day)?;
                 contract.remove_gate_active(worldwide_day)?;
                 contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
                 return contract.remove_sched_active(worldwide_day);
@@ -470,7 +471,7 @@ fn start_auction(
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
     // A day nobody could price cannot hold an auction, and ends as a red day does - but
-    // unlike a red day it was briefed with supply, which has to go back.
+    // unlike a red day it was briefed with a limit, which has to go back.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
     if unpriced || red {
@@ -489,7 +490,7 @@ fn start_auction(
             contract.emit(IDesis::AuctionCancelledUnpriced {
                 worldwideDay: worldwide_day.into(),
             })?;
-            refund_unsold_supply(storage, contract, worldwide_day)?;
+            refund_unused_desis_limit(storage, contract, worldwide_day)?;
         } else {
             contract.emit(IDesis::AuctionCancelledRedDay {
                 worldwideDay: worldwide_day.into(),
@@ -503,7 +504,7 @@ fn start_auction(
             worldwideDay: worldwide_day.into(),
         })?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-        refund_unsold_supply(storage, contract, worldwide_day)?;
+        refund_unused_desis_limit(storage, contract, worldwide_day)?;
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
@@ -524,29 +525,29 @@ fn start_auction(
     Ok(StartOutcome::Started)
 }
 
-/// Return a retiring day's unsold brief supply to PromisLimit. No-op once the
-/// supply was consumed at clearing (or for a red day, which briefs zero).
-fn refund_unsold_supply(
+/// Return a retiring day's unused Desis Limit to PromisLimit. No-op once the
+/// limit was consumed at clearing (or for a red day, which briefs zero).
+fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
-    let supply = contract.pending_supply_promis.read(&worldwide_day)?;
-    if supply.is_zero() {
+    let unused = contract.pending_desis_limit_minor.read(&worldwide_day)?;
+    if unused.is_zero() {
         return Ok(());
     }
     contract
-        .pending_supply_promis
+        .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
     contract.emit(IDesis::UnusedSupplyReported {
         worldwideDay: worldwide_day.into(),
-        unusedPromis: supply,
+        unusedPromis: unused,
     })?;
-    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(supply)?;
+    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
     Ok(())
 }
 
-/// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
+/// Arm the clearing from the briefed Desis Limit: convert raw PROMIS to whole Intex
 /// units, start the fan-in gate and broadcast the clearing stage.
 fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
@@ -554,9 +555,11 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     if config.promis_load_minor == 0 {
         return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
-    let supply_promis = u128::try_from(contract.pending_supply_promis.read(&worldwide_day)?)
-        .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
-    let supply_intex = (supply_promis / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
+    let desis_limit_minor =
+        u128::try_from(contract.pending_desis_limit_minor.read(&worldwide_day)?)
+            .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
+    let supply_intex =
+        (desis_limit_minor / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
 
     contract.clearing_initiated.write(&worldwide_day, 1u8)?;
     contract
@@ -568,15 +571,34 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
     contract.push_gate_active(worldwide_day)?;
     contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendAuctionStageClearingCall {
-            worldwideDay: worldwide_day.into(),
+    // Per chain, each in its own checkpoint: a chain whose send fails takes neither the day's arming
+    // nor the other chains' rounds with it, and the fan-in deadline covers the one left behind.
+    for chain_id in fetch_targets(storage, worldwide_day)? {
+        let sent = storage.with_checkpoint(|| {
+            let gas = clearing_round_gas(storage, worldwide_day, chain_id)?;
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendAuctionStageClearingCall {
+                    worldwideDay: worldwide_day.into(),
+                    dstChainId: chain_id,
+                    gasLimit: U256::from(gas),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = sent {
+            tracing::warn!(
+                target: "outbe::desis",
+                %worldwide_day,
+                chain_id,
+                error = ?error,
+                "clearing round: chain skipped"
+            );
         }
-        .abi_encode()
-        .into(),
-    )?;
+    }
     Ok(())
 }
 
@@ -882,6 +904,28 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
+/// Gas one CLEARING round asks of `chain_id`, from the busiest of its last
+/// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth.
+pub(crate) fn clearing_round_gas(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+    chain_id: u32,
+) -> Result<u64> {
+    let contract = storage.contract::<DesisContract>();
+    let mut bids = CLEARING_MIN_BIDS;
+    let mut day = worldwide_day.value();
+    for _ in 0..CLEARING_HISTORY_DAYS {
+        day = outbe_primitives::time::previous_date_key(day);
+        let key = DesisContract::chain_key(WorldwideDay::new(day), chain_id);
+        bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
+    }
+    let chunks = bids.div_ceil(CLEARING_BIDS_PER_CHUNK).max(1);
+    let cost = CLEARING_FIXED_GAS
+        .saturating_add(chunks.saturating_mul(CLEARING_CHUNK_GAS))
+        .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
+    Ok(cost.saturating_mul(3) / 2)
+}
+
 /// The day's frozen target snapshot, read from the OriginRouter registry
 /// (deterministic: frozen at STAGE_START).
 fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<Vec<u32>> {
@@ -920,7 +964,7 @@ fn partition_chains(
 }
 
 /// Run the clearing algorithm over the included chains' bids, transition to
-/// `Cleared`, hand issuance to IntexFactory, return unused supply to PromisLimit
+/// `Cleared`, hand issuance to IntexFactory, return the unused limit to PromisLimit
 /// and send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
 fn clear_inner(
     storage: StorageHandle<'_>,
@@ -939,7 +983,7 @@ fn clear_inner(
 
     let config = contract.read_auction_config(worldwide_day)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&worldwide_day)? as u16;
-    // Zero bids are valid here: `calculate_clearing` yields 0 issued, the full supply returns
+    // Zero bids are valid here: `calculate_clearing` yields 0 issued, the full limit returns
     // to PromisLimit, and a no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
     let bids = contract.read_chains_bids(worldwide_day, included)?;
 
@@ -955,14 +999,14 @@ fn clear_inner(
     contract.write_last_clearing_issued_count(result.issued_units)?;
 
     // Clear the bid working-set, pending inputs and the gate (CEI: state writes before external calls).
-    let supply_promis = contract.pending_supply_promis.read(&worldwide_day)?;
+    let desis_limit_minor = contract.pending_desis_limit_minor.read(&worldwide_day)?;
     for &chain_id in snapshot {
         contract.reset_chain_intake(worldwide_day, chain_id)?;
     }
     contract.day_bid_count.write(&worldwide_day, 0)?;
     contract.pending_supply_intex.write(&worldwide_day, 0)?;
     contract
-        .pending_supply_promis
+        .pending_desis_limit_minor
         .write(&worldwide_day, U256::ZERO)?;
     contract.clearing_initiated.write(&worldwide_day, 0u8)?;
     contract.clearing_deadline.clear(&worldwide_day)?;
@@ -989,16 +1033,17 @@ fn clear_inner(
         })?;
     }
 
-    // Return the unsold Promis (unsold whole units + conversion dust) to PromisLimit.
-    let issued_promis =
+    // Return the Unused Desis Limit (unsold whole units + conversion dust) to PromisLimit.
+    let desis_allocation_minor =
         U256::from(result.issued_units as u128) * U256::from(config.promis_load_minor);
-    let unused_promis = supply_promis.saturating_sub(issued_promis);
-    if !unused_promis.is_zero() {
+    let unused_desis_limit_minor = desis_limit_minor.saturating_sub(desis_allocation_minor);
+    if !unused_desis_limit_minor.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
             worldwideDay: worldwide_day.into(),
-            unusedPromis: unused_promis,
+            unusedPromis: unused_desis_limit_minor,
         })?;
-        PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
+        PromisLimitContract::new(storage.clone())
+            .add_to_total_unallocated(unused_desis_limit_minor)?;
     }
 
     if result.issued_units == 0 {

@@ -12,8 +12,13 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @dev Sized for the bids relay it fires, not the 452k stage flip: 5.0M once `RELAY_BIDS_CAP` binds.
-    uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
+    /// @dev Floor for a CLEARING round, and what the router clamps a smaller ask up to: driven through the
+    ///      whole inbound path it spends 1.56M and still places a chunk (`ClearingRelayMailboxGas.t.sol`).
+    uint256 internal constant AUCTION_STAGE_CLEARING = 2_300_000;
+
+    /// @dev Ceiling for a CLEARING round, under the tightest per-transaction cap our targets enforce
+    ///      (Ethereum's EIP-7825 is 16 777 216); a heavier day takes several rounds instead.
+    uint256 internal constant AUCTION_STAGE_CLEARING_MAX = 14_000_000;
 
     /// @dev 147k.
     uint256 internal constant AUCTION_RESULT = 225_000;
@@ -29,15 +34,28 @@ library IntexGas {
     ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
     uint256 internal constant MARK_APPLY_CAP = 60_000;
 
-    /// @notice Ceiling on the bids relay an inbound CLEARING fires. The origin cannot know the day's bid
-    ///         count, so past this the relay parks.
-    uint256 internal constant RELAY_BIDS_CAP = 5_000_000;
+    /// @dev What a round must have left to send one more BIDS_BATCH: a full 64-bid chunk measures ~714k
+    ///      against the canonical mailbox - ~157k the send, ~8.7k a bid.
+    uint256 internal constant RELAY_CHUNK_GAS = 800_000;
+
+    /// @dev Held back on top of the last chunk for the completeness marker, ~157k measured; without it a
+    ///      round that just affords its final chunk reverts whole and reports nothing.
+    uint256 internal constant RELAY_MARKER_GAS = 250_000;
+
+    /// @dev Held back from the relay so an unfinished day can still be reported home: the 63/64 rule
+    ///      leaves the outer frame far too little to send a message of its own.
+    uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     /// @dev 88k.
     uint256 internal constant BIDS_DONE = 135_000;
+
+    /// @dev The remainder report a stopped relay sends home. Dearer than the other inbound bids messages
+    ///      because its handler answers with an outbound CLEARING: 136k of it is the handler's own work
+    ///      against the stand, and the rest is what a real dispatch costs over the mock's.
+    uint256 internal constant BIDS_REMAINING = 400_000;
 
     /// @dev The one budget no test can measure - the receiver forwards into the Desis precompile. Derived
     ///      from its tariff (read 100, write 2,900, six per bid), 17.6k on the generation-reset branch and

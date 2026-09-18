@@ -550,7 +550,7 @@ fn measure_settle_gem_gas_with_real_paynote() {
     provider.flush().unwrap();
     drop(provider);
     let calldata = Bytes::from(
-        IGemFactory::settleGemCall {
+        IGemFactory::settleGemWithPayNoteCall {
             gemId: gem_id,
             payNoteProof: proof.into(),
         }

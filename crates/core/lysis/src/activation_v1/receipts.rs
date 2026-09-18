@@ -269,7 +269,7 @@ fn verify_request_receipt(
         receipt.logical_anchor <= expected.logical_anchor,
         "Lysis request receipt logical anchor",
     )?;
-    let briefed_supply = if expected.day_type == DayType::Green {
+    let desis_limit_minor = if expected.day_type == DayType::Green {
         expected.desis_limit_minor
     } else {
         U256::ZERO
@@ -279,7 +279,7 @@ fn verify_request_receipt(
             == Some(desis_request_brief_hash(
                 expected.protocol_bundle_hash,
                 expected.wwd,
-                briefed_supply,
+                desis_limit_minor,
                 &expected.auction_entry_prices,
                 receipt.logical_anchor,
             )?),

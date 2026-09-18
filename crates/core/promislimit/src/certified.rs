@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn certified_credit_adds_unused_lysis_limit_minor_to_actual_current_value() {
+    fn certified_credit_adds_the_unused_lysis_limit_to_actual_current_value() {
         let input = input(31, 8, 2);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(40));
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_unused_lysis_limit_minor_preserves_the_accumulator_and_returns_exact_receipt() {
+    fn zero_unused_lysis_limit_preserves_the_accumulator_and_returns_exact_receipt() {
         let input = input(32, 10, 0);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(17));

@@ -243,7 +243,7 @@ where
         .lysis_limit_minor
         .checked_sub(streamed.lysis_allocation_minor)
         .ok_or(LysisFinalizationErrorV1::Authority(
-            "Lysis allocation within frozen limit",
+            "Lysis allocation within the frozen limit",
         ))?;
     let counts = ExactCountsV1 {
         tribute_count: streamed.tribute_count,
@@ -257,7 +257,7 @@ where
         eligible_nominal_total: streamed.eligible_nominal_total,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
-        gratis_supply: frozen.gratis_supply,
+        day_gratis_limit_minor: frozen.day_gratis_limit_minor,
         lysis_limit_minor: frozen.lysis_limit_minor,
         desis_limit_minor: frozen.desis_limit_minor,
         lysis_allocation_minor: streamed.lysis_allocation_minor,
@@ -283,7 +283,7 @@ where
         tribute_nominal_total: streamed.tribute_nominal_total,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
-        gratis_supply: frozen.gratis_supply,
+        day_gratis_limit_minor: frozen.day_gratis_limit_minor,
         lysis_limit_minor: frozen.lysis_limit_minor,
         desis_limit_minor: frozen.desis_limit_minor,
         lysis_allocation_minor: streamed.lysis_allocation_minor,

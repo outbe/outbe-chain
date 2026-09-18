@@ -61,9 +61,12 @@ contract OriginRouter is
         /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
-        mapping(uint256 idx => ParkedSend) parkedSends;
-        /// @dev Next index to assign in `parkedSends`.
-        uint256 nextParkedSendIdx;
+        mapping(uint256 idx => ParkedMessage) parkedMessages;
+        /// @dev Next index to assign in `parkedMessages`.
+        uint256 nextParkedMessageIdx;
+        /// @dev Gas a day's CLEARING round asks of each chain, as desis sized it from that chain's recent
+        ///      bid counts. Later rounds of the same day reuse it, so a remainder report needs no sizing.
+        mapping(uint32 worldwideDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -190,28 +193,40 @@ contract OriginRouter is
         try this.sendLeg(dstChainId, payload, gasLimit) returns (bytes32 id) {
             sendId = id;
         } catch {
-            OriginRouterStorage storage $ = _os();
-            uint256 idx = $.nextParkedSendIdx++;
-            ParkedSend storage p = $.parkedSends[idx];
-            p.dstChainId = dstChainId;
-            p.gasLimit = SafeCast.toUint64(gasLimit);
-            p.payload = payload;
-            emit SendParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
+            _park(dstChainId, payload, gasLimit);
         }
     }
 
-    /// @inheritdoc IOriginRouter
-    function flushPendingSend(uint256 idx) external nonReentrant {
-        ParkedSend storage p = _os().parkedSends[idx];
-        if (p.payload.length == 0 || p.sent) revert NoParkedSend(idx);
-        p.sent = true; // CEI; a revert in `_send` rolls this back, keeping the entry retryable
-        bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
-        emit PendingSendFlushed(idx, p.dstChainId, sendId);
+    function _park(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private {
+        OriginRouterStorage storage $ = _os();
+        uint256 idx = $.nextParkedMessageIdx++;
+        ParkedMessage storage p = $.parkedMessages[idx];
+        p.dstChainId = dstChainId;
+        p.gasLimit = SafeCast.toUint64(gasLimit);
+        p.payload = payload;
+        emit MessageParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedSend(uint256 idx) external view returns (ParkedSend memory) {
-        return _os().parkedSends[idx];
+    /// @dev Deliberately not `nonReentrant`: on a chain that is its own target the send is delivered inside
+    ///      this frame and comes back through `receiveMessage`, which the contract-wide guard would reject.
+    ///      The `sent` flag below is set before the send, so a re-entrant call cannot send the entry twice.
+    function resendParkedMessage(uint256 idx) external {
+        ParkedMessage storage p = _os().parkedMessages[idx];
+        if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
+        p.sent = true; // CEI; a revert in `_send` rolls this back, keeping the entry retryable
+        bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
+        emit ParkedMessageResent(idx, p.dstChainId, sendId);
+    }
+
+    /// @inheritdoc IOriginRouter
+    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory) {
+        return _os().parkedMessages[idx];
+    }
+
+    /// @inheritdoc IOriginRouter
+    function parkedMessageCount() external view returns (uint256) {
+        return _os().nextParkedMessageIdx;
     }
 
     /// @dev Whether `chainId` is in the series' STAGE_START snapshot (the frozen day-of target set).
@@ -241,116 +256,6 @@ contract OriginRouter is
         }
     }
 
-    // --- Quote ---
-    /// @dev Sum the per-target fee to broadcast `payload` over `chainIds` with `gasLimit` destination gas.
-    function _broadcastFee(uint32[] memory chainIds, bytes memory payload, uint256 gasLimit)
-        private
-        view
-        returns (uint256 fee)
-    {
-        for (uint256 i = 0; i < chainIds.length; ++i) {
-            fee += _quoteFee(chainIds[i], payload, gasLimit);
-        }
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256) {
-        return _broadcastFee(
-            _os().targetChainIds, _encodeAuctionStageStart(params), IntexGas.auctionStart(params.prices.length)
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256) {
-        return _broadcastFee(
-            _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay),
-            IntexGas.AUCTION_STAGE_CLEARING
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendAuctionResult(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
-    ) external view returns (uint256) {
-        return _quoteFee(
-            dstChainId,
-            BridgeMsgCodec.encodeAuctionResult(worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount),
-            IntexGas.AUCTION_RESULT
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendIssuanceInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        IssuanceInstructionsParams[] calldata series
-    ) external view returns (uint256) {
-        uint256 recipients;
-        for (uint256 i = 0; i < series.length; i++) {
-            recipients += series[i].recipients.length;
-        }
-        return _quoteFee(
-            dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
-            IntexGas.issuance(series.length, recipients)
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendRefundInstructions(
-        uint32 dstChainId,
-        uint32 worldwideDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
-    ) external view returns (uint256) {
-        return _quoteFee(
-            dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(
-                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
-            ),
-            IntexGas.refund(bidders.length)
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds)
-        external
-        view
-        returns (uint256)
-    {
-        return _broadcastFee(
-            _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeMarkCalled(worldwideDay, calledAt, seriesIds),
-            IntexGas.markCalled(seriesIds.length)
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
-    function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external view returns (uint256) {
-        return _broadcastFee(
-            _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeMarkQualified(worldwideDay, seriesIds),
-            IntexGas.markQualified(seriesIds.length)
-        );
-    }
-
-    /// @dev The day's frozen snapshot if one exists, else the live registry (used only for pre-start fee quotes).
-    function _seriesOrRegistry(uint32 worldwideDay) private view returns (uint32[] memory) {
-        OriginRouterStorage storage $ = _os();
-        uint32[] memory snapshot = $.seriesTargets[worldwideDay];
-        return snapshot.length != 0 ? snapshot : $.targetChainIds;
-    }
-
     // --- Send ---
     /// @inheritdoc IOriginRouter
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable onlyRole(DESIS_ROLE) {
@@ -366,14 +271,25 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageClearing(uint32 worldwideDay) external payable onlyRole(DESIS_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
-        if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay);
-        for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_CLEARING);
-            emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
-        }
+    function sendAuctionStageClearing(uint32 worldwideDay, uint32 dstChainId, uint256 gasLimit)
+        external
+        payable
+        onlyRole(DESIS_ROLE)
+    {
+        if (!_isSeriesTarget(worldwideDay, dstChainId)) revert NoTargets();
+        uint64 budget = _clearingBudget(gasLimit);
+        // Remembered so the rounds that follow a remainder report ask for the same gas as the first one.
+        _os().clearingGas[worldwideDay][dstChainId] = budget;
+        bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay), budget);
+        emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+    }
+
+    /// @dev Keep the ask inside what a round is worth: below the floor a round could not even flip the
+    ///      stage, and above the cap no target chain would accept the delivery.
+    function _clearingBudget(uint256 gasLimit) private pure returns (uint64) {
+        if (gasLimit < IntexGas.AUCTION_STAGE_CLEARING) return uint64(IntexGas.AUCTION_STAGE_CLEARING);
+        if (gasLimit > IntexGas.AUCTION_STAGE_CLEARING_MAX) return uint64(IntexGas.AUCTION_STAGE_CLEARING_MAX);
+        return uint64(gasLimit);
     }
 
     /// @inheritdoc IOriginRouter
@@ -517,6 +433,8 @@ contract OriginRouter is
             _handleBidsBatch(srcChainId, payload);
         } else if (msgType == BridgeMsgCodec.MSG_BIDS_DONE) {
             _handleBidsDone(srcChainId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_BIDS_REMAINING) {
+            _handleBidsRemaining(srcChainId, payload);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
@@ -555,6 +473,43 @@ contract OriginRouter is
         IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
+    }
+
+    /// @dev A target whose relay stopped part way asks for another round. Answered by sending the day's
+    ///      CLEARING again - the target resumes from the chunk it left, so the same message carries on
+    ///      rather than starting over. Parked like any other send when the relay float is empty.
+    function _handleBidsRemaining(uint32 srcChainId, bytes calldata payload) private {
+        (uint32 worldwideDay, uint32 bodySrcChainId, uint16 nextBatch, uint16 totalBatches) =
+            BridgeMsgCodec.decodeBidsRemaining(payload);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
+
+        // A day whose intake has closed - cleared on the fan-in timeout, or cancelled - would have every
+        // chunk of the next round ignored on arrival, so the round is not worth paying for.
+        IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(worldwideDay);
+        if (stage != IDesis.AuctionStage.Revealing && stage != IDesis.AuctionStage.Clearing) {
+            emit InboundMessageIgnored(
+                srcChainId,
+                BridgeMsgCodec.MSG_BIDS_REMAINING,
+                bytes32((uint256(worldwideDay) << 32) | srcChainId),
+                InboundReason.OBSOLETE
+            );
+            return;
+        }
+
+        uint64 budget = _os().clearingGas[worldwideDay][srcChainId];
+        uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget;
+        bytes memory round = BridgeMsgCodec.encodeAuctionStageClearing(worldwideDay);
+
+        // A target on this very chain is delivered inside this frame, where `receiveMessage` still holds its
+        // re-entry guard - so the round's own chunk sends would be rejected coming back in. Park it instead
+        // and let the drain trigger carry it in a transaction of its own.
+        bytes32 sendId;
+        if (srcChainId == block.chainid) {
+            _park(srcChainId, round, gasLimit);
+        } else {
+            sendId = _sendOrPark(srcChainId, round, gasLimit);
+        }
+        emit BidsRelayRoundSent(sendId, worldwideDay, srcChainId, nextBatch, totalBatches);
     }
 
     /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge
@@ -676,6 +631,11 @@ contract OriginRouter is
         return _os().parkedProceeds[idx];
     }
 
+    /// @inheritdoc IOriginRouter
+    function parkedProceedsCount() external view returns (uint256) {
+        return _os().nextParkedProceedsIdx;
+    }
+
     /// @inheritdoc IERC7786TokenReceiver
     /// @dev The token bridge credits WCOEN before this call; we unwrap it and hand the native to the factory
     ///      precompile, which pays the series' creators. A distribution failure parks the native for retry so
@@ -703,12 +663,12 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function retryProceeds(uint256 idx) external nonReentrant {
+    function distributeParkedProceeds(uint256 idx) external nonReentrant {
         ParkedProceeds storage p = _os().parkedProceeds[idx];
         if (p.amount == 0 || p.settled) revert NoParkedProceeds(idx);
         p.settled = true;
         IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.worldwideDay, p.srcChainId);
-        emit ProceedsRetried(idx, p.worldwideDay, p.amount);
+        emit ParkedProceedsDistributed(idx, p.worldwideDay, p.amount);
     }
 
     /// @dev Hand native proceeds to the factory precompile; park them for retry on failure. `srcChainId` lets the

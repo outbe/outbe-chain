@@ -784,7 +784,7 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&prepared.wwd)
                 .unwrap(),
             record.intent.frozen_metadosis_values.desis_limit_minor

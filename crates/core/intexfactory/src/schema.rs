@@ -118,7 +118,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 23)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Lifecycle notices waiting for the `intex_notify` trigger to send them: the
+    // Lifecycle notices waiting for the `intex_drain_notices` trigger to send them: the
     // scans run in a block hook, which cannot call contracts. Head and tail reset
     // to 0 whenever the queue drains empty.
     #[attribute(order = 24)]
@@ -179,6 +179,12 @@ pub struct IntexFactoryContract {
     pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 44)]
     pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// Where the parked-message sweep resumes: every index below it is sent or empty.
+    #[attribute(order = 45)]
+    pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    /// As `parked_message_cursor`, for the proceeds the factory refused.
+    #[attribute(order = 46)]
+    pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl IntexFactoryContract<'_> {

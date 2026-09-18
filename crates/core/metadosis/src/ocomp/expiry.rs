@@ -227,10 +227,10 @@ fn expire_exact(
         ctx.block.timestamp,
         &poc_schema_limits(),
     )?;
-    let expected_limit = before
+    let expected_retained_limit_minor = before
         .retained_lysis_limit_minor
         .ok_or_else(|| storage_corruption_message("terminal OCOMP expiry has no retained limit"))?;
-    if retained_lysis_limit_minor != expected_limit {
+    if retained_lysis_limit_minor != expected_retained_limit_minor {
         return Err(storage_corruption_message(
             "terminal OCOMP expiry returned a different retained limit",
         ));
@@ -246,7 +246,7 @@ fn expire_exact(
     )?;
     if metadosis.get_wwd_status(before.worldwide_day)? != crate::aggregate::WwdStatus::Failed
         || metadosis
-            .read_metadosis_failure_receipt(before.worldwide_day, expected_limit)?
+            .read_metadosis_failure_receipt(before.worldwide_day, expected_retained_limit_minor)?
             .is_none()
         || metadosis
             .live_ocomp_fsm_state_by_intent(intent_id, &poc_schema_limits())?

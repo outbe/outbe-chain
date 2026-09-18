@@ -129,7 +129,7 @@ fn request_limit_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbrie
 }
 
 #[test]
-fn green_request_commits_exact_desis_limit_minor_and_canonical_receipt() {
+fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
     with_storage(|storage| {
         let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -175,7 +175,7 @@ fn green_request_commits_exact_desis_limit_minor_and_canonical_receipt() {
         );
         assert_eq!(
             desis
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(60)
@@ -190,7 +190,7 @@ fn green_request_commits_exact_desis_limit_minor_and_canonical_receipt() {
 }
 
 #[test]
-fn red_request_briefs_desis_without_supply_and_credits_exact_desis_limit_minor() {
+fn red_request_briefs_nothing_and_credits_the_exact_desis_limit() {
     with_storage(|storage| {
         let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -267,7 +267,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
 
         let desis = DesisContract::new(storage.clone());
         assert_eq!(
-            desis.pending_supply_promis.read(&wwd).unwrap(),
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
             U256::from(7)
         );
         assert_eq!(desis.sched_active_count.read().unwrap(), 1);
@@ -387,7 +387,7 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(68)
@@ -428,7 +428,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
                 .get_total_unallocated()
                 .unwrap(),
             U256::from(996),
-            "a RED day opens no auction, so its base returns with the headroom"
+            "a RED day opens no auction, so its limit returns with the headroom"
         );
     });
 }
@@ -464,7 +464,7 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
         assert_eq!(receipt.day_limit, U256::from(5_680));
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(4_680),
@@ -508,7 +508,7 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
         assert_eq!(receipt.desis_limit_minor, U256::from(780));
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&request.wwd.into())
                 .unwrap(),
             U256::from(780)

@@ -285,7 +285,7 @@ impl ProgramExecutionV1 {
                 .collect(),
             total_nominal: self.total_nominal,
             lysis_limit_minor: self.lysis_limit_minor,
-            remaining_gratis: self.remaining,
+            remaining_lysis_limit_minor: self.remaining,
             league_fractions: self
                 .fractions
                 .iter()

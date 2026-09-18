@@ -615,7 +615,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         "status": "SUCCESS",
         "total_nominal": total_nominal.to_string(),
         "lysis_limit_minor": allocation.to_string(),
-        "remaining_gratis": remaining.to_string(),
+        "remaining_lysis_limit_minor": remaining.to_string(),
         "group_table": table,
         "nod_actions": actions,
         "contributors": contributors

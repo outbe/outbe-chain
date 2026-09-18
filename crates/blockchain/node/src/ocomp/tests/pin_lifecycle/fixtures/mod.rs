@@ -108,7 +108,7 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
-            gratis_supply: U256::from(20),
+            day_gratis_limit_minor: U256::from(20),
             lysis_limit_minor: U256::from(300),
             desis_limit_minor: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {

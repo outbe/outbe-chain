@@ -152,8 +152,8 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Expire one group in a single credit. Re-walking is normal, so members an
-/// earlier pass retired are skipped and each load is credited exactly once.
+/// Expire one group in a single credit. A group with a member left over is walked
+/// again, so only that member stays in it and each load is credited exactly once.
 fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
@@ -163,10 +163,11 @@ fn expire_group(
     let group = factory.called_group(iso_code, worldwide_day)?;
 
     let mut credit = U256::ZERO;
-    let mut pending = 0u32;
+    let mut left = Vec::new();
     for &series_id in &group.members {
         // Per member: a shared checkpoint would roll the whole group's credit back.
         let returned = storage.with_checkpoint(|| {
+            // Stored by a node that still wrote the terminal state; its load went back then.
             if outbe_intex::api::read_series(storage, series_id)?.lifecycle_state()?
                 == IntexState::Expired
             {
@@ -191,7 +192,7 @@ fn expire_group(
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(target: "outbe::intexfactory", series = %series_id, error = ?error, "expiry sweep: series left for the next pass");
-                pending += 1;
+                left.push(series_id);
                 continue;
             }
         };
@@ -204,11 +205,13 @@ fn expire_group(
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .add_to_total_unallocated(credit)?;
     }
-    if pending == 0 {
+    if left.is_empty() {
         factory.remove_called_group(iso_code, worldwide_day)?;
+    } else {
+        factory.retain_called_group(iso_code, worldwide_day, &left)?;
     }
     Ok(GroupExpiry {
         members: group.members.len() as u32,
-        pending,
+        pending: left.len() as u32,
     })
 }

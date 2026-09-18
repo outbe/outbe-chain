@@ -1644,7 +1644,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
-            gratis_supply: U256::from(20),
+            day_gratis_limit_minor: U256::from(20),
             lysis_limit_minor: plan.lysis_limit_minor,
             desis_limit_minor: U256::from(1_000),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {

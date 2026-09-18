@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 pub struct LysisResult {
     pub nod_ids: Vec<WwdEntityId>,
     pub tribute_ids: Vec<WwdEntityId>,
-    pub remaining_gratis: U256,
+    pub remaining_lysis_limit_minor: U256,
 }
 
 /// Executes lysis for a given worldwide day with the specified gratis allocation.
@@ -52,7 +52,7 @@ fn lysis_inner(
         return Ok(LysisResult {
             nod_ids: vec![],
             tribute_ids: vec![],
-            remaining_gratis: lysis_limit_minor,
+            remaining_lysis_limit_minor: lysis_limit_minor,
         });
     }
 
@@ -141,7 +141,7 @@ fn lysis_inner(
     Ok(LysisResult {
         nod_ids,
         tribute_ids: result.tribute_ids,
-        remaining_gratis: result.remaining_gratis,
+        remaining_lysis_limit_minor: result.remaining_lysis_limit_minor,
     })
 }
 

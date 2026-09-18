@@ -74,14 +74,4 @@ contract GasAttributeTest is CrossChainTest {
         outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
         _assertLastGas(IntexGas.refund(n));
     }
-
-    function test_quoteMatchesSend_bothCarryGas() public view {
-        // The quote path builds the same attribute; the mock returns a flat fee, so this simply confirms the
-        // quote signature compiles and returns without reverting under the gas attribute.
-        IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
-        p.worldwideDay = 7;
-        p.dayState = 1;
-        outbe.quoteSendAuctionStageStart(p);
-    }
 }

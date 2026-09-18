@@ -747,15 +747,44 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settle: `settler` is the caller. The cost is discharged by spending a PayNote,
-/// so no tokens move here; the NFT move goes via storage.call.
-pub fn settle(
+/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer.
+pub fn settle_intex(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    intex_owner: Address,
+    settler: Address,
+    amount: U256,
+    asset: Address,
+) -> Result<()> {
+    settle(storage, series_id, intex_owner, settler, amount, |series| {
+        let currency = accept_payment_token(storage, asset, series)?;
+        let cost = cost_in_token(storage, series, asset, currency, amount)?;
+        deposit_payment(storage, settler, asset, cost)
+    })
+}
+
+/// Settle paying the cost by spending a PayNote owned by `settler`.
+pub fn settle_intex_with_paynote(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     intex_owner: Address,
     settler: Address,
     amount: U256,
     paynote_proof: &[u8],
+) -> Result<()> {
+    settle(storage, series_id, intex_owner, settler, amount, |series| {
+        discharge_cost(storage, series, amount, settler, paynote_proof)
+    })
+}
+
+/// `settler` is the caller; the settled units stay with `intex_owner`.
+fn settle(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    intex_owner: Address,
+    settler: Address,
+    amount: U256,
+    pay: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<()>,
 ) -> Result<()> {
     if intex_owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
@@ -787,34 +816,101 @@ pub fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
-    // Last, so a doomed settle never pays for proof verification.
-    discharge_cost(storage, &series, amount, settler, paynote_proof)?;
+    storage.clone().with_checkpoint(|| {
+        // The units move before payment so a token callback cannot settle them
+        // twice; a failed payment rolls the move back.
+        storage.call(
+            INTEX_NFT1155_ADDRESS,
+            U256::ZERO,
+            IIntexNFT1155::settleIntexCall {
+                seriesId: series_id.into(),
+                from: intex_owner,
+                to: intex_owner,
+                amount,
+            }
+            .abi_encode()
+            .into(),
+        )?;
 
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::settleIntexCall {
-            seriesId: series_id.into(),
-            from: intex_owner,
-            to: intex_owner,
-            amount,
+        let settled_units = u32::try_from(amount)
+            .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+        outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
+
+        pay(&series)?;
+
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::Settled {
+                seriesId: series_id.into(),
+                intexOwner: intex_owner,
+                amount,
+            },
+        )
+    })
+}
+
+/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
+/// vault through the router, leaving the factory's own balance untouched.
+fn deposit_payment(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    cost: U256,
+) -> Result<()> {
+    if cost.is_zero() {
+        return Ok(());
+    }
+    let before = token_balance(storage, asset)?;
+    checked_token_call(
+        storage,
+        asset,
+        IERC20::transferFromCall {
+            from: payer,
+            to: INTEX_FACTORY_ADDRESS,
+            amount: cost,
+        },
+    )?;
+    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
+        return Err(IntexFactoryError::SettlementAmountMismatch.into());
+    }
+    checked_token_call(
+        storage,
+        asset,
+        IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount: cost,
+        },
+    )?;
+    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
+    if token_balance(storage, asset)? != before {
+        return Err(IntexFactoryError::SettlementAmountMismatch.into());
+    }
+    Ok(())
+}
+
+fn checked_token_call(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    call: impl SolCall,
+) -> Result<()> {
+    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(IntexFactoryError::TokenOperationFailed.into());
+    }
+    Ok(())
+}
+
+fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::balanceOfCall {
+            account: INTEX_FACTORY_ADDRESS,
         }
         .abi_encode()
         .into(),
     )?;
-
-    let settled_units = u32::try_from(amount)
-        .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
-    outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
-
-    emit_event(
-        storage,
-        crate::precompile::IIntexFactory::Settled {
-            seriesId: series_id.into(),
-            intexOwner: intex_owner,
-            amount,
-        },
-    )
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| IntexFactoryError::TokenOperationFailed.into())
 }
 
 /// Discharges the settlement cost by spending one PayNote.
