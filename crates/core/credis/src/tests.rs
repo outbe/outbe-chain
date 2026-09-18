@@ -1596,7 +1596,7 @@ fn token_uri_renders_the_position_image_and_metadata() {
 
         let short = outbe_common::nft_card::short_id(id);
         assert_eq!(json["name"], format!("Credis {short}"));
-        assert_eq!(json["description"], "Outbe Credis");
+        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert_eq!(trait_value(&json, "State").unwrap(), "Open");
         assert_eq!(trait_value(&json, "Principal").unwrap(), 1000);
         assert_eq!(trait_value(&json, "Outstanding").unwrap(), 1000);

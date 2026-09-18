@@ -1034,7 +1034,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         let hex = format!("{:064x}", body.nod_id.to_u256());
         let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
         assert_eq!(json["name"], format!("Nod {id}"));
-        assert_eq!(json["description"], "Outbe Nod");
+        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
         assert_eq!(value(&json, "State").unwrap(), "Qualified");
         assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);

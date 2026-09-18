@@ -1891,7 +1891,7 @@ fn token_uri_renders_the_gem_card() {
 
         let id = outbe_common::nft_card::short_id(gem_id);
         assert_eq!(json["name"], format!("Gem {id}"));
-        assert_eq!(json["description"], "Outbe Gem");
+        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
         assert_eq!(trait_value(&json, "State").unwrap(), "Qualified");
         assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");

@@ -1,7 +1,12 @@
 /// Legacy ERC-721 metadata surface values.
 pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";
-pub const TOKEN_DESCRIPTION: &str = "Outbe Nod";
+pub const TOKEN_DESCRIPTION: &str = concat!(
+    "Nod is a mining right on the Outbe network. Once qualified, its owner pays the settlement cost ",
+    "at the fixed entry price, and the settled right is exercised to mine its Gratis load. ",
+    "A called Nod must be settled by its settlement deadline, otherwise it is forfeited. ",
+    "A Nod is never transferable."
+);
 
 /// Per-bin multiplicative step in basis points. PancakeSwap LB default; each
 /// bin spans a 0.25% price band. The LB-protocol constants used alongside
