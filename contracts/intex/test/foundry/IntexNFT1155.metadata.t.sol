@@ -58,6 +58,24 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(json.contains(bytes(needle)), needle);
     }
 
+    /// @dev Rows are laid out by a cursor, so the y is what a reordering breaks.
+    function _assertRowAt(bytes memory svg, string memory label, uint256 y) internal view {
+        assertTrue(
+            svg.contains(
+                bytes(
+                    string.concat(
+                        "<text x=\"60\" y=\"",
+                        vm.toString(y),
+                        "\" font-family=\"sans-serif\" font-size=\"20\" fill=\"#999\">",
+                        label,
+                        "</text>"
+                    )
+                )
+            ),
+            label
+        );
+    }
+
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
@@ -97,6 +115,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("QUALIFIED"), "badge text");
         assertTrue(svg.contains("#16a34a"), "badge color");
         assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Price", 355);
     }
 
     function test_uri_Called_AddsCallTimestamps() public {
@@ -126,7 +145,9 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("CALLED"), "badge text");
         assertTrue(svg.contains("#f97316"), "badge color");
         // calledAt == 1, deadline == 1 + 14 days == 1970-01-15 00:00:01 UTC.
-        assertTrue(svg.contains("Call Deadline"), "deadline row");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Price", 355);
+        _assertRowAt(svg, "Call Deadline", 400);
         assertTrue(svg.contains("15.01.1970 00:00 UTC"), "deadline date formatting");
     }
 
@@ -147,6 +168,8 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("EXPIRED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Deadline", 400);
     }
 
     function test_uri_SettledToken_SuffixAndNoLifecycle() public {
@@ -214,9 +237,10 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
         assertTrue(svg.contains(">1.08</text>"), "floor price while issued");
-        assertTrue(svg.indexOf(">Promis Load</text>") < svg.indexOf(">Entry Price</text>"), "load leads the card");
-        assertTrue(svg.indexOf(">Entry Price</text>") < svg.indexOf(">Floor Price</text>"), "floor follows entry");
-        assertTrue(svg.indexOf(">Floor Price</text>") < svg.indexOf(">Call Price</text>"), "call closes the prices");
+        _assertRowAt(svg, "Promis Load", 265);
+        _assertRowAt(svg, "Entry Price", 310);
+        _assertRowAt(svg, "Floor Price", 355);
+        _assertRowAt(svg, "Call Price", 400);
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 
