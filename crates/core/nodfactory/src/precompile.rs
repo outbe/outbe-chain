@@ -60,12 +60,11 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),
-            settleNodWithPayNote(c) => mutate(c, caller, |sender, c| {
+            settleNodWithPayNote(c) => mutate(c, caller, |_, c| {
                 runtime::settle_nod_with_paynote(
                     &storage,
                     scope,
                     parent,
-                    sender,
                     WwdEntityId::from(c.nodId),
                     &c.payNoteProof,
                 )?;
