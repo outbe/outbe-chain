@@ -17,7 +17,7 @@ import {
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
-import { parseDataUri } from "../format.js";
+import { type DecodedDataUri, parseDataUri } from "../format.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
@@ -224,7 +224,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   async function seriesMetadata(
     n: Network,
     series: Hex,
-  ): Promise<{ collection: unknown; issued: unknown; settled: unknown } | undefined> {
+  ): Promise<{ collection: DecodedDataUri; issued: DecodedDataUri; settled: DecodedDataUri } | undefined> {
     try {
       const nft = addr(n, "nft");
       const [issuedId, settledId] = (await n.client.readContract({
