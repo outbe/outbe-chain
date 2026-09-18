@@ -10,7 +10,7 @@ interface INod {
     /// ERC-4906: the metadata of `_tokenId` changed.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906: the metadata of every token in `[_fromTokenId, _toTokenId]` changed. A bucket
-    /// transition touches Nods whose ids are not contiguous, so it announces the full range.
+    /// transition announces the id range of its Worldwide Day, the top four bytes of a Nod id.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     event NodBodyStored(

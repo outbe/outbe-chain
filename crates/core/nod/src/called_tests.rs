@@ -1384,12 +1384,14 @@ fn a_call_pass_announces_one_batch_metadata_update() {
         assert_eq!(scan(&storage, &scope, &parent, at + DAY), 0);
     });
 
-    let batches = provider
+    let batches: Vec<(U256, U256)> = provider
         .get_events(outbe_primitives::addresses::NOD_ADDRESS)
         .iter()
-        .filter(|log| crate::precompile::INod::BatchMetadataUpdate::decode_log_data(log).is_ok())
-        .count();
-    assert_eq!(batches, 1);
+        .filter_map(|log| crate::precompile::INod::BatchMetadataUpdate::decode_log_data(log).ok())
+        .map(|event| (event._fromTokenId, event._toTokenId))
+        .collect();
+    let day = U256::from(WWD) << 224;
+    assert_eq!(batches, vec![(day, day | (U256::MAX >> 32))]);
 }
 
 #[test]

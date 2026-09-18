@@ -10,7 +10,7 @@ use outbe_primitives::math::{
     tree_math::{self, BinTreeStorage},
 };
 use outbe_primitives::time::WorldwideDay;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
@@ -49,6 +49,18 @@ pub(crate) fn derived_call_terms(
 }
 
 impl NodContract<'_> {
+    /// A Nod id carries its Worldwide Day in the top four bytes, so each day is one id range.
+    pub(crate) fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
+        for &day in days {
+            let from = U256::from(day) << 224;
+            self.emit(INod::BatchMetadataUpdate {
+                _fromTokenId: from,
+                _toTokenId: from | (U256::MAX >> 32),
+            })?;
+        }
+        Ok(())
+    }
+
     pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
         if !self.entry_prices_frozen.read(&day)? {
             return Ok(None);

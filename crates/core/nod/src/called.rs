@@ -183,7 +183,7 @@ pub fn run_call_slice(
     let mut mutated: u32 = 0;
     let mut visited: u32 = 0;
     let mut forfeited: u32 = 0;
-    let mut called: u32 = 0;
+    let mut called_days = std::collections::BTreeSet::new();
 
     // Descending walk: removing a bucket swap-pops the tail into the hole, and
     // the tail is already behind a descending cursor, so no live entry is
@@ -224,7 +224,7 @@ pub fn run_call_slice(
                     });
                     if res.is_ok() {
                         mutated = mutated.saturating_add(1);
-                        called = called.saturating_add(1);
+                        called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
                     }
                 }
             } else if has_unpaid
@@ -248,12 +248,7 @@ pub fn run_call_slice(
         cursor -= 1;
     };
 
-    if called > 0 {
-        nod.emit(INod::BatchMetadataUpdate {
-            _fromTokenId: U256::ZERO,
-            _toTokenId: U256::MAX,
-        })?;
-    }
+    nod.emit_days_metadata_update(&called_days)?;
 
     let next_cursor = if completed {
         0

@@ -260,17 +260,6 @@ fn held_in_full(issued_at: u64, day: u32) -> bool {
     issued_at != 0 && day >= first_full_day(issued_at)
 }
 
-/// A bucket transition changes the metadata of every Nod in it.
-fn announce_qualified(nod: &mut NodContract<'_>, qualified: u32) -> Result<()> {
-    if qualified > 0 {
-        nod.emit(INod::BatchMetadataUpdate {
-            _fromTokenId: U256::ZERO,
-            _toTokenId: U256::MAX,
-        })?;
-    }
-    Ok(())
-}
-
 /// Drains the floor-bins crossed by one currency's `rate` on `day`, inspecting
 /// at most `budget` buckets. Returns how many it inspected and whether the
 /// eligible range was walked to the end. Buckets whose sealed `issued_at` has
@@ -291,11 +280,11 @@ fn qualify_with_rate(
     let mut nod = NodContract::new(ctx.storage.clone());
     let mut bin_cursor = nod.qualify_scan_cursor.read(&iso_code)?;
     let mut inspected = 0_u32;
-    let mut qualified = 0_u32;
+    let mut qualified_days = std::collections::BTreeSet::new();
     loop {
         if inspected == budget {
             nod.qualify_scan_cursor.write(&iso_code, bin_cursor)?;
-            announce_qualified(&mut nod, qualified)?;
+            nod.emit_days_metadata_update(&qualified_days)?;
             return Ok((inspected, false));
         }
         let next = match tree_math::find_first_left_inclusive(
@@ -305,7 +294,7 @@ fn qualify_with_rate(
             Some(bin) if bin <= r_bin => bin,
             _ => {
                 nod.qualify_scan_cursor.write(&iso_code, 0)?;
-                announce_qualified(&mut nod, qualified)?;
+                nod.emit_days_metadata_update(&qualified_days)?;
                 return Ok((inspected, true));
             }
         };
@@ -361,7 +350,7 @@ fn qualify_with_rate(
                 continue;
             }
             nod.qualify_bucket_loaded(scope, loaded)?;
-            qualified += 1;
+            qualified_days.insert(worldwide_day.value());
             let last = count.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod bin {iso_code}:{next} count underflow"
@@ -400,7 +389,7 @@ fn qualify_with_rate(
             tree_math::remove(&CurrencyBins(&nod, iso_code), next)?;
         } else if index < count {
             nod.qualify_scan_cursor.write(&iso_code, next)?;
-            announce_qualified(&mut nod, qualified)?;
+            nod.emit_days_metadata_update(&qualified_days)?;
             return Ok((inspected, false));
         }
 
@@ -408,7 +397,7 @@ fn qualify_with_rate(
             Some(next) if next <= MAX_BIN_ID => next,
             _ => {
                 nod.qualify_scan_cursor.write(&iso_code, 0)?;
-                announce_qualified(&mut nod, qualified)?;
+                nod.emit_days_metadata_update(&qualified_days)?;
                 return Ok((inspected, true));
             }
         };

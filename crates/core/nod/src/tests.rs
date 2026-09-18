@@ -828,16 +828,18 @@ fn metadata_updates_follow_qualification_passes_and_settlement() {
     });
 
     let events = provider.get_events(outbe_primitives::addresses::NOD_ADDRESS);
-    let batches = events
+    let batches: Vec<(U256, U256)> = events
         .iter()
-        .filter(|log| INod::BatchMetadataUpdate::decode_log_data(log).is_ok())
-        .count();
+        .filter_map(|log| INod::BatchMetadataUpdate::decode_log_data(log).ok())
+        .map(|event| (event._fromTokenId, event._toTokenId))
+        .collect();
     let updates: Vec<U256> = events
         .iter()
         .filter_map(|log| INod::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    assert_eq!(batches, 1);
+    let day = U256::from(first.worldwide_day.value()) << 224;
+    assert_eq!(batches, vec![(day, day | (U256::MAX >> 32))]);
     assert_eq!(updates, vec![first.nod_id.to_u256()]);
 }
 
