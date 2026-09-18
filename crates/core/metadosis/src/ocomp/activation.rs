@@ -14,6 +14,7 @@ use outbe_ocomp_protocol::{
     },
     profile::ProtocolBundleV1,
     receipts::{ActivationOutcome, RequestLimitSplitReceiptV1},
+    result::wwd_allocation_ceiling,
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
@@ -358,6 +359,22 @@ fn apply_certified_result(
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
+        // C37: Lysis Allocation is frozen; Desis Allocation is not. Fail
+        // against the Desis Limit before any owner write, so a Limit that
+        // could breach the Tribute nominal never installs Nods or briefs.
+        wwd_allocation_ceiling(
+            plan.nod().lysis_allocation_minor(),
+            request_receipt.desis_limit_minor,
+            plan.tribute().consumed_nominal_total(),
+        )
+        .map_err(|error| match error {
+            ProtocolError::IntegerOverflow { .. } => {
+                crate::errors::business_failure("day allocation overflow")
+            }
+            _ => crate::errors::business_failure(
+                "day allocation exceeds the nominal its tributes retired",
+            ),
+        })?;
         let prepared_tribute =
             prepare_certified_partition_retirement(storage, capability, &tribute_input, limits)
                 .map_err(owner_apply_error)?;
@@ -369,18 +386,6 @@ fn apply_certified_result(
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
-        // Measured against the auction's whole limit: the actual draw is only
-        // known two days later, and the limit bounds it.
-        let allocated = plan
-            .nod()
-            .lysis_allocation_minor()
-            .checked_add(request_receipt.desis_limit_minor)
-            .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
-        if allocated > plan.tribute().consumed_nominal_total() {
-            return Err(crate::errors::business_failure(
-                "day allocation exceeds the nominal its tributes retired",
-            ));
-        }
         // Lysis has closed and returned what it did not spend, so the auction can now draw.
         crate::ocomp_limits::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {

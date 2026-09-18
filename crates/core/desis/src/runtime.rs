@@ -1036,7 +1036,13 @@ fn clear_inner(
     // Return the Unused Desis Limit (unsold whole units + conversion dust) to PromisLimit.
     let desis_allocation_minor =
         U256::from(result.issued_units as u128) * U256::from(config.promis_load_minor);
-    let unused_desis_limit_minor = desis_limit_minor.saturating_sub(desis_allocation_minor);
+    let unused_desis_limit_minor = desis_limit_minor
+        .checked_sub(desis_allocation_minor)
+        .ok_or(DesisError::DesisAllocationExceedsLimit {
+            wwd: worldwide_day,
+            allocation: desis_allocation_minor,
+            limit: desis_limit_minor,
+        })?;
     if !unused_desis_limit_minor.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
             worldwideDay: worldwide_day.into(),
