@@ -250,18 +250,14 @@ fn nod_fields_match_public_inputs(world: &mut World) {
             checkpoint
         );
     }
-    let entry_price = if inputs.len() == 1 {
+    if inputs.len() == 1 {
         let expected = super::oracle_expectations::fresh_wwd_price(world, height);
         assert_eq!(
             intent.frozen_metadosis_values.current_vwap, expected,
             "JobIntent froze the independently recomputed WWD VWAP"
         );
-        expected
-    } else {
-        // This ten-owner profile seeds its day before startup; it has no live
-        // FORMING interval. Its frozen price is an input to the Nod arithmetic.
-        intent.frozen_metadosis_values.current_vwap
-    };
+    }
+    let entry_price = super::oracle_expectations::frozen_entry_price(world);
     let expected = nod_reference::single_league_actions(
         inputs,
         expected_league.expect("input league"),
@@ -291,6 +287,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
             "input_count": inputs.len(), "league": expected_league,
             "budget": intent.frozen_metadosis_values.lysis_limit_minor,
             "input_vwap": intent.frozen_metadosis_values.current_vwap,
+            "entry_price": entry_price,
             "logical_evaluation_time": intent.logical_evaluation_time,
             "expected_root": expected_root,
             "expected_actions": expected.iter().map(|action| format!("{action:?}")).collect::<Vec<_>>(),

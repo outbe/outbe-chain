@@ -46,10 +46,23 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
         private_keys.len()
     );
     let private_keys = &private_keys[..count];
-    // Every capacity owner offers as its own EOA, so each one needs its own
-    // zk-enabled L2Registry registration, and each offer is proven for that
-    // owner's chain before the burst starts.
-    crate::features::l2_registration::ensure_tribute_offer_operators(world, private_keys);
+    // Distinct callers share the declared testnet circuit network. Each offer
+    // still has its own caller-bound proof and network-signed Merkle root;
+    // synthetic per-owner networks have no circuit binding on this host chain.
+    const CAPACITY_L2_CHAIN_ID: u64 = 57_005;
+    let network_operator = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("capacity network administrator key");
+    let administrator =
+        crate::features::l2_registration::operator_address(world, &network_operator);
+    crate::features::l2_registration::ensure_tribute_offer_operators(world, &[network_operator]);
+    assert_eq!(
+        world.rpc.l2_chain_by_l1_address(administrator),
+        Some(CAPACITY_L2_CHAIN_ID),
+        "fresh capacity fixture registers the declared circuit network"
+    );
     let worldwide_day = world
         .state
         .wwd
@@ -65,8 +78,9 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
                     let rpc = world.rpc.clone();
                     let worldwide_day = worldwide_day.clone();
                     scope.spawn(move || {
-                        rpc.tribute_offer_with_params(
+                        rpc.tribute_offer_for_network_with_params(
                             private_key,
+                            CAPACITY_L2_CHAIN_ID,
                             &worldwide_day,
                             OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
                             OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
