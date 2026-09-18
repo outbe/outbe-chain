@@ -15,12 +15,12 @@
 //! `binding_hash` folds the caller's L2 chain id as a sixth preimage element, so
 //! a proof minted for one L2 does not verify as another's even under a
 //! byte-identical circuit. The claim and both formulas live in
-//! `outbe-l2-zk-canonical`; the enclave holds no copy of either.
+//! `outbe-l2-claims`; the enclave holds no copy of either.
 
 use alloy_primitives::B256;
-use outbe_l2_zk_canonical::claims::tribute::{binding, TributeDraftClaim};
-use outbe_l2_zk_canonical::outbe_zk_core::codec::{field_to_b256, sort_set};
-use outbe_l2_zk_canonical::outbe_zk_core::entity::Entity;
+use outbe_l2_claims::claims::tribute::{binding, TributeDraftClaim};
+use outbe_l2_claims::outbe_zk_core::codec::{field_to_b256, sort_set};
+use outbe_l2_claims::outbe_zk_core::entity::Entity;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 
 use crate::compute::CanonicalAmount;
@@ -141,7 +141,7 @@ mod tests {
     }
 
     /// Consensus parity: the enclave's fold of the canonical claim must equal
-    /// the value frozen in `outbe-l2-zk-canonical/tests/tribute.rs`
+    /// the value frozen in `outbe-l2-claims/tests/tribute.rs`
     /// (`entity_hash_keeps_the_frozen_fold_order`). Same claim, same preimage,
     /// same bytes - if this drifts, proofs stop verifying.
     #[test]

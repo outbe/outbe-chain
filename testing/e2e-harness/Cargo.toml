@@ -72,7 +72,7 @@ outbe-evm.workspace = true
 outbe-l2registry.workspace = true
 outbe-primitives.workspace = true
 outbe-l2-demo.workspace = true
-outbe-l2-zk-canonical = { workspace = true, features = ["l2-keys"] }
+outbe-l2-zk-canonical.workspace = true
 outbe-zk-core.workspace = true
 outbe-radicle.workspace = true
 # Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.

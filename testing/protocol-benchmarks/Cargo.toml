@@ -34,7 +34,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] }
 outbe-l2-demo.workspace = true
-outbe-l2-zk-canonical = { workspace = true, features = ["l2-keys"] }
+outbe-l2-zk-canonical.workspace = true
 outbe-zk-core.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true

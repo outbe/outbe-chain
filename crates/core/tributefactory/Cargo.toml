@@ -18,7 +18,7 @@ outbe-agentreward.workspace = true
 outbe-oracle.workspace = true
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true
-outbe-l2-zk-canonical = { workspace = true, features = ["l2-keys"] }
+outbe-l2-zk-canonical.workspace = true
 outbe-zk-backend.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
