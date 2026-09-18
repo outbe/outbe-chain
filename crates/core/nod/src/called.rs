@@ -23,8 +23,8 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Qualification and calls both read finalized UTC-day VWAPs. The call walk
-//! stops at `first_full_day` of the bucket's sealed `issued_at`, so delayed
+//! Qualification and calls both read finalized UTC-day VWAPs, and both stop
+//! at `first_full_day` of the bucket's sealed `issued_at`, so delayed
 //! materialization cannot inherit pre-issuance days and a partial issuance
 //! UTC day does not count.
 

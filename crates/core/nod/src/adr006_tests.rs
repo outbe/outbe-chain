@@ -5,7 +5,10 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
+    WorldwideDay,
+};
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     error::{PrecompileError, Result},
@@ -37,6 +40,11 @@ use crate::{
     NodCertifiedGenerationProjection, NodContract, NodItemState, NodRepositoryReader,
 };
 
+/// Default block timestamp for qualification-hook tests. Not UTC midnight, so
+/// the closed day `qualify_nods` evaluates at `NOW` is the previous calendar
+/// day.
+const NOW: u64 = 1_752_534_000;
+
 fn item(owner: Address) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
     NodItemState {
@@ -50,7 +58,9 @@ fn item(owner: Address) -> NodItemState {
         bucket_key: NodContract::bucket_key(worldwide_day, U256::from(13), 978),
         issuance_currency: 840,
         reference_currency: 978,
-        issued_at: 1_752_534_000,
+        // Midnight of the UTC day `qualify_nods` at `NOW` evaluates, so a
+        // bucket issued in these fixtures can qualify on that day's VWAP.
+        issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
     }
 }
 
@@ -444,15 +454,24 @@ fn seed_bucket(
     owner: Address,
     iso: u16,
 ) -> WwdEntityId {
+    seed_bucket_issued(storage, scope, parent, owner, iso, item(owner).issued_at)
+}
+
+fn seed_bucket_issued(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    owner: Address,
+    iso: u16,
+    issued_at: u64,
+) -> WwdEntityId {
     let mut body = item(owner);
     body.reference_currency = iso;
+    body.issued_at = issued_at;
     body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
     api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
-
-/// Default block timestamp for qualification-hook tests.
-const NOW: u64 = 1_752_534_000;
 
 /// Stores the previous completed UTC-day price and finalization watermark.
 fn publish_day_vwap(storage: &StorageHandle<'_>, index: u32, rate: U256) {
@@ -673,6 +692,162 @@ fn qualification_requires_the_previous_finalized_utc_day_and_stays_latched() {
             });
         }
     }
+}
+
+/// Q027: the issuance UTC day counts for qualification only when the Nod was
+/// issued at midnight. A second later drops that day, so the closed day's
+/// VWAP cannot promote a bucket that did not hold it in full.
+#[test]
+fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
+    let closed = previous_date_key(timestamp_to_date_key(NOW));
+    let midnight = date_key_to_utc_timestamp(closed);
+    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
+        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+        let mut provider = HashMapStorageProvider::new(1);
+        let scope = ExecutionScope::new();
+        StorageHandle::enter(&mut provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), &scope).unwrap();
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            oracle.reference_currencies.push(978).unwrap();
+            oracle
+                .pair_to_index
+                .write(&AddressPair::new_coen_to(978), 1)
+                .unwrap();
+            publish_day_vwap(&storage, 1, U256::from(14));
+            let bucket_id = seed_bucket_issued(
+                &storage,
+                &scope,
+                &parent,
+                Address::repeat_byte(0x66),
+                978,
+                issued_at,
+            );
+            let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
+                storage.clone(),
+            );
+            crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+            assert_eq!(
+                is_qualified(&storage, &scope, &parent, bucket_id),
+                expected,
+                "issued at {issued_at}"
+            );
+            let nod = NodContract::new(storage.clone());
+            let bin = NodContract::price_to_bin(U256::from(13)).unwrap();
+            assert_eq!(
+                nod.unqualified_bin_count
+                    .read(&NodContract::scoped(978, bin))
+                    .unwrap(),
+                u32::from(!expected),
+                "issued at {issued_at}"
+            );
+        });
+    }
+}
+
+/// Q027: a delayed materialization must not qualify on a pre-issuance close,
+/// even when that day's VWAP stands above the floor. Issued at `NOW` (not
+/// midnight), the closed day `qualify_nods` reads is two calendar days before
+/// `first_full_day(issued_at)`.
+#[test]
+fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
+    let issued_at = NOW;
+    assert!(
+        previous_date_key(timestamp_to_date_key(NOW)) < first_full_day(issued_at),
+        "the fixture must evaluate a day the bucket has not held in full"
+    );
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 1)
+            .unwrap();
+        publish_day_vwap(&storage, 1, U256::from(14));
+        let bucket_id = seed_bucket_issued(
+            &storage,
+            &scope,
+            &parent,
+            Address::repeat_byte(0x66),
+            978,
+            issued_at,
+        );
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
+            storage.clone(),
+        );
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
+        let nod = NodContract::new(storage.clone());
+        let bin = NodContract::price_to_bin(U256::from(13)).unwrap();
+        assert_eq!(
+            nod.unqualified_bin_count
+                .read(&NodContract::scoped(978, bin))
+                .unwrap(),
+            1,
+            "a too-early close must leave the bucket parked"
+        );
+    });
+}
+
+/// A bucket skipped because the close predates `first_full_day` stays in the
+/// unqualified trie and qualifies on the first later sweep whose day it held
+/// in full.
+#[test]
+fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
+    let issued_at = NOW;
+    let full = first_full_day(issued_at);
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 1)
+            .unwrap();
+        publish_day_vwap(&storage, 1, U256::from(14));
+        let bucket_id = seed_bucket_issued(
+            &storage,
+            &scope,
+            &parent,
+            Address::repeat_byte(0x66),
+            978,
+            issued_at,
+        );
+        let ctx = |ts: u64| {
+            outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(1, ts, 1),
+                storage.clone(),
+            )
+        };
+        crate::hooks::qualify_nods(&ctx(NOW), &scope, &parent).unwrap();
+        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
+
+        let scan_at = date_key_to_utc_timestamp(full).saturating_add(86_400);
+        publish_vwap_on(&storage, 1, full, U256::from(14));
+        crate::hooks::qualify_nods(&ctx(scan_at), &scope, &parent).unwrap();
+        assert!(is_qualified(&storage, &scope, &parent, bucket_id));
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .unqualified_bin_count
+                .read(&NodContract::scoped(
+                    978,
+                    NodContract::price_to_bin(U256::from(13)).unwrap()
+                ))
+                .unwrap(),
+            0
+        );
+    });
 }
 
 /// A bucket denominated in a currency absent from the oracle registry is never

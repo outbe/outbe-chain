@@ -6,7 +6,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     math::{constants::MAX_BIN_ID, tree_math},
@@ -181,6 +181,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             &parent,
             USD,
             floor + U256::from(1),
+            first_full_day(usd.issued_at),
             crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
@@ -278,8 +279,16 @@ fn the_scan_stops_at_its_budget_and_resumes_from_the_bin_cursor() {
                 .count()
         };
 
-        let first =
-            hooks::qualify_buckets_with_rate(&context, &scope, &parent, USD, rate, 2).unwrap();
+        let first = hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            USD,
+            rate,
+            first_full_day(bodies[0].issued_at),
+            2,
+        )
+        .unwrap();
         assert_eq!(first, 2, "must inspect exactly the budget");
         assert_eq!(qualified(&storage), 2);
         assert_eq!(
@@ -290,13 +299,151 @@ fn the_scan_stops_at_its_budget_and_resumes_from_the_bin_cursor() {
             1
         );
 
-        let second =
-            hooks::qualify_buckets_with_rate(&context, &scope, &parent, USD, rate, 2).unwrap();
+        let second = hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            USD,
+            rate,
+            first_full_day(bodies[0].issued_at),
+            2,
+        )
+        .unwrap();
         assert_eq!(second, 1, "only the remaining bucket is left to inspect");
         assert_eq!(qualified(&storage), 3);
         assert!(
             !tree_math::contains(&CurrencyBins(&NodContract::new(storage.clone()), USD), bin)
                 .unwrap()
+        );
+    });
+}
+
+/// Q027: qualification uses the same `first_full_day(issued_at)` cutoff as the
+/// call scan. A VWAP on the partial issuance UTC day, or any earlier day,
+/// cannot promote the bucket even when it stands strictly above the floor.
+#[test]
+fn qualification_skips_days_before_first_full_day() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let body = item(
+        Address::repeat_byte(0x11),
+        U256::from(500_000_000_000_000_000u128),
+        USD,
+    );
+    let bin = NodContract::price_to_bin(body.floor_price_minor).unwrap();
+    let issuance_day = timestamp_to_date_key(body.issued_at);
+    let full_day = first_full_day(body.issued_at);
+    assert_ne!(
+        issuance_day, full_day,
+        "the fixture must be a partial issuance day so the cutoff is observable"
+    );
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        let context = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, body.issued_at, 1),
+            storage.clone(),
+        );
+        let rate = body.floor_price_minor + U256::from(1);
+        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key);
+        let qualified = |storage: &StorageHandle<'_>| {
+            api::get_bucket(storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap()
+                .is_qualified
+        };
+
+        let inspected = hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            USD,
+            rate,
+            issuance_day,
+            crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+        )
+        .unwrap();
+        assert_eq!(inspected, 1);
+        assert!(!qualified(&storage));
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .unqualified_bin_count
+                .read(&NodContract::scoped(USD, bin))
+                .unwrap(),
+            1,
+            "a too-early day must leave the bucket parked"
+        );
+
+        let inspected = hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            USD,
+            rate,
+            full_day,
+            crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+        )
+        .unwrap();
+        assert_eq!(inspected, 1);
+        assert!(qualified(&storage));
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .unqualified_bin_count
+                .read(&NodContract::scoped(USD, bin))
+                .unwrap(),
+            0
+        );
+    });
+}
+
+/// A bucket issued before the stamp existed carries zero. Zero is "unsealed",
+/// not epoch-midnight; it cannot qualify on any VWAP day.
+#[test]
+fn a_zero_issued_at_stamp_does_not_qualify() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let body = item(
+        Address::repeat_byte(0x11),
+        U256::from(500_000_000_000_000_000u128),
+        USD,
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        NodContract::new(storage.clone())
+            .callable_bucket_issued_at
+            .clear(&body.bucket_key)
+            .unwrap();
+        let context = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, body.issued_at, 1),
+            storage.clone(),
+        );
+        let inspected = hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            USD,
+            body.floor_price_minor + U256::from(1),
+            first_full_day(body.issued_at),
+            crate::constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+        )
+        .unwrap();
+        assert_eq!(inspected, 1);
+        assert!(
+            !api::get_bucket(
+                &storage,
+                &scope,
+                &parent,
+                WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key),
+            )
+            .unwrap()
+            .unwrap()
+            .is_qualified
         );
     });
 }

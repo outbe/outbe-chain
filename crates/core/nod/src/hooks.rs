@@ -4,14 +4,18 @@
 //! Later CycleTicks continue the same day with the same price, so a later
 //! UTC rollover cannot reprice the remainder or skip a one-day crossing.
 //! Qualification and calls both wait for Oracle finalization and never fall
-//! back to a live rate, an older day, or a WorldwideDay VWAP.
+//! back to a live rate, an older day, or a WorldwideDay VWAP. Both arms skip
+//! pre-issuance history and the partial issuance UTC day: a bucket only
+//! qualifies, and a call window only counts, on days at or after
+//! `first_full_day` of the sealed `issued_at`. A zero stamp is unsealed, not
+//! epoch-midnight, and never qualifies.
 //!
 //! Qualification promotes any unqualified bucket whose
-//! `floor_price_minor < rate`. The comparison is strict - a bucket priced
-//! exactly at the rate stays unqualified until the rate moves strictly above
-//! its floor. Qualification is a monotonic latch - once a bucket is
-//! qualified, it stays that way, so `mine_gratis` only has to read the cached
-//! `is_qualified` bit.
+//! `floor_price_minor < rate` on a UTC day it held in full. The comparison is
+//! strict - a bucket priced exactly at the rate stays unqualified until the
+//! rate moves strictly above its floor. Qualification is a monotonic latch -
+//! once a bucket is qualified, it stays that way, so `mine_gratis` only has
+//! to read the cached `is_qualified` bit.
 //!
 //! Implementation (PancakeSwap-Liquidity-Book bin index):
 //! - `floor_price_minor` is mapped to a 24-bit `bin_id` on a log-spaced
@@ -22,9 +26,11 @@
 //! - Each run: walk set bins in ascending `bin_id` order via
 //!   `bin_tree::find_first_left_inclusive`. Bins strictly below `r_bin` hold
 //!   only floors `< rate` (any floor equal to the rate maps into `r_bin`), so
-//!   they drain wholesale; the tail bin (`bin_id == r_bin`) checks each
-//!   bucket's exact `floor_price_minor < rate` so a coarse bin neither
-//!   qualifies a bucket above the rate nor one priced exactly at it.
+//!   they drain except buckets whose sealed `issued_at` has not yet reached
+//!   `first_full_day` of the sweep day (those stay parked until a later day);
+//!   the tail bin (`bin_id == r_bin`) checks each bucket's exact
+//!   `floor_price_minor < rate` so a coarse bin neither qualifies a bucket
+//!   above the rate nor one priced exactly at it.
 //!
 //! Multi-currency: a floor is only comparable to the rate of its own
 //! `reference_currency`, so every bin column is namespaced by ISO code and
@@ -41,6 +47,7 @@ use outbe_primitives::{
     daily_sweep::{Scheduled, SweepDays},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
+    time::first_full_day,
 };
 
 use crate::{
@@ -170,8 +177,9 @@ pub fn run_qualify_slice(
                         true
                     }
                     Ok(_) => {
-                        let (inspected, finished) =
-                            qualify_with_rate(ctx, scope, parent, iso_code, vwap, budget)?;
+                        let (inspected, finished) = qualify_with_rate(
+                            ctx, scope, parent, iso_code, vwap, pinned_day, budget,
+                        )?;
                         budget = budget.saturating_sub(inspected);
                         inspected_total = inspected_total.saturating_add(inspected);
                         finished
@@ -238,21 +246,31 @@ pub fn qualify_buckets_with_rate(
     parent: &impl ParentBodySource,
     iso_code: u16,
     rate: U256,
+    day: u32,
     budget: u32,
 ) -> Result<u32> {
-    let (inspected, _) = qualify_with_rate(ctx, scope, parent, iso_code, rate, budget)?;
+    let (inspected, _) = qualify_with_rate(ctx, scope, parent, iso_code, rate, day, budget)?;
     Ok(inspected)
 }
 
-/// Drains the floor-bins crossed by one currency's `rate`, inspecting at most
-/// `budget` buckets. Returns how many it inspected and whether the eligible
-/// range was walked to the end.
+/// True when `day` is a full UTC day the bucket held. Zero stamp is unsealed
+/// (predates the field), not epoch-midnight, so it never qualifies — same
+/// policy as the call scan.
+fn held_in_full(issued_at: u64, day: u32) -> bool {
+    issued_at != 0 && day >= first_full_day(issued_at)
+}
+
+/// Drains the floor-bins crossed by one currency's `rate` on `day`, inspecting
+/// at most `budget` buckets. Returns how many it inspected and whether the
+/// eligible range was walked to the end. Buckets whose sealed `issued_at` has
+/// not yet reached `first_full_day` of `day` stay in the trie for a later sweep.
 fn qualify_with_rate(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     iso_code: u16,
     rate: U256,
+    day: u32,
     budget: u32,
 ) -> Result<(u32, bool)> {
     if budget == 0 {
@@ -322,7 +340,8 @@ fn qualify_with_rate(
                     )),
                 );
             }
-            if !strict && bucket.floor_price_minor >= rate {
+            let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
+            if (!strict && bucket.floor_price_minor >= rate) || !held_in_full(issued_at, day) {
                 index += 1;
                 inspected += 1;
                 continue;

@@ -14,7 +14,7 @@ use outbe_nod::{
     NodItemState, NodRepositoryReader,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -164,6 +164,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 &parent,
                 840,
                 body.floor_price_minor + U256::from(1),
+                first_full_day(body.issued_at),
                 MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
             )
             .unwrap(),
@@ -218,6 +219,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             &parent,
             840,
             U256::from(1299),
+            first_full_day(1_752_534_000),
             MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
