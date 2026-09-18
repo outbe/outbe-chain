@@ -1853,8 +1853,6 @@ fn wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation() {
     ));
 }
 
-/// A39 mutation: keep every other conservation identity, then bump Lysis or
-/// Desis so the sum exceeds Tribute nominal. The certified result must fail.
 #[test]
 fn mutating_lysis_plus_desis_above_tribute_nominal_is_detected() {
     result_with_conservation(ceiling_conservation(10, 6, 4))

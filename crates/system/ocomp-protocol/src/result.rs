@@ -443,7 +443,7 @@ fn validate_nod_membership_proof(
     )
 }
 
-/// C37: sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
+/// Sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
 /// nominal. Pass Desis Allocation once the auction has frozen it. Before then
 /// pass the Desis Limit, the maximum later issuance may allocate, so a Limit
 /// that could breach the ceiling fails before economic writes.
@@ -519,9 +519,6 @@ impl LysisResultV1 {
             lysis_sum == self.conservation.lysis_limit_minor,
             "Lysis limit conservation",
         )?;
-        // C37: Lysis Allocation is frozen; Desis Allocation is not. The Desis
-        // Limit is the most Desis may later allocate, so a Limit that could
-        // breach the Tribute nominal fails before activation writes.
         wwd_allocation_ceiling(
             self.conservation.lysis_allocation_minor,
             self.conservation.desis_limit_minor,
