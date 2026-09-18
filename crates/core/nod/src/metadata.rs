@@ -1,32 +1,20 @@
-use alloy_primitives::U256;
 use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::api;
-use crate::constants::{CALL_RATE_PCT, TOKEN_DESCRIPTION, TOKEN_NAME};
+use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{NodBucketState, NodContract, NodItemState};
 
-/// Qualification and the call live on the bucket, so both are read from there.
+/// Qualification, the call and the sealed call terms live on the bucket, as in `nodData`.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,
     bucket: &NodBucketState,
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
-    let deadline = api::settlement_deadline_of(
-        called_at,
-        nod.callable_bucket_call_notice_period
-            .read(&item.bucket_key)?,
-    );
-    let sealed_call_price = nod.callable_bucket_call_price.read(&item.bucket_key)?;
-    let call_price = if sealed_call_price.is_zero() {
-        bucket
-            .entry_price_minor
-            .saturating_mul(U256::from(100 + CALL_RATE_PCT))
-            / U256::from(100u64)
-    } else {
-        sealed_call_price
-    };
+    let terms = nod.read_call_terms(item.bucket_key)?;
+    let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period);
+    let call_price = terms.call_price;
     let called = called_at != 0 && !item.is_settled;
     let state = if item.is_settled {
         nft_card::SETTLED
