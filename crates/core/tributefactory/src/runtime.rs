@@ -175,7 +175,7 @@ impl TributeFactoryContract<'_> {
         }
 
         let zk_context = Some(TributeZkContext {
-            derived_owner: public.owner,
+            owner: public.owner,
             chain_id: host_chain_id,
             l2_chain_id: u64::from(l2_chain_id),
         });
@@ -298,23 +298,29 @@ fn resolve_verification_key(
     // One lookup: an L2 key carries the bytes L1 verifies with, and
     // `outbe-l2-zk-canonical`'s build script asserts the manifest's proof
     // system at compile time, so there is nothing left to cross-check here.
-    outbe_l2registry::api::l2_keys(host_chain_id, u64::from(l2_chain_id), Claim::Tribute)
-        .iter()
-        .find(|key| key.version() == version)
-        .map(|key| key.vk_bytes())
-        .ok_or_else(|| {
-            TributeFactoryError::UnknownCircuitVersion {
-                chain_id: l2_chain_id,
-                version: version.to_owned(),
-            }
-            .into()
-        })
+    outbe_l2registry::api::vk_for(
+        host_chain_id,
+        u64::from(l2_chain_id),
+        Claim::Tribute,
+        version,
+    )
+    .ok_or_else(|| {
+        TributeFactoryError::UnknownCircuitVersion {
+            chain_id: l2_chain_id,
+            version: version.to_owned(),
+        }
+        .into()
+    })
 }
 
 fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<TributePublicInputs> {
     // The claim's generated decoder derives the combined length from the key
     // header (59 words, log_n range, declared public count) and rejects
     // non-canonical field words, so one decoder serves every registered key.
+    // Those header rules are also build-time failures in the registry, so a key
+    // that reached us through `resolve_verification_key` cannot break them -
+    // every error mapped here is a fault in the caller's `zkProof`, which is
+    // what makes `MalformedZkProof` the right variant for all of them.
     decode_public_inputs(proof, verification_key)
         .and_then(TributePublicInputs::try_from)
         .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()).into())
@@ -539,6 +545,8 @@ mod zk_result_tests {
             (MAINNET_CHAIN_ID, 4242, "1.0.0"),
             (TESTNET_CHAIN_ID, 0xE2E1_0000, "1.0.0"),
             (19_280_501, 0xE2E1_0000, "1.0.0"),
+            // A bound L2 with an unusable selector: empty, then an L1
+            // circuit version (paynote's), which no L2 claim ever registers.
             (DEVNET_CHAIN_ID, 0xdead, ""),
             (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {

@@ -158,10 +158,8 @@ pub(crate) fn offer_identifiers(tag: &str, caller: Address, worldwide_day: u32) 
         .as_millis();
     let entropy = format!("{tag}:{caller:#x}:{worldwide_day}:{ordinal}:{millis}");
     let mut rng = StdRng::from_seed(keccak256(entropy.as_bytes()).0);
-    (
-        B256::from(field_bytes(&Fr::rand(&mut rng))),
-        B256::from(field_bytes(&Fr::rand(&mut rng))),
-    )
+    let mut word = || field_to_b256(&Fr::rand(&mut rng)).expect("a random field element encodes");
+    (word(), word())
 }
 
 /// Prove one Tribute offer statement and sign its Merkle root.
@@ -188,16 +186,18 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
 
     // Use the same host-chain-gated key lookup as offer admission; the proof is
     // encoded under exactly the key the node will verify it with.
-    let vk = outbe_l2registry::api::l2_keys(host_chain_id, l2_chain_id, Claim::Tribute)
-        .iter()
-        .find(|key| key.version() == FIXTURE_CIRCUIT_VERSION)
-        .unwrap_or_else(|| {
-            panic!(
-                "L2 chain {l2_chain_id:#x} has no circuit binding for {FIXTURE_CIRCUIT_VERSION} \
-                 on host {host_chain_id}; the development stub requires the Devnet host"
-            )
-        })
-        .vk_bytes();
+    let vk = outbe_l2registry::api::vk_for(
+        host_chain_id,
+        l2_chain_id,
+        Claim::Tribute,
+        FIXTURE_CIRCUIT_VERSION,
+    )
+    .unwrap_or_else(|| {
+        panic!(
+            "L2 chain {l2_chain_id:#x} has no circuit binding for {FIXTURE_CIRCUIT_VERSION} \
+             on host {host_chain_id}; the development stub requires the Devnet host"
+        )
+    });
 
     // CRS setup uses a blocking download/read path. Generate on a plain thread
     // rather than inside cucumber's Tokio runtime.
@@ -237,7 +237,9 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
             ProofGenerator::<TributeDemo>::generate(&Barretenberg::default(), &witness, &public)
                 .expect("generate the offer proof");
 
-        let merkle_root = field_bytes(&public.merkle_root);
+        let merkle_root = field_to_b256(&public.merkle_root)
+            .expect("the proof's merkle root encodes as a 32-byte word")
+            .0;
         let combined = encode_combined_proof(&public_words(&public), &proof.proof, vk)
             .expect("encode the combined proof");
         assert_eq!(
@@ -271,12 +273,6 @@ fn parse_amount(value: &str, what: &'static str) -> u64 {
     value
         .parse::<u64>()
         .unwrap_or_else(|_| panic!("{what} must be a canonical whole u64, got {value:?}"))
-}
-
-fn field_bytes(field: &Fr) -> [u8; 32] {
-    field_to_b256(field)
-        .expect("BN254 field encodes as a 32-byte word")
-        .0
 }
 
 #[cfg(test)]
@@ -342,7 +338,6 @@ mod tests {
     #[ignore = "generates and verifies a real Barretenberg tribute proof"]
     fn proven_offer_is_a_valid_proof_for_its_statement() {
         use outbe_l2_zk_canonical::claims::tribute::{alloy::PublicInputs, decode_public_inputs};
-        use outbe_l2_zk_canonical::l2_keys;
         use outbe_zk_backend::barretenberg::RawVerifier;
 
         let caller = Address::repeat_byte(0x44);
@@ -358,7 +353,13 @@ mod tests {
             draft_id,
             su_hash,
         });
-        let vk = l2_keys(57_005, Claim::Tribute)[0].vk_bytes();
+        let vk = outbe_l2registry::api::vk_for(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            57_005,
+            Claim::Tribute,
+            FIXTURE_CIRCUIT_VERSION,
+        )
+        .expect("chain 57005 registers the fixture circuit version");
         let proof = hex::decode(zk.proof_hex().trim_start_matches("0x")).expect("proof hex");
         let public: PublicInputs = decode_public_inputs(&proof, vk)
             .expect("public inputs decode")

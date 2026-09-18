@@ -2,7 +2,7 @@
 //!
 //! The claim is folded from the encrypted payload (draft id, amount, su ids),
 //! the cleartext offer (`worldwide_day`, `tribute_currency`) and
-//! `derived_owner`, which is public input zero of the submitted full proof.
+//! `owner`, which is public input zero of the submitted full proof.
 //! Keeping the fold here binds the proof claim to the plaintext the enclave
 //! actually decrypted without exposing the draft id or amount fields to the
 //! host.
@@ -45,7 +45,7 @@ pub(crate) fn derive_expected_hashes(
 
     let draft = TributeDraftClaim {
         id,
-        owner: context.derived_owner,
+        owner: context.owner,
         worldwide_day: offer.worldwide_day.into(),
         currency: offer.tribute_currency,
         base: amount.base,
@@ -103,7 +103,7 @@ mod tests {
             reference_wwd_vwap_minor: U256::ZERO,
             reference_scurve_minor: U256::ZERO,
             zk_context: Some(TributeZkContext {
-                derived_owner: b256(2),
+                owner: b256(2),
                 chain_id: 19_280_501,
                 l2_chain_id,
             }),

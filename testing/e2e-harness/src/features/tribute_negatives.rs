@@ -156,14 +156,13 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             assert_eq!(call.signature.len(), 48);
             // The proof's size is a property of the key the call names, not a
             // constant: look the key up exactly as the node does.
-            let vk = outbe_l2_zk_canonical::l2_keys(
+            let vk = outbe_l2registry::api::vk_for(
+                outbe_primitives::chain::DEVNET_CHAIN_ID,
                 u64::from(call.chainId),
                 outbe_l2_zk_canonical::Claim::Tribute,
+                &call.version,
             )
-            .iter()
-            .find(|key| key.version() == call.version)
-            .expect("the offered circuit version is registered")
-            .vk_bytes();
+            .expect("the offered circuit version is registered");
             assert_eq!(
                 call.zkProof.len(),
                 outbe_l2_zk_canonical::combined_len(

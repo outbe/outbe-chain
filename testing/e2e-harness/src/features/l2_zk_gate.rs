@@ -60,17 +60,19 @@ fn offer_proof(
 /// the result is well formed but cryptographically invalid for its statement.
 fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk) -> Vec<u8> {
     use outbe_l2_zk_canonical::claims::tribute::{decode_public_inputs, PUBLIC_INPUT_COUNT};
-    use outbe_l2_zk_canonical::{l2_keys, Claim};
+    use outbe_l2_zk_canonical::Claim;
     use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 
     let original = original.proof.clone();
     let donor = donor.proof.clone();
     std::thread::spawn(move || {
-        let vk = l2_keys(L2_CHAIN_ID, Claim::Tribute)
-            .iter()
-            .find(|key| key.version() == l2_fixture::FIXTURE_CIRCUIT_VERSION)
-            .expect("the gate scenario's chain is bound to the fixture circuit version")
-            .vk_bytes();
+        let vk = outbe_l2registry::api::vk_for(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            L2_CHAIN_ID,
+            Claim::Tribute,
+            l2_fixture::FIXTURE_CIRCUIT_VERSION,
+        )
+        .expect("the gate scenario's chain is bound to the fixture circuit version");
         let bb = Barretenberg::default();
         let public = decode_public_inputs(&original, vk).expect("original public inputs");
         let other = decode_public_inputs(&donor, vk).expect("donor public inputs");

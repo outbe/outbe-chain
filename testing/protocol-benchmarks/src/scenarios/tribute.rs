@@ -31,7 +31,7 @@ use outbe_l2_zk_canonical::claims::tribute::{
     alloy::PublicInputs as TributePublicInputs, binding, decode_public_inputs, public_words,
     TributeDraftClaim, PUBLIC_INPUT_COUNT,
 };
-use outbe_l2_zk_canonical::{combined_len, encode_combined_proof, l2_keys, Claim};
+use outbe_l2_zk_canonical::{combined_len, encode_combined_proof, Claim};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -187,11 +187,13 @@ fn build_payload() -> Vec<u8> {
 /// The verification key chain 57005 registers for the fixture's circuit
 /// version — the same bytes the tribute factory hands barretenberg.
 fn fixture_vk() -> &'static [u8] {
-    l2_keys(u64::from(L2_CHAIN_ID), Claim::Tribute)
-        .iter()
-        .find(|key| key.version() == L2_CIRCUIT_VERSION)
-        .expect("the benchmark's L2 registers the fixture circuit version")
-        .vk_bytes()
+    outbe_l2registry::api::vk_for(
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        u64::from(L2_CHAIN_ID),
+        Claim::Tribute,
+        L2_CIRCUIT_VERSION,
+    )
+    .expect("the benchmark's L2 registers the fixture circuit version")
 }
 
 /// The deterministic claim, signer and binding the frozen fixture was proven
@@ -948,6 +950,37 @@ fn gas_component(report: &ScenarioReport, key: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::b256;
+
+    /// The frozen fixture's four public words, as literals.
+    ///
+    /// `build_fixture` compares the frozen words against freshly proven ones,
+    /// but both sides recompute from this crate's code, so a formula change
+    /// moves them together - and it needs the CRS and a proof, so it runs only
+    /// under the benchmark. This decodes the committed bytes and needs neither.
+    /// If it fires, the claim fold, the binding formula or the empty-tree root
+    /// changed and the fixture must be regenerated.
+    #[test]
+    fn the_frozen_fixture_carries_the_expected_public_words() {
+        let public: TributePublicInputs = decode_public_inputs(FROZEN_TRIBUTE_PROOF, fixture_vk())
+            .expect("the frozen fixture decodes under the registered key")
+            .try_into()
+            .expect("four canonical field words");
+        assert_eq!(
+            [
+                public.owner,
+                public.nft_hash,
+                public.binding_hash,
+                public.merkle_root
+            ],
+            [
+                b256!("1777cf6e8eb8ca68f573f1f11f441e5a0a290ee7720acc0ac67e14410b177428"),
+                b256!("0d588a3043ac8abd1b19a3e5773b6f391e0a962f9182aa10ecc765bec09692ac"),
+                b256!("215b86506b5727f074dc578fb84555b983a0fe6ce87088085335965705bab7c2"),
+                b256!("05a6da7f14263ac5ef49052254198c79bbd2b9ec882c372bab94f55d897c42cc"),
+            ]
+        );
+    }
 
     /// Rewrite `fixtures/tribute_offer_proof.bin` from the deterministic
     /// statement in [`fixture_statement`].
@@ -958,12 +991,20 @@ mod tests {
     /// registered key changes:
     ///
     /// ```text
-    /// cargo test -p outbe-protocol-benchmarks --lib -- --ignored \
-    ///     regenerate_frozen_tribute_proof_fixture --nocapture
+    /// OUTBE_REGENERATE_TRIBUTE_FIXTURE=1 \
+    ///   cargo test -p outbe-protocol-benchmarks --lib -- --ignored \
+    ///   regenerate_frozen_tribute_proof_fixture --nocapture
     /// ```
     #[test]
     #[ignore = "proves with the pinned Barretenberg CRS and rewrites the fixture"]
     fn regenerate_frozen_tribute_proof_fixture() {
+        // This rewrites a committed consensus fixture, so `--include-ignored`
+        // must not be enough to trigger it: a silent rewrite would leave the
+        // suite green while the frozen bytes moved.
+        assert!(
+            std::env::var_os("OUTBE_REGENERATE_TRIBUTE_FIXTURE").is_some(),
+            "set OUTBE_REGENERATE_TRIBUTE_FIXTURE=1 to rewrite the frozen fixture"
+        );
         init_crs().expect("pinned CRS initializes");
         let vk = fixture_vk();
         let (claim, signer, binding_hash, mut rng) = fixture_statement();

@@ -204,7 +204,7 @@ mod tests {
 
     fn zk_context() -> TributeZkContext {
         TributeZkContext {
-            derived_owner: B256::from([0x01; 32]),
+            owner: B256::from([0x01; 32]),
             chain_id: 19_280_501,
             l2_chain_id: 57_005,
         }
@@ -327,7 +327,7 @@ mod tests {
         assert_ne!(expected.nft_hash, B256::ZERO);
         assert_ne!(expected.binding_hash, B256::ZERO);
 
-        offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
+        offer.zk_context.as_mut().unwrap().owner = B256::from([0x02; 32]);
         let (different_owner, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
         assert_ne!(
             different_owner[0]
@@ -436,7 +436,7 @@ mod tests {
         offer.zk_context = Some(zk_context());
         let original = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
 
-        offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
+        offer.zk_context.as_mut().unwrap().owner = B256::from([0x02; 32]);
         let different_owner = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
         assert_ne!(original, different_owner);
 

@@ -25,6 +25,10 @@ use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+/// The L2 and the tribute circuit version every fixture here offers under —
+/// the pair that selects a verification key.
+const L2_CHAIN_ID: u64 = 0xdead;
+const CIRCUIT_VERSION: &str = "1.0.0";
 
 struct NoParentBodies;
 
@@ -59,10 +63,9 @@ mod l2_zk_gate {
     use outbe_primitives::storage::StorageHandle;
 
     use super::NoParentBodies;
+    use super::{CIRCUIT_VERSION, L2_CHAIN_ID};
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
-
-    const L2_CHAIN_ID: u64 = 0xdead;
 
     fn caller() -> Address {
         Address::repeat_byte(0x77)
@@ -84,14 +87,20 @@ mod l2_zk_gate {
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
             l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
-            circuit_version: "1.0.0".to_owned(),
+            circuit_version: CIRCUIT_VERSION.to_owned(),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
     }
 
     fn dummy_proof(root: [u8; 32]) -> Bytes {
-        let vk = outbe_l2_zk_canonical::l2_keys(57_005, Claim::Tribute)[0].vk_bytes();
+        let vk = outbe_l2registry::api::vk_for(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            L2_CHAIN_ID,
+            Claim::Tribute,
+            CIRCUIT_VERSION,
+        )
+        .expect("the test L2 registers the fixture circuit version");
         let combined = combined_len(vk, PUBLIC_INPUT_COUNT).unwrap();
         let mut proof = Vec::with_capacity(combined);
         proof.extend_from_slice(&4u32.to_be_bytes());
@@ -173,8 +182,10 @@ mod l2_zk_gate {
             )
             .encode()
             .to_vec();
-            // A signed root does not select a missing version or implicitly
-            // adopt a circuit version the L2 is not bound to.
+            // Neither an empty selector nor an L1 circuit version selects a
+            // key: "1.2.0" is the paynote circuit's version, registered in the
+            // L1 registry and never for an L2 claim. Both must be named
+            // explicitly and both must miss.
             for version in ["", "1.2.0"] {
                 let mut wrong_version = offer(&root, &good_sig);
                 wrong_version.zk_proof = dummy_proof(root);
@@ -438,12 +449,13 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
     const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
     outbe_zk_backend::barretenberg::init_crs().unwrap();
-    let vk = outbe_l2registry::api::l2_keys(
+    let vk = outbe_l2registry::api::vk_for(
         outbe_primitives::chain::DEVNET_CHAIN_ID,
         0xdead,
         outbe_l2_zk_canonical::Claim::Tribute,
-    )[0]
-    .vk_bytes();
+        CIRCUIT_VERSION,
+    )
+    .expect("the fixture's circuit version is registered");
     let public: PublicInputs = decode_public_inputs(PROOF, vk).unwrap().try_into().unwrap();
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{CALLER:#x}"),
@@ -482,7 +494,7 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         exclude_from_intex_issuance: false,
         zk_proof: Bytes::from_static(PROOF),
         l2_chain_id: 0xdead,
-        circuit_version: "1.0.0".to_owned(),
+        circuit_version: CIRCUIT_VERSION.to_owned(),
         zk_merkle_root: Bytes::copy_from_slice(public.merkle_root.as_slice()),
         signature: Bytes::copy_from_slice(&signature),
     };
@@ -667,10 +679,16 @@ fn offer_tribute_folds_the_calldata_l2_chain_id_into_binding_hash() {
     // past decoding and the merkle-root check, so the enclave runs, and then
     // fails the host's `nft_hash` comparison - which is after the fold and
     // before the verifier, so no CRS is needed.
-    let vk = outbe_l2_zk_canonical::l2_keys(57_005, Claim::Tribute)[0].vk_bytes();
+    let vk = outbe_l2registry::api::vk_for(
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        L2_CHAIN_ID,
+        Claim::Tribute,
+        CIRCUIT_VERSION,
+    )
+    .expect("the test L2 registers the fixture circuit version");
     let mut proof = Vec::with_capacity(combined_len(vk, PUBLIC_INPUT_COUNT).unwrap());
     proof.extend_from_slice(&4u32.to_be_bytes());
-    proof.extend_from_slice(&[0x01; 32]); // owner -> context.derived_owner
+    proof.extend_from_slice(&[0x01; 32]); // owner -> context.owner
     proof.extend_from_slice(&[0x02; 32]); // nft_hash (placeholder)
     proof.extend_from_slice(&[0x03; 32]); // binding_hash (placeholder)
     proof.extend_from_slice(&ROOT);
@@ -688,7 +706,7 @@ fn offer_tribute_folds_the_calldata_l2_chain_id_into_binding_hash() {
         exclude_from_intex_issuance: false,
         zk_proof: proof.clone(),
         l2_chain_id,
-        circuit_version: "1.0.0".to_owned(),
+        circuit_version: CIRCUIT_VERSION.to_owned(),
         zk_merkle_root: Bytes::copy_from_slice(&ROOT),
         signature: Bytes::copy_from_slice(&signature),
     };
@@ -777,6 +795,13 @@ fn offer_tribute_folds_the_calldata_l2_chain_id_into_binding_hash() {
     let (other_context, other) = run(0xbeef);
     assert_eq!(other_context.l2_chain_id, 0xbeef);
     assert_eq!(other.binding_hash, expected_binding(0xbeef));
+    // Frozen too - the doc above promises two digests, so freeze both.
+    assert_eq!(
+        other.binding_hash,
+        "0x005e84f521ff1759cb5022e8926f123430421e5dda8ee71c76bacc8a651a1201"
+            .parse::<B256>()
+            .unwrap()
+    );
     assert_ne!(hashes.binding_hash, other.binding_hash);
     assert_eq!(
         hashes.nft_hash, other.nft_hash,

@@ -87,16 +87,22 @@ pub struct EncryptedTributeOffer {
     /// active curve and is valid.
     pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied for every admitted offer. The owner is
-    /// the first public input in `zkProof`; the chain id comes from the local
-    /// execution context.
+    /// the first public input in `zkProof`; the host chain id comes from the
+    /// local execution context and the L2 chain id from the calldata. Both are
+    /// folded into `binding_hash`.
     #[serde(default)]
     pub zk_context: Option<TributeZkContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeZkContext {
-    pub derived_owner: B256,
-    /// Host (L1) chain id, from the local execution context.
+    /// Public input zero of the submitted proof: the L2's own owner
+    /// commitment, opaque to L1. The enclave folds it into the claim as
+    /// `TributeDraftClaim::owner` and never interprets it.
+    pub owner: B256,
+    /// Host (L1) chain id, from the local execution context. `binding_hash`
+    /// folds it alongside [`TributeZkContext::l2_chain_id`], so a proof minted
+    /// against one host does not verify on another.
     pub chain_id: u64,
     /// L2 chain id the offer selected, from the `offerTribute` calldata.
     /// `binding_hash` folds it as a sixth preimage element, so a proof minted
@@ -1030,7 +1036,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         match &offer.zk_context {
             Some(context) => {
                 buf.push(1);
-                buf.extend_from_slice(context.derived_owner.as_slice());
+                buf.extend_from_slice(context.owner.as_slice());
                 buf.extend_from_slice(&context.chain_id.to_be_bytes());
                 buf.extend_from_slice(&context.l2_chain_id.to_be_bytes());
             }
