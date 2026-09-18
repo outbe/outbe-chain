@@ -59,7 +59,7 @@ fn third_party_settles_and_mines(world: &mut World) {
     );
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
-    assert!(!initial.costAmountMinor.is_zero());
+    assert!(!initial.settlementCostMinor.is_zero());
     qualify_successor(world, id, owner, initial.floorPriceMinor);
     let head = world.rpc.head(port).expect("qualified head");
     world
@@ -93,7 +93,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         PAYER_KEY,
         payer,
         addresses::NOD_FACTORY_ADDR,
-        body.costAmountMinor
+        body.settlementCostMinor
             .checked_mul(U256::from(2))
             .expect("two settlement costs"),
     );
@@ -124,7 +124,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             nodId: id.to_u256(),
             asset,
             nullifier: B256::ZERO,
-            amountCovered: body.costAmountMinor,
+            amountCovered: body.settlementCostMinor,
         },
     );
     for &peer in &ports {
@@ -141,7 +141,7 @@ fn third_party_settles_and_mines(world: &mut World) {
             [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
             settled_height,
         );
-        assert_payment_delta(balances_before, balances_after, body.costAmountMinor);
+        assert_payment_delta(balances_before, balances_after, body.settlementCostMinor);
         let fee = crate::world::rpc::Rpc::receipt_gas_cost(&settled.receipt).expect("payer gas");
         assert_eq!(
             native_balance_at(&peer_url, payer, settled_height) + fee,
