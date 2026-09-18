@@ -1,4 +1,4 @@
-//! End-to-end flow: mine -> pledge -> requestCredis -> latch -> settle -> void.
+//! End-to-end flow: mine -> pledge -> issueCredis -> latch -> settle -> void.
 //!
 //! The harness (in-process enclave, sub-call stubs, view-key decryption, the
 //! finalized daily series) lives in [`crate::tests::common`].
@@ -16,24 +16,25 @@ use crate::runtime;
 use crate::tests::common::*;
 
 #[test]
-fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
+fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
         // Pledge parks the amount in the ticket: balance drained, pledged ledger 0.
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
         let spend = credis_spend_auth(alice(), handle, alice());
         fund_stake(&storage, pledge_stake());
-        let (position_id, amount_stables) = runtime::request_credis(
+        let (position_id, amount_stables) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             REFERENCE_ISO,
+            reservation_id,
             pledge_stake(),
         )
         .unwrap();
@@ -158,25 +159,28 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             bootstrap(&storage, collateral);
             deploy_smart_account(&storage, bob());
             // The quote floors 13 / 2 to 6, and the note carries that exact amount.
+            let reservation_id = seed_reservation(&storage, bob(), principal);
             let (handle, quoted) = outbe_gratisfactory::runtime::pledge_gratis(
                 storage.clone(),
                 alice(),
                 principal,
                 asset(),
                 collateral,
+                reservation_id,
                 auth(outbe_tee::protocol::GratisOp::Pledge, alice(), principal, 1),
             )
             .unwrap();
             assert_eq!(quoted, collateral);
             let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
             fund_stake(&storage, stake);
-            let (id, disbursed) = runtime::request_credis(
+            let (id, disbursed) = runtime::issue_credis(
                 storage.clone(),
                 cca(),
                 bob(),
                 handle,
                 credis_spend_auth(alice(), handle, bob()),
                 REFERENCE_ISO,
+                reservation_id,
                 stake,
             )
             .unwrap();
@@ -361,23 +365,24 @@ fn settle_accepts_a_third_party_payer() {
 }
 
 #[test]
-fn request_credis_allows_an_owner_with_an_unresolved_call() {
+fn issue_credis_allows_an_owner_with_an_unresolved_call() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
         // Both pledges are quoted at the seeded rate, before the price moves.
-        let first_handle = pledge(&storage, alice(), 1);
-        let second_handle = pledge(&storage, alice(), 2);
+        let (first_handle, first_reservation) = pledge(&storage, alice(), 1);
+        let (second_handle, second_reservation) = pledge(&storage, alice(), 2);
 
         let first_spend = credis_spend_auth(alice(), first_handle, alice());
         fund_stake(&storage, pledge_stake());
-        let (first, _) = runtime::request_credis(
+        let (first, _) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             first_handle,
             first_spend,
             REFERENCE_ISO,
+            first_reservation,
             pledge_stake(),
         )
         .unwrap();
@@ -392,13 +397,14 @@ fn request_credis_allows_an_owner_with_an_unresolved_call() {
         // while the first is still unresolved, and both stand on their own.
         let spend = credis_spend_auth(alice(), second_handle, alice());
         fund_stake(&storage, pledge_stake());
-        let (second, _) = runtime::request_credis(
+        let (second, _) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             second_handle,
             spend,
             REFERENCE_ISO,
+            second_reservation,
             pledge_stake(),
         )
         .unwrap();
@@ -426,17 +432,18 @@ fn request_credis_allows_an_owner_with_an_unresolved_call() {
 }
 
 #[test]
-fn request_credis_rejects_zero_smart_account() {
+fn issue_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::request_credis(
+        let err = runtime::issue_credis(
             storage.clone(),
             cca(),
             Address::ZERO,
             B256::ZERO,
             [0u8; 32],
             REFERENCE_ISO,
+            B256::ZERO,
             U256::ZERO,
         )
         .unwrap_err();
@@ -607,7 +614,7 @@ fn factory_balance(storage: &StorageHandle<'_>) -> U256 {
 /// rejected: under-staking would let a CCA originate cheaply, over-staking would
 /// hand the borrower more than the collateral it is supposed to match.
 #[test]
-fn request_credis_requires_the_stake_to_equal_the_collateral() {
+fn issue_credis_requires_the_stake_to_equal_the_collateral() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(3u64));
@@ -622,15 +629,16 @@ fn request_credis_requires_the_stake_to_equal_the_collateral() {
         .enumerate()
         {
             // Each pledge consumes the next op nonce.
-            let handle = pledge(&storage, alice(), i as u64 + 1);
+            let (handle, reservation_id) = pledge(&storage, alice(), i as u64 + 1);
             let spend = credis_spend_auth(alice(), handle, alice());
-            let err = runtime::request_credis(
+            let err = runtime::issue_credis(
                 storage.clone(),
                 cca(),
                 alice(),
                 handle,
                 spend,
                 REFERENCE_ISO,
+                reservation_id,
                 wrong,
             )
             .unwrap_err();
@@ -646,7 +654,7 @@ fn request_credis_requires_the_stake_to_equal_the_collateral() {
 /// The stake is handed to the borrower's smart account at origination - the factory
 /// keeps nothing and the CCA gets nothing back.
 #[test]
-fn request_credis_pays_the_stake_to_the_smart_account() {
+fn issue_credis_pays_the_stake_to_the_smart_account() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -729,23 +737,24 @@ fn the_void_leaves_the_stake_with_the_smart_account() {
 /// The loan is delivered by a call into the smart account, which would silently
 /// succeed against a codeless address.
 #[test]
-fn request_credis_rejects_an_undeployed_smart_account() {
+fn issue_credis_rejects_an_undeployed_smart_account() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, _) = pledge(&storage, alice(), 1);
         // A valid auth bound to bob, so the rejection can only come from the
         // deployment guard and not from a bad authorization.
         let spend = credis_spend_auth(alice(), handle, bob());
 
         // bob was never bootstrapped, so it has no code.
-        let err = runtime::request_credis(
+        let err = runtime::issue_credis(
             storage.clone(),
             cca(),
             bob(),
             handle,
             spend,
             REFERENCE_ISO,
+            B256::ZERO,
             pledge_stake(),
         )
         .unwrap_err();
@@ -763,20 +772,21 @@ fn the_entry_price_is_struck_from_the_reference_leg() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         // Priced and sealed at COEN/840 = 2.0.
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
 
         // The reference leg moves to 3.0 before the CCA presents the ticket.
         set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
 
         let spend = credis_spend_auth(alice(), handle, alice());
         fund_stake(&storage, pledge_stake());
-        let (position_id, amount_stables) = runtime::request_credis(
+        let (position_id, amount_stables) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             REFERENCE_ISO,
+            reservation_id,
             pledge_stake(),
         )
         .unwrap();
@@ -797,23 +807,24 @@ fn the_entry_price_is_struck_from_the_reference_leg() {
 }
 
 #[test]
-fn request_credis_rejects_an_unregistered_reference_currency() {
+fn issue_credis_rejects_an_unregistered_reference_currency() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         fund_stake(&storage, pledge_stake());
 
         // 392 (JPY) has no COEN pair and is not in the reference registry: electing it
         // would seal a threshold the daily scan can never evaluate.
-        let err = runtime::request_credis(
+        let err = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             392,
+            reservation_id,
             pledge_stake(),
         )
         .unwrap_err();
@@ -839,20 +850,21 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
         register_reference_pair(&storage, ISSUANCE_ISO);
 
         // Priced and sealed at COEN/840 = 2.0.
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
 
         // The spot moves before the CCA presents the ticket. A re-quote would seal 3.0.
         set_coen_rate_for(&storage, ISSUANCE_ISO, U256::from(3_000_000u64));
 
         let spend = credis_spend_auth(alice(), handle, alice());
         fund_stake(&storage, pledge_stake());
-        let (position_id, _) = runtime::request_credis(
+        let (position_id, _) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             ISSUANCE_ISO,
+            reservation_id,
             pledge_stake(),
         )
         .unwrap();
@@ -874,18 +886,19 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
-        let handle = pledge(&storage, alice(), 1);
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
         let spend = credis_spend_auth(alice(), handle, alice());
         // Model the EVM call frame: stake validation fails after pledge consumption,
         // so the enclosing transaction must restore the ticket.
         assert!(storage
-            .with_checkpoint(|| runtime::request_credis(
+            .with_checkpoint(|| runtime::issue_credis(
                 storage.clone(),
                 cca(),
                 alice(),
                 handle,
                 spend,
                 REFERENCE_ISO,
+                reservation_id,
                 U256::ZERO
             ))
             .is_err());
@@ -900,13 +913,14 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             U256::ZERO
         );
         fund_stake(&storage, pledge_stake());
-        let (id, _) = runtime::request_credis(
+        let (id, _) = runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             REFERENCE_ISO,
+            reservation_id,
             pledge_stake(),
         )
         .unwrap();
@@ -920,13 +934,14 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             pledge_cost()
         );
         outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
-        assert!(runtime::request_credis(
+        assert!(runtime::issue_credis(
             storage.clone(),
             cca(),
             alice(),
             handle,
             spend,
             REFERENCE_ISO,
+            reservation_id,
             pledge_stake()
         )
         .is_err());
@@ -938,4 +953,132 @@ fn failed_origination_preserves_the_pledge_and_cca_weight_and_exit_freezes_new_p
             pledge_stables()
         );
     });
+}
+
+#[test]
+fn issue_credis_rejects_a_missing_or_mismatched_reservation() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(3u64));
+        fund_stake(&storage, pledge_stake());
+
+        let (handle, _) = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let err = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            B256::ZERO,
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("reservation not found"), "{err}");
+
+        let (handle, _) = pledge(&storage, alice(), 2);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let err = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            seed_reservation_at(
+                &storage,
+                cca(),
+                bob(),
+                asset(),
+                pledge_stables(),
+                CREATED_AT + 15 * 60,
+            ),
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("reservation account mismatch"),
+            "{err}"
+        );
+
+        let (handle, _) = pledge(&storage, alice(), 3);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let too_small = seed_reservation_at(
+            &storage,
+            cca(),
+            alice(),
+            asset(),
+            pledge_stables() - U256::from(1u64),
+            CREATED_AT + 15 * 60,
+        );
+        let err = storage
+            .with_checkpoint(|| {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    handle,
+                    spend,
+                    REFERENCE_ISO,
+                    too_small,
+                    pledge_stake(),
+                )
+            })
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("reservation amount is below"),
+            "{err}"
+        );
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+    });
+    teardown();
+}
+
+#[test]
+fn issue_credis_accepts_a_larger_reservation() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let reservation_id =
+            seed_reservation(&storage, alice(), pledge_stables() * U256::from(2u64));
+        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            reservation_id,
+            auth(
+                outbe_tee::protocol::GratisOp::Pledge,
+                alice(),
+                pledge_stables(),
+                1,
+            ),
+        )
+        .unwrap();
+        assert_eq!(gratis_cost, pledge_cost());
+        let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
+        let (position_id, amount) = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            reservation_id,
+            pledge_stake(),
+        )
+        .unwrap();
+        assert_eq!(amount, pledge_stables());
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .principal,
+            pledge_stables()
+        );
+    });
+    teardown();
 }

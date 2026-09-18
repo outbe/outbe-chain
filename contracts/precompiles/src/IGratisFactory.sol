@@ -9,7 +9,7 @@ interface IGratisFactory {
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     /// `pledgeHandle` is the confidential record id presented later at
-    /// `requestCredis`. NOTE: both amounts are public (calldata / event); only
+    /// `issueCredis`. NOTE: both amounts are public (calldata / event); only
     /// cumulative balances are encrypted (see the gratis amount-privacy TODO).
     event GratisPledged(
         address indexed account,
@@ -26,7 +26,7 @@ interface IGratisFactory {
     /// @notice Pledge enough gratis to collateralize `amountStables` of credit in
     ///         `asset`. The gratis cost is derived on-chain from the oracle rate and
     ///         sealed into the pledge ticket together with the asset and the rate, so
-    ///         `requestCredis` disburses exactly `amountStables` without re-pricing.
+    ///         `issueCredis` disburses exactly `amountStables` without re-pricing.
     ///         Authorized by the caller's Gratis modify key:
     ///         `mac = HMAC(modifyKey, op-preimage over amountStables)` where `opNonce`
     ///         MUST equal the caller's current on-chain gratis op-nonce (fetch via
@@ -35,11 +35,19 @@ interface IGratisFactory {
     /// @param asset         Stablecoin the credis will later be disbursed in.
     /// @param maxGratis     Slippage cap: reverts if the oracle-derived gratis cost
     ///                      exceeds it. Authenticated by the transaction signature.
+    /// @param reservationId Live `IVaultRouter` hold the CCA created for this credit
+    ///        before the pledge. Must cover `asset` and at least `amountStables` and
+    ///        must not have expired. The hold is not consumed here; `issueCredis` is.
     /// @return pledgeHandle The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
-    function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
-        external
-        returns (bytes32 pledgeHandle);
+    function pledgeGratis(
+        uint256 amountStables,
+        address asset,
+        uint256 maxGratis,
+        bytes32 reservationId,
+        bytes32 mac,
+        uint64 opNonce
+    ) external returns (bytes32 pledgeHandle);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by

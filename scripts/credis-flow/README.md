@@ -31,12 +31,17 @@ holder, client-side) can read them.
   `amountStables`, so this is the slippage guard - and it is authenticated by your
   transaction signature). The gratis actually charged comes back on the
   `GratisPledged` event.
-- **Credis.** `requestCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency)` (payable - the CCA
-  attaches COEN equal to the pledged collateral) - called by the
-  CCA. The user hands it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds
-  it to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" || bundle)`.
-  Neither the asset nor the amount is calldata - both are read back out of the ticket,
-  so the loan is issued at the price the user accepted rather than a fresh quote.
+- **Credis.** The CCA first calls `IVaultRouter.reserveStables(smartAccount, asset, amount)`
+  to lock vault liquidity for 15 minutes. The user then pledges against that hold
+  (`pledgeGratis(..., reservationId, ...)`). After the user hands over the spend
+  path, the CCA calls
+  `issueCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency, reservationId)`
+  (payable - the CCA attaches COEN equal to the pledged collateral). The user hands
+  it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it to the bundle
+  with `spendAuth = HMAC(pledgeSecret, "credis-bind" || bundle)`. Neither the asset
+  nor the amount is calldata - both are read back out of the ticket, so the loan is
+  issued at the price the user accepted rather than a fresh quote. Unused reservation
+  remainder returns to the origin vault.
   `settle(positionId, amount)` applies a payment interest first and principal
   second, and **automatically** releases the collateral share proportional to the
   principal it covered back to the pledger's encrypted balance - no reclaim note,

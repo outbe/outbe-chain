@@ -18,7 +18,7 @@ import {
   pledgeSecret,
   GratisOp,
 } from "./confidential.js";
-import { writeTicket } from "./ticket.js";
+import { readReservation, writeTicket } from "./ticket.js";
 
 // The user names the CREDIT they want, not the collateral: `pledgeGratis` converts
 // `amountStables` of `asset` into the gratis it costs at the current oracle rate and
@@ -86,8 +86,31 @@ async function main() {
   // one the user chose; `asset` and `maxGratis` are covered by the tx signature.
   const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Pledge, amountStables, opNonce, chainId);
 
-  console.log("\nSending pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)...");
-  const tx = await gratisFactory.pledgeGratis(amountStables, erc20Address, maxGratis, mac, opNonce);
+  const offer = readReservation();
+  if (!offer) {
+    console.error("No reservation found. Run `npm run reserve-stables` first.");
+    process.exit(1);
+  }
+  if (offer.asset.toLowerCase() !== erc20Address.toLowerCase()) {
+    console.error(`Reservation asset ${offer.asset} != ${erc20Address}`);
+    process.exit(1);
+  }
+  if (BigInt(offer.amount) < amountStables) {
+    console.error(
+      `Reservation ${offer.amount} is below the pledged credit ${amountStables.toString()}`,
+    );
+    process.exit(1);
+  }
+
+  console.log("\nSending pledgeGratis(amountStables, asset, maxGratis, reservationId, mac, opNonce)...");
+  const tx = await gratisFactory.pledgeGratis(
+    amountStables,
+    erc20Address,
+    maxGratis,
+    offer.reservationId,
+    mac,
+    opNonce,
+  );
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("pledgeGratis tx receipt missing");
@@ -143,6 +166,7 @@ async function main() {
     txHash: receipt.hash,
     chainId: chainId.toString(),
     createdAt: new Date().toISOString(),
+    reservationId: offer.reservationId,
   });
 
   console.log(`\nTicket written: ${ticketPath}`);

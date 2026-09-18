@@ -18,7 +18,7 @@ use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::crosschain;
 use crate::precompile::{dispatch, dispatch_crosschain};
 use crate::runtime;
-use crate::schema::VaultRouterContract;
+use crate::schema::{StablesReservation, VaultRouterContract};
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{IVaultV2, IERC20};
 
@@ -2135,6 +2135,277 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
         });
         assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
     }
+}
+
+// --- reservations -------------------------------------------------------------
+
+fn with_reservable_vault<R>(shares: U256, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at(vault(), word(shares));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        bond_cca(&storage);
+        register_vault(&storage, asset(), vault());
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+        f(storage)
+    })
+}
+
+#[test]
+fn reserve_stables_rejects_an_inactive_caller() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            stranger(),
+            receiver(),
+            asset(),
+            U256::from(10),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cca not active"), "{err}");
+        assert!(runtime::reservation_of(&storage, B256::ZERO)
+            .unwrap()
+            .asset
+            .is_zero());
+    });
+}
+
+#[test]
+fn a_reservation_holds_then_releases_once() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
+                .unwrap();
+        let held = runtime::reservation_of(&storage, id).unwrap();
+        assert_eq!(held.asset, asset());
+        assert_eq!(held.amount, U256::from(10));
+        assert_eq!(held.smart_account, receiver());
+        assert_eq!(held.cca, cca());
+        assert_eq!(held.vault, vault());
+        assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
+
+        let delivered = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            U256::from(10),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap();
+        assert_eq!(delivered, U256::from(10));
+        assert!(runtime::reservation_of(&storage, id)
+            .unwrap()
+            .asset
+            .is_zero());
+
+        let err = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            U256::from(10),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("reservation not found"), "{err}");
+    });
+}
+
+#[test]
+fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(50))
+                .unwrap();
+
+        let err = runtime::release_reservation(
+            storage.clone(),
+            id,
+            stranger(),
+            U256::from(10),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("reservation account mismatch"),
+            "{err}"
+        );
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap().amount,
+            U256::from(50),
+            "failed release must leave the hold intact"
+        );
+
+        let delivered = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            U256::from(10),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap();
+        assert_eq!(delivered, U256::from(10));
+        assert!(runtime::reservation_of(&storage, id)
+            .unwrap()
+            .asset
+            .is_zero());
+    });
+}
+
+#[test]
+fn an_unspent_reservation_returns_to_the_origin_vault() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
+                .unwrap();
+        let minted = runtime::return_reservation(storage.clone(), cca(), id).unwrap();
+        assert_eq!(minted, U256::from(100));
+        assert!(runtime::reservation_of(&storage, id)
+            .unwrap()
+            .asset
+            .is_zero());
+        assert_eq!(
+            runtime::return_reservation(storage.clone(), cca(), id).unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
+fn a_stranger_cannot_return_a_live_reservation() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
+                .unwrap();
+        let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "{err}");
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap().amount,
+            U256::from(10)
+        );
+    });
+}
+
+fn seed_expired_reservation(storage: &StorageHandle<'_>) -> B256 {
+    let id = B256::repeat_byte(0x51);
+    VaultRouterContract::new(storage.clone())
+        .reservations
+        .create(&StablesReservation {
+            id,
+            asset: asset(),
+            amount: U256::from(10),
+            smart_account: receiver(),
+            cca: cca(),
+            vault: vault(),
+            expires_at: 1_700_000_000 - 1,
+        })
+        .unwrap();
+    id
+}
+
+#[test]
+fn anyone_may_return_an_expired_reservation() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id = seed_expired_reservation(&storage);
+        let minted = runtime::return_reservation(storage.clone(), stranger(), id).unwrap();
+        assert_eq!(minted, U256::from(100));
+        assert!(runtime::reservation_of(&storage, id)
+            .unwrap()
+            .asset
+            .is_zero());
+    });
+}
+
+#[test]
+fn release_rejects_an_expired_reservation() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id = seed_expired_reservation(&storage);
+        let err = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            U256::from(10),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("reservation expired"), "{err}");
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap().amount,
+            U256::from(10)
+        );
+    });
+}
+
+#[test]
+fn reservations_are_gated_like_a_withdrawal() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let reserve_call = IVaultRouter::reserveStablesCall {
+            smartAccount: receiver(),
+            asset: asset(),
+            amount: U256::from(10),
+        }
+        .abi_encode();
+        let out = dispatch(storage.clone(), &reserve_call, cca(), U256::ZERO).unwrap();
+        let id = IVaultRouter::reserveStablesCall::abi_decode_returns(&out).unwrap();
+
+        let release_call = IVaultRouter::releaseReservationCall {
+            id,
+            receiver: receiver(),
+            amount: U256::from(10),
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity target"),
+            "{err}"
+        );
+
+        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        let out = dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap();
+        assert_eq!(
+            IVaultRouter::releaseReservationCall::abi_decode_returns(&out).unwrap(),
+            U256::from(10)
+        );
+    });
+}
+
+#[test]
+fn a_reservation_cannot_exceed_the_vaults_shares() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at_selector(
+        vault(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(U256::from(10u64)),
+    );
+    storage.stub_sub_call_at_selector(
+        vault(),
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(5u64)),
+    );
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        bond_cca(&storage);
+        register_vault(&storage, asset(), vault());
+        let err =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
+                .unwrap_err();
+        assert!(err.to_string().contains("insufficient shares"), "{err}");
+        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(10)).unwrap());
+    });
+}
+
+#[test]
+fn has_liquidity_is_false_for_an_asset_without_a_vault() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(1)).unwrap());
+    });
 }
 
 fn bond_cca(storage: &StorageHandle<'_>) {

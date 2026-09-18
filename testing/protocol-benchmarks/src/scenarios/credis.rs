@@ -16,6 +16,7 @@ use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_pledged, derive_modify_key, derive_view_key, modify_mac, pledge_secret, spend_auth_mac,
 };
+use outbe_vaultrouter::{StablesReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -28,7 +29,7 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const CREATED_AT: u64 = 1_700_000_000;
 const BLOCK_NUMBER: u64 = 42;
 const ISSUANCE_ISO: u16 = 840;
-/// Threshold anchor elected by the benchmarked `requestCredis`.
+/// Threshold anchor elected by the benchmarked `issueCredis`.
 const REFERENCE_ISO: u16 = ISSUANCE_ISO;
 const ALICE: Address = Address::repeat_byte(0xaa);
 const CCA: Address = Address::repeat_byte(0xcc);
@@ -49,6 +50,7 @@ pub struct PreparedCredis {
     provider: HashMapStorageProvider,
     pledge_handle: B256,
     spend_auth: [u8; 32],
+    reservation_id: B256,
 }
 
 fn pledge_stables() -> U256 {
@@ -86,7 +88,7 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(bytes)
 }
 
-fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
+fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], B256), String> {
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -140,12 +142,27 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
         .map_err(|error| error.to_string())?;
 
+    let contract = VaultRouterContract::new(storage.clone());
+    let reservation_id = B256::from(U256::from(1));
+    contract
+        .reservations
+        .create(&StablesReservation {
+            id: reservation_id,
+            asset: ASSET,
+            amount: pledge_stables(),
+            smart_account: ALICE,
+            cca: CCA,
+            vault: Address::repeat_byte(0x77),
+            expires_at: CREATED_AT + 15 * 60,
+        })
+        .map_err(|error| error.to_string())?;
     let (pledge_handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
         storage.clone(),
         ALICE,
         pledge_stables(),
         ASSET,
         U256::MAX,
+        reservation_id,
         auth(GratisOp::Pledge, pledge_stables(), 1),
     )
     .map_err(|error| error.to_string())?;
@@ -158,7 +175,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .map_err(|error| error.to_string())?;
     let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_handle), ALICE);
-    Ok((pledge_handle, spend_auth))
+    Ok((pledge_handle, spend_auth, reservation_id))
 }
 
 impl BenchmarkScenario for CredisScenario {
@@ -167,7 +184,7 @@ impl BenchmarkScenario for CredisScenario {
     fn metadata(&self) -> ScenarioMetadata {
         ScenarioMetadata::new(
             "credis/create/request/marginal",
-            "Credis request (real confidential state, marginal child calls)",
+            "Credis issue (real confidential state, marginal child calls)",
             ExecutionClass::UserTransaction,
             Profile::Single,
         )
@@ -183,11 +200,13 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_sub_call_stub();
         provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
         provider.stub_sub_call_at(ASSET, iso_word(ISSUANCE_ISO));
-        let (pledge_handle, spend_auth) = StorageHandle::enter(&mut provider, seed_world)?;
+        let (pledge_handle, spend_auth, reservation_id) =
+            StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {
             provider,
             pledge_handle,
             spend_auth,
+            reservation_id,
         })
     }
 
@@ -197,11 +216,12 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_production_storage_gas_metering();
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
-        let calldata = ICredisFactory::requestCredisCall {
+        let calldata = ICredisFactory::issueCredisCall {
             smartAccount: ALICE,
             pledgeHandle: prepared.pledge_handle,
             spendAuth: B256::from(prepared.spend_auth),
             referenceCurrency: REFERENCE_ISO,
+            reservationId: prepared.reservation_id,
         }
         .abi_encode();
 
@@ -211,7 +231,7 @@ impl BenchmarkScenario for CredisScenario {
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);
-        let decoded = ICredisFactory::requestCredisCall::abi_decode_returns(&output)
+        let decoded = ICredisFactory::issueCredisCall::abi_decode_returns(&output)
             .map_err(|error| error.to_string())?;
         let runtime_gas = StorageHandle::enter(&mut provider, |storage| {
             storage.gas_used().map_err(|error| error.to_string())

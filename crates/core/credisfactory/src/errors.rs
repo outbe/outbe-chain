@@ -18,6 +18,18 @@ pub enum CredisFactoryError {
     SmartAccountNotDeployed,
     #[error("attached COEN must equal the pledged collateral exactly")]
     CcaStakeMismatch,
+    #[error("reservation not found")]
+    ReservationNotFound,
+    #[error("reservation expired")]
+    ReservationExpired,
+    #[error("reservation account mismatch")]
+    ReservationAccountMismatch,
+    #[error("reservation cca mismatch")]
+    ReservationCcaMismatch,
+    #[error("reservation asset mismatch")]
+    ReservationAssetMismatch,
+    #[error("reservation amount is below the pledged credit")]
+    ReservationInsufficient,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

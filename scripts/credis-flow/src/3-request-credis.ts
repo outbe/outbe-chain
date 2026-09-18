@@ -29,7 +29,7 @@ const SALT = 0n;
 // only the call - the loan stays denominated in the disbursed asset's currency.
 const REFERENCE_CURRENCY = 840; // USD
 
-// The CCA calls requestCredis with the confidential pledge handle + a spend
+// The CCA calls issueCredis with the confidential pledge handle + a spend
 // authorization that binds it to the user's smart account. The CCA holds the
 // `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
 // hold the user's view key, so it cannot read the user's encrypted Gratis
@@ -133,7 +133,7 @@ async function main() {
     process.exit(1);
   }
 
-  // requestCredis is payable and takes the stake from the CCA, so an underfunded
+  // issueCredis is payable and takes the stake from the CCA, so an underfunded
   // CCA fails inside the EVM with no useful message.
   const ccaNative = await provider.getBalance(ccaAddress);
   if (ccaNative < stake) {
@@ -144,19 +144,27 @@ async function main() {
     process.exit(1);
   }
 
+  if (!ticket.reservationId) {
+    console.error("Ticket has no reservationId. Run `npm run reserve-stables` before pledging.");
+    process.exit(1);
+  }
+  const reservationId = ticket.reservationId;
+  console.log(`  reservation: ${reservationId}`);
+
   console.log(
-    "\nSending requestCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency)...",
+    "\nSending issueCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency, reservationId)...",
   );
-  const tx = await credisFactory.requestCredis(
+  const tx = await credisFactory.issueCredis(
     smartAccount,
     ticket.pledgeHandle,
     spend,
     REFERENCE_CURRENCY,
+    reservationId,
     { value: stake },
   );
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
-  if (!receipt) throw new Error("requestCredis tx receipt missing");
+  if (!receipt) throw new Error("issueCredis tx receipt missing");
   console.log(`  Block:   ${receipt.blockNumber}`);
 
   // Log the events across the involved interfaces.

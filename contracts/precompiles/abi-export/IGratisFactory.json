@@ -48,6 +48,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "reservationId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "mac",
         "type": "bytes32",
         "internalType": "bytes32"

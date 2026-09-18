@@ -5,7 +5,7 @@
 //! `Unauthorized`). Following the repo convention, precompile reverts carry a
 //! string reason rather than an ABI-encoded custom-error selector.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -82,6 +82,20 @@ pub enum VaultRouterError {
     UnsupportedAssetDecimals(u8),
     #[error("cca not active: {0}")]
     CcaNotActive(Address),
+    #[error("invalid reservation amount")]
+    InvalidReservationAmount,
+    #[error("reservation exists: {0}")]
+    ReservationExists(B256),
+    #[error("reservation not found: {0}")]
+    ReservationNotFound(B256),
+    #[error("reservation expired: {0}")]
+    ReservationExpired(B256),
+    #[error("reservation account mismatch")]
+    ReservationAccountMismatch,
+    #[error("reservation amount exceeds hold: available={available}, required={required}")]
+    ReservationInsufficient { available: U256, required: U256 },
+    #[error("block timestamp does not fit unix seconds")]
+    TimestampOverflow,
 }
 
 impl From<VaultRouterError> for PrecompileError {

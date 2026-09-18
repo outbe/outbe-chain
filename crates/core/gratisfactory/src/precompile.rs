@@ -45,6 +45,7 @@ pub fn dispatch(
                         c.amountStables,
                         c.asset,
                         c.maxGratis,
+                        c.reservationId,
                         auth,
                     )?;
                     emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
