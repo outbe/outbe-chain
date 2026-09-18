@@ -10,22 +10,73 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {IntexUnits} from "@contracts/shared/libs/IntexUnits.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-/// @dev Takes the tokens the way a composed-transfer bridge does, and nothing else.
-contract PullingTokenBridge {
-    IERC20 private immutable TOKEN;
+/// @dev The ERC-7786 hub as the proceeds leg meets it: wrap the payload, bump the nonce, hash the body the
+///      mailbox would hash. Only the mailbox's own merkle insert, hook and IGP payment are left out - those
+///      need a fork, and `ClearingRelayMailboxGas.t.sol` prices them at ~157k a send.
+contract LocalWcoenGateway {
+    event MessageDispatched(bytes32 indexed id, bytes body);
 
-    constructor(IERC20 token) {
-        TOKEN = token;
-    }
+    uint256 private _nonce;
 
-    function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
+    function quote(bytes calldata, bytes calldata, bytes[] calldata) external pure returns (uint256) {
         return 0.001 ether;
     }
 
-    function sendAndCall(uint32, address, uint256 amount, bytes calldata, uint256) external payable returns (bytes32) {
+    function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        payable
+        returns (bytes32 id)
+    {
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        uint256 nonce = ++_nonce;
+        bytes memory body = abi.encode(sender, recipient, abi.encode(nonce, sender, recipient, payload), attributes);
+        id = keccak256(body);
+        emit MessageDispatched(id, body);
+    }
+}
+
+/// @dev `ERC7786TokenBridge.sendAndCall` in lock-unlock mode, statement for statement: take the tokens, wrap
+///      (from, to, amount, extraData), carry the destination gas as an ERC-7786 attribute, hand it to the hub.
+contract LocalWcoenTokenBridge {
+    bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
+
+    IERC20 private immutable TOKEN;
+    LocalWcoenGateway private immutable GATEWAY;
+    bytes private _remoteBridge;
+
+    constructor(IERC20 token, LocalWcoenGateway gateway) {
+        TOKEN = token;
+        GATEWAY = gateway;
+        _remoteBridge = InteroperableAddress.formatEvmV1(2, address(0xB21D6E));
+    }
+
+    function quoteSend(uint32, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
+        external
+        view
+        returns (uint256)
+    {
+        return GATEWAY.quote(_remoteBridge, _payload(to, amount, extraData), _attrs(gasLimit));
+    }
+
+    function sendAndCall(uint32, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
+        external
+        payable
+        returns (bytes32)
+    {
         TOKEN.transferFrom(msg.sender, address(this), amount);
-        return bytes32(uint256(1));
+        return GATEWAY.sendMessage{value: msg.value}(_remoteBridge, _payload(to, amount, extraData), _attrs(gasLimit));
+    }
+
+    function _payload(address to, uint256 amount, bytes calldata extraData) private view returns (bytes memory) {
+        return abi.encode(InteroperableAddress.formatEvmV1(block.chainid, msg.sender), to, amount, extraData);
+    }
+
+    function _attrs(uint256 gasLimit) private pure returns (bytes[] memory attrs) {
+        if (gasLimit == 0) return new bytes[](0);
+        attrs = new bytes[](1);
+        attrs[0] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 }
 
@@ -203,7 +254,9 @@ contract RefundDayGasTest is RefundGasBase {
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         router.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        router.setProceedsRoute(address(new PullingTokenBridge(token)), makeAddr("originRouter"));
+        router.setProceedsRoute(
+            address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway())), makeAddr("originRouter")
+        );
         escrow.setProceedsRecipient(address(router));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
         vm.deal(address(router), 1 ether);
