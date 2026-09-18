@@ -166,7 +166,6 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 principal,
                 asset(),
                 collateral,
-                reservation_id,
                 auth(outbe_tee::protocol::GratisOp::Pledge, alice(), principal, 1),
             )
             .unwrap();
@@ -1048,7 +1047,6 @@ fn issue_credis_accepts_a_larger_reservation() {
             pledge_stables(),
             asset(),
             U256::MAX,
-            reservation_id,
             auth(
                 outbe_tee::protocol::GratisOp::Pledge,
                 alice(),

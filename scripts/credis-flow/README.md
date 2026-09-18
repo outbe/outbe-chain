@@ -32,9 +32,8 @@ holder, client-side) can read them.
   transaction signature). The gratis actually charged comes back on the
   `GratisPledged` event.
 - **Credis.** The CCA first calls `IVaultRouter.reserveStables(smartAccount, asset, amount)`
-  to lock vault liquidity for 15 minutes. The user then pledges against that hold
-  (`pledgeGratis(..., reservationId, ...)`). After the user hands over the spend
-  path, the CCA calls
+  to lock vault liquidity for 15 minutes. The user then pledges Gratis. After the
+  user hands over the spend path, the CCA calls
   `issueCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency, reservationId)`
   (payable - the CCA attaches COEN equal to the pledged collateral). The user hands
   it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it to the bundle

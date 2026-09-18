@@ -113,7 +113,7 @@ pub fn pledge_stake() -> U256 {
 }
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
-/// return the resulting handle plus the reservation the pledge required. The gratis
+/// return the resulting handle plus a CCA reservation created first. The gratis
 /// it costs is derived from the seeded rate.
 pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, B256) {
     let reservation_id = seed_reservation(storage, who, pledge_stables());
@@ -123,7 +123,6 @@ pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, B
         pledge_stables(),
         asset(),
         U256::MAX,
-        reservation_id,
         auth(GratisOp::Pledge, who, pledge_stables(), nonce),
     )
     .unwrap();

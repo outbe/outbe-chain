@@ -11,7 +11,6 @@ outbe-gratis.workspace = true
 outbe-fidelity.workspace = true
 # Prices the credis loan at pledge time (COEN/840 -> gratis collateral).
 outbe-oracle.workspace = true
-outbe-vaultrouter.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
