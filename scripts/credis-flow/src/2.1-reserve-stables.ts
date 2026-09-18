@@ -72,8 +72,9 @@ async function main() {
       }
     })
     .find((event) => event?.name === "ReservationCreated");
-  const reservationId = (created?.args?.id ?? created?.args?.[0]) as string | undefined;
-  if (!reservationId) throw new Error("ReservationCreated event missing");
+  const rawId = created?.args?.id ?? created?.args?.[0];
+  if (rawId === undefined || rawId === null) throw new Error("ReservationCreated event missing");
+  const reservationId = rawId.toString();
 
   const path = writeReservation({
     reservationId,

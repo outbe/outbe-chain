@@ -399,8 +399,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "receiver",
@@ -467,8 +467,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -535,8 +535,8 @@
     "outputs": [
       {
         "name": "reservationId",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
@@ -547,8 +547,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -838,9 +838,9 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
         "name": "smartAccount",
@@ -887,9 +887,9 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
         "name": "asset",
@@ -918,9 +918,9 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
         "name": "asset",
@@ -1099,8 +1099,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1110,8 +1110,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1137,8 +1137,8 @@
     "inputs": [
       {
         "name": "id",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
