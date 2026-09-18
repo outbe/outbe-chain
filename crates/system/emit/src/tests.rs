@@ -539,8 +539,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
     .unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -814,8 +813,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -828,7 +826,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     let next_key = change_key(key, nullifier).unwrap();
     let change =
         note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let root_after_change = tree.root();
 
     let partial_data = mint_calldata(
@@ -939,8 +937,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     .unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, note).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn_u256(&mut provider, ALICE, note, b256(serial)).unwrap();
@@ -964,7 +961,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     dispatch_mint(&mut provider, BOB, &data).unwrap();
     assert_eq!(provider.get_balance(CAROL), minted);
 
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let next_nullifier = derive_nullifier(change, next_key).unwrap();
     let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, remainder);
     let data = mint_calldata_u256(
@@ -997,8 +994,7 @@ fn stale_root_past_the_32_window_is_rejected() {
     let serial = scenario_serial();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1053,8 +1049,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1112,8 +1107,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 40);
@@ -1158,8 +1152,7 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1276,8 +1269,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1435,8 +1427,7 @@ fn mint_rolls_back_fully_under_fault_injection() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let nullifier =

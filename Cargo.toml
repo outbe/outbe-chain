@@ -269,7 +269,7 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-core = { git = "https://github.com/psonet/outbe-circuits.git", rev = "41f3c53d9666d76ef05af15688c81eaf3e4ab7b4", features = ["alloy"] }
+outbe-zk-core = { git = "https://github.com/psonet/outbe-circuits.git", rev = "2b56b1f8b39d0136667f467b28e2dfac785db593", features = ["alloy"] }
 # `default-features = false` here, not in the enclave's manifest: cargo ignores
 # a member's `default-features = false` when the workspace dependency does not
 # set it. Off, this is the claim half — `TributeDraftClaim`, `binding`, the
@@ -279,10 +279,10 @@ outbe-zk-core = { git = "https://github.com/psonet/outbe-circuits.git", rev = "4
 # registration and force an attestation rotation for an event the enclave has no
 # part in. Verifiers (tributefactory, l2registry, the CLI, the harnesses) add
 # `features = ["l2-keys"]` at their own dependency line.
-outbe-l2-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "41f3c53d9666d76ef05af15688c81eaf3e4ab7b4", default-features = false }
-outbe-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "41f3c53d9666d76ef05af15688c81eaf3e4ab7b4", features = ["alloy"] }
-outbe-zk-backend = { git = "https://github.com/psonet/outbe-circuits.git", rev = "41f3c53d9666d76ef05af15688c81eaf3e4ab7b4" }
-outbe-l2-demo = { git = "https://github.com/psonet/outbe-circuits.git", rev = "41f3c53d9666d76ef05af15688c81eaf3e4ab7b4" }
+outbe-l2-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "2b56b1f8b39d0136667f467b28e2dfac785db593", default-features = false }
+outbe-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "2b56b1f8b39d0136667f467b28e2dfac785db593", features = ["alloy"] }
+outbe-zk-backend = { git = "https://github.com/psonet/outbe-circuits.git", rev = "2b56b1f8b39d0136667f467b28e2dfac785db593" }
+outbe-l2-demo = { git = "https://github.com/psonet/outbe-circuits.git", rev = "2b56b1f8b39d0136667f467b28e2dfac785db593" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

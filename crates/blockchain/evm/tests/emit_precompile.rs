@@ -342,8 +342,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     // Alice burns all 100 units into a Bob-owned note.
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let outcome = run(
@@ -396,7 +395,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let change =
         note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
     let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let outcome = run(
         db.clone(),
         BOB,
@@ -634,8 +633,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
 
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let mut db = base_db();
@@ -793,8 +791,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         let leaf = u32::try_from(
             owner_tree
                 .append(note_commitment(pool, owner_serial, U256::from(100)).unwrap())
-                .unwrap()
-                .0,
+                .unwrap(),
         )
         .unwrap();
         let mut db = base_db();

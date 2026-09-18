@@ -177,7 +177,7 @@ pub fn note_and_spend_proof(
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = crate::client::new_tree(chain_id).unwrap();
-    let leaf_index = u32::try_from(tree.append(n.commitment).unwrap().0).unwrap();
+    let leaf_index = u32::try_from(tree.append(n.commitment).unwrap()).unwrap();
     let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, owner, spend_amount);
 
     SpendFixture {
