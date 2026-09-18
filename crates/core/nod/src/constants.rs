@@ -1,4 +1,4 @@
-/// Legacy ERC-721 metadata surface values.
+/// ERC-721 metadata surface values.
 pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";
 pub const TOKEN_DESCRIPTION: &str = concat!(
