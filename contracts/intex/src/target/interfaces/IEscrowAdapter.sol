@@ -18,6 +18,7 @@ interface IEscrowAdapter {
     enum LockStatus {
         None,
         Locked,
+        // Settled by a finalization that paid out on the spot; nothing writes it now.
         Finalized,
         Won
     }
@@ -204,6 +205,10 @@ interface IEscrowAdapter {
     /// @param locked Locked amount.
     /// @param paid Payment the clearing terms work out.
     error PaymentExceedsLock(uint128 locked, uint256 paid);
+    /// @notice A refund chunk names a partially filled winner outside the winners it carries.
+    /// @param partialIndex Index the partial fill points at.
+    /// @param winners Winners the chunk carries.
+    error PartialFillOutsideChunk(uint16 partialIndex, uint256 winners);
     /// @notice A partial fill is not smaller than the quantity the winner locked for.
     /// @param won Units the winner received.
     /// @param quantity Units the lock was taken for.

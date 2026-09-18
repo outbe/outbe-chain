@@ -147,6 +147,16 @@ contract EscrowAdapterWinnersTest is Test {
         assertEq(_apply(_one(bob), 0, 0, true), _paid(1), "the same terms apply");
     }
 
+    function test_APartialFillOutsideTheChunkIsRejected() public {
+        _lock(alice, 800_000, 3);
+
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PartialFillOutsideChunk.selector, uint16(1), uint256(1)));
+        escrow.finalizeAuction(DAY, RECEIVE_ID, _one(alice), 1, 2, CLEARING_RATE, BASIS, true);
+
+        assertEq(uint8(escrow.getBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.Locked), "left whole");
+    }
+
     function test_AChunkWithWinnersNeedsClearingTerms() public {
         _lock(alice, 800_000, 1);
 

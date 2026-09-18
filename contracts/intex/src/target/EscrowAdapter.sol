@@ -385,6 +385,9 @@ contract EscrowAdapter is
             state.finalized = true;
             state.finalizedAt = uint32(block.timestamp);
         }
+        if (partialWon != 0 && partialIndex >= winners.length) {
+            revert PartialFillOutsideChunk(partialIndex, winners.length);
+        }
         if (winners.length != 0) _recordClearing(worldwideDay, clearingRate, basis);
 
         uint128 totalOwed = 0;

@@ -1578,6 +1578,22 @@
     },
     {
       "type": "error",
+      "name": "PartialFillOutsideChunk",
+      "inputs": [
+        {
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "winners",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "PaymentExceedsLock",
       "inputs": [
         {

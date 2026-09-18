@@ -5,6 +5,7 @@ pragma solidity 0.8.30;
 /// @author Outbe
 /// @notice The escrow amount formula, shared by the lock taken at reveal and the payment a winner makes.
 library IntexUnits {
+    /// @dev Carried here, rather than read from the codec, so the escrow needs no codec import.
     uint256 internal constant SCALE_1E6 = 1_000_000;
     uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
 

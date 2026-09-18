@@ -144,7 +144,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Wire_EmitsWired_OnRotation() public {
-        // Rotate the auction address (no LiveLocksOutstanding constraint - no locks opened in setUp).
+        // Rotate the auction address; the asset stays, so no version is retired.
         // `escrow` was wired in setUp with (auction, compact, paymentToken); only the auction
         // rotates, so its old value is non-zero and the rest carry their prior addresses.
         address newAuction = address(0xBEEF);
