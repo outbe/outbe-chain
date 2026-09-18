@@ -332,7 +332,7 @@ fn mark_called(
 /// unmined would otherwise leave the reserve with nothing minted against it.
 /// The credit is one accumulated write per pass, and the caller's checkpoint
 /// makes it atomic with the burns it accounts for.
-fn forfeit_members(
+pub(crate) fn forfeit_members(
     storage: &StorageHandle<'_>,
     nod: &mut NodContract<'_>,
     scope: &ExecutionScope,

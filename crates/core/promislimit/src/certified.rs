@@ -338,6 +338,26 @@ mod tests {
         })
     }
 
+    /// A18.8 / C36: Unused Lysis Limit is Limit minus Allocation, and that
+    /// remainder increases Promis Limit exactly once. A conservation mismatch
+    /// is already rejected with no credit (`wrong_binding_or_limit_conservation_is_side_effect_free`).
+    #[test]
+    fn a18_unused_lysis_plus_allocation_equals_the_limit_and_credits_once() {
+        let input = input(37, 8, 2);
+        assert_eq!(
+            input.lysis_allocation_minor + input.unused_lysis_limit_minor,
+            input.lysis_limit_minor
+        );
+        let mut provider = ActivationTestProvider::new();
+        seed(&mut provider, U256::from(40));
+        let before = current(&mut provider);
+        run(&mut provider, &input).unwrap();
+        assert_eq!(
+            current(&mut provider),
+            before + input.unused_lysis_limit_minor
+        );
+    }
+
     #[test]
     fn certified_credit_adds_the_unused_lysis_limit_to_actual_current_value() {
         let input = input(31, 8, 2);
