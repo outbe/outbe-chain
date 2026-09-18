@@ -45,7 +45,7 @@ interface ICredisFactory {
         bytes32 pledgeHandle,
         bytes32 spendAuth,
         uint16 referenceCurrency,
-        bytes32 reservationId
+        uint256 reservationId
     ) external payable returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Settle `amount` against a position and release the matching share of

@@ -44,9 +44,9 @@ interface IVaultRouter {
     error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
     error UnsupportedAssetDecimals(uint8 decimals);
     error CcaNotActive(address cca);
-    error ReservationExists(bytes32 id);
-    error ReservationNotFound(bytes32 id);
-    error ReservationExpired(bytes32 id);
+    error ReservationExists(uint256 id);
+    error ReservationNotFound(uint256 id);
+    error ReservationExpired(uint256 id);
     error ReservationAccountMismatch();
     error ReservationInsufficient(uint256 available, uint256 required);
     error InvalidReservationAmount();
@@ -86,7 +86,7 @@ interface IVaultRouter {
     );
 
     event ReservationCreated(
-        bytes32 indexed id,
+        uint256 indexed id,
         address indexed smartAccount,
         address indexed cca,
         address asset,
@@ -94,9 +94,9 @@ interface IVaultRouter {
         uint256 amount,
         uint64 expiresAt
     );
-    event ReservationReleased(bytes32 indexed id, address indexed asset, address indexed receiver, uint256 amount);
+    event ReservationReleased(uint256 indexed id, address indexed asset, address indexed receiver, uint256 amount);
     event ReservationReturned(
-        bytes32 indexed id, address indexed asset, address indexed vault, uint256 amount, uint256 mintedShares
+        uint256 indexed id, address indexed asset, address indexed vault, uint256 amount, uint256 mintedShares
     );
 
     /// @notice Returns the number of assets.
@@ -201,19 +201,19 @@ interface IVaultRouter {
     ///         delivered for 15 minutes. Caller must be an active CCA.
     function reserveStables(address smartAccount, address asset, uint256 amount)
         external
-        returns (bytes32 reservationId);
+        returns (uint256 reservationId);
 
     /// @notice Delivers `amount` of a reservation to `receiver` (a token bundle) and
     ///         returns any unused remainder to the origin vault. Caller must be a
     ///         registered liquidity target. `receiver` must be the reserved smart
     ///         account. Reverts if the reservation is missing, expired, or too small.
-    function releaseReservation(bytes32 id, address receiver, uint256 amount) external returns (uint256 delivered);
+    function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
 
     /// @notice Deposits an unused reservation back into its origin vault and deletes it.
     ///         The originating CCA may call at any time; after expiry anyone may.
     ///         Idempotent — an `id` holding nothing returns 0 instead of reverting.
-    function returnReservation(bytes32 id) external returns (uint256 mintedShares);
+    function returnReservation(uint256 id) external returns (uint256 mintedShares);
 
     /// @notice The reservation held under `id`, or a zeroed struct if none.
-    function reservationOf(bytes32 id) external view returns (StablesReservation memory reservation);
+    function reservationOf(uint256 id) external view returns (StablesReservation memory reservation);
 }

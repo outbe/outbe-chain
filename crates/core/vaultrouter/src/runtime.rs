@@ -9,7 +9,7 @@
 //! mutating sub-calls propagate failure by reverting; their boolean return is
 //! not separately decoded.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
@@ -415,7 +415,7 @@ pub(crate) fn reserve_stables(
     smart_account: Address,
     asset: Address,
     amount: U256,
-) -> Result<B256> {
+) -> Result<U256> {
     if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(VaultRouterError::CcaNotActive(caller).into());
     }
@@ -441,7 +441,7 @@ pub(crate) fn reserve_stables(
             .checked_add(U256::from(1))
             .ok_or(VaultRouterError::InvalidReservationAmount)?;
         contract.reservation_nonce.write(nonce)?;
-        let id = reservation_id(caller, smart_account, nonce);
+        let id = nonce;
         if contract.reservations.exists(id)? {
             return Err(VaultRouterError::ReservationExists(id).into());
         }
@@ -475,7 +475,7 @@ pub(crate) fn reserve_stables(
 /// and return any unused remainder to the origin vault.
 pub(crate) fn release_reservation(
     storage: StorageHandle<'_>,
-    id: B256,
+    id: U256,
     receiver: Address,
     amount: U256,
     target: IVaultRouter::StablesTarget,
@@ -542,7 +542,7 @@ pub(crate) fn release_reservation(
 pub(crate) fn return_reservation(
     storage: StorageHandle<'_>,
     caller: Address,
-    id: B256,
+    id: U256,
 ) -> Result<U256> {
     let now = now_secs(&storage)?;
     storage.with_checkpoint(|| {
@@ -567,7 +567,7 @@ pub(crate) fn return_reservation(
 }
 
 /// Reads and deletes the reservation under `id`, rejecting an unknown one.
-fn take_reservation(storage: &StorageHandle<'_>, id: B256) -> Result<StablesReservation> {
+fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<StablesReservation> {
     take_reservation_if_held(storage, id)?
         .ok_or_else(|| VaultRouterError::ReservationNotFound(id).into())
 }
@@ -575,7 +575,7 @@ fn take_reservation(storage: &StorageHandle<'_>, id: B256) -> Result<StablesRese
 /// Reads and deletes the reservation under `id`, or `None` when nothing is held.
 fn take_reservation_if_held(
     storage: &StorageHandle<'_>,
-    id: B256,
+    id: U256,
 ) -> Result<Option<StablesReservation>> {
     let contract = VaultRouterContract::new(storage.clone());
     let Some(record) = contract.reservations.get(id)? else {
@@ -583,14 +583,6 @@ fn take_reservation_if_held(
     };
     contract.reservations.delete(id)?;
     Ok(Some(record))
-}
-
-fn reservation_id(cca: Address, smart_account: Address, nonce: U256) -> B256 {
-    let mut packed = [0u8; 72];
-    packed[..20].copy_from_slice(cca.as_slice());
-    packed[20..40].copy_from_slice(smart_account.as_slice());
-    packed[40..].copy_from_slice(&nonce.to_be_bytes::<32>());
-    keccak256(packed)
 }
 
 fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
@@ -772,7 +764,7 @@ pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U25
 }
 
 /// `reservationOf`: the reservation held under `id`, or a zeroed record when none.
-pub fn reservation_of(storage: &StorageHandle<'_>, id: B256) -> Result<StablesReservation> {
+pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<StablesReservation> {
     let contract = VaultRouterContract::new(storage.clone());
     Ok(contract
         .reservations

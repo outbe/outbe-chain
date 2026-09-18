@@ -50,7 +50,7 @@ pub struct PreparedCredis {
     provider: HashMapStorageProvider,
     pledge_handle: B256,
     spend_auth: [u8; 32],
-    reservation_id: B256,
+    reservation_id: U256,
 }
 
 fn pledge_stables() -> U256 {
@@ -88,7 +88,7 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(bytes)
 }
 
-fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], B256), String> {
+fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), String> {
     storage
         .increase_balance(
             outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -143,7 +143,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], B256), Stri
         .map_err(|error| error.to_string())?;
 
     let contract = VaultRouterContract::new(storage.clone());
-    let reservation_id = B256::from(U256::from(1));
+    let reservation_id = U256::from(1);
     contract
         .reservations
         .create(&StablesReservation {

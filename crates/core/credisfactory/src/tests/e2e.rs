@@ -442,7 +442,7 @@ fn issue_credis_rejects_zero_smart_account() {
             B256::ZERO,
             [0u8; 32],
             REFERENCE_ISO,
-            B256::ZERO,
+            U256::ZERO,
             U256::ZERO,
         )
         .unwrap_err();
@@ -753,7 +753,7 @@ fn issue_credis_rejects_an_undeployed_smart_account() {
             handle,
             spend,
             REFERENCE_ISO,
-            B256::ZERO,
+            U256::ZERO,
             pledge_stake(),
         )
         .unwrap_err();
@@ -970,7 +970,7 @@ fn issue_credis_rejects_a_missing_or_mismatched_reservation() {
             handle,
             spend,
             REFERENCE_ISO,
-            B256::ZERO,
+            U256::ZERO,
             pledge_stake(),
         )
         .unwrap_err();

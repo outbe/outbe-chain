@@ -5,7 +5,7 @@
 //! `Unauthorized`). Following the repo convention, precompile reverts carry a
 //! string reason rather than an ABI-encoded custom-error selector.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -85,11 +85,11 @@ pub enum VaultRouterError {
     #[error("invalid reservation amount")]
     InvalidReservationAmount,
     #[error("reservation exists: {0}")]
-    ReservationExists(B256),
+    ReservationExists(U256),
     #[error("reservation not found: {0}")]
-    ReservationNotFound(B256),
+    ReservationNotFound(U256),
     #[error("reservation expired: {0}")]
-    ReservationExpired(B256),
+    ReservationExpired(U256),
     #[error("reservation account mismatch")]
     ReservationAccountMismatch,
     #[error("reservation amount exceeds hold: available={available}, required={required}")]

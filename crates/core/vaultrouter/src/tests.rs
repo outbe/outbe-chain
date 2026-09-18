@@ -2167,7 +2167,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
         )
         .unwrap_err();
         assert!(err.to_string().contains("cca not active"), "{err}");
-        assert!(runtime::reservation_of(&storage, B256::ZERO)
+        assert!(runtime::reservation_of(&storage, U256::ZERO)
             .unwrap()
             .asset
             .is_zero());
@@ -2289,8 +2289,8 @@ fn a_stranger_cannot_return_a_live_reservation() {
     });
 }
 
-fn seed_expired_reservation(storage: &StorageHandle<'_>) -> B256 {
-    let id = B256::repeat_byte(0x51);
+fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
+    let id = U256::from(0x51u64);
     VaultRouterContract::new(storage.clone())
         .reservations
         .create(&StablesReservation {

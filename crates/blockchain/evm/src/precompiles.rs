@@ -840,9 +840,7 @@ mod boundary_value_tests {
         STAKING_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         VOTE_ADDRESS,
-        // issueCredis takes the originating CCA's matching COEN stake.
         CREDIS_FACTORY_ADDRESS,
-        // burn is the pool's only value-carrying entry point.
         EMIT_ADDRESS,
         CCA_REGISTRY_ADDRESS,
     ];

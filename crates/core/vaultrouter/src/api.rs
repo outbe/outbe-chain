@@ -49,7 +49,7 @@ pub fn reference_currency_assets(
 /// holds without routing through the EVM stub.
 pub fn reservation_of(
     storage: &StorageHandle<'_>,
-    id: B256,
+    id: U256,
 ) -> Result<crate::schema::StablesReservation> {
     crate::runtime::reservation_of(storage, id)
 }
@@ -58,7 +58,7 @@ pub fn reservation_of(
 /// via an EVM sub-call, returning any unused remainder to the origin vault.
 pub fn release_reservation(
     storage: &StorageHandle<'_>,
-    id: B256,
+    id: U256,
     receiver: Address,
     amount: U256,
 ) -> Result<U256> {
@@ -78,7 +78,7 @@ pub fn release_reservation(
 }
 
 /// `returnReservation`: deposit the assets held under `id` back into their vault.
-pub fn return_reservation(storage: &StorageHandle<'_>, id: B256) -> Result<U256> {
+pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256> {
     let ret = storage.call(
         VAULT_ROUTER_ADDRESS,
         U256::ZERO,

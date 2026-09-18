@@ -13,7 +13,7 @@ pub const UNKNOWN: u8 = 0;
 #[storage_record(exists_field = asset)]
 pub struct StablesReservation {
     #[key]
-    pub id: B256,
+    pub id: U256,
     #[attribute(order = 0)]
     pub asset: Address,
     #[attribute(order = 1)]
@@ -134,7 +134,7 @@ pub struct VaultRouterContract {
 
     /// slot 27: CCA stables reservations keyed by id.
     #[attribute(order = 24)]
-    pub reservations: outbe_primitives::storage::dsl::Map<B256, StablesReservation>,
+    pub reservations: outbe_primitives::storage::dsl::Map<U256, StablesReservation>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

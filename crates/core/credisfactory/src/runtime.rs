@@ -52,7 +52,7 @@ pub fn issue_credis(
     pledge_handle: B256,
     spend_auth: [u8; 32],
     reference_currency: u16,
-    reservation_id: B256,
+    reservation_id: U256,
     stake: U256,
 ) -> Result<(U256, U256)> {
     if smart_account.is_zero() {

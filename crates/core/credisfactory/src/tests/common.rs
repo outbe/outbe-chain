@@ -63,7 +63,6 @@ pub fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
-/// The originating agent. `issueCredis`'s caller is recorded on the position.
 pub fn cca() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
@@ -115,7 +114,7 @@ pub fn pledge_stake() -> U256 {
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
 /// return the resulting handle plus a CCA reservation created first. The gratis
 /// it costs is derived from the seeded rate.
-pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, B256) {
+pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, U256) {
     let reservation_id = seed_reservation(storage, who, pledge_stables());
     let (handle, gratis_cost) = gf::pledge_gratis(
         storage.clone(),
@@ -157,7 +156,7 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
 /// Parks a live vault reservation for `smart_account` so `issue_credis` can
 /// consume it. The hold is written through VaultRouter storage, not the ABI,
 /// because these tests stub EVM sub-calls into the router.
-pub fn seed_reservation(storage: &StorageHandle<'_>, smart_account: Address, amount: U256) -> B256 {
+pub fn seed_reservation(storage: &StorageHandle<'_>, smart_account: Address, amount: U256) -> U256 {
     seed_reservation_at(
         storage,
         cca(),
@@ -175,7 +174,7 @@ pub fn seed_reservation_at(
     reserved_asset: Address,
     amount: U256,
     expires_at: u64,
-) -> B256 {
+) -> U256 {
     let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract
         .reservation_nonce
@@ -183,7 +182,7 @@ pub fn seed_reservation_at(
         .unwrap()
         .saturating_add(U256::from(1));
     contract.reservation_nonce.write(nonce).unwrap();
-    let id = B256::from(nonce);
+    let id = nonce;
     contract
         .reservations
         .create(&StablesReservation {
