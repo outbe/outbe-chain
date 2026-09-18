@@ -4,6 +4,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolValue as _;
 use cucumber::{then, when};
 use outbe_primitives::time::timestamp_to_date_key;
 
@@ -35,9 +36,8 @@ fn submit_reward_bearing_tribute(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
     let funder = world.validators.get(0);
     let operator_key = funder.evm_key().expect("validator-0 EVM key");
-    // The offer is admitted only from an operator L2Registry knows with zk
-    // verification enabled; register this one under its fixture key before the
-    // day is entered.
+    // This reward fixture uses the network administrator as its submitting
+    // user. The independent-user scenario covers a different caller identity.
     crate::features::l2_registration::ensure_tribute_offer_operator(world, &operator_key);
     wait_for_offering(world, &wwd);
 
@@ -306,8 +306,13 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         )
     };
 
-    let waa_block_number =
-        claim_gem_and_assert_gas_only_cost(world, WAA_BENEFICIARY_KEY, waa_beneficiary, WAA_POOL);
+    let waa_block_number = claim_gem_and_assert_gas_only_cost(
+        world,
+        WAA_BENEFICIARY_KEY,
+        waa_beneficiary,
+        WAA_POOL,
+        waa_claimable,
+    );
     let escrow_after_waa = native_balance(
         world,
         world.validators.primary_port(),
@@ -320,8 +325,13 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
             .expect("WAA escrow debit")
     );
 
-    let sra_block_number =
-        claim_gem_and_assert_gas_only_cost(world, SRA_BENEFICIARY_KEY, sra_beneficiary, SRA_POOL);
+    let sra_block_number = claim_gem_and_assert_gas_only_cost(
+        world,
+        SRA_BENEFICIARY_KEY,
+        sra_beneficiary,
+        SRA_POOL,
+        sra_claimable,
+    );
     let escrow_after_sra = native_balance(
         world,
         world.validators.primary_port(),
@@ -393,9 +403,16 @@ fn claim_gem_and_assert_gas_only_cost(
     key: &str,
     beneficiary: Address,
     pool: u8,
+    claimable: U256,
 ) -> u64 {
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
+    let inventory_before = gem_inventory_at(
+        world,
+        primary,
+        beneficiary,
+        world.rpc.head(primary).expect("pre-claim head"),
+    );
     let receipt = world
         .rpc
         .claim_agent_reward_gem(key, pool)
@@ -410,11 +427,223 @@ fn claim_gem_and_assert_gas_only_cost(
         before,
         "the Gem claim moved native COEN beyond its own gas"
     );
-    receipt
+    let height = receipt
         .get("blockNumber")
         .and_then(serde_json::Value::as_str)
         .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
-        .expect("AgentReward claim receipt block")
+        .expect("AgentReward claim receipt block");
+    let ports = world.validators.committee_ports();
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 120)
+        .expect("Gem claim finality on every validator");
+    let timestamp = world
+        .rpc
+        .block_timestamp(primary, height)
+        .expect("claim timestamp");
+    let mut expected_body = None;
+    for port in ports {
+        let before_at_receipt = gem_inventory_at(world, port, beneficiary, height - 1);
+        assert_eq!(
+            before_at_receipt, inventory_before,
+            "claim inventory changed before execution"
+        );
+        let after = gem_inventory_at(world, port, beneficiary, height);
+        assert_eq!(
+            after.len(),
+            inventory_before.len() + 1,
+            "claim must mint exactly one beneficiary Gem"
+        );
+        let added: Vec<_> = after
+            .iter()
+            .filter(|id| !inventory_before.contains(id))
+            .copied()
+            .collect();
+        assert_eq!(added.len(), 1, "claim must preserve existing Gem ownership");
+        for id in &inventory_before {
+            assert!(after.contains(id));
+        }
+        let url = world.rpc.url(port);
+        let gem = eth::read_call_at_result(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: added[0] },
+            height,
+        )
+        .expect("finalized claim Gem");
+        // The price and profile must be stable across the claim block. This
+        // makes the independent pre-state expectation valid at execution time.
+        let terms = claim_gem_terms_at(&url, height - 1);
+        assert_eq!(
+            terms,
+            claim_gem_terms_at(&url, height),
+            "Gem inputs changed within claim block"
+        );
+        let expected_load = claimable / U256::from(1_000_000_000_000u64);
+        assert!(!expected_load.is_zero());
+        assert_claimed_gem(
+            &gem,
+            beneficiary,
+            pool,
+            expected_load,
+            terms.0,
+            terms.1,
+            timestamp,
+        );
+        assert_eq!(gem.gemId, added[0]);
+        let encoded = gem.abi_encode();
+        assert_eq!(
+            *expected_body.get_or_insert(encoded.clone()),
+            encoded,
+            "Gem body parity"
+        );
+        super::settlement::assert_receipt_event(
+            &receipt,
+            addresses::GEM_FACTORY_ADDR,
+            &eth::IGemFactory::GemIssued {
+                gemId: added[0],
+                gemType: gem.gemType,
+                owner: beneficiary,
+                promisLoad: expected_load,
+                entryPrice: terms.0,
+                floorPrice: terms.1,
+                issuanceCurrency: 840,
+                referenceCurrency: 840,
+                issuedAt: timestamp,
+            },
+        );
+        assert_eq!(
+            eth::receipt_json(
+                &url,
+                receipt["transactionHash"].as_str().expect("claim hash")
+            )
+            .expect("claim receipt parity")["logs"],
+            receipt["logs"]
+        );
+    }
+    height
+}
+
+fn gem_inventory_at(world: &World, port: u16, owner: Address, height: u64) -> Vec<U256> {
+    let url = world.rpc.url(port);
+    let count: usize = eth::read_call_at_result(
+        &url,
+        addresses::GEM_ADDR,
+        &eth::IGem::balanceOfCall { owner },
+        height,
+    )
+    .expect("Gem inventory size")
+    .try_into()
+    .expect("bounded Gem inventory");
+    assert!(count <= 32, "bounded beneficiary Gem inventory");
+    let ids: Vec<_> = (0..count)
+        .map(|index| {
+            eth::read_call_at_result(
+                &url,
+                addresses::GEM_ADDR,
+                &eth::IGem::tokenOfOwnerByIndexCall {
+                    owner,
+                    index: U256::from(index),
+                },
+                height,
+            )
+            .expect("Gem owner index")
+        })
+        .collect();
+    assert_eq!(
+        ids.iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        ids.len()
+    );
+    ids
+}
+
+/// Read inputs, not Gem output: Oracle's closed-day watermark and the genesis
+/// Gem profile. The full reward scenario deliberately requires a closed USD day.
+fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
+    let word = |address: Address, slot: u64| -> U256 {
+        serde_json::from_value(
+            eth::raw_json_with_params(
+                url,
+                "eth_getStorageAt",
+                serde_json::json!([
+                    format!("{address:#x}"),
+                    format!("0x{slot:x}"),
+                    format!("0x{height:x}")
+                ]),
+            )
+            .expect("historical Gem input slot"),
+        )
+        .expect("input slot quantity")
+    };
+    // Oracle schema slots 58/59 are UTC-day VWAP values/watermark;
+    // Gem profile is slot 42 (the preceding record spans multiple slots).
+    let day: u32 = word(outbe_primitives::addresses::ORACLE_ADDRESS, 59)
+        .try_into()
+        .expect("UTC date key");
+    assert_ne!(
+        day, 0,
+        "reward claim fixture requires finalized UTC-day price"
+    );
+    let price = eth::read_call_at_result(
+        url,
+        outbe_primitives::addresses::ORACLE_ADDRESS,
+        &eth::IOracle::getUtcDayVwapCall {
+            base: Address::ZERO,
+            quote: outbe_primitives::asset_type::currency_address(840),
+            utcDay: day,
+        },
+        height,
+    )
+    .expect("independent closed UTC-day claim price");
+    assert!(!price.is_zero());
+    let profile: u8 = word(addresses::GEM_ADDR, 42)
+        .try_into()
+        .expect("Gem profile byte");
+    let chain_id: U256 = serde_json::from_value(
+        eth::raw_json_with_params(url, "eth_chainId", serde_json::json!([]))
+            .expect("Gem profile chain"),
+    )
+    .expect("chain quantity");
+    let production = match profile {
+        0 => outbe_primitives::chain::is_mainnet(chain_id.try_into().expect("chain id u64")),
+        1 => false,
+        2 => true,
+        _ => panic!("unknown Gem profile {profile}"),
+    };
+    let markup = if production { 108u64 } else { 105u64 };
+    let floor = price
+        .checked_mul(U256::from(markup))
+        .expect("Gem floor numerator")
+        / U256::from(100);
+    (price, floor)
+}
+
+fn assert_claimed_gem(
+    gem: &eth::IGem::GemData,
+    owner: Address,
+    pool: u8,
+    load: U256,
+    price: U256,
+    floor: U256,
+    timestamp: u64,
+) {
+    let kind = match pool {
+        WAA_POOL => 3,
+        SRA_POOL => 2,
+        _ => panic!("unknown reward pool"),
+    };
+    assert_eq!(gem.owner, owner);
+    assert_eq!(gem.gemType, kind);
+    assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
+    assert_eq!(gem.promisLoad, load);
+    assert_eq!(gem.entryPrice, price);
+    assert_eq!(gem.floorPrice, floor);
+    assert_eq!(gem.issuanceCurrency, 840);
+    assert_eq!(gem.referenceCurrency, 840);
+    assert_eq!(gem.issuedAt, timestamp);
 }
 
 fn wait_for_offering(world: &World, wwd: &str) {
@@ -535,4 +764,70 @@ fn native_balance(world: &World, port: u16, address: Address) -> U256 {
         .rpc
         .balance_on(port, &format!("{address:#x}"))
         .unwrap_or_else(|| panic!("read native balance for {address:#x} on validator port {port}"))
+}
+
+#[cfg(test)]
+mod claim_tests {
+    use super::*;
+
+    fn wallet_gem() -> eth::IGem::GemData {
+        eth::IGem::GemData {
+            gemId: U256::from(7),
+            owner: Address::repeat_byte(1),
+            gemType: 3,
+            state: 0,
+            promisLoad: U256::from(123),
+            entryPrice: U256::from(1_000_001),
+            floorPrice: U256::from(1_050_001),
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            issuedAt: 100,
+            callPrice: U256::from(1_100_001),
+            calledAt: 0,
+            callNoticePeriod: 0,
+        }
+    }
+
+    #[test]
+    fn agent_claim_oracle_rejects_wrong_recipient_load_pool_and_price() {
+        let check = |gem: &eth::IGem::GemData| {
+            assert_claimed_gem(
+                gem,
+                Address::repeat_byte(1),
+                WAA_POOL,
+                U256::from(123),
+                U256::from(1_000_001),
+                U256::from(1_050_001),
+                100,
+            )
+        };
+        check(&wallet_gem());
+        for mutation in 0..7 {
+            let mut gem = wallet_gem();
+            match mutation {
+                0 => gem.owner = Address::repeat_byte(2),
+                1 => gem.promisLoad += U256::ONE,
+                2 => gem.gemType = 2,
+                3 => gem.entryPrice += U256::ONE,
+                4 => gem.floorPrice += U256::ONE,
+                5 => gem.state = 1,
+                _ => gem.referenceCurrency = 978,
+            }
+            assert!(
+                std::panic::catch_unwind(|| check(&gem)).is_err(),
+                "accepted wrong Gem field {mutation}"
+            );
+        }
+        let mut sra = wallet_gem();
+        sra.gemType = 2;
+        assert_claimed_gem(
+            &sra,
+            Address::repeat_byte(1),
+            SRA_POOL,
+            U256::from(123),
+            U256::from(1_000_001),
+            U256::from(1_050_001),
+            100,
+        );
+    }
 }

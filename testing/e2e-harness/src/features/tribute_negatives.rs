@@ -21,6 +21,8 @@ pub(super) enum Rejection {
     Duplicate,
     /// The selected network is registered, but the offer carries no root signature.
     MissingSignature,
+    /// A valid-length root signature from another network key.
+    InvalidSignature,
     /// A well-formed proof whose statement does not match the submitted one.
     InvalidProof,
     /// The selected chain has no L2Registry entry. The factory guard fails closed
@@ -34,7 +36,9 @@ impl Rejection {
             Self::Duplicate => {
                 "tribute already exists for this combination of parameters".to_owned()
             }
-            Self::MissingSignature => "invalid BLS signature over zkMerkleRoot".to_owned(),
+            Self::MissingSignature | Self::InvalidSignature => {
+                "invalid BLS signature over zkMerkleRoot".to_owned()
+            }
             Self::InvalidProof => "ZK proof verification failed".to_owned(),
             Self::UnregisteredNetwork => {
                 format!("L2 network {l2_chain_id} is not registered")
@@ -150,6 +154,14 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         Rejection::MissingSignature => {
             assert_eq!(call.zkMerkleRoot.len(), 32, "must reach signature guard");
             assert!(call.signature.is_empty());
+        }
+        Rejection::InvalidSignature => {
+            assert_eq!(call.zkMerkleRoot.len(), 32);
+            assert_eq!(call.signature.len(), 48);
+            assert_eq!(
+                call.zkProof.len(),
+                outbe_zk_canonical::full_proof::COMBINED_LEN
+            );
         }
         Rejection::InvalidProof => {
             assert_eq!(call.zkMerkleRoot.len(), 32);
