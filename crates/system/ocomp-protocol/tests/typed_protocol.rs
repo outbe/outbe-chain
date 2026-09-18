@@ -41,10 +41,10 @@ use outbe_ocomp_protocol::{
     },
     registry::{HashDomain, ListKind, ObjectKind},
     result::{
-        lysis_v1_empty_semantic_event_root, ActivationPayloadV1, CarryOverCreditActionV1,
-        CarryOverReason, CompletionStatus, ConservationTotalsV1, ExactCountsV1,
-        LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
-        ResultRootsV1,
+        lysis_v1_empty_semantic_event_root, wwd_allocation_ceiling, ActivationPayloadV1,
+        CarryOverCreditActionV1, CarryOverReason, CompletionStatus, ConservationTotalsV1,
+        ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1,
+        ResultChunkV1, ResultRootsV1,
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
@@ -361,6 +361,53 @@ fn result() -> LysisResultV1 {
         conservation,
         arithmetic_commitment,
         event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
+    }
+}
+
+fn result_with_conservation(conservation: ConservationTotalsV1) -> LysisResultV1 {
+    let mut result = result();
+    result.tribute_nominal_total = conservation.tribute_nominal_total;
+    result.unused_lysis_limit_minor = conservation.unused_lysis_limit_minor;
+    result.conservation = conservation.clone();
+    let completion = &mut result.metadosis_completion_summary;
+    completion.tribute_nominal_total = conservation.tribute_nominal_total;
+    completion.day_limit = conservation.day_limit;
+    completion.gratis_demand = conservation.gratis_demand;
+    completion.day_gratis_limit_minor = conservation.day_gratis_limit_minor;
+    completion.lysis_limit_minor = conservation.lysis_limit_minor;
+    completion.desis_limit_minor = conservation.desis_limit_minor;
+    completion.lysis_allocation_minor = conservation.lysis_allocation_minor;
+    completion.unused_lysis_limit_minor = conservation.unused_lysis_limit_minor;
+    completion.carry_over_credit = conservation.carry_over_credit;
+    result.arithmetic_commitment = hash_framed(
+        HashDomain::LysisArithmetic,
+        &result
+            .arithmetic_summary()
+            .encode_canonical(&LIMITS)
+            .unwrap(),
+    )
+    .unwrap();
+    result
+}
+
+fn ceiling_conservation(
+    tribute_nominal_total: u64,
+    lysis_allocation_minor: u64,
+    desis_limit_minor: u64,
+) -> ConservationTotalsV1 {
+    let lysis_limit_minor = lysis_allocation_minor;
+    ConservationTotalsV1 {
+        tribute_nominal_total: U256::from(tribute_nominal_total),
+        eligible_nominal_total: U256::from(tribute_nominal_total),
+        day_limit: U256::from(lysis_limit_minor + desis_limit_minor),
+        gratis_demand: U256::from(lysis_limit_minor),
+        day_gratis_limit_minor: U256::from(lysis_limit_minor),
+        lysis_limit_minor: U256::from(lysis_limit_minor),
+        desis_limit_minor: U256::from(desis_limit_minor),
+        lysis_allocation_minor: U256::from(lysis_allocation_minor),
+        unused_lysis_limit_minor: U256::ZERO,
+        carry_over_credit: U256::ZERO,
+        nod_cost_total: U256::from(lysis_allocation_minor),
     }
 }
 
@@ -1782,6 +1829,44 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         Err(ProtocolError::InvalidInvariant(
             "aggregate receipt outcome shape"
         ))
+    ));
+}
+
+/// C37/A39: a one-unit mutation of Lysis Allocation or Desis Limit past the
+/// sealed Tribute nominal is detected, including checked-add overflow.
+#[test]
+fn wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation() {
+    assert!(wwd_allocation_ceiling(U256::from(6), U256::from(4), U256::from(10)).is_ok());
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::from(6), U256::from(5), U256::from(10)),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::from(7), U256::from(4), U256::from(10)),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::MAX, U256::from(1), U256::MAX),
+        Err(ProtocolError::IntegerOverflow {
+            what: "WWD allocation ceiling"
+        })
+    ));
+}
+
+/// A39 mutation: keep every other conservation identity, then bump Lysis or
+/// Desis so the sum exceeds Tribute nominal. The certified result must fail.
+#[test]
+fn mutating_lysis_plus_desis_above_tribute_nominal_is_detected() {
+    result_with_conservation(ceiling_conservation(10, 6, 4))
+        .validate_semantics(&LIMITS)
+        .unwrap();
+    assert!(matches!(
+        result_with_conservation(ceiling_conservation(10, 6, 5)).validate_semantics(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        result_with_conservation(ceiling_conservation(10, 7, 4)).validate_semantics(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
     ));
 }
 
