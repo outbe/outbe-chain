@@ -188,10 +188,10 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeRefund_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_REFUND_WINNERS + 1;
+        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.PayloadArrayTooLong.selector, uint256(n), BridgeMsgCodec.MAX_REFUND_WINNERS
+                BridgeMsgCodec.PayloadArrayTooLong.selector, uint256(n), BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN
             )
         );
         this.exposedEncodeRefund(n);
@@ -215,7 +215,7 @@ contract BridgeMsgCodecValidationTest is Test {
     ///      future encoder change cannot deliver an oversized REFUND that exhausts the receiver's
     ///      gas in the per-winner loop. Built by hand to bypass the now-capping encoder.
     function test_DecodeRefund_OverOutboundCap_RevertsRefundBatchTooLarge() public {
-        uint256 n = uint256(BridgeMsgCodec.MAX_REFUND_WINNERS) + 1;
+        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         bytes memory overCap = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
@@ -223,7 +223,7 @@ contract BridgeMsgCodecValidationTest is Test {
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_REFUND_WINNERS)
+                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
             )
         );
         this.exposedDecodeRefundInstructions(overCap);
@@ -239,41 +239,40 @@ contract BridgeMsgCodecValidationTest is Test {
 
     /// @dev Derives the largest array length whose encoded message still fits under
     ///      `MAX_MESSAGE_BYTES`, by measuring the actual per-item byte cost, and asserts
-    ///      `cap` sits under it. Regression guard: if a payload grows
+    ///      `MAX_PAYLOAD_ARRAY_LEN` sits under it. Regression guard: if a payload grows
     ///      (e.g. a new array/field), the real ceiling drops and this fails if the cap loses
     ///      headroom. `len0/len1/len2` are encoded lengths at 0/1/2 items.
-    function _deriveCeilingAndAssertHeadroom(string memory label, uint256 cap, uint256 len0, uint256 len1, uint256 len2)
-        internal
-    {
+    function _deriveCeilingAndAssertHeadroom(string memory label, uint256 len0, uint256 len1, uint256 len2) internal {
         uint256 perItem = len1 - len0;
         assertEq(len2 - len1, perItem, string.concat(label, ": per-item byte cost is not linear"));
         uint256 derivedMaxItems = (MAX_MESSAGE_BYTES - len0) / perItem;
         emit log_named_uint(string.concat(label, " bytes/item"), perItem);
         emit log_named_uint(string.concat(label, " real max items @ 10000B"), derivedMaxItems);
-        assertGe(derivedMaxItems, cap, string.concat(label, ": the cap exceeds the real byte ceiling"));
+        assertGe(
+            derivedMaxItems,
+            BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN,
+            string.concat(label, ": MAX_PAYLOAD_ARRAY_LEN exceeds the real byte ceiling")
+        );
     }
 
-    /// @notice Computes the real per-message array ceiling under the bridge byte cap and proves each
-    ///         message's cap clears it. Run with `-vv` to see the derived numbers (bids is the tightest at
-    ///         ~128 B/item).
+    /// @notice Computes the real per-message array ceiling under the bridge byte cap and proves the
+    ///         single system-wide `MAX_PAYLOAD_ARRAY_LEN = 64` clears every one of them. Run with
+    ///         `-vv` to see the derived numbers (bids is the tightest at ~128 B/item).
     function test_RealPayloadByteCeiling_ClearsTheCap() public {
         _deriveCeilingAndAssertHeadroom(
             "bids",
-            BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN,
             this.exposedEncodeBidsBatch(0).length,
             this.exposedEncodeBidsBatch(1).length,
             this.exposedEncodeBidsBatch(2).length
         );
         _deriveCeilingAndAssertHeadroom(
             "refund",
-            BridgeMsgCodec.MAX_REFUND_WINNERS,
             this.exposedEncodeRefund(0).length,
             this.exposedEncodeRefund(1).length,
             this.exposedEncodeRefund(2).length
         );
         _deriveCeilingAndAssertHeadroom(
             "issuance",
-            BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN,
             this.exposedEncodeIssuance(0).length,
             this.exposedEncodeIssuance(1).length,
             this.exposedEncodeIssuance(2).length

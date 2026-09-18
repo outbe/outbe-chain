@@ -54,8 +54,9 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
-/// Winners per REFUND_INSTRUCTIONS message; mirrors the codec's `MAX_REFUND_WINNERS`.
-pub const REFUND_CHUNK_LEN: usize = 128;
+/// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`. Issuance uses its own,
+/// narrower cap - a recipient costs a mint, a winner costs a status flip.
+pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
 pub const MAX_REFUND_CHUNKS: usize = 256;

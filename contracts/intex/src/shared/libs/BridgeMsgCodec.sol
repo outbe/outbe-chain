@@ -93,11 +93,6 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 736;
 
-    /// @notice Per-message cap on REFUND_INSTRUCTIONS winners. A winner is one address on the wire and a status
-    ///         flip on the target, so a chunk carries twice the general array cap and still sits well under
-    ///         `maxMessageSize`.
-    uint16 internal constant MAX_REFUND_WINNERS = 128;
-
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
     ///         the ordered lane; larger bid sets are chunked into multiple batches by the sender.
@@ -180,10 +175,10 @@ library BridgeMsgCodec {
     /// @notice A series in an ISSUANCE_INSTRUCTIONS message belongs to a different day than the message header.
     error IssuanceDayMismatch(bytes14 seriesId, uint32 seriesDay, uint32 messageDay);
 
-    /// @notice An outbound payload array exceeds its cap.
+    /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
     /// @param got The actual array length the encoder was given.
-    /// @param max The array's cap.
+    /// @param max The configured `MAX_PAYLOAD_ARRAY_LEN`.
     error PayloadArrayTooLong(uint256 got, uint256 max);
 
     // --- Encoding ---
@@ -531,8 +526,8 @@ library BridgeMsgCodec {
 
     /// @notice Encodes one chunk of a day's REFUND_INSTRUCTIONS: the chain's winners and the day's clearing
     ///         terms, from which the target works out what each of them paid.
-    /// @dev Reverts `PayloadArrayTooLong` above `MAX_REFUND_WINNERS`. An empty chunk closes a day with no winners
-    ///      on the chain.
+    /// @dev Reverts `PayloadArrayTooLong` above `MAX_PAYLOAD_ARRAY_LEN`. An empty chunk closes a day with no
+    ///      winners on the chain.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _clearingRate The day's clearing rate (`1e6` fixed-point).
     /// @param _basis The day's escrow basis (`promisLoadMinor`).
@@ -550,7 +545,7 @@ library BridgeMsgCodec {
         uint16 _partialIndex,
         uint16 _partialWon
     ) internal pure returns (bytes memory) {
-        requireMaxArrayLen(_winners.length, MAX_REFUND_WINNERS);
+        requireMaxArrayLen(_winners.length, MAX_PAYLOAD_ARRAY_LEN);
         if (_totalChunks == 0 || _totalChunks > MAX_CHUNKS || _chunkIndex >= _totalChunks) {
             revert InvalidRefundChunk(_chunkIndex, _totalChunks);
         }
@@ -847,8 +842,8 @@ library BridgeMsgCodec {
         }
         // A peer compromise or a future encoder change could deliver an over-cap REFUND that exhausts the
         // receiver's gas in the per-winner loop. The drop-don't-block handler catches this typed revert.
-        if (winners.length > MAX_REFUND_WINNERS) {
-            revert RefundBatchTooLarge(winners.length, MAX_REFUND_WINNERS);
+        if (winners.length > MAX_PAYLOAD_ARRAY_LEN) {
+            revert RefundBatchTooLarge(winners.length, MAX_PAYLOAD_ARRAY_LEN);
         }
         if (partialWon != 0 && partialIndex >= winners.length) {
             revert InvalidRefundPartial(partialIndex, winners.length);

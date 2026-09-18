@@ -94,7 +94,7 @@ abstract contract RefundGasBase is CrossChainTest {
 contract RefundFinalizeGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 128, BID_RATE, 0);
+        _lock(0, 64, BID_RATE, 0);
         _elapseCompactResetPeriod();
     }
 
@@ -117,22 +117,18 @@ contract RefundFinalizeGasTest is RefundGasBase {
     function test_Finalize64Winners() public {
         emit log_named_uint("finalize_winners_64", _finalize(64));
     }
-
-    function test_Finalize128Winners() public {
-        emit log_named_uint("finalize_winners_128", _finalize(128));
-    }
 }
 
 /// @dev Bids at the clearing rate pay their whole lock, so each lock is deleted instead of kept for a claim.
 contract RefundFinalizeWholeLockGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
-        _lock(0, 128, CLEARING_RATE, 0);
+        _lock(0, 64, CLEARING_RATE, 0);
         _elapseCompactResetPeriod();
     }
 
-    function test_Finalize128WinnersPayingTheirWholeLock() public {
-        emit log_named_uint("finalize_winners_128_whole_lock", _finalize(128));
+    function test_Finalize64WinnersPayingTheirWholeLock() public {
+        emit log_named_uint("finalize_winners_64_whole_lock", _finalize(64));
     }
 }
 
@@ -235,9 +231,9 @@ contract RefundDayGasTest is RefundGasBase {
     }
 
     function test_AWidestChunkFitsItsQuote() public {
-        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_REFUND_WINNERS);
-        emit log_named_uint("day_chunk_128w", spent);
-        assertLt(spent, IntexGas.refund(BridgeMsgCodec.MAX_REFUND_WINNERS), "the widest chunk must fit its quote");
+        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+        emit log_named_uint("day_chunk_64w", spent);
+        assertLt(spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN), "the widest chunk must fit its quote");
     }
 
     function test_AChainWithoutWinners() public {

@@ -500,7 +500,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversRefundsAtTheirWidest() public {
-        uint256 winners = BridgeMsgCodec.MAX_REFUND_WINNERS;
+        uint256 winners = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
         escrow.setProceedsRecipient(address(router));
 

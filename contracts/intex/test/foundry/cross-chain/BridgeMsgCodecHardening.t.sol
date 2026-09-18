@@ -163,11 +163,11 @@ contract BridgeMsgCodecHardeningTest is Test {
     // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
 
     function test_decodeRefundInstructions_overCap_revertsRefundBatchTooLarge() public {
-        // The outbound encoder caps at MAX_REFUND_WINNERS; an over-cap inbound payload can only
+        // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN; an over-cap inbound payload can only
         // reach the receiver via a peer compromise or a future encoder change. The decoder must
         // reject with the typed RefundBatchTooLarge error so the drop-don't-block handler surfaces
         // a parameterized diagnostic.
-        uint256 n = uint256(BridgeMsgCodec.MAX_REFUND_WINNERS) + 1;
+        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         address[] memory winners = new address[](n);
         for (uint256 i = 0; i < n; ++i) {
             winners[i] = address(uint160(i + 1));
@@ -180,7 +180,7 @@ contract BridgeMsgCodecHardeningTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_REFUND_WINNERS)
+                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
             )
         );
         harness.decodeRefundInstructions(packet);
