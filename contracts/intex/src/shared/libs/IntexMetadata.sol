@@ -9,8 +9,7 @@ import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
 /// @dev External linked library: deployed once and delegatecalled, keeping the renderer's
 ///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure - the caller
-///      passes a SeriesData snapshot plus the current timestamp (drives the derived Expired
-///      display; expiry is not an on-chain state).
+///      passes a SeriesData snapshot whose state already carries the derived Expired.
 library IntexMetadata {
     string internal constant COLLECTION_DESCRIPTION =
         "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Unsettled units stay transferable until the series is called; settled units move to a separate Settled token class that stays exercisable.";
