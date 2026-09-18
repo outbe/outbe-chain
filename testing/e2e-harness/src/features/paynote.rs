@@ -16,13 +16,10 @@ use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
 use outbe_paynote::Field;
-use outbe_paynote::PayNoteSuit;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::Codec as _;
-use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
+use outbe_zk_core::codec::{field_from_b256, field_to_b256, u256_limbs_be, FieldElement as _};
+use outbe_zk_core::zk::ProofGenerator;
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
@@ -61,7 +58,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        PayNoteSuit::field_to_b256(&self.serial).unwrap()
+        field_to_b256(&self.serial).unwrap()
     }
 }
 
@@ -151,12 +148,8 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address)
         leaf_index,
         auth_path,
     };
-    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("paynote spend proof");
+    let proof = ProofGenerator::<PayNote>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("paynote spend proof");
     combined_from(&public, &proof.proof)
 }
 
@@ -199,7 +192,7 @@ fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
         .ok()?
         .try_into()
         .ok()?;
-    let commitment = PayNoteSuit::field_from_b256(&B256::from(commitment_bytes)).ok()?;
+    let commitment = field_from_b256(&B256::from(commitment_bytes)).ok()?;
 
     let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if data.len() != 3 * 32 {

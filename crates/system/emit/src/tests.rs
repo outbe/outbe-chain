@@ -11,13 +11,12 @@ use ark_ff::PrimeField;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::Codec as _;
-use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+use outbe_zk_core::codec::{field_to_b256, u256_limbs_be};
+use outbe_zk_core::zk::ProofGenerator;
+use outbe_zk_core::FieldElement as _;
 
 use crate::hash::{
     change_key, emit_domain, empty_leaf, empty_subtrees, note_commitment,
@@ -27,7 +26,7 @@ use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_S
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 use crate::Field;
 
-use crate::{EmitSuite, EmitTree};
+use crate::EmitTree;
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
@@ -45,7 +44,7 @@ fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
 }
 
 fn b256(field: Field) -> B256 {
-    EmitSuite::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 fn small_word(low_byte: u8) -> B256 {
@@ -126,12 +125,11 @@ fn selectors_and_gas_are_pinned() {
 // ---- real-proof fixture ----------------------------------------------------
 
 fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields =
-        <EmitMint as outbe_protocol::protocol::zk::Circuit<EmitSuite>>::public_inputs(public);
+    let fields = <EmitMint as outbe_zk_core::zk::Circuit>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(EmitSuite::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);
@@ -201,12 +199,8 @@ fn prove_mint_u256(
             .try_into()
             .unwrap(),
     };
-    let proof = ProofGenerator::<EmitSuite, EmitMint>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("emit mint proof generation");
+    let proof = ProofGenerator::<EmitMint>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("emit mint proof generation");
     combined_from(&public, &proof.proof)
 }
 
@@ -545,8 +539,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
     .unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -820,8 +813,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -834,7 +826,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     let next_key = change_key(key, nullifier).unwrap();
     let change =
         note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let root_after_change = tree.root();
 
     let partial_data = mint_calldata(
@@ -945,8 +937,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     .unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, note).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn_u256(&mut provider, ALICE, note, b256(serial)).unwrap();
@@ -970,7 +961,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     dispatch_mint(&mut provider, BOB, &data).unwrap();
     assert_eq!(provider.get_balance(CAROL), minted);
 
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let next_nullifier = derive_nullifier(change, next_key).unwrap();
     let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, remainder);
     let data = mint_calldata_u256(
@@ -1003,8 +994,7 @@ fn stale_root_past_the_32_window_is_rejected() {
     let serial = scenario_serial();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1059,8 +1049,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1118,8 +1107,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 40);
@@ -1164,8 +1152,7 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1282,8 +1269,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -1441,8 +1427,7 @@ fn mint_rolls_back_fully_under_fault_injection() {
         EmitTree::new(emit_domain(), empty_leaf(pool).unwrap(), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let nullifier =

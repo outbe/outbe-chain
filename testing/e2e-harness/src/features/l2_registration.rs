@@ -29,6 +29,11 @@ pub(super) fn operator_address(world: &World, key: &str) -> Address {
 }
 
 /// Register each operator key that is about to submit a Tribute offer.
+///
+/// Gated because `features::ocomp` is its only caller and that module is gated
+/// too, so a default-feature build trips `dead_code` under the workspace
+/// `warnings = "deny"`.
+#[cfg(feature = "ocomp-integration")]
 pub(super) fn ensure_tribute_offer_operators(world: &mut World, keys: &[String]) {
     let addresses: Vec<Address> = keys
         .iter()

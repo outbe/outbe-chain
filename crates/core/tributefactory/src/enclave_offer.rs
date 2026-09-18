@@ -122,11 +122,13 @@ pub fn process_tribute_offer_batch_via_enclave(
         EnclaveResponse::TributeOfferBatch {
             results,
             inputs_canonical_hash,
+            inputs_canonical_hash_version,
             attestation_tag,
         } => validate_tribute_offer_batch_response(
             offers,
             results,
             inputs_canonical_hash,
+            inputs_canonical_hash_version,
             &attestation_pub,
             &attestation_tag,
         ),
@@ -149,9 +151,23 @@ fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
     results: Vec<TributeOfferResult>,
     inputs_canonical_hash: B256,
+    inputs_canonical_hash_version: u16,
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
+    // Before blaming the enclave, rule out the boring explanation: the two
+    // sides hashed different layouts. An enclave is a measured image on its
+    // own release cadence, so this is what a rollout that moved only one side
+    // looks like, and every offer in the batch would fail. An image built
+    // before the version field existed reports 0.
+    let version = outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION;
+    if inputs_canonical_hash_version != version {
+        return Err(PrecompileError::Fatal(format!(
+            "tee_enclave_version_skew: enclave hashes canonical inputs at layout \
+             version {inputs_canonical_hash_version}, this node at {version}; \
+             update the enclave image"
+        )));
+    }
     let expected = outbe_tee::protocol::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
         return Err(PrecompileError::Fatal(
@@ -270,13 +286,43 @@ mod tests {
             outbe_tee::protocol::inputs_canonical_hash(&offers)
         );
 
-        let err =
-            validate_tribute_offer_batch_response(&offers, Vec::new(), wrong_hash, &[0u8; 32], &[])
-                .expect_err("hash divergence must be rejected");
+        let err = validate_tribute_offer_batch_response(
+            &offers,
+            Vec::new(),
+            wrong_hash,
+            outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION,
+            &[0u8; 32],
+            &[],
+        )
+        .expect_err("hash divergence must be rejected");
         assert!(
             err.to_string().contains("tee_enclave_nondeterminism"),
             "unexpected error: {err}"
         );
+    }
+
+    /// An enclave hashing a different preimage layout is a rollout that moved
+    /// one side only, not a faulty enclave, and the error must say so. `0` is
+    /// what an image built before the version field existed reports.
+    #[test]
+    fn validate_names_a_preimage_version_skew() {
+        let offers = vec![sample_tribute_offer()];
+        let right_hash = outbe_tee::protocol::inputs_canonical_hash(&offers);
+        for reported in [0, outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION + 1] {
+            let err = validate_tribute_offer_batch_response(
+                &offers,
+                Vec::new(),
+                right_hash,
+                reported,
+                &[0u8; 32],
+                &[],
+            )
+            .expect_err("a layout version the node does not speak must be rejected");
+            assert!(
+                err.to_string().contains("tee_enclave_version_skew"),
+                "unexpected error: {err}"
+            );
+        }
     }
 
     /// The day, currency and price are request inputs the node resolved, so a
@@ -301,6 +347,7 @@ mod tests {
                 &offers,
                 Vec::new(),
                 hash_of_other,
+                outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION,
                 &[0u8; 32],
                 &[],
             )

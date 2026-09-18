@@ -282,6 +282,8 @@ pub(in crate::transport) fn dispatch_with_initialization(
             EnclaveResponse::TributeOfferBatch {
                 results,
                 inputs_canonical_hash,
+                inputs_canonical_hash_version:
+                    outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION,
                 attestation_tag,
             }
         }

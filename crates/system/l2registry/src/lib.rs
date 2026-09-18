@@ -8,9 +8,12 @@
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature
 //! over `zkMerkleRoot` for `TributeFactory.offerTribute`, independent of the caller.
 //!
-//! [`api::l2_circuits`] uses explicit deployment bindings outside Devnet.
-//! Devnet may use a frozen development binding for unbound L2s without
-//! changing signature or proof verification.
+//! [`api::l2_keys`] and [`api::vk_for`] read the compiled-in
+//! `outbe-l2-zk-canonical` registry: outside Devnet, only the keys the L2
+//! itself registered there. On Devnet an L2 with no registered key falls back
+//! to chain 57005's, so fixture networks can be stood up without a
+//! registration pull request; signature and proof verification are unchanged
+//! either way.
 
 pub mod api;
 pub mod errors;

@@ -87,8 +87,12 @@ outbe-fidelity-math.workspace = true
 # stack directly - NOT `outbe-zk-backend`, which pulls a heavy Barretenberg C++
 # FFI inappropriate for the enclave.
 outbe-poseidon.workspace = true
-outbe-protocol.workspace = true
-outbe-protocol-derive.workspace = true
+# The claim half only. The enclave folds `TributeDraftClaim` and `binding`; it
+# never verifies a proof, so it has no use for a verification key. This is a
+# different package from the key registry `outbe-l2-zk-canonical`, and nothing
+# in its dependency tree carries a key - so MRENCLAVE cannot move when an L2
+# registers, under any cargo invocation. Never swap this for the registry.
+outbe-l2-claims.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
 

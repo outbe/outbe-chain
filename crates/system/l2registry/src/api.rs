@@ -5,9 +5,9 @@ use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
     group::G1, ops::verify_message, variant::MinSig,
 };
+use outbe_l2_zk_canonical::{l2_keys as canonical_l2_keys, Claim, L2Key};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zk_canonical::L2CircuitVersion;
 
 use crate::errors::L2RegistryError;
 use crate::runtime::decode_public_key;
@@ -55,17 +55,42 @@ pub fn check_zk_merkle_root_signature(
     Ok(ZkOfferCheck::Verified { chain_id })
 }
 
-/// Exact deployment bindings; Devnet's extra fixture L2s reuse chain 57005.
+/// Registered verification keys for `claim` on `l2_chain_id`; Devnet's extra
+/// fixture L2s reuse chain 57005's keys.
 ///
-/// Basic fixtures use the declared 57005 binding directly. Additional L2s
-/// retain real signature and proof verification, and never gain bindings on
+/// Basic fixtures use the declared 57005 keys directly. Additional L2s retain
+/// real signature and proof verification, and never gain keys on
 /// non-development host chains.
-pub fn l2_circuits(host_chain_id: u64, l2_chain_id: u64) -> &'static [L2CircuitVersion] {
-    let declared = outbe_zk_canonical::l2_circuits(l2_chain_id);
+pub fn l2_keys(host_chain_id: u64, l2_chain_id: u64, claim: Claim) -> &'static [L2Key] {
+    let declared = canonical_l2_keys(l2_chain_id, claim);
     if declared.is_empty() && outbe_primitives::chain::is_devnet(host_chain_id) && l2_chain_id != 0
     {
-        outbe_zk_canonical::l2_circuits(57_005)
+        canonical_l2_keys(57_005, claim)
     } else {
         declared
     }
+}
+
+/// The verification key `version` of `claim` is registered under for
+/// `l2_chain_id`, or `None` if that chain registers no such version.
+///
+/// The exact lookup offer admission performs, so a prover, a fixture and the
+/// node all encode against the same bytes.
+///
+/// Deliberately ignores [`L2Key::status`]: a `deprecated` key must keep
+/// verifying. Proofs are built by wallets on mobile devices, which lag a
+/// registration by weeks, and rejecting their key would invalidate proofs that
+/// were valid when they were minted. Revocation is what stops a key, and it
+/// deletes the circuit root, so a revoked version never reaches this table at
+/// all - every key here is `active` or `deprecated` and both must verify.
+pub fn vk_for(
+    host_chain_id: u64,
+    l2_chain_id: u64,
+    claim: Claim,
+    version: &str,
+) -> Option<&'static [u8]> {
+    l2_keys(host_chain_id, l2_chain_id, claim)
+        .iter()
+        .find(|key| key.version() == version)
+        .map(|key| key.vk_bytes())
 }

@@ -28,9 +28,8 @@ use crate::{
     runtime,
     sol_ext::{IReferenceCurrency, IERC20},
 };
-use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use outbe_vaultrouter::api::IVaultRouter;
+use outbe_zk_core::codec::field_to_be_bytes;
 
 /// The chain ID `World`'s storage provider reports; PayNote folds it into
 /// every commitment, so fixtures must be built under the same one.
@@ -295,7 +294,7 @@ impl World {
             spend_amount,
         );
         paynote_support::seed_pool(&mut self.provider, CHAIN_ID, &[fixture.commitment]);
-        let nullifier = B256::from_slice(&OutbeV1::field_to_be_bytes(&fixture.public.nullifier));
+        let nullifier = B256::from_slice(&field_to_be_bytes(&fixture.public.nullifier));
         (fixture.proof, nullifier)
     }
 

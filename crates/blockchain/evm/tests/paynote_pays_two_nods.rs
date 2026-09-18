@@ -20,8 +20,7 @@
 //! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
 //! NodFactory, Nod, GratisFactory and Gratis all run for real.
 
-use outbe_paynote::PayNoteSuit;
-use outbe_protocol::Codec as _;
+use outbe_zk_core::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -301,7 +300,7 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
 }
 
 fn word(field: outbe_paynote::Field) -> B256 {
-    PayNoteSuit::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 /// Settles `nod_id`, then mines it with gratis mint authorization against the
@@ -419,7 +418,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
     let mut tree = new_tree(CHAIN_ID).unwrap();
-    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap()).unwrap();
 
     // First Nod: spend half the note.
     let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
@@ -453,7 +452,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         ),
         "the appended leaf must be the change commitment the owner can derive"
     );
-    let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change.commitment).unwrap()).unwrap();
 
     // One note is one payment: the first proof cannot pay the second Nod.
     let replay = settle_and_mine(&mut ctx, &scope, &readers, nods[1], &first_proof);
@@ -518,7 +517,7 @@ fn measure_settle_gem_gas_with_real_paynote() {
     let deposited_state = ctx.journaled_state.inner.state.clone();
     ctx.journaled_state.database.commit(deposited_state);
     let mut tree = new_tree(CHAIN_ID).unwrap();
-    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap()).unwrap();
     let proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
 
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);

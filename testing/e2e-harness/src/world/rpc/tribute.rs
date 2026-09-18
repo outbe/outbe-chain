@@ -368,7 +368,7 @@ impl Rpc {
         );
     }
 
-    /// Prove one real `FullProof` offer for `caller`'s registered L2 fixture
+    /// Prove one real tribute offer proof for `caller`'s registered L2 fixture
     /// network: the proof is bound to `caller`, this chain's id, the offer's
     /// day, currency, amounts and draft, and its Merkle root is signed with the
     /// key that network registered.
@@ -399,7 +399,7 @@ impl Rpc {
         )
     }
 
-    /// A caller-bound FullProof for a selected registered network. Network
+    /// A caller-bound tribute proof for a selected registered network. Network
     /// ownership and the user submitting the Tribute are independent identities.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prove_offer_for_network(

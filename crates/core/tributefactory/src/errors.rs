@@ -27,9 +27,6 @@ pub enum TributeFactoryError {
     #[error("unknown circuit version {version:?} for L2 chain {chain_id}")]
     UnknownCircuitVersion { chain_id: u32, version: String },
 
-    #[error("ZK circuit does not support the Tribute proof interface")]
-    UnsupportedZkCircuit,
-
     #[error("malformed zkProof: {0}")]
     MalformedZkProof(String),
 
@@ -95,15 +92,6 @@ pub enum TributeFactoryError {
 
     #[error("invalid sra_address at index {index}: {address}")]
     InvalidSraAddressAtIndex { index: usize, address: String },
-
-    #[error("base amount has too many decimal places (max 18)")]
-    BaseAmountTooManyDecimals,
-
-    #[error("invalid base amount format")]
-    InvalidBaseAmountFormat,
-
-    #[error("invalid atto amount format")]
-    InvalidAttoAmountFormat,
 }
 
 impl From<TributeFactoryError> for PrecompileError {

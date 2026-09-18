@@ -25,6 +25,10 @@ use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+/// The L2 and the tribute circuit version every fixture here offers under —
+/// the pair that selects a verification key.
+const L2_CHAIN_ID: u64 = 0xdead;
+const CIRCUIT_VERSION: &str = "1.0.0";
 
 struct NoParentBodies;
 
@@ -51,17 +55,17 @@ impl ParentBodySource for NoParentBodies {
 mod l2_zk_gate {
     use alloy_primitives::{Address, Bytes, U256};
     use outbe_compressed_entities::ExecutionScope;
+    use outbe_l2_zk_canonical::claims::tribute::PUBLIC_INPUT_COUNT;
+    use outbe_l2_zk_canonical::{combined_len, Claim};
     use outbe_l2registry::L2RegistryContract;
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
     use super::NoParentBodies;
+    use super::{CIRCUIT_VERSION, L2_CHAIN_ID};
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
-
-    const L2_CHAIN_ID: u64 = 0xdead;
 
     fn caller() -> Address {
         Address::repeat_byte(0x77)
@@ -83,20 +87,28 @@ mod l2_zk_gate {
             exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
             l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
-            circuit_version: "1.1.0".to_owned(),
+            circuit_version: CIRCUIT_VERSION.to_owned(),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
     }
 
-    fn dummy_full_proof(root: [u8; 32]) -> Bytes {
-        let mut proof = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
+    fn dummy_proof(root: [u8; 32]) -> Bytes {
+        let vk = outbe_l2registry::api::vk_for(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            L2_CHAIN_ID,
+            Claim::Tribute,
+            CIRCUIT_VERSION,
+        )
+        .expect("the test L2 registers the fixture circuit version");
+        let combined = combined_len(vk, PUBLIC_INPUT_COUNT).unwrap();
+        let mut proof = Vec::with_capacity(combined);
         proof.extend_from_slice(&4u32.to_be_bytes());
         proof.extend_from_slice(&[0x01; 32]);
         proof.extend_from_slice(&[0x02; 32]);
         proof.extend_from_slice(&[0x03; 32]);
         proof.extend_from_slice(&root);
-        proof.resize(FULL_PROOF_COMBINED_LEN, 0);
+        proof.resize(combined, 0);
         proof.into()
     }
 
@@ -128,7 +140,7 @@ mod l2_zk_gate {
         )
         .encode();
         let mut input = offer(&root, &signature);
-        input.zk_proof = dummy_full_proof(root);
+        input.zk_proof = dummy_proof(root);
         input
     }
 
@@ -170,11 +182,13 @@ mod l2_zk_gate {
             )
             .encode()
             .to_vec();
-            // A signed root does not select a missing version or implicitly
-            // adopt the global registry's newer FullProof version.
+            // Neither an empty selector nor an L1 circuit version selects a
+            // key: "1.2.0" is the paynote circuit's version, registered in the
+            // L1 registry and never for an L2 claim. Both must be named
+            // explicitly and both must miss.
             for version in ["", "1.2.0"] {
                 let mut wrong_version = offer(&root, &good_sig);
-                wrong_version.zk_proof = dummy_full_proof(root);
+                wrong_version.zk_proof = dummy_proof(root);
                 wrong_version.circuit_version = version.to_owned();
                 let error = factory
                     .offer_tribute(&scope, &NoParentBodies, wrong_version)
@@ -188,7 +202,7 @@ mod l2_zk_gate {
             let mut valid_gate = offer(&root, &good_sig);
             // The submitter need not be the registered network operator.
             valid_gate.caller = Address::repeat_byte(0x88);
-            valid_gate.zk_proof = dummy_full_proof(root);
+            valid_gate.zk_proof = dummy_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, valid_gate)
@@ -200,7 +214,7 @@ mod l2_zk_gate {
             registry.remove_network(caller(), L2_CHAIN_ID).unwrap();
             registry.register_network(4242, caller(), &public).unwrap();
             let mut wrong_chain = offer(&root, &good_sig);
-            wrong_chain.zk_proof = dummy_full_proof(root);
+            wrong_chain.zk_proof = dummy_proof(root);
             let error = factory
                 .offer_tribute(&scope, &NoParentBodies, wrong_chain)
                 .unwrap_err();
@@ -247,7 +261,7 @@ mod l2_zk_gate {
             assert!(revert_message(missing).contains("zkProof is required"));
 
             let mut wrong_root = offer(&root, &signature);
-            wrong_root.zk_proof = dummy_full_proof([0x24; 32]);
+            wrong_root.zk_proof = dummy_proof([0x24; 32]);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let mismatch = factory
                 .offer_tribute(&scope, &NoParentBodies, wrong_root)
@@ -424,19 +438,25 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         ops::{self, sign_message},
         variant::MinSig,
     };
+    use outbe_l2_zk_canonical::claims::tribute::{alloy::PublicInputs, decode_public_inputs};
     use outbe_l2registry::L2RegistryContract;
     use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
-    use outbe_zk_canonical::full_proof::{alloy::PublicInputs, decode_public_inputs};
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    const PROOF: &[u8] = include_bytes!(
-        "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
-    );
+    const PROOF: &[u8] =
+        include_bytes!("../../../../testing/protocol-benchmarks/fixtures/tribute_offer_proof.bin");
     const CALLER: Address = Address::repeat_byte(0x77);
     const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
     outbe_zk_backend::barretenberg::init_crs().unwrap();
-    let public: PublicInputs = decode_public_inputs(PROOF).unwrap().try_into().unwrap();
+    let vk = outbe_l2registry::api::vk_for(
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        0xdead,
+        outbe_l2_zk_canonical::Claim::Tribute,
+        CIRCUIT_VERSION,
+    )
+    .expect("the fixture's circuit version is registered");
+    let public: PublicInputs = decode_public_inputs(PROOF, vk).unwrap().try_into().unwrap();
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{CALLER:#x}"),
         "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
@@ -474,7 +494,7 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         exclude_from_intex_issuance: false,
         zk_proof: Bytes::from_static(PROOF),
         l2_chain_id: 0xdead,
-        circuit_version: "1.1.0".to_owned(),
+        circuit_version: CIRCUIT_VERSION.to_owned(),
         zk_merkle_root: Bytes::copy_from_slice(public.merkle_root.as_slice()),
         signature: Bytes::copy_from_slice(&signature),
     };
@@ -593,4 +613,198 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
             alloy_primitives::U256::ZERO
         );
     });
+}
+
+/// The `chainId` argument of `offerTribute` must reach the enclave and land in
+/// `binding_hash`. Nothing else in the pipeline notices if it is dropped or
+/// replaced by the host chain id: the enclave folds whatever the context says,
+/// and the host then compares that fold against the enclave's own output.
+///
+/// The expected values below are frozen, not recomputed through `binding()`:
+///
+/// ```text
+/// binding_hash = poseidon2([1, 0x7777…77, draft_lo128, draft_hi128,
+///                           424_242 (devnet host), <chainId>])
+/// ```
+///
+/// with `draft = 0x1111…11`, so `draft_hi128 = draft_lo128 = 0x1111…11` (16
+/// bytes). Two chain ids, two frozen digests: passing the host chain id, a
+/// constant, or the other L2's id all miss both.
+#[test]
+fn offer_tribute_folds_the_calldata_l2_chain_id_into_binding_hash() {
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{
+        ops::{self, sign_message},
+        variant::MinSig,
+    };
+    use outbe_l2_zk_canonical::{claims::tribute::PUBLIC_INPUT_COUNT, combined_len, Claim};
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_tee::protocol::{TributeZkContext, TributeZkExpectedHashes};
+    use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
+    use x25519_dalek::{PublicKey, StaticSecret};
+
+    const CALLER: Address = Address::repeat_byte(0x77);
+    const PRIVATE_KEY: [u8; 32] = [0x33; 32];
+    const DRAFT_ID: B256 = B256::repeat_byte(0x11);
+    const SU_HASH: B256 = B256::repeat_byte(0x22);
+    const ROOT: [u8; 32] = [0x04; 32];
+
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "creator": format!("{CALLER:#x}"),
+        "tribute_draft_id": format!("{DRAFT_ID:#x}"),
+        "amount_base": "100",
+        "amount_micro": "0",
+        "su_hashes": [format!("{SU_HASH:#x}")],
+    }))
+    .unwrap();
+    let offer_public_key = PublicKey::from(&StaticSecret::from(PRIVATE_KEY)).to_bytes();
+    let (cipher, nonce, ephemeral) =
+        outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
+    let key = TributeOfferKeyMaterial {
+        tribute_offer_private_key: &PRIVATE_KEY,
+        salt: &outbe_tee::OFFER_HKDF_SALT,
+    };
+
+    let mut rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+    let (private, group_key) = ops::keypair::<_, MinSig>(&mut rng);
+    let signature = sign_message::<MinSig>(
+        &private,
+        outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+        &ROOT,
+    )
+    .encode();
+
+    // A well-framed envelope whose four public words are placeholders: it gets
+    // past decoding and the merkle-root check, so the enclave runs, and then
+    // fails the host's `nft_hash` comparison - which is after the fold and
+    // before the verifier, so no CRS is needed.
+    let vk = outbe_l2registry::api::vk_for(
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        L2_CHAIN_ID,
+        Claim::Tribute,
+        CIRCUIT_VERSION,
+    )
+    .expect("the test L2 registers the fixture circuit version");
+    let mut proof = Vec::with_capacity(combined_len(vk, PUBLIC_INPUT_COUNT).unwrap());
+    proof.extend_from_slice(&4u32.to_be_bytes());
+    proof.extend_from_slice(&[0x01; 32]); // owner -> context.owner
+    proof.extend_from_slice(&[0x02; 32]); // nft_hash (placeholder)
+    proof.extend_from_slice(&[0x03; 32]); // binding_hash (placeholder)
+    proof.extend_from_slice(&ROOT);
+    proof.resize(combined_len(vk, PUBLIC_INPUT_COUNT).unwrap(), 0);
+    let proof = Bytes::from(proof);
+
+    let offer_for = |l2_chain_id: u32| OfferTributeInput {
+        caller: CALLER,
+        cipher_text: Bytes::copy_from_slice(&cipher),
+        nonce: Bytes::copy_from_slice(&nonce),
+        ephemeral_pubkey: U256::from_be_bytes(ephemeral),
+        worldwide_day: TARGET_WWD_A,
+        tribute_currency: 840,
+        reference_currency: 840,
+        exclude_from_intex_issuance: false,
+        zk_proof: proof.clone(),
+        l2_chain_id,
+        circuit_version: CIRCUIT_VERSION.to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(&ROOT),
+        signature: Bytes::copy_from_slice(&signature),
+    };
+
+    // One offer, observed at the enclave boundary: what the host handed over,
+    // and what the enclave derived from it.
+    let run = |l2_chain_id: u32| -> (TributeZkContext, TributeZkExpectedHashes) {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let scope = ExecutionScope::new();
+        let observed = std::cell::RefCell::new(None);
+        StorageHandle::enter(&mut provider, |storage| {
+            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+            L2RegistryContract::new(storage.clone())
+                .register_network(
+                    u64::from(l2_chain_id),
+                    Address::repeat_byte(0x88),
+                    &group_key.encode(),
+                )
+                .unwrap();
+            begin_block(storage.clone(), &scope).unwrap();
+
+            let error = TributeFactoryContract::new(storage.clone())
+                .offer_tribute_with_processor(
+                    &scope,
+                    &NoParentBodies,
+                    offer_for(l2_chain_id),
+                    |offers| {
+                        let results = process_tribute_offer_batch(&key, offers).0;
+                        *observed.borrow_mut() = Some((
+                            offers[0].zk_context.clone().expect("zk context"),
+                            results[0]
+                                .zk_expected_hashes
+                                .clone()
+                                .expect("expected hashes"),
+                        ));
+                        Ok(results)
+                    },
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&error, PrecompileError::Revert(message) if message.contains("nft_hash")),
+                "unexpected error: {error}"
+            );
+        });
+        observed.into_inner().expect("enclave was reached")
+    };
+
+    // The expectation, spelled out from the formula rather than taken from
+    // `binding()`: same preimage, written here, folded here.
+    let expected_binding = |l2_chain_id: u64| {
+        use outbe_l2_zk_canonical::outbe_zk_core::codec::{field_from_be_bytes, field_to_b256};
+        use outbe_l2_zk_canonical::outbe_zk_core::hash::poseidon2;
+        use outbe_l2_zk_canonical::outbe_zk_core::Fr;
+        field_to_b256(
+            &poseidon2(&[
+                Fr::from(1u64), // BINDING_DOMAIN
+                field_from_be_bytes(CALLER.as_slice()),
+                field_from_be_bytes(&DRAFT_ID.0[16..]),
+                field_from_be_bytes(&DRAFT_ID.0[..16]),
+                Fr::from(CHAIN_ID),
+                Fr::from(l2_chain_id),
+            ])
+            .unwrap(),
+        )
+        .unwrap()
+    };
+
+    let (context, hashes) = run(0xdead);
+    assert_eq!(
+        context.l2_chain_id, 0xdead,
+        "calldata chainId reached the enclave"
+    );
+    assert_eq!(
+        context.chain_id, CHAIN_ID,
+        "host chain id is still its own field"
+    );
+    assert_eq!(hashes.binding_hash, expected_binding(0xdead));
+    // Frozen too, so a change to the fold itself cannot move both sides at once.
+    assert_eq!(
+        hashes.binding_hash,
+        "0x213ccd4535aec004fb58f0dc1be3af46de5a252a923e771cd8517b0fe53649cb"
+            .parse::<B256>()
+            .unwrap()
+    );
+
+    let (other_context, other) = run(0xbeef);
+    assert_eq!(other_context.l2_chain_id, 0xbeef);
+    assert_eq!(other.binding_hash, expected_binding(0xbeef));
+    // Frozen too - the doc above promises two digests, so freeze both.
+    assert_eq!(
+        other.binding_hash,
+        "0x005e84f521ff1759cb5022e8926f123430421e5dda8ee71c76bacc8a651a1201"
+            .parse::<B256>()
+            .unwrap()
+    );
+    assert_ne!(hashes.binding_hash, other.binding_hash);
+    assert_eq!(
+        hashes.nft_hash, other.nft_hash,
+        "only the binding moves with the L2 id"
+    );
 }

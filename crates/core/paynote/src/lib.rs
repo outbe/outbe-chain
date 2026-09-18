@@ -39,9 +39,6 @@ pub mod test_support;
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
-/// Cryptographic suite used by PayNote.
-pub use outbe_zk_canonical::paynote::PayNoteSuite as PayNoteSuit;
-
 /// In-memory commitment tree for PayNote clients.
 pub use outbe_zk_canonical::paynote::Tree as PayNoteTree;
 

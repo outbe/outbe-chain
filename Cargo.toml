@@ -269,10 +269,19 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0", features = ["alloy"] }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.20.0" }
+outbe-zk-core = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742", features = ["alloy"] }
+# The claim half: `TributeDraftClaim`, `binding` and the generated
+# `PublicInputs`. A separate package, not a feature — it contains no
+# verification key and depends on nothing that does, so the enclave cannot
+# acquire one under any cargo invocation and MRENCLAVE does not move when an
+# L2 registers. Verifiers take `outbe-l2-zk-canonical`, which re-exports this.
+outbe-l2-claims = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742" }
+# The key registry: one `circuit.vk` per registered (chain, claim, version).
+# Never depend on this from the enclave.
+outbe-l2-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742" }
+outbe-zk-canonical = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742", features = ["alloy"] }
+outbe-zk-backend = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742" }
+outbe-l2-demo = { git = "https://github.com/psonet/outbe-circuits.git", rev = "5fc4742" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

@@ -16,13 +16,11 @@ use outbe_emit::EmitTree;
 use outbe_emit::Field;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::EMIT_ADDRESS;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::Codec as _;
-use outbe_protocol::FieldElement as _;
-use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+use outbe_zk_core::codec::{field_to_b256, u256_limbs_be};
+use outbe_zk_core::zk::ProofGenerator;
+use outbe_zk_core::FieldElement as _;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::{
@@ -181,7 +179,7 @@ fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
 }
 
 fn b256(field: Field) -> B256 {
-    OutbeV1::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 // ---- reference tree and proof fixture --------------------------------------
@@ -232,14 +230,13 @@ fn prove_mint(
             .unwrap(),
     };
     let backend = Barretenberg::default();
-    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
+    let proof = ProofGenerator::<EmitMint>::generate(&backend, &witness, &public)
         .expect("emit mint proof generation");
-    let fields =
-        <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public);
+    let fields = <EmitMint as outbe_zk_core::zk::Circuit>::public_inputs(&public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof.proof.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(OutbeV1::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);
@@ -345,8 +342,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     // Alice burns all 100 units into a Bob-owned note.
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let outcome = run(
@@ -399,7 +395,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let change =
         note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
     let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
-    let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
+    let change_leaf = u32::try_from(tree.append(change).unwrap()).unwrap();
     let outcome = run(
         db.clone(),
         BOB,
@@ -637,8 +633,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
 
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)).unwrap())
-            .unwrap()
-            .0,
+            .unwrap(),
     )
     .unwrap();
     let mut db = base_db();
@@ -796,8 +791,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         let leaf = u32::try_from(
             owner_tree
                 .append(note_commitment(pool, owner_serial, U256::from(100)).unwrap())
-                .unwrap()
-                .0,
+                .unwrap(),
         )
         .unwrap();
         let mut db = base_db();

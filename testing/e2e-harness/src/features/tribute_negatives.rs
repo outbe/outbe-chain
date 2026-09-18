@@ -155,20 +155,28 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             assert_eq!(call.zkMerkleRoot.len(), 32, "must reach signature guard");
             assert!(call.signature.is_empty());
         }
-        Rejection::InvalidSignature => {
+        // One arm: both rejections are about the *content* of the signature or
+        // the proof, so the call they produce has the same shape. Only what the
+        // node then rejects differs.
+        Rejection::InvalidSignature | Rejection::InvalidProof => {
             assert_eq!(call.zkMerkleRoot.len(), 32);
             assert_eq!(call.signature.len(), 48);
+            // The proof's size is a property of the key the call names, not a
+            // constant: look the key up exactly as the node does.
+            let vk = outbe_l2registry::api::vk_for(
+                outbe_primitives::chain::DEVNET_CHAIN_ID,
+                u64::from(call.chainId),
+                outbe_l2_zk_canonical::Claim::Tribute,
+                &call.version,
+            )
+            .expect("the offered circuit version is registered");
             assert_eq!(
                 call.zkProof.len(),
-                outbe_zk_canonical::full_proof::COMBINED_LEN
-            );
-        }
-        Rejection::InvalidProof => {
-            assert_eq!(call.zkMerkleRoot.len(), 32);
-            assert_eq!(call.signature.len(), 48);
-            assert_eq!(
-                call.zkProof.len(),
-                outbe_zk_canonical::full_proof::COMBINED_LEN
+                outbe_l2_zk_canonical::combined_len(
+                    vk,
+                    outbe_l2_zk_canonical::claims::tribute::PUBLIC_INPUT_COUNT
+                )
+                .expect("combined length under the registered key")
             );
         }
         Rejection::UnregisteredNetwork => {

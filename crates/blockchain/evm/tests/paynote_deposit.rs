@@ -18,8 +18,7 @@
 //!     the public view ABI.
 
 use outbe_paynote::Field;
-use outbe_paynote::PayNoteSuit;
-use outbe_protocol::Codec as _;
+use outbe_zk_core::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -88,7 +87,7 @@ fn expected_commitment_u256(asset: Address, amount: U256) -> Field {
 }
 
 fn note_serial_word() -> alloy_primitives::B256 {
-    PayNoteSuit::field_to_b256(&note_sn(Field::from(SPEND_KEY)).unwrap()).unwrap()
+    field_to_b256(&note_sn(Field::from(SPEND_KEY)).unwrap()).unwrap()
 }
 
 /// A database with the two counterparty stubs deployed and VaultRouter seeded
@@ -223,7 +222,7 @@ fn deposit_routes_full_width_amount_through_vault_router_and_appends_commitment(
 
     // And the appended leaf is the commitment the runtime derived from the
     // asset and amount it actually moved — not anything the caller supplied.
-    let commitment = PayNoteSuit::field_to_b256(&expected_commitment_u256(ASSET, amount)).unwrap();
+    let commitment = field_to_b256(&expected_commitment_u256(ASSET, amount)).unwrap();
     let present = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
@@ -362,7 +361,7 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
     );
 
     for amount in [DEPOSIT_AMOUNT, DEPOSIT_AMOUNT + 1] {
-        let commitment = PayNoteSuit::field_to_b256(&expected_commitment(ASSET, amount)).unwrap();
+        let commitment = field_to_b256(&expected_commitment(ASSET, amount)).unwrap();
         let present = run_call!(
             &mut ctx,
             PAYNOTE_ADDRESS,

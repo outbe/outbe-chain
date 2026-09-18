@@ -87,16 +87,27 @@ pub struct EncryptedTributeOffer {
     /// active curve and is valid.
     pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied for every admitted offer. The owner is
-    /// the first public input in `zkProof`; the chain id comes from the local
-    /// execution context.
+    /// the first public input in `zkProof`; the host chain id comes from the
+    /// local execution context and the L2 chain id from the calldata. Both are
+    /// folded into `binding_hash`.
     #[serde(default)]
     pub zk_context: Option<TributeZkContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeZkContext {
-    pub derived_owner: B256,
+    /// Public input zero of the submitted proof: the L2's own owner
+    /// commitment, opaque to L1. The enclave folds it into the claim as
+    /// `TributeDraftClaim::owner` and never interprets it.
+    pub owner: B256,
+    /// Host (L1) chain id, from the local execution context. `binding_hash`
+    /// folds it alongside [`TributeZkContext::l2_chain_id`], so a proof minted
+    /// against one host does not verify on another.
     pub chain_id: u64,
+    /// L2 chain id the offer selected, from the `offerTribute` calldata.
+    /// `binding_hash` folds it as a sixth preimage element, so a proof minted
+    /// for one L2 does not verify as another's.
+    pub l2_chain_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -994,6 +1005,20 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
     m
 }
 
+/// Version of the [`inputs_canonical_hash`] preimage layout, folded into the
+/// hash itself and reported beside it in
+/// [`EnclaveResponse::TributeOfferBatch`].
+///
+/// Bump this on ANY change to the bytes [`inputs_canonical_hash`] builds - a
+/// new field, a reordering, a width change. The enclave is a measured image
+/// with its own release cadence, so a host can meet an enclave built against
+/// an older layout. Without this the two just disagree on the digest and the
+/// host blames non-determinism; with it the host names the skew.
+///
+/// - `1`: the layout before the ZK context carried an L2 chain id.
+/// - `2`: current. Adds `l2_chain_id` to the per-offer ZK context.
+pub const INPUTS_CANONICAL_HASH_VERSION: u16 = 2;
+
 /// Deterministic hash over the canonical batch inputs - every field of every
 /// offer. Length-prefixed to be unambiguous.
 ///
@@ -1007,6 +1032,7 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
 /// drifting. Diagnostic only - never written to chain state.
 pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(&INPUTS_CANONICAL_HASH_VERSION.to_be_bytes());
     buf.extend_from_slice(&(offers.len() as u32).to_be_bytes());
     for offer in offers {
         buf.extend_from_slice(offer.owner.as_slice());
@@ -1025,8 +1051,9 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         match &offer.zk_context {
             Some(context) => {
                 buf.push(1);
-                buf.extend_from_slice(context.derived_owner.as_slice());
+                buf.extend_from_slice(context.owner.as_slice());
                 buf.extend_from_slice(&context.chain_id.to_be_bytes());
+                buf.extend_from_slice(&context.l2_chain_id.to_be_bytes());
             }
             None => buf.push(0),
         }
@@ -1256,6 +1283,12 @@ pub enum EnclaveResponse {
         /// Diagnostic hash of canonical inputs (incl. price/day/currency);
         /// host compares it to detect enclave non-determinism, then discards.
         inputs_canonical_hash: B256,
+        /// The [`INPUTS_CANONICAL_HASH_VERSION`] the enclave hashed under.
+        /// An enclave built before this field existed omits it and it decodes
+        /// as `0`, which is exactly how the host tells version skew from real
+        /// non-determinism instead of blaming the wrong thing.
+        #[serde(default)]
+        inputs_canonical_hash_version: u16,
         /// Local-only attestation tag; host verifies against its enclave's
         /// attestation key, then discards. Never written to state.
         attestation_tag: Vec<u8>,

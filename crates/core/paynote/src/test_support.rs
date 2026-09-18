@@ -7,18 +7,17 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::Codec as _;
-use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
+use outbe_zk_core::codec::{field_to_b256, u256_limbs_be};
+use outbe_zk_core::zk::{Circuit, ProofGenerator};
+use outbe_zk_core::FieldElement as _;
 
 use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, note_sn};
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 use crate::Field;
-use crate::{PayNoteSuit, PayNoteTree};
+use crate::PayNoteTree;
 
 /// Everything the pool and the prover need about one note.
 pub struct Note {
@@ -112,21 +111,17 @@ fn prove_spend(
             .try_into()
             .unwrap(),
     };
-    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("paynote proof generation");
+    let proof = ProofGenerator::<PayNote>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("paynote proof generation");
     (public, proof.proof)
 }
 
 pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields = <PayNote as Circuit<PayNoteSuit>>::public_inputs(public);
+    let fields = <PayNote as Circuit>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(PayNoteSuit::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);
@@ -141,7 +136,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
     provider.enter(|storage| {
         let paynote: PayNoteContract<'_> = storage.contract();
         let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
-        let empty_root = PayNoteSuit::field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
+        let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
         paynote.current_root.write(empty_root).unwrap();
         paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
         paynote.recent_roots.push(empty_root).unwrap();
@@ -149,7 +144,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
             runtime::append(&paynote, &zeros, *leaf).unwrap();
             paynote
                 .commitments
-                .write(&PayNoteSuit::field_to_b256(leaf).unwrap(), true)
+                .write(&field_to_b256(leaf).unwrap(), true)
                 .unwrap();
         }
     });
@@ -182,7 +177,7 @@ pub fn note_and_spend_proof(
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = crate::client::new_tree(chain_id).unwrap();
-    let leaf_index = u32::try_from(tree.append(n.commitment).unwrap().0).unwrap();
+    let leaf_index = u32::try_from(tree.append(n.commitment).unwrap()).unwrap();
     let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, owner, spend_amount);
 
     SpendFixture {

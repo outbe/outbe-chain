@@ -29,19 +29,19 @@ Examples:
       --rpc https://rpc.testnet.outbe.net \
       --private-key 0x<KEY> \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
-      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.0.0 \
       --tribute-draft-id 0x<32-byte draft id> --su-hash 0x<32-byte su hash>
 
   # explicit day
   python3 scripts/tribute_offer.py --rpc https://rpc.testnet.outbe.net \
       --private-key 0x<KEY> --day 20260601 --amount 100 --currency 840 \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
-      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.0.0 \
       --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
 
   # deliberate negative offer (the node rejects it): empty proof/root/signature
   python3 scripts/tribute_offer.py ... --zk-proof 0x --zk-merkle-root 0x \
-      --signature 0x --chain-id 57005 --version 1.1.0 \
+      --signature 0x --chain-id 57005 --version 1.0.0 \
       --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
 """
 
@@ -219,7 +219,7 @@ def main() -> None:
     ap.add_argument("--exclude-from-intex-issuance", action="store_true",
                     help="set the excludeFromIntexIssuance flag")
     ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
-                    help="combined FullProof bytes (0x-hex): 4-byte public-input word "
+                    help="combined tribute proof bytes (0x-hex): 4-byte public-input word "
                          "count, public inputs, proof; 0x is a deliberate negative "
                          "offer the node rejects")
     ap.add_argument("--zk-merkle-root", required=True, type=hex_bytes_arg,
@@ -231,7 +231,7 @@ def main() -> None:
                     help="L2 chain id the proof verifies under; must be the caller's "
                          "registered L2")
     ap.add_argument("--version", required=True,
-                    help="exact circuit version enabled for that chain, e.g. 1.1.0")
+                    help="exact circuit version registered for that chain, e.g. 1.0.0")
     ap.add_argument("--tribute-draft-id", required=True, type=hex32_arg,
                     help="32-byte TributeDraft id the proof and the caller's L2 "
                          "attestation bind (0x-hex)")
