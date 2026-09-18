@@ -33,9 +33,14 @@ fn submit_reward_bearing_tribute(world: &mut World) {
         "single reward-bearing offer fixture"
     );
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
+    let funder = world.validators.get(0);
+    let operator_key = funder.evm_key().expect("validator-0 EVM key");
+    // The offer is admitted only from an operator L2Registry knows with zk
+    // verification enabled; register this one under its fixture key before the
+    // day is entered.
+    crate::features::l2_registration::ensure_tribute_offer_operator(world, &operator_key);
     wait_for_offering(world, &wwd);
 
-    let funder = world.validators.get(0);
     for key in [WAA_BENEFICIARY_KEY, SRA_BENEFICIARY_KEY] {
         let funding = world
             .rpc
@@ -49,7 +54,6 @@ fn submit_reward_bearing_tribute(world: &mut World) {
 
     let waa_beneficiary = beneficiary_address(world, WAA_BENEFICIARY_KEY);
     let sra_beneficiary = beneficiary_address(world, SRA_BENEFICIARY_KEY);
-    let operator_key = funder.evm_key().expect("validator-0 EVM key");
     let transaction_hash = world
         .rpc
         .submit_tribute_offer_with_agent_rewards(
@@ -244,10 +248,9 @@ fn observe_agent_rewards(world: &mut World) {
         balances.escrow, expected_escrow,
         "AgentReward escrow differs from expected rewards"
     );
-    let expected_cca_delta = economic_reference::cca_accrual(
-        economic_reference::emission_day(genesis_rewards_timestamp, before.timestamp),
-        economic_reference::emission_day(genesis_rewards_timestamp, checkpoint.timestamp),
-    );
+    // This WAA/SRA scenario has no registered CCA or originated positions.
+    // Its CCA allocation therefore goes to terminal Metadosis.
+    let expected_cca_delta = U256::ZERO;
     assert_eq!(
         balances.cca,
         cca_before
@@ -506,7 +509,7 @@ fn reward_balances_at(
             waa: claimable(waa),
             sra: claimable(sra),
             escrow: native(addresses::AGENT_REWARD_ADDR),
-            cca: native(outbe_primitives::addresses::CCA_ADDRESS),
+            cca: native(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS),
         };
         assert_eq!(
             world

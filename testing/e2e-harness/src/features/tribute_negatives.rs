@@ -19,16 +19,26 @@ use crate::{
 
 pub(super) enum Rejection {
     Duplicate,
+    /// The selected network is registered, but the offer carries no root signature.
     MissingSignature,
+    /// A well-formed proof whose statement does not match the submitted one.
     InvalidProof,
+    /// The selected chain has no L2Registry entry. The factory guard fails closed
+    /// before the day, pricing, or enclave paths are reached.
+    UnregisteredNetwork,
 }
 
 impl Rejection {
-    fn reason(&self) -> &'static str {
+    fn reason(&self, l2_chain_id: u32) -> String {
         match self {
-            Self::Duplicate => "tribute already exists for this combination of parameters",
-            Self::MissingSignature => "invalid BLS signature over zkMerkleRoot",
-            Self::InvalidProof => "ZK proof verification failed",
+            Self::Duplicate => {
+                "tribute already exists for this combination of parameters".to_owned()
+            }
+            Self::MissingSignature => "invalid BLS signature over zkMerkleRoot".to_owned(),
+            Self::InvalidProof => "ZK proof verification failed".to_owned(),
+            Self::UnregisteredNetwork => {
+                format!("L2 network {l2_chain_id} is not registered")
+            }
         }
     }
 }
@@ -149,6 +159,16 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                 outbe_zk_canonical::full_proof::COMBINED_LEN
             );
         }
+        Rejection::UnregisteredNetwork => {
+            assert!(
+                call.zkMerkleRoot.is_empty()
+                    && call.zkProof.is_empty()
+                    && call.chainId == 0
+                    && call.version.is_empty()
+                    && call.signature.is_empty(),
+                "the registration guard must not depend on zk material"
+            );
+        }
     }
 
     let height: u64 = quantity(&receipt, "blockNumber")
@@ -162,7 +182,8 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         .rpc
         .checkpoint_at(ports[0], height)
         .expect("negative receipt checkpoint");
-    let expected = Revert::from(rejection.reason().to_owned()).abi_encode();
+    let reason = rejection.reason(call.chainId);
+    let expected = Revert::from(reason.clone()).abi_encode();
     assert_eq!(
         receipt["blockHash"]
             .as_str()
@@ -280,7 +301,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                 "transaction_hash": tx_hash, "receipt_height": height, "port": port,
                 "observation_height": observed.height, "block_hash": format!("{:#x}", observed.hash),
                 "state_root": format!("{:#x}", observed.state_root), "unstable_attempts": unstable,
-            "layer": "evm", "reason": rejection.reason(), "state_selection": "receipt_and_live_then_finalized",
+            "layer": "evm", "reason": reason, "state_selection": "receipt_and_live_then_finalized",
             })
         );
     }

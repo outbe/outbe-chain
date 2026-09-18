@@ -281,7 +281,7 @@ pub(in super::super) fn execute_gratis_prefix_down_unit(
 
     let is_root = level == topology.tree().height() && index == 0;
     let (incoming_remaining, child_start) = if is_root {
-        (Some(plan.lysis_budget), 0)
+        (Some(plan.lysis_limit_minor), 0)
     } else {
         let parent = resolved
             .first()

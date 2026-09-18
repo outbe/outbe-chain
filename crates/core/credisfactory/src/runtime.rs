@@ -57,10 +57,8 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidSmartAccount.into());
     }
 
-    // Origination is a CCA action, not an open one: the caller must be in good
-    // standing at the registry. Today's registry is a stub that reports every address
-    // active, so this rejects nothing yet - it is the seam the real one drops into.
-    if !outbe_cca::api::is_active(&storage, caller)? {
+    // Origination requires an active, fully bonded CCA.
+    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
         return Err(CredisFactoryError::CcaNotActive.into());
     }
 

@@ -66,7 +66,7 @@ sol! {
     }
 
     interface IIntexSettlement {
-        function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, bytes payNoteProof) external;
+        function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes payNoteProof) external;
         function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits);
     }
 
@@ -267,7 +267,7 @@ pub fn settle(
         url,
         INTEX_FACTORY,
         owner_key,
-        &IIntexSettlement::settleIntexCall {
+        &IIntexSettlement::settleIntexWithPayNoteCall {
             seriesId: series,
             intexOwner: owner,
             amount: U256::from(amount),

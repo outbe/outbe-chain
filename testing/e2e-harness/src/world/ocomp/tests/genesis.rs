@@ -590,8 +590,8 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
     let genesis_timestamp =
         u64::try_from(parse_hex_word(genesis["timestamp"].as_str().unwrap()).unwrap()).unwrap();
     let alloc = genesis["alloc"].as_object().unwrap();
-    for private_key in private_keys {
-        let owner = crate::internal::eth::address_of(&private_key).unwrap();
+    for private_key in &private_keys {
+        let owner = crate::internal::eth::address_of(private_key).unwrap();
         let alloc_key = find_alloc_address_key(alloc, owner)
             .unwrap()
             .expect("capacity Tribute owner is funded in base genesis");
@@ -630,6 +630,41 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
         );
         assert_eq!(day.scheduled_process_time, day.offering_end);
     });
+
+    // The Tribute factory admits an offer only from an operator L2Registry
+    // knows, so the same owners must be registered - with zk verification
+    // enabled under the deterministic fixture key - in the genesis the factory
+    // will read.
+    let registry_address = outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
+    let registry_key = find_alloc_address_key(alloc, registry_address)
+        .unwrap()
+        .expect("capacity L2 registry storage is seeded in base genesis");
+    let mut registry_provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
+    for (slot, value) in alloc[&registry_key]["storage"].as_object().unwrap() {
+        registry_provider.storage.insert(
+            (registry_address, parse_hex_word(slot).unwrap()),
+            parse_storage_word(value).unwrap(),
+        );
+    }
+    StorageHandle::enter(&mut registry_provider, |storage| {
+        let registry = outbe_l2registry::L2RegistryContract::new(storage);
+        for private_key in &private_keys {
+            let owner = crate::internal::eth::address_of(private_key).unwrap();
+            let chain_id = registry.l1_to_chain.read(&owner).unwrap();
+            assert_ne!(
+                chain_id, 0,
+                "capacity owner {owner:#x} is not registered for the factory guard"
+            );
+            let record = registry.load_network(chain_id).unwrap();
+            assert_eq!(record.l1_address, owner);
+            assert_eq!(
+                record.public_key_bytes().as_slice(),
+                crate::internal::l2_fixture::root_signing_public_key(chain_id).as_slice(),
+                "capacity owner {owner:#x} must be registered under the fixture key"
+            );
+        }
+    });
+
     assert_eq!(
         prepared.install.request_profile.genesis_hash,
         parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json"))

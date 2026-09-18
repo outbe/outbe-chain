@@ -1067,7 +1067,7 @@ mod tests {
                                     nod_count: 257,
                                     bucket_count: 1,
                                     nod_amount_total: alloy_primitives::U256::from(100),
-                                    nod_gratis_consumed: alloy_primitives::U256::ZERO,
+                                    lysis_allocation_minor: alloy_primitives::U256::ZERO,
                                     issued_at: 1,
                                     result_evidence_hash: B256::repeat_byte(13),
                                     block_number: 40,

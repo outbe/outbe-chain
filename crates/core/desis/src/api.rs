@@ -29,7 +29,7 @@ impl AuctionBriefRejectionReason {
     }
 }
 
-/// What an oversized supply means for the caller: the settlement paths carry it
+/// What an oversized limit means for the caller: the settlement paths carry it
 /// to the unallocated pool, the OCOMP request path cannot because its receipt
 /// commits a brief hash that a rejection would have nothing to fill.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,19 +44,19 @@ pub enum AuctionBriefReceipt {
     Accepted,
     RejectedToCarryOver {
         reason: AuctionBriefRejectionReason,
-        supply: U256,
+        desis_limit_minor: U256,
         max_accepted: U256,
     },
 }
 
-/// Record the day's auction brief (supply in raw PROMIS, entry price, day
-/// type). Only a supply outside Desis' `u128` auction domain is a committed
+/// Record the day's auction brief (limit in raw PROMIS, entry price, day
+/// type). Only a limit outside Desis' `u128` auction domain is a committed
 /// rejection. Invalid state, timestamp overflow, storage/index/event faults and
 /// corruption propagate as `Err`.
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
-    supply_promis: U256,
+    desis_limit_minor: U256,
     reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
@@ -64,31 +64,31 @@ pub fn dispatch_auction_brief(
 ) -> Result<AuctionBriefReceipt> {
     storage.clone().with_checkpoint(|| {
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
-        let Ok(supply_u128) = u128::try_from(supply_promis) else {
+        let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
             if matches!(overflow, BriefOverflowPolicy::Reject) {
                 return Err(outbe_primitives::error::PrecompileError::Revert(
-                    "auction brief supply exceeds Desis u128 domain".into(),
+                    "auction brief limit exceeds Desis u128 domain".into(),
                 ));
             }
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
-                supply: supply_promis,
+                supply: desis_limit_minor,
                 maxAccepted: max_accepted,
                 reasonCode: reason.code(),
             })?;
             return Ok(AuctionBriefReceipt::RejectedToCarryOver {
                 reason,
-                supply: supply_promis,
+                desis_limit_minor,
                 max_accepted,
             });
         };
         runtime::record_preflighted_brief(
             storage.clone(),
             worldwide_day,
-            supply_u128,
+            desis_limit_u128,
             reference_prices,
             is_green,
             anchor,

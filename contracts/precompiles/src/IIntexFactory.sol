@@ -10,16 +10,25 @@ pragma solidity ^0.8.30;
 ///         settlement bookkeeping and the autonomous qualification index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexOwner`. Any caller may pay; the settled units stay with
-    ///         the owner. Allowed in Qualified (voluntary) and Called (forced).
-    /// @dev The cost is paid by spending a PayNote, so this call moves no
-    ///      tokens: the underlying assets reached the reserve vault when the
-    ///      note was deposited.
+    ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
+    ///         settled units stay with the owner. Allowed in Qualified (voluntary)
+    ///         and Called (forced).
+    /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
+    ///      Payment is deposited into the reserve vault through VaultRouter.
+    /// @param asset Token registered with the vault router under either of the
+    ///        series' currencies. The issuance currency converts through COEN and
+    ///        needs fresh rates.
+    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset) external;
+
+    /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
+    /// @dev Moves no tokens: the underlying assets reached the reserve vault when
+    ///      the note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and cover the settlement cost. The issuance
     ///        currency converts through COEN and needs fresh rates.
-    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof) external;
+    function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
+        external;
 
     /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
     ///         and which of the series' two currencies that token settles on. Priced

@@ -279,7 +279,7 @@ fn encode_retained_effect(encoded: &mut Vec<u8>, effect: Option<RetainedRequestE
         Some(effect) => {
             encoded.push(1);
             encoded.extend_from_slice(&effect.effect_nonce.to_be_bytes());
-            encoded.extend_from_slice(&effect.lysis_budget.to_be_bytes::<32>());
+            encoded.extend_from_slice(&effect.lysis_limit_minor.to_be_bytes::<32>());
             encoded.extend_from_slice(effect.receipt_hash.as_slice());
         }
         None => {
@@ -363,13 +363,13 @@ fn decode_retained_effect(
 ) -> Result<Option<RetainedRequestEffectSnapshot>> {
     let present = reader.u8()?;
     let effect_nonce = reader.u64()?;
-    let lysis_budget = U256::from_be_bytes(reader.take::<32>()?);
+    let lysis_limit_minor = U256::from_be_bytes(reader.take::<32>()?);
     let receipt_hash = B256::from(reader.take::<32>()?);
     match present {
-        0 if effect_nonce == 0 && lysis_budget.is_zero() && receipt_hash.is_zero() => Ok(None),
+        0 if effect_nonce == 0 && lysis_limit_minor.is_zero() && receipt_hash.is_zero() => Ok(None),
         1 if !receipt_hash.is_zero() => Ok(Some(RetainedRequestEffectSnapshot {
             effect_nonce,
-            lysis_budget,
+            lysis_limit_minor,
             receipt_hash,
         })),
         _ => Err(storage_corruption_message(

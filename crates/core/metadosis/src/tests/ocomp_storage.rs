@@ -37,8 +37,8 @@ const DEADLINE_HEIGHT: u64 = REQUEST_HEIGHT
     + outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS;
 const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
-const LYSIS_BUDGET: U256 = U256::from_limbs([700, 0, 0, 0]);
-const AUCTION_BASE: U256 = U256::from_limbs([300, 0, 0, 0]);
+const LYSIS_LIMIT: U256 = U256::from_limbs([700, 0, 0, 0]);
+const DESIS_LIMIT: U256 = U256::from_limbs([300, 0, 0, 0]);
 const AUCTION_ENTRY_PRICE: U256 = U256::from_limbs([55, 0, 0, 0]);
 
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
@@ -187,14 +187,14 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: DAY_LIMIT,
-        lysis_budget: LYSIS_BUDGET,
-        auction_base: AUCTION_BASE,
+        lysis_limit_minor: LYSIS_LIMIT,
+        desis_limit_minor: DESIS_LIMIT,
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
                 protocol_bundle_hash,
                 WWD.value(),
-                AUCTION_BASE,
+                DESIS_LIMIT,
                 &entry_prices(),
                 REQUEST_TIME,
             )
@@ -244,10 +244,10 @@ fn intent(
             day_limit: DAY_LIMIT,
             previous_vwap: U256::from(50),
             current_vwap: U256::from(55),
-            gratis_demand: LYSIS_BUDGET,
-            gratis_supply: DAY_LIMIT,
-            lysis_budget: LYSIS_BUDGET,
-            auction_base: AUCTION_BASE,
+            gratis_demand: LYSIS_LIMIT,
+            day_gratis_limit_minor: DAY_LIMIT,
+            lysis_limit_minor: LYSIS_LIMIT,
+            desis_limit_minor: DESIS_LIMIT,
             auction_entry_prices: entry_prices(),
             request_budget_split_receipt_hash: receipt_hash,
         },
@@ -460,7 +460,7 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
-        let retained_lysis_budget = contract
+        let retained_lysis_limit_minor = contract
             .expire_ocomp_job(
                 &expiry_transition,
                 first_intent_id,
@@ -469,7 +469,7 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
                 &limits,
             )
             .unwrap();
-        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
+        assert_eq!(retained_lysis_limit_minor, LYSIS_LIMIT);
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
@@ -614,7 +614,7 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
-        let retained_lysis_budget = contract
+        let retained_lysis_limit_minor = contract
             .expire_ocomp_job(
                 &expiry_transition,
                 first_intent_id,
@@ -624,7 +624,7 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
             )
             .unwrap();
 
-        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
+        assert_eq!(retained_lysis_limit_minor, LYSIS_LIMIT);
         assert_eq!(
             contract.get_wwd_status(WWD).unwrap(),
             status::OFFCHAIN_PENDING

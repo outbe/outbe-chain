@@ -1,7 +1,7 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settleIntex` / `minePromis` name the
-//! owner they act for, so `caller = msg.sender` only binds the PayNote spent.
+//! Routing only: decode -> runtime -> encode. The settle calls / `minePromis` name the
+//! owner they act for, so `caller = msg.sender` only binds the payment.
 //! None accept value, except `distribute`, which credits auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -28,12 +28,12 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
-/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntex`
+/// Base gas charged by the registry before invoking [`dispatch`]: `settleIntexWithPayNote`
 /// verifies a PayNote spend proof, which is real native work every validator
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleIntexCall::SELECTOR) => ZK_VERIFY_GAS,
+        Some(&IIntexFactory::settleIntexWithPayNoteCall::SELECTOR) => ZK_VERIFY_GAS,
         _ => PRECOMPILE_BASE_GAS,
     }
 }
@@ -205,7 +205,17 @@ pub fn dispatch(
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
                 settleIntex(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::settle(
+                    runtime::settle_intex(
+                        &storage,
+                        SeriesId::from(c.seriesId),
+                        c.intexOwner,
+                        sender,
+                        c.amount,
+                        c.asset,
+                    )
+                }),
+                settleIntexWithPayNote(c) => mutate_void(c, caller, |sender, c| {
+                    runtime::settle_intex_with_paynote(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.intexOwner,

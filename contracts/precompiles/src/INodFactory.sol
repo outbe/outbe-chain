@@ -29,9 +29,8 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
-    /// Names the spent nullifier instead of a payer address: the note is what
-    /// pays, and it is deliberately not linkable to a payer.
+    /// @notice Emitted when a Nod is paid. ERC20 payments use a zero nullifier;
+    /// PayNote payments identify the spent note by its nullifier.
     event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
@@ -53,13 +52,15 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Pay the caller-owned qualified Nod at or before its settlement deadline.
-    /// Preserves the Nod as a paid entitlement. No PoW or mint authorization is needed.
-    function settleNod(uint256 nodId, bytes calldata payNoteProof) external;
+    /// @notice Pay a qualified Nod's costAmountMinor in ERC20 base units.
+    /// The asset must be registered for the Nod's reference currency.
+    function settleNod(uint256 nodId, address asset) external;
 
-    /// @notice Exercise a caller-owned paid Nod and mint its Gratis load.
-    /// Requires valid PoW and the owner's current Gratis mint authorization.
-    /// Paid entitlements have no mining deadline and require no further payment.
+    /// @notice Pay a qualified Nod at or before its settlement deadline.
+    /// The PayNote proof must name the caller as its owner.
+    function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
+
+    /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over `sha256(nodId_be32 || nonce_be8)` with the required leading zero bytes.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.

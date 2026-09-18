@@ -65,6 +65,12 @@ pub enum IntexFactoryError {
         worldwide_day: outbe_primitives::time::WorldwideDay,
     },
 
+    #[error("settlement token call failed")]
+    TokenOperationFailed,
+
+    #[error("settlement token moved an unexpected amount")]
+    SettlementAmountMismatch,
+
     #[error("PayNote proof names owner {actual}, expected {expected}")]
     PayNoteOwnerMismatch {
         expected: alloy_primitives::Address,

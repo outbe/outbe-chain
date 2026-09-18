@@ -119,10 +119,9 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
             .unwrap();
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.
-        OracleContract::new(handle.clone())
-            .reference_currencies
-            .push(840u16)
-            .unwrap();
+        let oracle = OracleContract::new(handle.clone());
+        oracle.reference_currencies.push(840u16).unwrap();
+        oracle.config_lookback_duration.write(86_400).unwrap();
         if let Some(rate) = rate {
             outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
@@ -411,7 +410,7 @@ fn settle_wallet_settles_with_a_registered_asset() {
         // STABLE reports 840, which is the gem's reference currency, so it
         // settles on the reference rail. Real vault interaction is covered by
         // integration tests; here the router is stubbed.
-        runtime::settle_gem(storage, ALICE, gem_id, proof).unwrap();
+        runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof).unwrap();
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Settled as u8
@@ -435,7 +434,7 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         gem_id
     });
 
@@ -447,6 +446,60 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
         .expect("settlement emits GemSettled");
     assert_eq!(event.gemId, gem_id);
     assert_eq!(event.settlementCurrency, 840);
+}
+
+/// The stubbed token answers `true` without moving a balance, so the direct path
+/// must refuse the payment and leave the gem unsettled.
+#[test]
+fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let gem_id = issue_at_live_rate(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+
+        let call = crate::precompile::IGemFactory::settleGemCall {
+            gemId: gem_id,
+            asset: STABLE,
+        };
+        let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
+        assert!(err_msg(res).contains("unexpected amount"));
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+    });
+}
+
+#[test]
+fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let gem_id = issue_at_live_rate(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
+        assert!(err_msg(res).contains("does not match"));
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+    });
 }
 
 /// Issues at the fixture's live COEN/reference rate. The production caller
@@ -516,7 +569,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // Paying with the EUR asset picks the issuance rail.
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         cost
     });
 
@@ -539,7 +592,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
             U256::from(3u64)
         );
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
     assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
@@ -559,7 +612,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
             U256::ONE
         );
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
     assert_eq!(
@@ -584,7 +637,7 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
         )
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
-        let res = runtime::settle_gem(storage, ALICE, gem_id, proof);
+        let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof);
         assert!(err_msg(res).contains("not registered"));
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
@@ -612,7 +665,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         cost
     });
 
@@ -643,7 +696,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        let res = runtime::settle_gem(&storage, ALICE, gem_id, &proof);
+        let res = runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof);
         assert!(err_msg(res).contains("no registered vault"));
     });
 }
@@ -667,7 +720,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // An eighteen-decimal asset was a hard revert before; now it scales.
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         cost
     });
 
@@ -696,7 +749,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         cost
     });
 
@@ -777,7 +830,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
         assert_eq!(iss_iso, 978);
         assert_eq!(iss_amount, ref_amount / U256::from(2u64));
 
-        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         iss_amount
     });
 
@@ -855,7 +908,7 @@ fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
         )
         .unwrap();
 
-        let error = runtime::settle_gem(storage, ALICE, gem_id, proof).unwrap_err();
+        let error = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof).unwrap_err();
 
         assert!(error.to_string().contains("stale"), "{error}");
         assert_eq!(
@@ -881,7 +934,7 @@ fn settle_rejects_wrong_settlement_currency() {
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
         // Paying a USD gem with a EUR (978) stablecoin matches neither of its
         // currencies, so it reverts before any vault interaction.
-        let res = runtime::settle_gem(storage, ALICE, gem_id, proof);
+        let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof);
         assert!(err_msg(res).contains("does not match the gem"));
     });
 }
@@ -902,7 +955,7 @@ fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        runtime::settle_gem(&storage, BOB, gem_id, &proof).unwrap();
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &proof).unwrap();
         let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Settled as u8);
         assert_eq!(item.owner, ALICE, "paying never moves the gem");
@@ -936,7 +989,7 @@ fn settle_rejects_non_qualified_state() {
         )
         .unwrap();
         // WALLET is born Issued - settle should reject (must be Qualified).
-        let res = runtime::settle_gem(storage, ALICE, gem_id, &[]);
+        let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, &[]);
         assert!(err_msg(res).contains("invalid state"));
     });
 }
@@ -1148,6 +1201,7 @@ fn an_expired_position_returns_its_remainder() {
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {
+        seed_vwap(storage, T_NOW - 60, six_decimal_unit());
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -1189,6 +1243,7 @@ fn issue_gem_position_unknown_source_rejects() {
 fn issue_merchant_gem_mints_issued_and_drains_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry below coen -> entry follows coen.
         let id = seed_and_send(
             storage,
@@ -1230,6 +1285,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, rate);
         // source entry above coen, source floor above 1.08 * entry -> both dominate.
         let source_entry = U256::from(3u64) * six_decimal_unit();
         let source_floor = U256::from(5u64) * six_decimal_unit();
@@ -1299,5 +1355,86 @@ fn issue_merchant_gem_after_expiry_rejects() {
 
         let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("expired"));
+    });
+}
+
+fn seed_vwap(storage: &StorageHandle, at: u64, vwap: U256) {
+    OracleContract::new(storage.clone())
+        .write_snapshot(
+            at,
+            &[(outbe_oracle::api::DAY_TYPE_PAIR, vwap, six_decimal_unit())],
+        )
+        .unwrap();
+}
+
+fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
+    let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
+    let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+    gem_api::get_gem(storage, gem_id)
+        .unwrap()
+        .unwrap()
+        .entry_price_minor
+}
+
+#[test]
+fn issue_merchant_gem_prices_at_the_four_hour_vwap() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let vwap = U256::from(3u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, vwap);
+        let id = seed_and_send(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let gem_id =
+            runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.entry_price_minor, vwap);
+        assert_eq!(
+            item.floor_price_minor,
+            vwap * U256::from(108u64) / U256::from(100u64)
+        );
+        assert_eq!(
+            item.call_price_minor,
+            vwap * U256::from(228u64) / U256::from(100u64)
+        );
+    });
+}
+
+#[test]
+fn issue_merchant_gem_ignores_a_spot_above_the_four_hour_vwap() {
+    let rate = U256::from(5u64) * six_decimal_unit();
+    let vwap = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, vwap);
+        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_source_entry_dominates_the_four_hour_vwap() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let source_entry = U256::from(4u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 60, U256::from(3u64) * six_decimal_unit());
+        assert_eq!(merchant_entry_price(storage, source_entry), source_entry);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_rejects_an_empty_four_hour_window() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_vwap(storage, T_NOW - 4 * 3600 - 60, rate);
+        let id = seed_and_send(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
+        assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }

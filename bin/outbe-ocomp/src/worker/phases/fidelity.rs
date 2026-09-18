@@ -353,7 +353,7 @@ pub(in super::super) fn execute_fixed_reduce_unit(
     let ordered_fractions = if is_root {
         finalize_fi_fraction_table(
             aggregate.as_ref().ok_or(WorkerError::UnitBindingMismatch)?,
-            plan.lysis_budget,
+            plan.lysis_limit_minor,
         )
         .map_err(LysisArtifactErrorV1::from)?
     } else {

@@ -99,11 +99,11 @@ wire_struct! {
         pub tribute_nominal_total: U256,
         pub day_limit: U256,
         pub gratis_demand: U256,
-        pub gratis_supply: U256,
-        pub lysis_budget: U256,
-        pub auction_base: U256,
-        pub nod_gratis_consumed: U256,
-        pub unused_lysis: U256,
+        pub day_gratis_limit_minor: U256,
+        pub lysis_limit_minor: U256,
+        pub desis_limit_minor: U256,
+        pub lysis_allocation_minor: U256,
+        pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
         pub status: CompletionStatus,
         pub logical_evaluation_height: u64,
@@ -156,11 +156,11 @@ wire_struct! {
         pub eligible_nominal_total: U256,
         pub day_limit: U256,
         pub gratis_demand: U256,
-        pub gratis_supply: U256,
-        pub lysis_budget: U256,
-        pub auction_base: U256,
-        pub nod_gratis_consumed: U256,
-        pub unused_lysis: U256,
+        pub day_gratis_limit_minor: U256,
+        pub lysis_limit_minor: U256,
+        pub desis_limit_minor: U256,
+        pub lysis_allocation_minor: U256,
+        pub unused_lysis_limit_minor: U256,
         pub carry_over_credit: U256,
         pub nod_cost_total: U256,
     }
@@ -206,7 +206,7 @@ wire_struct! {
         pub metadosis_completion_summary: MetadosisCompletionSummaryV1,
         pub tribute_count: u32,
         pub tribute_nominal_total: U256,
-        pub unused_lysis: U256,
+        pub unused_lysis_limit_minor: U256,
         pub roots: ResultRootsV1,
         pub counts: ExactCountsV1,
         pub conservation: ConservationTotalsV1,
@@ -468,13 +468,13 @@ impl LysisResultV1 {
         validate_lysis_v1_event_commitment(&self.counts, self.event_summary_hash)?;
         require(
             self.tribute_nominal_total == self.conservation.tribute_nominal_total
-                && self.unused_lysis == self.conservation.unused_lysis,
+                && self.unused_lysis_limit_minor == self.conservation.unused_lysis_limit_minor,
             "result scalar conservation binding",
         )?;
         let split_sum = self
             .conservation
-            .lysis_budget
-            .checked_add(self.conservation.auction_base)
+            .lysis_limit_minor
+            .checked_add(self.conservation.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "day budget conservation",
             })?;
@@ -485,19 +485,19 @@ impl LysisResultV1 {
         )?;
         let lysis_sum = self
             .conservation
-            .nod_gratis_consumed
-            .checked_add(self.conservation.unused_lysis)
+            .lysis_allocation_minor
+            .checked_add(self.conservation.unused_lysis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Lysis budget conservation",
             })?;
         require(
-            lysis_sum == self.conservation.lysis_budget,
+            lysis_sum == self.conservation.lysis_limit_minor,
             "Lysis budget conservation",
         )?;
         require(
-            self.conservation.carry_over_credit == self.unused_lysis
+            self.conservation.carry_over_credit == self.unused_lysis_limit_minor
                 && self.carry_over_credit.reason == CarryOverReason::UnusedLysis
-                && self.carry_over_credit.amount == self.unused_lysis
+                && self.carry_over_credit.amount == self.unused_lysis_limit_minor
                 && self.carry_over_credit.source_wwd == self.metadosis_completion_summary.wwd,
             "carry-over conservation",
         )?;
@@ -506,11 +506,12 @@ impl LysisResultV1 {
             completion.tribute_nominal_total == self.tribute_nominal_total
                 && completion.day_limit == self.conservation.day_limit
                 && completion.gratis_demand == self.conservation.gratis_demand
-                && completion.gratis_supply == self.conservation.gratis_supply
-                && completion.lysis_budget == self.conservation.lysis_budget
-                && completion.auction_base == self.conservation.auction_base
-                && completion.nod_gratis_consumed == self.conservation.nod_gratis_consumed
-                && completion.unused_lysis == self.conservation.unused_lysis
+                && completion.day_gratis_limit_minor == self.conservation.day_gratis_limit_minor
+                && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
+                && completion.desis_limit_minor == self.conservation.desis_limit_minor
+                && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
+                && completion.unused_lysis_limit_minor
+                    == self.conservation.unused_lysis_limit_minor
                 && completion.carry_over_credit == self.conservation.carry_over_credit,
             "Metadosis completion conservation binding",
         )?;
@@ -577,9 +578,9 @@ impl LysisResultV1 {
                 && completion.day_type == frozen.day_type
                 && completion.day_limit == frozen.day_limit
                 && completion.gratis_demand == frozen.gratis_demand
-                && completion.gratis_supply == frozen.gratis_supply
-                && completion.lysis_budget == frozen.lysis_budget
-                && completion.auction_base == frozen.auction_base
+                && completion.day_gratis_limit_minor == frozen.day_gratis_limit_minor
+                && completion.lysis_limit_minor == frozen.lysis_limit_minor
+                && completion.desis_limit_minor == frozen.desis_limit_minor
                 && completion.status == CompletionStatus::Completed
                 && completion.logical_evaluation_height == intent.logical_evaluation_height
                 && completion.logical_evaluation_time == intent.logical_evaluation_time,

@@ -103,7 +103,7 @@ pub fn dispatch(
                                     .entry(wwd)
                                     .metadosis_limit_amount()
                                     .read()?,
-                                |receipt| receipt.lysis_budget,
+                                |receipt| receipt.lysis_limit_minor,
                             );
                         metadosis.read_metadosis_failure_receipt(wwd, expected_value_routed)?;
                     }

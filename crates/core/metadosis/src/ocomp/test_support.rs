@@ -121,7 +121,7 @@ pub(crate) fn inject_receipt_fault(
         }
         Some(ActivationReceiptFault::Tribute) => receipts.tribute.retired_generation += 1,
         Some(ActivationReceiptFault::CarryOver) => {
-            receipts.carry_over.credited_unused_lysis += U256::from(1);
+            receipts.carry_over.credited_unused_lysis_limit_minor += U256::from(1);
             receipts.carry_over.after_value += U256::from(1);
         }
         Some(ActivationReceiptFault::RequestSplit) => {
@@ -721,8 +721,8 @@ fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(100),
-        lysis_budget: U256::from(60),
-        auction_base: U256::from(40),
+        lysis_limit_minor: U256::from(60),
+        desis_limit_minor: U256::from(40),
         destination: BudgetSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
@@ -776,9 +776,9 @@ fn intent(
             previous_vwap: U256::from(8),
             current_vwap: U256::from(10),
             gratis_demand: U256::from(60),
-            gratis_supply: U256::from(60),
-            lysis_budget: U256::from(60),
-            auction_base: U256::from(40),
+            day_gratis_limit_minor: U256::from(60),
+            lysis_limit_minor: U256::from(60),
+            desis_limit_minor: U256::from(40),
             auction_entry_prices: test_entry_prices(),
             request_budget_split_receipt_hash: request_receipt_hash,
         },
@@ -843,11 +843,11 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
         eligible_nominal_total: U256::from(600),
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
-        gratis_supply: U256::from(60),
-        lysis_budget: U256::from(60),
-        auction_base: U256::from(40),
-        nod_gratis_consumed: U256::from(45),
-        unused_lysis: U256::from(15),
+        day_gratis_limit_minor: U256::from(60),
+        lysis_limit_minor: U256::from(60),
+        desis_limit_minor: U256::from(40),
+        lysis_allocation_minor: U256::from(45),
+        unused_lysis_limit_minor: U256::from(15),
         carry_over_credit: U256::from(15),
         nod_cost_total: U256::from(300),
     };
@@ -885,11 +885,11 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
             tribute_nominal_total: U256::from(1_000),
             day_limit: U256::from(100),
             gratis_demand: U256::from(60),
-            gratis_supply: U256::from(60),
-            lysis_budget: U256::from(60),
-            auction_base: U256::from(40),
-            nod_gratis_consumed: U256::from(45),
-            unused_lysis: U256::from(15),
+            day_gratis_limit_minor: U256::from(60),
+            lysis_limit_minor: U256::from(60),
+            desis_limit_minor: U256::from(40),
+            lysis_allocation_minor: U256::from(45),
+            unused_lysis_limit_minor: U256::from(15),
             carry_over_credit: U256::from(15),
             status: CompletionStatus::Completed,
             logical_evaluation_height: TEST_REQUEST_HEIGHT,
@@ -897,7 +897,7 @@ fn result(bundle_hash: B256, job_id: B256, limits: &SchemaLimits) -> LysisResult
         },
         tribute_count: 2,
         tribute_nominal_total: U256::from(1_000),
-        unused_lysis: U256::from(15),
+        unused_lysis_limit_minor: U256::from(15),
         roots,
         counts,
         conservation,
@@ -938,12 +938,12 @@ pub fn lysis_result_for_intent(
         eligible_nominal_total: U256::ZERO,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
-        gratis_supply: frozen.gratis_supply,
-        lysis_budget: frozen.lysis_budget,
-        auction_base: frozen.auction_base,
-        nod_gratis_consumed: U256::ZERO,
-        unused_lysis: frozen.lysis_budget,
-        carry_over_credit: frozen.lysis_budget,
+        day_gratis_limit_minor: frozen.day_gratis_limit_minor,
+        lysis_limit_minor: frozen.lysis_limit_minor,
+        desis_limit_minor: frozen.desis_limit_minor,
+        lysis_allocation_minor: U256::ZERO,
+        unused_lysis_limit_minor: frozen.lysis_limit_minor,
+        carry_over_credit: frozen.lysis_limit_minor,
         nod_cost_total: U256::ZERO,
     };
     let summary = LysisArithmeticSummaryV1 {
@@ -971,7 +971,7 @@ pub fn lysis_result_for_intent(
         carry_over_credit: CarryOverCreditActionV1 {
             source_wwd: intent.wwd,
             reason: CarryOverReason::UnusedLysis,
-            amount: frozen.lysis_budget,
+            amount: frozen.lysis_limit_minor,
         },
         metadosis_completion_summary: MetadosisCompletionSummaryV1 {
             wwd: intent.wwd,
@@ -980,19 +980,19 @@ pub fn lysis_result_for_intent(
             tribute_nominal_total: intent.authenticated_day_nominal,
             day_limit: frozen.day_limit,
             gratis_demand: frozen.gratis_demand,
-            gratis_supply: frozen.gratis_supply,
-            lysis_budget: frozen.lysis_budget,
-            auction_base: frozen.auction_base,
-            nod_gratis_consumed: U256::ZERO,
-            unused_lysis: frozen.lysis_budget,
-            carry_over_credit: frozen.lysis_budget,
+            day_gratis_limit_minor: frozen.day_gratis_limit_minor,
+            lysis_limit_minor: frozen.lysis_limit_minor,
+            desis_limit_minor: frozen.desis_limit_minor,
+            lysis_allocation_minor: U256::ZERO,
+            unused_lysis_limit_minor: frozen.lysis_limit_minor,
+            carry_over_credit: frozen.lysis_limit_minor,
             status: CompletionStatus::Completed,
             logical_evaluation_height: intent.logical_evaluation_height,
             logical_evaluation_time: intent.logical_evaluation_time,
         },
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
-        unused_lysis: frozen.lysis_budget,
+        unused_lysis_limit_minor: frozen.lysis_limit_minor,
         roots,
         counts,
         conservation,
@@ -1467,7 +1467,7 @@ impl ActivationFixture {
             // A real request credits what Lysis left of the day's emission before the auction is
             // sized, so the accumulator holds at least what this receipt says the auction draws.
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .checked_add_carry_over(request_receipt.auction_base)
+                .checked_add_carry_over(request_receipt.desis_limit_minor)
                 .unwrap();
             contract
                 .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)

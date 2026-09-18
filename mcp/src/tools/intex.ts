@@ -1132,7 +1132,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const factory = addr(n, "factory");
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
-        functionName: "settleIntex",
+        functionName: "settleIntexWithPayNote",
         args: [series, intexOwner, BigInt(amount), pay_note_proof as Hex],
       });
       const receipt = await submit(n, factory, data, 0n, wait);

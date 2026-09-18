@@ -166,7 +166,7 @@ fn to_abi_certified_generation(
             nodCount: generation.nod_count,
             bucketCount: generation.bucket_count,
             nodAmountTotal: generation.nod_amount_total,
-            nodGratisConsumed: generation.nod_gratis_consumed,
+            nodGratisConsumed: generation.lysis_allocation_minor,
             issuedAt: generation.issued_at,
         },
         None => INod::CertifiedGenerationData {

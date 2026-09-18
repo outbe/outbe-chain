@@ -8211,6 +8211,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-ccaregistry",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -8219,12 +8220,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-cca"
+name = "outbe-ccaregistry"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-macros",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8310,6 +8313,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-consensus",
+ "outbe-l2registry",
  "outbe-operator",
  "outbe-paynote",
  "outbe-primitives",
@@ -8416,6 +8420,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-ccaregistry",
  "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
@@ -8427,7 +8432,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
@@ -8451,6 +8456,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-credisfactory",
@@ -8546,6 +8552,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-evm",
  "outbe-fidelity",
+ "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",
@@ -8569,7 +8576,6 @@ dependencies = [
  "radicle",
  "rand 0.10.2",
  "rand 0.8.6",
- "rand_core 0.10.1",
  "rand_core 0.6.4",
  "reth-chainspec",
  "reth-ethereum",
@@ -8698,7 +8704,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-accounting",
  "outbe-agentreward",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-chain-constants",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -8980,6 +8986,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-vote",
+ "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9462,7 +9469,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9489,6 +9496,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "hex",
+ "outbe-ccaregistry",
  "outbe-compressed-entities",
  "outbe-credis",
  "outbe-credisfactory",
@@ -9533,7 +9541,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9880,15 +9888,19 @@ dependencies = [
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-zk-backend",
  "outbe-zk-canonical",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -9977,7 +9989,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-cca",
+ "outbe-ccaregistry",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
@@ -10021,7 +10033,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "acir",
  "acvm",
@@ -10039,7 +10051,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

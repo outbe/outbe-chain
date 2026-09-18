@@ -45,7 +45,8 @@ pub fn dispatch(
                 let settled = registry.settled_units.read(&series_id)?;
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
-                to_abi_data(&record, settled, exercised, gem_factory)
+                let now = storage.timestamp()?.to::<u64>();
+                to_abi_data(&record, settled, exercised, gem_factory, now)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
@@ -85,6 +86,7 @@ fn to_abi_data(
     settled: u32,
     exercised: u32,
     gem_factory: u32,
+    now: u64,
 ) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
         seriesId: r.series_id.into(),
@@ -95,7 +97,7 @@ fn to_abi_data(
         callWindow: r.call_window_seconds,
         callThreshold: r.call_threshold_seconds,
         callPriceMinor: r.call_price_minor,
-        state: r.state,
+        state: r.effective_state(now)? as u8,
         issuedAt: r.issued_at,
         calledAt: r.called_at,
         callNoticePeriod: r.call_notice_period_seconds,

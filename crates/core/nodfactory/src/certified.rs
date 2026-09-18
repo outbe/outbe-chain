@@ -34,7 +34,7 @@ pub struct CertifiedNodGenerationV1 {
     pub roots: ResultRootsV1,
     pub counts: ExactCountsV1,
     pub nod_amount_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub issued_at: u64,
 }
 
@@ -65,7 +65,7 @@ pub fn install_certified_generation(
         nod_count: input.counts.nod_count,
         nod_root: input.roots.nod_root,
         nod_amount_total: input.nod_amount_total,
-        nod_gratis_consumed: input.nod_gratis_consumed,
+        lysis_allocation_minor: input.lysis_allocation_minor,
         issued_at: input.issued_at,
     };
     let state_event_digest = nod_state_event_digest(&input.binding, &state_projection, limits)
@@ -76,7 +76,7 @@ pub fn install_certified_generation(
         nod_count: input.counts.nod_count,
         nod_root: input.roots.nod_root,
         nod_amount_total: input.nod_amount_total,
-        nod_gratis_consumed: input.nod_gratis_consumed,
+        lysis_allocation_minor: input.lysis_allocation_minor,
         issued_at: input.issued_at,
         state_event_digest,
     };
@@ -139,7 +139,7 @@ pub fn install_certified_generation(
         nod_count: input.counts.nod_count,
         bucket_count: input.counts.bucket_count,
         nod_amount_total: input.nod_amount_total,
-        nod_gratis_consumed: input.nod_gratis_consumed,
+        lysis_allocation_minor: input.lysis_allocation_minor,
         issued_at: input.issued_at,
         next_nod_ordinal: 0,
         last_progress_height: activation_height,
@@ -156,8 +156,8 @@ pub fn install_certified_generation(
             .write(&worldwide_day, installed.metadata_word())?;
         nod.ocomp_nod_amount_total
             .write(&worldwide_day, installed.nod_amount_total)?;
-        nod.ocomp_nod_gratis_consumed
-            .write(&worldwide_day, installed.nod_gratis_consumed)?;
+        nod.ocomp_lysis_allocation_minor
+            .write(&worldwide_day, installed.lysis_allocation_minor)?;
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, installed.job_id)?;
         nod.ocomp_materialization_protocol_bundle_hash
@@ -189,7 +189,7 @@ pub fn install_certified_generation(
                 bucketRoot: input.roots.bucket_root,
                 outputManifestRoot: input.roots.output_manifest_root,
                 nodAmountTotal: input.nod_amount_total,
-                nodGratisConsumed: input.nod_gratis_consumed,
+                nodGratisConsumed: input.lysis_allocation_minor,
                 issuedAt: input.issued_at,
                 stateEventDigest: state_event_digest,
             }
@@ -220,7 +220,7 @@ fn generation_matches(
         && existing.nod_count == input.counts.nod_count
         && existing.bucket_count == input.counts.bucket_count
         && existing.nod_amount_total == input.nod_amount_total
-        && existing.nod_gratis_consumed == input.nod_gratis_consumed
+        && existing.lysis_allocation_minor == input.lysis_allocation_minor
         && existing.issued_at == input.issued_at
 }
 
@@ -534,7 +534,7 @@ mod tests {
                 semantic_event_count: 0,
             },
             nod_amount_total: U256::from(700),
-            nod_gratis_consumed: U256::from(500),
+            lysis_allocation_minor: U256::from(500),
             issued_at: 1_700_000_123,
         }
     }
@@ -561,7 +561,7 @@ mod tests {
                 nod_count: input.counts.nod_count,
                 bucket_count: input.counts.bucket_count,
                 nod_amount_total: input.nod_amount_total,
-                nod_gratis_consumed: input.nod_gratis_consumed,
+                lysis_allocation_minor: input.lysis_allocation_minor,
                 issued_at: input.issued_at,
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(receipt.nod_count, input.counts.nod_count);
         assert_eq!(receipt.nod_root, input.roots.nod_root);
         assert_eq!(receipt.nod_amount_total, input.nod_amount_total);
-        assert_eq!(receipt.nod_gratis_consumed, input.nod_gratis_consumed);
+        assert_eq!(receipt.lysis_allocation_minor, input.lysis_allocation_minor);
         assert_eq!(provider.queue_bounds(), (1, 2));
         assert_eq!(
             provider.materialization_head(),
@@ -596,7 +596,7 @@ mod tests {
             nod_count: input.counts.nod_count,
             nod_root: input.roots.nod_root,
             nod_amount_total: input.nod_amount_total,
-            nod_gratis_consumed: input.nod_gratis_consumed,
+            lysis_allocation_minor: input.lysis_allocation_minor,
             issued_at: input.issued_at,
         };
         receipt
@@ -627,7 +627,7 @@ mod tests {
             input.roots.output_manifest_root
         );
         assert_eq!(event.data.nodAmountTotal, input.nod_amount_total);
-        assert_eq!(event.data.nodGratisConsumed, input.nod_gratis_consumed);
+        assert_eq!(event.data.nodGratisConsumed, input.lysis_allocation_minor);
         assert_eq!(event.data.issuedAt, input.issued_at);
         assert_eq!(event.data.stateEventDigest, receipt.state_event_digest);
     }
@@ -669,7 +669,7 @@ mod tests {
         next.roots.bucket_root = B256::repeat_byte(42);
         next.roots.output_manifest_root = B256::repeat_byte(43);
         next.nod_amount_total = U256::from(701);
-        next.nod_gratis_consumed = U256::from(501);
+        next.lysis_allocation_minor = U256::from(501);
         next.issued_at += 1;
 
         assert!(provider.run(&next).is_err());

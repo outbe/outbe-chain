@@ -74,13 +74,10 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 /// at UTC midnight. See epic, Phase 5.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
-/// Checkout Credis Agent precompile. Two roles at one address: the accumulator that
-/// receives the daily CCA emission pool, and the registry answering an agent's
-/// standing (`ICca.getCcaState`).
-///
-/// The registry side currently answers from a stub with no storage of its own;
-/// see `outbe_cca::precompile`.
-pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
+/// Checkout Credis Agent registry precompile. Holds agent bonds and daily CCA
+/// emission rewards, and exposes agent standing (`ICcaRegistry.getCcaState`).
+/// See `outbe_ccaregistry::precompile`.
+pub const CCA_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 
 // ---------------------------------------------------------------------------
 // Validator infrastructure precompiles (0xEE00 range)
@@ -209,12 +206,10 @@ pub const COMPRESSED_ENTITIES_ADDRESS: Address =
 
 /// L2 network registry precompile (storage-backed).
 ///
-/// Records registered L2 networks keyed by `chain_id`: the L1 operator address
-/// that submits on behalf of the network, the network's BLS MinPk public key
-/// (48 bytes, same variant as validator consensus keys), and a per-network
-/// `zk_enabled` flag. When the flag is set, `TributeFactory.offerTribute`
-/// requires a valid BLS signature over `zkMerkleRoot` from the caller's
-/// registered network key. All mutating methods are permissionless by design.
+/// Records each L2's operator address and BLS MinSig group public key (G2,
+/// 96 bytes), keyed by non-zero `chain_id`. `TributeFactory.offerTribute` always
+/// requires a valid root signature and ZK proof from a registered operator.
+/// Registration is governance-only; removal requires the registered owner.
 pub const L2_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0E");
 
 /// Stablecoin Factory precompile address.

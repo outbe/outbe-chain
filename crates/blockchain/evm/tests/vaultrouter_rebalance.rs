@@ -40,8 +40,7 @@ use revm::{
     Context,
 };
 
-/// The CCA caller. `outbe_cca::api::is_active` is a stub that accepts every
-/// address (see its own doc comment), so this needs no registration.
+/// The bonded CCA caller.
 const CCA: Address = Address::new([0x11; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT_FROM: Address = Address::new([0x55; 20]);
@@ -105,6 +104,19 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
 
     let mut provider = DirectStorageProvider::new(&mut database, block());
     StorageHandle::enter(&mut provider, |storage| {
+        storage
+            .increase_balance(
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(
+            storage.clone(),
+            CCA,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
         let router = VaultRouterContract::new(storage.clone());
         if register_from {
             router.asset_vault_set(ASSET).insert(VAULT_FROM).unwrap();

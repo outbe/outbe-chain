@@ -220,7 +220,8 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
-        runtime::settle(&s, sid(7), owner(), payer, units, &fixture.proof).unwrap();
+        runtime::settle_intex_with_paynote(&s, sid(7), owner(), payer, units, &fixture.proof)
+            .unwrap();
 
         assert_eq!(
             outbe_intex::api::settled_units(&s, sid(7)).unwrap(),
@@ -241,6 +242,100 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
     assert_eq!(settled[0].amount, units);
 }
 
+/// A qualified series 7 whose owner holds two units, and a registered six-decimal
+/// payment token whose transfers answer `transfer_ret`.
+fn with_erc20_series<R>(
+    transfer_ret: alloy_primitives::Bytes,
+    f: impl FnOnce(StorageHandle) -> R,
+) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(2),
+    );
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(1),
+    );
+    storage.stub_sub_call_at(payment_token(), transfer_ret);
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(840),
+    );
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
+
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
+        f(s)
+    })
+}
+
+#[test]
+fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
+    with_erc20_series(word(1), |s| {
+        let err =
+            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(2), payment_token())
+                .unwrap_err();
+        assert!(err.to_string().contains("unexpected amount"), "{err}");
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+    });
+}
+
+#[test]
+fn erc20_settle_refuses_a_token_answering_false() {
+    with_erc20_series(word(0), |s| {
+        let err =
+            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(2), payment_token())
+                .unwrap_err();
+        assert!(err.to_string().contains("token call failed"), "{err}");
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+    });
+}
+
+#[test]
+fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
+    with_erc20_series(word(1), |s| {
+        let foreign = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+        assert!(
+            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(1), foreign).is_err()
+        );
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+    });
+}
+
+#[test]
+fn only_the_paynote_settle_pays_for_proof_verification() {
+    use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
+
+    let erc20 = IIntexFactory::settleIntexCall {
+        seriesId: sid(7).into(),
+        intexOwner: owner(),
+        amount: U256::ONE,
+        asset: payment_token(),
+    }
+    .abi_encode();
+    let paynote = IIntexFactory::settleIntexWithPayNoteCall {
+        seriesId: sid(7).into(),
+        intexOwner: owner(),
+        amount: U256::ONE,
+        payNoteProof: Default::default(),
+    }
+    .abi_encode();
+    assert_eq!(precompile::base_gas(&erc20), PRECOMPILE_BASE_GAS);
+    assert_eq!(precompile::base_gas(&paynote), ZK_VERIFY_GAS);
+}
+
 // ---------------------------------------------------------------------
 // settle gating (value movement is localnet-exercised, not unit tested)
 // ---------------------------------------------------------------------
@@ -248,14 +343,25 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, sid(7), owner(), owner(), U256::ZERO, &[]).is_err());
+        assert!(
+            runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::ZERO, &[])
+                .is_err()
+        );
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(&s, sid(7), owner(), owner(), U256::from(1), &[]).is_err());
+        assert!(runtime::settle_intex_with_paynote(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::from(1),
+            &[]
+        )
+        .is_err());
     });
 }
 
@@ -264,7 +370,9 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(&s, sid(7), owner(), owner(), U256::from(1), &[]).unwrap_err();
+        let err =
+            runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::from(1), &[])
+                .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -288,7 +396,9 @@ fn settle_rejects_expired_deadline() {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
         outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
-        let err = runtime::settle(&s, sid(7), owner(), owner(), U256::from(1), &[]).unwrap_err();
+        let err =
+            runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::from(1), &[])
+                .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }

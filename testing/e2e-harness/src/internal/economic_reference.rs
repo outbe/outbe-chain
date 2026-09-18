@@ -50,16 +50,6 @@ pub(crate) fn single_beneficiary_reward(day: u64) -> U256 {
     capped * U256::from(NATIVE_PER_PROTOCOL_UNIT)
 }
 
-/// CCA receives its entire 4% pool for each UTC day closed between snapshots.
-pub(crate) fn cca_accrual(first_day: u64, end_day: u64) -> U256 {
-    assert!(end_day >= first_day, "CCA observation moved backwards");
-    (first_day..end_day).fold(U256::ZERO, |sum, day| {
-        let pool = emission_units(day) * U256::from(4) / U256::from(100);
-        sum.checked_add(pool * U256::from(NATIVE_PER_PROTOCOL_UNIT))
-            .expect("expected CCA accrual fits U256")
-    })
-}
-
 /// Certified contributor batches can arrive in any order. Every leaf receives
 /// its floored proportional share; the round burns the undistributed remainder.
 pub(crate) fn contributor_shares(amount: U256, nominal: &[U256]) -> (Vec<U256>, U256) {
@@ -106,8 +96,6 @@ mod tests {
             single_beneficiary_reward(1),
             uint!(3436549794728000000000000_U256)
         );
-        assert_eq!(cca_accrual(1, 2), uint!(10739218108527000000000000_U256));
-        assert_eq!(cca_accrual(1, 1), U256::ZERO);
         assert_eq!(
             single_beneficiary_reward(3_072),
             single_beneficiary_reward(9_999)
@@ -118,7 +106,6 @@ mod tests {
     fn emission_day_uses_utc_calendar_boundaries() {
         assert_eq!(emission_day(86_399, 86_400), 1);
         assert_eq!(emission_day(86_400, 172_799), 0);
-        assert_eq!(cca_accrual(0, 2), cca_accrual(0, 1) + cca_accrual(1, 2));
     }
 
     #[test]

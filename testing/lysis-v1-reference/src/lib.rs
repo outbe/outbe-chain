@@ -38,7 +38,7 @@ struct CorpusCase {
 struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
-    gratis_allocation: String,
+    lysis_limit_minor: String,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -402,7 +402,14 @@ fn fraction_table_with_projection(
     }
     let target = wrap_u256(allocation * &unit) / total_nominal;
     let maximum = wrap_u256(&target * 2_u8);
+    // The distribution prioritizes its first group: highest league first.
+    shares.reverse();
+    populations.reverse();
     let mut fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
+    // Restore ascending league order for projection and the public table.
+    fractions.reverse();
+    shares.reverse();
+    populations.reverse();
     let raw_projected = group_nominals
         .iter()
         .zip(&fractions)
@@ -498,7 +505,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         return Err(ReferenceFailure::new("ZERO_TOTAL_NOMINAL"));
     }
 
-    let allocation = decimal(&input.gratis_allocation)?;
+    let allocation = decimal(&input.lysis_limit_minor)?;
     let table = fraction_table(&tributes, &total_nominal, &allocation)?;
     let fractions = table
         .iter()
@@ -607,8 +614,8 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
     Ok(json!({
         "status": "SUCCESS",
         "total_nominal": total_nominal.to_string(),
-        "gratis_allocation": allocation.to_string(),
-        "remaining_gratis": remaining.to_string(),
+        "lysis_limit_minor": allocation.to_string(),
+        "remaining_lysis_limit_minor": remaining.to_string(),
         "group_table": table,
         "nod_actions": actions,
         "contributors": contributors
@@ -926,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn six_decimal_projection_normalization_has_the_frozen_eight_unit_dust() {
+    fn six_decimal_projection_has_the_frozen_twenty_five_unit_dust() {
         let case = load_cases(&default_vectors_path())
             .unwrap()
             .into_iter()
@@ -937,14 +944,16 @@ mod tests {
             .iter()
             .map(|tribute| decimal(&tribute.nominal).unwrap())
             .sum::<BigUint>();
-        let allocation = decimal(&case.input.gratis_allocation).unwrap();
+        let allocation = decimal(&case.input.lysis_limit_minor).unwrap();
         let (_, raw, normalized) =
             fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
 
         assert_eq!(allocation, BigUint::from(4_800_000u64));
-        assert_eq!(raw, BigUint::from(4_800_034u64));
-        assert_eq!(normalized, BigUint::from(4_799_992u64));
-        assert_eq!(allocation - normalized, BigUint::from(8u64));
+        // The share remainder belongs to the highest league, so this projection
+        // is already within budget and needs no real-amount scaling.
+        assert_eq!(raw, BigUint::from(4_799_975u64));
+        assert_eq!(normalized, raw);
+        assert_eq!(allocation - normalized, BigUint::from(25u64));
     }
 
     #[test]

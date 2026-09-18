@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
@@ -93,7 +93,8 @@ fn issue_nod_inner(
     Ok(nod_id)
 }
 
-/// Owner-authorized exercise of one paid Nod.
+/// Exercise of one paid Nod. Any caller may submit; the owner's Gratis
+/// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
     pub nod_id: WwdEntityId,
@@ -101,8 +102,61 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified Nod's exact cost and preserves it for later exercise.
+/// Pays a qualified Nod's known cost directly in ERC20 base units.
 pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: WwdEntityId,
+    asset: Address,
+) -> Result<()> {
+    settle(
+        storage,
+        scope,
+        parent,
+        nod_id,
+        |reference_currency, gratis_load, entry_price| {
+            check_settlement_asset(storage, reference_currency, asset)?;
+            let cost = nod_api::cost_amount_minor(entry_price, gratis_load)?;
+            if !cost.is_zero() {
+                let before = token_balance(storage, asset)?;
+                checked_token_call(
+                    storage,
+                    asset,
+                    IERC20::transferFromCall {
+                        from: caller,
+                        to: NOD_FACTORY_ADDRESS,
+                        amount: cost,
+                    },
+                )?;
+                if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
+                    return Err(NodFactoryError::SettlementAmountMismatch.into());
+                }
+                checked_token_call(
+                    storage,
+                    asset,
+                    IERC20::approveCall {
+                        spender: VAULT_ROUTER_ADDRESS,
+                        amount: cost,
+                    },
+                )?;
+                outbe_vaultrouter::api::deposit(storage, asset, cost)?;
+                if token_balance(storage, asset)? != before {
+                    return Err(NodFactoryError::SettlementAmountMismatch.into());
+                }
+            }
+            Ok(PaidCost {
+                asset,
+                nullifier: B256::ZERO,
+                spend_amount: cost,
+            })
+        },
+    )
+}
+
+/// Pays a qualified Nod's exact cost by spending a PayNote.
+pub fn settle_nod_with_paynote(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
@@ -110,7 +164,32 @@ pub fn settle_nod(
     nod_id: WwdEntityId,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    settle(
+        storage,
+        scope,
+        parent,
+        nod_id,
+        |reference_currency, gratis_load, entry_price| {
+            discharge_cost(
+                storage,
+                reference_currency,
+                gratis_load,
+                entry_price,
+                caller,
+                paynote_proof,
+            )
+        },
+    )
+}
+
+fn settle(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    nod_id: WwdEntityId,
+    pay: impl FnOnce(u16, U256, U256) -> Result<PaidCost>,
+) -> Result<()> {
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
@@ -122,18 +201,18 @@ pub fn settle_nod(
         return Err(NodFactoryError::CallDeadlineExpired.into());
     }
     storage.clone().with_checkpoint(|| {
-        let paid = discharge_cost(
-            storage,
-            item.body(),
-            bucket.body().entry_price_minor,
-            caller,
-            paynote_proof,
-        )?;
+        let owner = item.body().owner;
+        let reference_currency = item.body().reference_currency;
+        let gratis_load = item.body().gratis_load_minor;
+        let entry_price = bucket.body().entry_price_minor;
+        // Publish the transition before external payment calls so callbacks cannot
+        // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::settle_nod(storage, scope, item, bucket)?;
+        let paid = pay(reference_currency, gratis_load, entry_price)?;
         emit_event(
             storage,
             INodFactory::NodPaid {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 asset: paid.asset,
                 nullifier: paid.nullifier,
@@ -141,6 +220,31 @@ pub fn settle_nod(
             },
         )
     })
+}
+
+fn checked_token_call(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    call: impl SolCall,
+) -> Result<()> {
+    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(NodFactoryError::TokenOperationFailed.into());
+    }
+    Ok(())
+}
+
+fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::balanceOfCall {
+            account: NOD_FACTORY_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| NodFactoryError::TokenOperationFailed.into())
 }
 
 /// Exercises a paid entitlement without payment or a deadline. Mint failure
@@ -152,23 +256,24 @@ pub fn mine_gratis(
     request: MineGratisRequest,
 ) -> Result<U256> {
     let MineGratisRequest {
-        caller,
         nod_id,
         nonce,
         auth,
+        ..
     } = request;
-    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if !item.body().is_settled {
         return Err(NodFactoryError::NodNotSettled.into());
     }
     validate_pow(nod_id, nonce)?;
+    let owner = item.body().owner;
     let gratis_load_minor = item.body().gratis_load_minor;
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, scope, item, bucket)?;
         emit_event(
             storage,
             INodFactory::NodExercised {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 gratisLoadMinor: gratis_load_minor,
             },
@@ -176,28 +281,25 @@ pub fn mine_gratis(
         emit_event(
             storage,
             INodFactory::NodBurned {
-                owner: caller,
+                owner,
                 nodId: nod_id.to_u256(),
                 gratisLoadMinor: gratis_load_minor,
             },
         )?;
-        outbe_gratisfactory::api::mint(storage.clone(), caller, gratis_load_minor, auth)?;
+        // Anyone may submit; mint is authorized by the Nod owner's modify key.
+        outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
         Ok(gratis_load_minor)
     })
 }
 
-fn load_owned_nod(
+fn load_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
     nod_id: WwdEntityId,
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if caller != item.body().owner {
-        return Err(NodFactoryError::NotOwner.into());
-    }
     if NodContract::new(storage.clone())
         .ocomp_certified_generation(item.body().worldwide_day)?
         .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
@@ -218,16 +320,17 @@ struct PaidCost {
     spend_amount: U256,
 }
 
-/// Discharges `item`'s cost by spending one PayNote.
+/// Discharges a Nod's cost by spending one PayNote.
 ///
 /// The proof is the payment. `consume` books its nullifier before returning, so
 /// the note cannot be spent twice; running inside the caller's checkpoint means
 /// a later failure un-books it. It is called last, after the cheap
-/// owner/qualification/deadline guards, so rejected settlement never pays for
+/// qualification/deadline guards, so rejected settlement never pays for
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
-    item: &NodItemState,
+    reference_currency: u16,
+    gratis_load_minor: U256,
     entry_price_minor: U256,
     caller: Address,
     paynote_proof: &[u8],
@@ -244,10 +347,10 @@ fn discharge_cost(
         }
         .into());
     }
-    check_settlement_asset(storage, item.reference_currency, claim.asset)?;
+    check_settlement_asset(storage, reference_currency, claim.asset)?;
     let cost = settlement_units(
         entry_price_minor,
-        item.gratis_load_minor,
+        gratis_load_minor,
         read_decimals(storage, claim.asset)?,
     )?;
     if claim.spend_amount != cost {
@@ -286,13 +389,13 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
         .map_err(|_| PrecompileError::Revert("settlement asset decimals undecodable".into()))
 }
 
-/// Rejects a note whose asset the vault router does not register under
+/// Rejects a payment whose asset the vault router does not register under
 /// `reference_currency`.
 ///
 /// The cost is denominated in the Nod's own reference currency, so any asset
 /// registered under it settles the Nod: the registry lists interchangeable
-/// alternatives, not a preference, and the payer picks which one their note
-/// carries. An empty registry is a configuration error, not a payer one.
+/// alternatives, not a preference, and the payer selects the asset. An empty
+/// registry is a configuration error, not a payer one.
 fn check_settlement_asset(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
@@ -301,7 +404,7 @@ fn check_settlement_asset(
     let registered =
         outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?;
     if !registered.contains(&asset) {
-        return Err(NodFactoryError::PayNoteAssetMismatch {
+        return Err(NodFactoryError::SettlementAssetMismatch {
             asset,
             reference_currency,
         }

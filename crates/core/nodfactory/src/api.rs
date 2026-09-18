@@ -53,8 +53,8 @@ pub fn materialize_certified_nods(
     )
 }
 
-/// Pays a qualified owner-held Nod for later mining.
-pub fn settle_nod(
+/// Pays a qualified Nod for later mining.
+pub fn settle_nod_with_paynote(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
@@ -62,5 +62,17 @@ pub fn settle_nod(
     nod_id: WwdEntityId,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    runtime::settle_nod(storage, scope, parent, caller, nod_id, paynote_proof)
+    runtime::settle_nod_with_paynote(storage, scope, parent, caller, nod_id, paynote_proof)
+}
+
+/// Pays a qualified Nod's cost directly in ERC20 base units.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: WwdEntityId,
+    asset: Address,
+) -> Result<()> {
+    runtime::settle_nod(storage, scope, parent, caller, nod_id, asset)
 }

@@ -476,7 +476,7 @@ fn begin_block_drain_isolates_failing_series() {
 fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
-    let calls = [IIntexFactory::settleIntexCall {
+    let calls = [IIntexFactory::settleIntexWithPayNoteCall {
         seriesId: Default::default(),
         intexOwner: Address::ZERO,
         amount: U256::ZERO,

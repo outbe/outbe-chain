@@ -153,7 +153,7 @@ fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
 }
 
 #[test]
-fn zero_or_over_budget_gratis_load_is_a_hard_failure_without_consumption() {
+fn zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption() {
     let mut remaining = U256::from(10);
     assert!(crate::runtime::consume_required_gratis(&mut remaining, U256::ZERO).is_err());
     assert_eq!(remaining, U256::from(10));
@@ -416,7 +416,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     let wwd = WorldwideDay::new(20260525);
     let nominal = coen(100u64);
     let total_nominal = nominal * U256::from(DENSE_TRIBUTE_COUNT);
-    let gratis_allocation = total_nominal / U256::from(10u64);
+    let lysis_limit_minor = total_nominal / U256::from(10u64);
     let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
@@ -451,7 +451,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         tribute.seal_day(wwd).unwrap();
 
         let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
                 .expect("GAS-08 dense Lysis day must complete");
 
         assert_eq!(
@@ -501,7 +501,10 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         assert!(!item.gratis_load_minor.is_zero());
         issued_gratis += item.gratis_load_minor;
     }
-    assert_eq!(issued_gratis + result.remaining_gratis, gratis_allocation);
+    assert_eq!(
+        issued_gratis + result.remaining_lysis_limit_minor,
+        lysis_limit_minor
+    );
 }
 
 #[test]
@@ -660,7 +663,7 @@ fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
 }
 
 #[test]
-fn test_normalized_f1_respects_budget_skewed_population() {
+fn test_normalized_f1_respects_limit_skewed_population() {
     // Skewed population + imbalanced interest tends to push raw f1 over the
     // target. After normalization the post-condition must hold.
     let q = SCALE / U256::from(4u64);
@@ -674,7 +677,7 @@ fn test_normalized_f1_respects_budget_skewed_population() {
 }
 
 #[test]
-fn test_normalized_f1_respects_budget_many_groups() {
+fn test_normalized_f1_respects_limit_many_groups() {
     let n = 10usize;
     let y_fp: Vec<U256> = (0..n).map(|_| SCALE / U256::from(n as u64)).collect();
     let p: Vec<u64> = (1..=n as u64).collect();
@@ -864,12 +867,12 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         // 3. Pick a gratis allocation that produces a positive gratis_load.
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
-        let gratis_allocation = nominal / U256::from(10u64);
+        let lysis_limit_minor = nominal / U256::from(10u64);
         let league_id = outbe_fidelity::api::league(s.clone(), owner).unwrap();
         let pure_result = crate::program_v1::execute(crate::program_v1::ProgramInputV1 {
             worldwide_day: wwd,
             logical_evaluation_time: T_NOW,
-            gratis_allocation,
+            lysis_limit_minor,
             tributes: vec![crate::program_v1::ObservedTributeV1 {
                 tribute: crate::program_v1::TributeInputV1 {
                     tribute_id: entity_id(wwd, owner),
@@ -889,7 +892,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         })
         .expect("pure Lysis V1");
 
-        let result = lysis(s.clone(), &scope, &bodies, wwd, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
         end_block(s, &scope).unwrap();
         (result, pure_result)
@@ -962,13 +965,13 @@ fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
 fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
     // 5% deficit - well below the historical 8% floor.
-    let gratis_allocation = total_interest * U256::from(5u64) / U256::from(100u64);
+    let lysis_limit_minor = total_interest * U256::from(5u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
         &tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .unwrap();
 
@@ -987,13 +990,13 @@ fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
     // 30% deficit - well above the historical 8%/16% range; the new logic
     // must not silently cap the fraction at 16%.
-    let gratis_allocation = total_interest * U256::from(30u64) / U256::from(100u64);
+    let lysis_limit_minor = total_interest * U256::from(30u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
         &tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .unwrap();
 
@@ -1011,13 +1014,13 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
     // 32% - matches the canonical metadosis symbolic rate (D1 in
     // metadosis-lysis-discrepancies.md). The fraction must reach 0.32, exactly.
-    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
+    let lysis_limit_minor = total_interest * U256::from(32u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
         &tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .unwrap();
 
@@ -1047,14 +1050,14 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         .fold(U256::ZERO, |acc, v| acc + v);
     debug_assert_eq!(total_interest, coen(5050u64));
 
-    let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
-    debug_assert_eq!(gratis_allocation, coen(1616u64));
+    let lysis_limit_minor = total_interest * U256::from(32u64) / U256::from(100u64);
+    debug_assert_eq!(lysis_limit_minor, coen(1616u64));
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
         &tribute_fis,
         total_interest,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .unwrap();
 
@@ -1078,7 +1081,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         );
     }
 
-    // 3. Algorithm-level budget invariant. Reconstruct the y_fp vector exactly
+    // 3. Algorithm-level limit invariant. Reconstruct the y_fp vector exactly
     //    as the runtime does (BTreeMap-ordered group share with the truncation
     //    delta absorbed into the last entry) and assert the normalized
     //    `sum(f_g * y_fp_g)/SCALE <= f_fp` post-condition. This is the
@@ -1108,7 +1111,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^6
     assert!(
         weighted <= f_fp,
-        "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
+        "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% limit violated)"
     );
 
     println!("100-tribute / 15-FI fraction map: {:?}", map);
@@ -1139,7 +1142,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     let cost_of_gratis = U256::from(500_000u64);
 
     // Scarce: allocation is only 4% of nominal -> deficit (4%) is BELOW the 8% floor.
-    let gratis_allocation = nominal * U256::from(4u64) / U256::from(100u64);
+    let lysis_limit_minor = nominal * U256::from(4u64) / U256::from(100u64);
     let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
 
     let mut storage = HashMapStorageProvider::new(1);
@@ -1172,7 +1175,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
         tribute.seal_day(wwd).unwrap();
 
-        let result = lysis(s.clone(), &scope, &bodies, wwd, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -1183,7 +1186,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
 
         assert!(
-            result.remaining_gratis.is_zero(),
+            result.remaining_lysis_limit_minor.is_zero(),
             "the full scarce allocation must be consumed"
         );
         end_block(s, &scope).unwrap();
@@ -1197,7 +1200,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         .map(decode_nod_body_event)
         .expect("NOD body event");
     assert_eq!(item.nod_id, result.nod_ids[0]);
-    assert_eq!(item.gratis_load_minor, gratis_allocation);
+    assert_eq!(item.gratis_load_minor, lysis_limit_minor);
     assert!(item.gratis_load_minor < eight_percent_load);
 }
 
@@ -1250,10 +1253,10 @@ fn lysis_records_contributors_aggregated_by_owner() {
         tribute.seal_day(wwd).unwrap();
 
         let total_nominal = coen(600u64);
-        let gratis_allocation = total_nominal / U256::from(10u64);
+        let lysis_limit_minor = total_nominal / U256::from(10u64);
 
         let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
                 .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
@@ -1333,10 +1336,10 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         tribute.seal_day(wwd).unwrap();
 
         let total_nominal = coen(600u64);
-        let gratis_allocation = total_nominal / U256::from(10u64);
+        let lysis_limit_minor = total_nominal / U256::from(10u64);
 
         let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
                 .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),

@@ -21,8 +21,14 @@ pub enum TributeFactoryError {
     #[error("enclave rejected the offer: {0}")]
     EnclaveRejected(String),
 
-    #[error("zkProof is required when ZK verification is enabled")]
+    #[error("zkProof is required")]
     ZkProofRequired,
+
+    #[error("unknown circuit version {version:?} for L2 chain {chain_id}")]
+    UnknownCircuitVersion { chain_id: u32, version: String },
+
+    #[error("ZK circuit does not support the Tribute proof interface")]
+    UnsupportedZkCircuit,
 
     #[error("malformed zkProof: {0}")]
     MalformedZkProof(String),

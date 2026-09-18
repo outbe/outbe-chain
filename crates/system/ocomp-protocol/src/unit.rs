@@ -201,7 +201,7 @@ wire_struct! {
         pub attempt: u32,
         pub input_manifest_hash: B256,
         pub wwd: u32,
-        pub lysis_budget: U256,
+        pub lysis_limit_minor: U256,
         pub logical_evaluation_time: u64,
         pub tribute_count: u32,
         pub max_tributes_per_work_shard: u32,
@@ -482,7 +482,7 @@ impl PlanCommitmentV1 {
         require(
             self.tribute_count > 0
                 && self.wwd > 0
-                && !self.lysis_budget.is_zero()
+                && !self.lysis_limit_minor.is_zero()
                 && self.logical_evaluation_time > 0
                 && self.max_tributes_per_work_shard > 0
                 && !self.primary_work_unit_root.is_zero(),

@@ -13,6 +13,12 @@ use outbe_ocomp_protocol::{
     registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
 };
 
+/// Keep system temp-directory symlinks outside storage path validation.
+#[allow(dead_code)]
+pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)
+}
+
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(if byte == 0 { 0xff } else { byte })
 }
@@ -95,9 +101,9 @@ pub fn finalized_job_spec(
             previous_vwap: nominal,
             current_vwap: nominal,
             gratis_demand: U256::ZERO,
-            gratis_supply: U256::ZERO,
-            lysis_budget: nominal,
-            auction_base: U256::ZERO,
+            day_gratis_limit_minor: U256::ZERO,
+            lysis_limit_minor: nominal,
+            desis_limit_minor: U256::ZERO,
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: nominal,

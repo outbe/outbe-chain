@@ -393,7 +393,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &key,
         addresses::GEM_FACTORY_ADDR,
         350_000,
-        &eth::IGemFactory::settleGemCall {
+        &eth::IGemFactory::settleGemWithPayNoteCall {
             gemId: gem_id,
             payNoteProof: paynote_proof.into(),
         },
@@ -610,7 +610,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &url,
             addresses::GEM_FACTORY_ADDR,
             &key,
-            &eth::IGemFactory::settleGemCall {
+            &eth::IGemFactory::settleGemWithPayNoteCall {
                 gemId: gem_id,
                 payNoteProof: proof.into(),
             },
@@ -944,7 +944,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &url,
         addresses::NOD_FACTORY_ADDR,
         &key,
-        &eth::INodFactory::settleNodCall {
+        &eth::INodFactory::settleNodWithPayNoteCall {
             nodId: U256::from_be_slice(&nod_id),
             payNoteProof: paynote_proof.into(),
         },
