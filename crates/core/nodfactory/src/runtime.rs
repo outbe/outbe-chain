@@ -161,18 +161,18 @@ pub fn settle_nod_with_paynote(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
     nod_id: WwdEntityId,
     paynote_proof: &[u8],
 ) -> Result<()> {
     settle(storage, scope, parent, nod_id, |terms, entry_price| {
-        discharge_cost(storage, terms, entry_price, caller, paynote_proof)
+        discharge_cost(storage, terms, entry_price, paynote_proof)
     })
 }
 
 /// Currency pair and load a settlement charges against. Copied off the item
 /// before `settle_nod` consumes the loaded body.
 struct SettlementTerms {
+    owner_reference: Address,
     issuance_currency: u16,
     reference_currency: u16,
     gratis_load_minor: U256,
@@ -199,6 +199,7 @@ fn settle(
     storage.clone().with_checkpoint(|| {
         let owner = item.body().owner;
         let terms = SettlementTerms {
+            owner_reference: owner,
             issuance_currency: item.body().issuance_currency,
             reference_currency: item.body().reference_currency,
             gratis_load_minor: item.body().gratis_load_minor,
@@ -330,21 +331,19 @@ fn discharge_cost(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
     entry_price_minor: U256,
-    caller: Address,
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // PayNote notes are bearer instruments: the proof names its own owner and
-    // anyone can relay it. Binding that owner to the caller is what stops an
-    // observer from lifting a broadcast proof to pay for their own Nod.
-    if claim.owner != caller {
+    // front-running protection
+    if claim.owner != terms.owner_reference {
         return Err(NodFactoryError::PayNoteOwnerMismatch {
-            expected: caller,
+            expected: terms.owner_reference,
             actual: claim.owner,
         }
-        .into());
+            .into());
     }
+
     let currency = accept_payment_asset(
         storage,
         claim.asset,
@@ -479,6 +478,7 @@ pub fn quote_settlement(
 ) -> Result<(u16, U256)> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     let terms = SettlementTerms {
+        owner_reference: item.body().owner,
         issuance_currency: item.body().issuance_currency,
         reference_currency: item.body().reference_currency,
         gratis_load_minor: item.body().gratis_load_minor,
