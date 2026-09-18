@@ -260,12 +260,14 @@ pub fn run_canary_probe(
         Ok(EnclaveResponse::TributeOfferBatch {
             results,
             inputs_canonical_hash: reported_hash,
+            inputs_canonical_hash_version: reported_version,
             attestation_tag,
         }) => validate_canary_batch(
             requester,
             &offers,
             &results,
             reported_hash,
+            reported_version,
             &attestation_tag,
             latency_ms,
         ),
@@ -287,6 +289,7 @@ fn validate_canary_batch(
     offers: &[EncryptedTributeOffer],
     results: &[outbe_tee::protocol::TributeOfferResult],
     reported_hash: alloy_primitives::B256,
+    reported_version: u16,
     attestation_tag: &[u8],
     latency_ms: u64,
 ) -> CanaryTickOutcome {
@@ -303,6 +306,16 @@ fn validate_canary_batch(
     }
     if result.owner != CANARY_OWNER {
         return fail("canary result echoes a different owner".to_string());
+    }
+    // Checked before the digest: a skewed enclave fails the hash too, and the
+    // canary is where an operator should learn it is an image mismatch rather
+    // than a faulty enclave - before offers start reverting.
+    let version = outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION;
+    if reported_version != version {
+        return fail(format!(
+            "canary enclave hashes canonical inputs at layout version \
+             {reported_version}, this node at {version}; update the enclave image"
+        ));
     }
     if reported_hash != inputs_canonical_hash(offers) {
         return fail("canary inputs_canonical_hash mismatch (non-determinism)".to_string());
@@ -743,6 +756,7 @@ mod tests {
                 status: TributeOfferStatus::Created,
             }],
             inputs_canonical_hash: alloy_primitives::B256::repeat_byte(0xFF),
+            inputs_canonical_hash_version: outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION,
             attestation_tag: Vec::new(),
         };
         let fake = FakeRequester::new(vec![

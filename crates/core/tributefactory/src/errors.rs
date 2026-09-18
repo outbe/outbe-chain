@@ -92,15 +92,6 @@ pub enum TributeFactoryError {
 
     #[error("invalid sra_address at index {index}: {address}")]
     InvalidSraAddressAtIndex { index: usize, address: String },
-
-    #[error("base amount has too many decimal places (max 18)")]
-    BaseAmountTooManyDecimals,
-
-    #[error("invalid base amount format")]
-    InvalidBaseAmountFormat,
-
-    #[error("invalid atto amount format")]
-    InvalidAttoAmountFormat,
 }
 
 impl From<TributeFactoryError> for PrecompileError {
