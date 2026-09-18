@@ -24,12 +24,13 @@ interface IGem {
     // ERC-721
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 gemId) external view returns (address);
-    // Declared for ERC-721 shape only: all five always revert NonTransferable.
+    // Gems are soulbound: transfers and approvals always revert NonTransferable.
     function transferFrom(address from, address to, uint256 gemId) external;
     function safeTransferFrom(address from, address to, uint256 gemId) external;
     function safeTransferFrom(address from, address to, uint256 gemId, bytes calldata data) external;
     function approve(address to, uint256 gemId) external;
     function setApprovalForAll(address operator, bool approved) external;
+    // No approval can exist: these read address(0) and false.
     function getApproved(uint256 gemId) external view returns (address);
     function isApprovedForAll(address owner, address operator) external view returns (bool);
 
@@ -46,14 +47,15 @@ interface IGem {
     // outbe-specific views
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
 
-    // --- Events (emitted by the Gem precompile) ---
+    // --- Events ---
+    /// @notice Emitted when a gem is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-    // Declared for ERC-721 shape only: gems are non-transferable, so these two are never emitted.
+    // Declared for ERC-721 shape only: gems are soulbound, so these two are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-    /// @notice ERC-4906: the metadata of `_tokenId` changed.
+    /// @notice ERC-4906: emitted when a gem is qualified, called or settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906: the metadata of every token in `[_fromTokenId, _toTokenId]` changed.
+    /// @notice ERC-4906, declared for the standard's shape only: never emitted.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
     /// @notice Issued gem promoted to Qualified by the daily qualification sweep.
     event GemQualified(uint256 indexed gemId, uint64 qualifiedAt);

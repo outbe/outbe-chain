@@ -2,15 +2,16 @@
 pragma solidity ^0.8.30;
 
 interface INod {
+    /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-    // Declared for ERC-721 shape only: Nods are soul-bound, so these two are never emitted.
+    // Declared for ERC-721 shape only: Nods are soulbound, so these two are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
 
-    /// ERC-4906: the metadata of `_tokenId` changed.
+    /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906: the metadata of every token in `[_fromTokenId, _toTokenId]` changed. A bucket
-    /// transition announces the id range of its Worldwide Day, the top four bytes of a Nod id.
+    /// ERC-4906: emitted per Worldwide Day when a qualification or call pass changes its buckets.
+    /// The range is the ids of that day, whose top four bytes are the day.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     event NodBodyStored(
@@ -119,12 +120,13 @@ interface INod {
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 nodId) external view returns (address);
 
-    // ERC-721 transfer surface. Nods are soul-bound: the five mutators always revert.
+    // ERC-721 transfer surface. Nods are soulbound: transfers and approvals always revert.
     function transferFrom(address from, address to, uint256 nodId) external;
     function safeTransferFrom(address from, address to, uint256 nodId) external;
     function safeTransferFrom(address from, address to, uint256 nodId, bytes calldata data) external;
     function approve(address to, uint256 nodId) external;
     function setApprovalForAll(address operator, bool approved) external;
+    // No approval can exist: these read address(0) and false.
     function getApproved(uint256 nodId) external view returns (address);
     function isApprovedForAll(address owner, address operator) external view returns (bool);
 

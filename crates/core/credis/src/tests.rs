@@ -1408,7 +1408,7 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
 }
 
 #[test]
-fn precompile_names_the_collection_and_is_soul_bound() {
+fn precompile_names_the_collection_and_is_soulbound() {
     with_credis(|storage| {
         let call = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO);
         let out = call(ICredis::nameCall {}.abi_encode()).unwrap();

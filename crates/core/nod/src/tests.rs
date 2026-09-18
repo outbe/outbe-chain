@@ -719,7 +719,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
 }
 
 #[test]
-fn transfer_surface_is_soul_bound() {
+fn transfer_surface_is_soulbound() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
 
