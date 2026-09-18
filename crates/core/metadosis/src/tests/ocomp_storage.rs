@@ -189,7 +189,7 @@ fn receipt() -> RequestLimitSplitReceiptV1 {
         day_limit: DAY_LIMIT,
         lysis_limit_minor: LYSIS_LIMIT,
         desis_limit_minor: DESIS_LIMIT,
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
                 protocol_bundle_hash,

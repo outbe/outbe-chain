@@ -21,7 +21,7 @@ fn requested_state() -> JobFsmState {
             deadline_height: DEADLINE_HEIGHT,
             intent_id: INTENT,
             lysis_limit_minor: LYSIS_LIMIT,
-            request_budget_receipt_hash: RECEIPT_HASH,
+            request_limit_receipt_hash: RECEIPT_HASH,
         })
         .unwrap();
     state
@@ -41,7 +41,7 @@ fn fresh_job_has_exactly_one_request_effect() {
             deadline_height: DEADLINE_HEIGHT,
             intent_id: INTENT,
             lysis_limit_minor: LYSIS_LIMIT,
-            request_budget_receipt_hash: RECEIPT_HASH,
+            request_limit_receipt_hash: RECEIPT_HASH,
         })
         .unwrap();
 
@@ -85,7 +85,7 @@ fn expiry_is_exclusive_and_absorbing_without_successor_job() {
             deadline_height: DEADLINE_HEIGHT + 65,
             intent_id: B256::repeat_byte(0x62),
             lysis_limit_minor: LYSIS_LIMIT,
-            request_budget_receipt_hash: RECEIPT_HASH,
+            request_limit_receipt_hash: RECEIPT_HASH,
         },
         JobFsmCommand::Expire {
             at_height: DEADLINE_HEIGHT + 1,
