@@ -553,6 +553,21 @@ where
     let mut runtime = runtime
         .lock()
         .map_err(|_| eyre::eyre!("offchain-data projector lock is poisoned"))?;
+    if runtime
+        .runtime_failure_sender
+        .as_ref()
+        .is_some_and(|sender| {
+            matches!(
+                *sender.borrow(),
+                Some(RuntimeBodyFailure::Unavailable { .. })
+            )
+        })
+    {
+        runtime
+            .writer
+            .verify_transaction_capability()
+            .wrap_err("probe offchain storage before acknowledging runtime-body recovery")?;
+    }
     let overlay = runtime.overlay.clone();
     let projector = &mut runtime.projector;
     let state = projector.state();

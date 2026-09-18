@@ -154,7 +154,10 @@ wire_struct! {
     /// Capacity totals use protocol units (1,000,000 per whole COEN).
     /// Lysis allocation is the sum of issued Nod loads; adding its unused limit
     /// reconciles to the frozen Lysis limit. The Desis limit is an auction ceiling,
-    /// not the allocation into live Intex issuance.
+    /// not the allocation into live Intex issuance. C37 still binds the Desis
+    /// Limit here: later issuance must stay inside it, so
+    /// `lysis_allocation + desis_limit` is the largest outcome the auction may
+    /// still produce.
     pub struct ConservationTotalsV1 {
         pub tribute_nominal_total: U256,
         pub eligible_nominal_total: U256,
@@ -440,6 +443,24 @@ fn validate_nod_membership_proof(
     )
 }
 
+/// Sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
+/// nominal. Pass Desis Allocation once the auction has frozen it. Before then
+/// pass the Desis Limit, the maximum later issuance may allocate, so a Limit
+/// that could breach the ceiling fails before economic writes.
+pub fn wwd_allocation_ceiling(
+    lysis_allocation_minor: U256,
+    desis_minor: U256,
+    tribute_nominal_total: U256,
+) -> Result<(), ProtocolError> {
+    let allocated =
+        lysis_allocation_minor
+            .checked_add(desis_minor)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "WWD allocation ceiling",
+            })?;
+    require(allocated <= tribute_nominal_total, "WWD allocation ceiling")
+}
+
 impl LysisResultV1 {
     #[must_use]
     pub fn arithmetic_summary(&self) -> LysisArithmeticSummaryV1 {
@@ -497,6 +518,11 @@ impl LysisResultV1 {
         require(
             lysis_sum == self.conservation.lysis_limit_minor,
             "Lysis limit conservation",
+        )?;
+        wwd_allocation_ceiling(
+            self.conservation.lysis_allocation_minor,
+            self.conservation.desis_limit_minor,
+            self.conservation.tribute_nominal_total,
         )?;
         require(
             self.conservation.carry_over_credit == self.unused_lysis_limit_minor

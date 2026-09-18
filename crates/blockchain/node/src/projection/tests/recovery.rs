@@ -412,9 +412,53 @@ async fn runtime_body_unavailability_uses_the_projection_recovery_session() {
         }
     })
     .await
-    .expect("an acknowledged projector reopen must restore readiness");
+    .expect("a successful storage probe must restore readiness");
     assert!(exit_rx.try_recv().is_err());
     task.abort();
+}
+
+#[test]
+fn runtime_outage_requires_a_successful_probe_before_recovery_acknowledgement() {
+    let runtime = initialized_runtime(1);
+    let storage = Arc::new(FailAfterStartupStorage::default());
+    storage.fail_reads.store(true, Ordering::SeqCst);
+    {
+        let mut runtime = runtime.lock().unwrap();
+        runtime.writer = storage.clone();
+        runtime
+            .runtime_failure_sender
+            .as_ref()
+            .unwrap()
+            .send_replace(Some(RuntimeBodyFailure::Unavailable {
+                generation: 1,
+                since: std::time::Instant::now(),
+            }));
+    }
+    let (logical_tx, _logical_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (write_tx, _write_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
+    let attempt = || {
+        project_through_target(
+            MockEthProvider::<reth_ethereum::EthPrimitives>::new(),
+            &runtime,
+            FinalizedTarget::new(0, B256::repeat_byte(0x11)),
+            &logical_tx,
+            &write_tx,
+            &recovery_tx,
+        )
+    };
+
+    assert_eq!(
+        projection_failure_class(&attempt().unwrap_err()),
+        ProjectionFailureClass::StorageUnavailable
+    );
+    assert!(recovery_rx.try_recv().is_err());
+
+    storage.fail_reads.store(false, Ordering::SeqCst);
+    assert_eq!(attempt().unwrap(), None);
+    recovery_rx
+        .try_recv()
+        .expect("successful probe acknowledges recovery");
 }
 
 #[tokio::test]

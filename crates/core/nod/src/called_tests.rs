@@ -23,7 +23,7 @@ use crate::{
     api,
     constants::{
         CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP, CALL_THRESHOLD,
-        CALL_THRESHOLD_DAYS, CALL_WINDOW, SECS_PER_DAY,
+        CALL_THRESHOLD_DAYS, CALL_WINDOW, MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -234,6 +234,77 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>, &ExecutionScope, &NodRepository
         register(&storage, ISO);
         body(&storage, &scope, &parent);
     });
+}
+
+fn try_forfeit(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    bucket_key: B256,
+    budget: u32,
+) -> outbe_primitives::error::Result<u32> {
+    storage.with_checkpoint(|| {
+        let mut nod = NodContract::new(storage.clone());
+        crate::called::forfeit_members(storage, &mut nod, scope, parent, bucket_key, budget)
+    })
+}
+
+/// Issues `specs` as (owner-byte, load, paid) into one bucket, qualifies it,
+/// force-calls it, and leaves the clock past the sealed notice.
+fn arm_lapsed(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    specs: &[(u8, u64, bool)],
+) -> (B256, Vec<NodItemState>) {
+    let items: Vec<NodItemState> = specs
+        .iter()
+        .map(|&(owner, load, _)| {
+            let mut item = nod_item(Address::repeat_byte(owner), ISO);
+            item.gratis_load_minor = U256::from(load);
+            api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+            item
+        })
+        .collect();
+    let bucket_key = items[0].bucket_key;
+    NodContract::new(storage.clone())
+        .qualify_bucket(scope, parent, bucket_key)
+        .unwrap();
+    let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, bucket_key);
+    for (item, &(_, _, paid)) in items.iter().zip(specs) {
+        if paid {
+            api::settle_nod(
+                storage,
+                scope,
+                api::load_item(storage, scope, parent, item.nod_id)
+                    .unwrap()
+                    .unwrap(),
+                api::load_bucket(storage, scope, parent, id)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    let at = START + 30 * DAY;
+    fill_days(
+        storage,
+        last_closed_day(at),
+        CALL_LOOKBACK_DAYS,
+        above_call(),
+    );
+    assert_eq!(scan(storage, scope, parent, at), 1);
+    finalize_through(storage, at + NOTICE + 1);
+    (bucket_key, items)
+}
+
+fn forfeited_event_loads(provider: &HashMapStorageProvider) -> U256 {
+    provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
+        .map(|event| event.gratisLoadMinor)
+        .fold(U256::ZERO, |sum, load| sum + load)
 }
 
 // --- Sealed call terms -----------------------------------------------------
@@ -1347,6 +1418,219 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     assert_eq!(events[0].sweep, CALL_SWEEP);
     assert_eq!(events[0].skippedDay, skipped);
     assert_eq!(events[0].inFlightDay, in_flight);
+}
+
+/// Promis Limit moves by the unpaid loads, not by reaching
+/// Forfeited or emitting `NodForfeited`. A paid-but-unexercised member is
+/// not credited. If `add_to_total_unallocated` were removed, this delta
+/// would fail while the events and burns could still look complete.
+#[test]
+fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        register(&storage, ISO);
+        let (bucket_key, items) = arm_lapsed(
+            &storage,
+            &scope,
+            &parent,
+            &[
+                (0x31, 3, false),
+                (0x32, 7, true),
+                (0x33, 11, false),
+                (0x34, 20, false),
+            ],
+        );
+        let unpaid: U256 = items
+            .iter()
+            .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
+            .filter_map(|(item, (paid, _))| (!paid).then_some(item.gratis_load_minor))
+            .fold(U256::ZERO, |sum, load| sum + load);
+        assert_eq!(unpaid, U256::from(34u64));
+        assert_eq!(
+            try_forfeit(
+                &storage,
+                &scope,
+                &parent,
+                bucket_key,
+                MAX_NOD_FORFEITS_PER_BLOCK,
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(reserve(&storage), unpaid);
+        assert_eq!(
+            try_forfeit(
+                &storage,
+                &scope,
+                &parent,
+                bucket_key,
+                MAX_NOD_FORFEITS_PER_BLOCK,
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(reserve(&storage), unpaid);
+        assert!(
+            api::get_item(&storage, &scope, &parent, items[1].nod_id)
+                .unwrap()
+                .unwrap()
+                .is_settled
+        );
+    });
+    assert_eq!(forfeited_event_loads(&provider), U256::from(34u64));
+}
+
+/// T16/A18.6: a forfeit slice that cannot finish in one budget resumes, and
+/// the credited total equals the unpaid loads independently of slice size.
+#[test]
+fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
+    harness(|storage, scope, parent| {
+        let (bucket_key, items) = arm_lapsed(
+            storage,
+            scope,
+            parent,
+            &[(0x41, 3, false), (0x42, 5, false), (0x43, 8, false)],
+        );
+        let expected: U256 = items
+            .iter()
+            .map(|item| item.gratis_load_minor)
+            .fold(U256::ZERO, |sum, load| sum + load);
+        assert_eq!(
+            try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
+            1
+        );
+        assert_eq!(
+            try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
+            1
+        );
+        assert_eq!(
+            try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
+            1
+        );
+        assert_eq!(reserve(storage), expected);
+        assert_eq!(
+            try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
+            0
+        );
+        assert_eq!(reserve(storage), expected);
+    });
+}
+
+/// T15/A18.6: every persistent write of a forfeit (burn, event, Promis Limit
+/// credit) rolls back with its checkpoint. Retry credits the original unpaid
+/// loads once, neither zero nor twice.
+#[test]
+fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let specs = [(0x51u8, 3u64, false), (0x52, 11, false), (0x53, 20, false)];
+    let expected = U256::from(34u64);
+
+    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    let probe_scope = ExecutionScope::new();
+    let probe_key = StorageHandle::enter(&mut probe, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &probe_scope).unwrap();
+        register(&storage, ISO);
+        arm_lapsed(&storage, &probe_scope, &parent, &specs).0
+    });
+    probe.fail_after_mutation_at(usize::MAX);
+    StorageHandle::enter(&mut probe, |storage| {
+        try_forfeit(
+            &storage,
+            &probe_scope,
+            &parent,
+            probe_key,
+            MAX_NOD_FORFEITS_PER_BLOCK,
+        )
+        .unwrap();
+    });
+    let mutation_count = probe.clear_mutation_failure();
+    assert!(
+        mutation_count >= 4,
+        "a three-member forfeit must write bodies, events and the Promis Limit credit"
+    );
+    assert_eq!(
+        probe
+            .get_events(NOD_ADDRESS)
+            .iter()
+            .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
+            .count(),
+        3
+    );
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let scope = ExecutionScope::new();
+        let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), &scope).unwrap();
+            register(&storage, ISO);
+            arm_lapsed(&storage, &scope, &parent, &specs).0
+        });
+        let storage_before = provider.storage.clone();
+        let events_before = provider.events.clone();
+        let ordered_before = provider.get_ordered_events().to_vec();
+        let ce_before = scope.ce_work_checkpoint().unwrap();
+        provider.fail_after_mutation_at(operation);
+        let failed = StorageHandle::enter(&mut provider, |storage| {
+            try_forfeit(
+                &storage,
+                &scope,
+                &parent,
+                bucket_key,
+                MAX_NOD_FORFEITS_PER_BLOCK,
+            )
+        });
+        assert!(
+            failed.is_err(),
+            "mutation {operation} unexpectedly succeeded"
+        );
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, storage_before, "storage at {operation}");
+        assert_eq!(provider.events, events_before, "events at {operation}");
+        assert_eq!(
+            provider.get_ordered_events(),
+            ordered_before.as_slice(),
+            "ordered events at {operation}"
+        );
+        assert_eq!(
+            scope.ce_work_checkpoint().unwrap(),
+            ce_before,
+            "CE work at {operation}"
+        );
+
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_eq!(reserve(&storage), U256::ZERO);
+            assert_eq!(
+                try_forfeit(
+                    &storage,
+                    &scope,
+                    &parent,
+                    bucket_key,
+                    MAX_NOD_FORFEITS_PER_BLOCK,
+                )
+                .unwrap(),
+                3
+            );
+            assert_eq!(reserve(&storage), expected);
+            assert_eq!(
+                try_forfeit(
+                    &storage,
+                    &scope,
+                    &parent,
+                    bucket_key,
+                    MAX_NOD_FORFEITS_PER_BLOCK,
+                )
+                .unwrap(),
+                0
+            );
+            assert_eq!(reserve(&storage), expected);
+        });
+    }
 }
 
 #[test]
