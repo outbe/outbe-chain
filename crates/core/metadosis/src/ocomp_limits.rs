@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     intent::{DayType, ReferenceEntryPriceV1},
-    receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
+    receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
 };
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -12,7 +12,7 @@ use outbe_promislimit::PromisLimitContract;
 use crate::errors::MetadosisError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RequestBudgetEffect {
+pub(crate) struct RequestLimitEffect {
     pub protocol_bundle_hash: B256,
     pub wwd: u32,
     pub pending_nonce: u64,
@@ -25,16 +25,18 @@ pub(crate) struct RequestBudgetEffect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RequestBudgetSplit {
+pub(crate) struct RequestLimitSplit {
     /// The day's own emission plus what it drew from the accumulator.
     pub day_limit: U256,
+    /// Maximum Lysis capacity, in protocol units (1e6 per whole COEN).
     pub lysis_limit_minor: U256,
+    /// Maximum Desis capacity, not actual Intex issuance, in protocol units.
     pub desis_limit_minor: U256,
     /// What Lysis left of the day's own emission, credited before the auction draws.
     pub carry_over_credit: U256,
 }
 
-impl RequestBudgetSplit {
+impl RequestLimitSplit {
     /// Lysis is bounded by the day's own emission and what it leaves is credited to the
     /// accumulator. The auction then draws from that accumulator: no more than the nominal beyond
     /// the symbolic share, and no more than the accumulator holds.
@@ -45,7 +47,7 @@ impl RequestBudgetSplit {
         carry_over_before: U256,
         green: bool,
     ) -> Result<Self> {
-        let invalid = || MetadosisError::InvalidOcompBudgetSplit {
+        let invalid = || MetadosisError::InvalidOcompLimitSplit {
             day_limit: base_limit,
             lysis_limit_minor,
         };
@@ -77,7 +79,7 @@ impl RequestBudgetSplit {
         desis_limit_minor: U256,
         carry_over_credit: U256,
     ) -> Result<Self> {
-        let invalid = || MetadosisError::InvalidOcompBudgetSplit {
+        let invalid = || MetadosisError::InvalidOcompLimitSplit {
             day_limit: base_limit,
             lysis_limit_minor,
         };
@@ -101,13 +103,13 @@ impl RequestBudgetSplit {
 ///
 /// The single-attempt FSM invokes this exactly once for a WorldwideDay. An
 /// existing receipt is an invariant violation rather than a replay path.
-pub(crate) fn apply_fresh_request_budget_effect(
+pub(crate) fn apply_fresh_request_limit_effect(
     storage: StorageHandle<'_>,
-    request: RequestBudgetEffect,
-) -> Result<RequestBudgetSplitReceiptV1> {
+    request: RequestLimitEffect,
+) -> Result<RequestLimitSplitReceiptV1> {
     let green = request.day_type == DayType::Green;
     let carry_over_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
-    let split = RequestBudgetSplit::derive(
+    let split = RequestLimitSplit::derive(
         request.day_limit,
         request.lysis_limit_minor,
         request.nominal_total,
@@ -124,7 +126,7 @@ pub(crate) fn apply_fresh_request_budget_effect(
         let delta = PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(split.carry_over_credit)?;
         if delta.credited != split.carry_over_credit {
-            return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
+            return Err(MetadosisError::OcompLimitReceiptMismatch.into());
         }
     }
     Ok(receipt)
@@ -141,7 +143,7 @@ pub(crate) fn apply_fresh_request_budget_effect(
 /// emission returns to the accumulator.
 pub(crate) fn apply_auction_brief(
     storage: StorageHandle<'_>,
-    receipt: &RequestBudgetSplitReceiptV1,
+    receipt: &RequestLimitSplitReceiptV1,
 ) -> Result<()> {
     let green = receipt.day_type == DayType::Green;
     // One checkpoint: the draw and the brief may not survive each other's failure.
@@ -150,10 +152,10 @@ pub(crate) fn apply_auction_brief(
             let drawn = PromisLimitContract::new(storage.clone())
                 .checked_take_carry_over_up_to(receipt.desis_limit_minor)?;
             if drawn.taken != receipt.desis_limit_minor {
-                return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
+                return Err(MetadosisError::OcompLimitReceiptMismatch.into());
             }
         }
-        let actual = outbe_desis::ocomp_budget::apply_request_desis_limit(
+        let actual = outbe_desis::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             receipt.protocol_bundle_hash,
             receipt.wwd.into(),
@@ -170,16 +172,13 @@ pub(crate) fn apply_auction_brief(
 }
 
 fn expected_receipt(
-    request: &RequestBudgetEffect,
-    split: RequestBudgetSplit,
+    request: &RequestLimitEffect,
+    split: RequestLimitSplit,
     effect_nonce: u64,
-) -> Result<RequestBudgetSplitReceiptV1> {
+) -> Result<RequestLimitSplitReceiptV1> {
     let (destination, desis_limit_minor) = match request.day_type {
-        DayType::Green => (
-            BudgetSplitDestination::DesisAuction,
-            split.desis_limit_minor,
-        ),
-        DayType::Red => (BudgetSplitDestination::CarryOver, U256::ZERO),
+        DayType::Green => (LimitSplitDestination::DesisAuction, split.desis_limit_minor),
+        DayType::Red => (LimitSplitDestination::CarryOver, U256::ZERO),
     };
     let carry_over_credit = split.carry_over_credit;
     let desis_brief_hash = Some(
@@ -192,7 +191,7 @@ fn expected_receipt(
         )
         .map_err(protocol_error_to_revert)?,
     );
-    let receipt = RequestBudgetSplitReceiptV1 {
+    let receipt = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: request.protocol_bundle_hash,
         wwd: request.wwd,
         pending_nonce: effect_nonce,
@@ -213,5 +212,5 @@ fn expected_receipt(
 }
 
 fn protocol_error_to_revert(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
-    crate::errors::caller_rejection(format!("invalid OCOMP request budget receipt: {error}"))
+    crate::errors::caller_rejection(format!("invalid OCOMP request limit receipt: {error}"))
 }

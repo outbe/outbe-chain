@@ -15,7 +15,7 @@ use outbe_primitives::time::WorldwideDay;
 use crate::schema::ReferenceCurrencyPrice;
 
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
-/// committed by `RequestBudgetSplitReceiptV1`. A red day briefs no limit, but
+/// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
 /// is briefed all the same so its targets learn the auction is cancelled.
 pub fn apply_request_desis_limit(
     storage: StorageHandle<'_>,

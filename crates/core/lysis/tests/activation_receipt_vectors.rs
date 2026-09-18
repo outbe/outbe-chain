@@ -34,18 +34,18 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
         assert_eq!(plan.binding().job_id, fixture.job_id);
         assert_eq!(plan.binding().attempt, fixture.intent.attempt);
         assert_eq!(
-            plan.request_budget_split_receipt_hash(),
+            plan.request_limit_split_receipt_hash(),
             fixture
                 .intent
                 .frozen_metadosis_values
-                .request_budget_split_receipt_hash
+                .request_limit_split_receipt_hash
         );
         assert_eq!(
             fixture
                 .request_receipt
                 .receipt_hash(&fixture.limits)
                 .unwrap(),
-            plan.request_budget_split_receipt_hash()
+            plan.request_limit_split_receipt_hash()
         );
         assert_eq!(plan.nod().nod_root(), fixture.result.roots.nod_root);
         assert_eq!(plan.nod().bucket_root(), fixture.result.roots.bucket_root);
@@ -215,8 +215,8 @@ fn receipt_verifier_closes_green_and_red_conservation_equations() {
 
         assert_eq!(verified.binding(), plan.binding());
         assert_eq!(
-            verified.request_budget_split_receipt_hash(),
-            plan.request_budget_split_receipt_hash()
+            verified.request_limit_split_receipt_hash(),
+            plan.request_limit_split_receipt_hash()
         );
         assert!(!verified.effect_commitment().is_zero());
         assert!(!verified.event_summary_hash().is_zero());
@@ -258,7 +258,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
     nonce_fixture
         .intent
         .frozen_metadosis_values
-        .request_budget_split_receipt_hash = nonce_fixture
+        .request_limit_split_receipt_hash = nonce_fixture
         .request_receipt
         .receipt_hash(&nonce_fixture.limits)
         .unwrap();
@@ -300,7 +300,7 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
     anchor_fixture
         .intent
         .frozen_metadosis_values
-        .request_budget_split_receipt_hash = anchor_fixture
+        .request_limit_split_receipt_hash = anchor_fixture
         .request_receipt
         .receipt_hash(&anchor_fixture.limits)
         .unwrap();

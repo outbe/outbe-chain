@@ -294,7 +294,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
 
         let receipt_before = metadosis
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
         let desis_limit_before = DesisContract::new(storage.clone())
@@ -348,7 +348,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert!(metadosis.ocomp_scheduler.is_empty().unwrap());
         assert_eq!(
             metadosis
-                .request_budget_receipt(wwd, &poc_schema_limits())
+                .request_limit_receipt(wwd, &poc_schema_limits())
                 .unwrap(),
             Some(receipt_before.clone())
         );
@@ -370,7 +370,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             metadosis
-                .request_budget_receipt(wwd, &poc_schema_limits())
+                .request_limit_receipt(wwd, &poc_schema_limits())
                 .unwrap(),
             Some(receipt_before)
         );
@@ -1074,7 +1074,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             expected_contributors.expected_series_version
         );
         assert!(metadosis
-            .request_budget_receipt(fixture.wwd, &poc_schema_limits())
+            .request_limit_receipt(fixture.wwd, &poc_schema_limits())
             .unwrap()
             .is_some());
         assert_eq!(nod.total_supply().unwrap(), before_nod_supply);
@@ -1408,7 +1408,7 @@ fn prepare_ready_days_fixture(
 #[derive(Debug, PartialEq)]
 struct RequestObservables {
     fsm: crate::ocomp::state::JobFsmProjection,
-    receipt: Option<outbe_ocomp_protocol::receipts::RequestBudgetSplitReceiptV1>,
+    receipt: Option<outbe_ocomp_protocol::receipts::RequestLimitSplitReceiptV1>,
     desis_stage: u8,
     desis_supply: U256,
     nod_supply: u64,
@@ -1427,7 +1427,7 @@ fn request_observables(
             .unwrap()
             .projection(),
         receipt: MetadosisContract::new(storage.clone())
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap(),
         desis_stage: DesisContract::new(storage.clone())
             .auction_stage
@@ -1541,7 +1541,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         run_terminal_request(&ctx, &scope).unwrap();
 
         let receipt = MetadosisContract::new(storage.clone())
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
         assert_eq!(receipt.day_limit, day_limit + U256::from(68));

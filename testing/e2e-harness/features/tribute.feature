@@ -39,3 +39,11 @@ Feature: Tribute admission, projection, and proofs
     When an L2 network is registered for the operator
     And the operator proves a signed tampered proof is rejected then submits the valid tribute proof
     Then the tribute transaction succeeds and supply becomes one
+
+  @tribute-independent-user
+  Scenario: A user independent of the L2 administrator offers with the network signature
+    Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
+    When a user without an L2 registration rejects a wrong network signature then offers through the registered network
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    And the Tribute belongs to the independent user on every validator while the L2 administrator owns none

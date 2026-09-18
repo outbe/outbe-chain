@@ -35,7 +35,7 @@ fn action(ordinal: u32) -> NodActionV1 {
         floor_price_minor: U256::from(500),
         gratis_load_minor: U256::from(1_000),
         entry_price_minor: U256::from(510),
-        cost_amount_minor: U256::from(2),
+        settlement_cost_minor: U256::from(2),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_700_000_000,

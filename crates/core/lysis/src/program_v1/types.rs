@@ -105,7 +105,7 @@ pub struct NodActionV1 {
     pub floor_price_minor: U256,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub cost_amount_minor: U256,
+    pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub bucket_key: B256,

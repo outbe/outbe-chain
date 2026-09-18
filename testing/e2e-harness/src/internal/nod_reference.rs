@@ -82,7 +82,7 @@ pub(crate) fn single_league_actions(
                 floor_price_minor: floor_price,
                 gratis_load_minor: load,
                 entry_price_minor: entry_price,
-                cost_amount_minor: cost,
+                settlement_cost_minor: cost,
                 issuance_currency: tribute.issuance_currency,
                 reference_currency: tribute.reference_currency,
                 issued_at,
@@ -103,7 +103,7 @@ fn record(action: &NodActionV1) -> Vec<u8> {
     bytes.extend(action.floor_price_minor.to_be_bytes::<32>());
     bytes.extend(action.gratis_load_minor.to_be_bytes::<32>());
     bytes.extend(action.entry_price_minor.to_be_bytes::<32>());
-    bytes.extend(action.cost_amount_minor.to_be_bytes::<32>());
+    bytes.extend(action.settlement_cost_minor.to_be_bytes::<32>());
     bytes.extend(action.issuance_currency.to_be_bytes());
     bytes.extend(action.reference_currency.to_be_bytes());
     bytes.extend(action.issued_at.to_be_bytes());
@@ -208,7 +208,7 @@ mod tests {
             floor_price_minor: U256::from(1_080_000),
             gratis_load_minor: U256::from(987_654_321),
             entry_price_minor: U256::from(1_000_000),
-            cost_amount_minor: U256::from(987_654_321),
+            settlement_cost_minor: U256::from(987_654_321),
             issuance_currency: 949,
             reference_currency: 840,
             issued_at: 1_789_000_123,
@@ -258,7 +258,7 @@ mod tests {
                 assert_eq!(action.floor_price_minor, U256::from(1_188_001));
                 assert_eq!(action.gratis_load_minor, U256::from(load));
                 assert_eq!(action.entry_price_minor, U256::from(1_000_003));
-                assert_eq!(action.cost_amount_minor, U256::from(cost));
+                assert_eq!(action.settlement_cost_minor, U256::from(cost));
                 assert_eq!(
                     (action.issuance_currency, action.reference_currency),
                     (840, 840)
@@ -309,7 +309,7 @@ mod tests {
                 6 => last.floor_price_minor += U256::from(1),
                 7 => last.gratis_load_minor += U256::from(1),
                 8 => last.entry_price_minor += U256::from(1),
-                9 => last.cost_amount_minor += U256::from(1),
+                9 => last.settlement_cost_minor += U256::from(1),
                 10 => last.issuance_currency += 1,
                 11 => last.reference_currency += 1,
                 12 => last.issued_at += 1,

@@ -21,7 +21,14 @@ use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
 use outbe_paynote::test_support as paynote_support;
 
-use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime, sol_ext::IERC20};
+use crate::{
+    api,
+    errors::NodFactoryError,
+    precompile::INodFactory,
+    runtime,
+    sol_ext::{IReferenceCurrency, IERC20},
+};
+use outbe_vaultrouter::api::IVaultRouter;
 use outbe_zk_core::codec::field_to_be_bytes;
 
 /// The chain ID `World`'s storage provider reports; PayNote folds it into
@@ -83,15 +90,36 @@ fn params(owner: Address) -> NodIssueParams {
 
 /// The Nod's derived cost, in the `u128` minor units a PayNote spend carries.
 fn cost_of(input: &NodIssueParams) -> u128 {
-    let cost = outbe_nod::api::cost_amount_minor(input.entry_price_minor, input.gratis_load_minor)
-        .expect("derive the Nod cost");
+    let cost =
+        outbe_nod::api::settlement_cost_minor(input.entry_price_minor, input.gratis_load_minor)
+            .expect("derive the Nod cost");
     u128::try_from(cost).expect("test Nod cost fits a PayNote spend amount")
 }
 
-fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
+fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
     (0_u64..100_000)
-        .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
+        .find(|nonce| runtime::validate_pow(nod_id, owner, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
+}
+
+#[test]
+fn nod_pow_binds_owner_and_zero_sequence() {
+    let owner = Address::repeat_byte(0x11);
+    let other = Address::repeat_byte(0x22);
+    let nod_id = NodContract::generate_nod_id(owner, WorldwideDay::new(20_241_201)).unwrap();
+    let nonce = 42;
+    let bound = runtime::compute_pow_hash(nod_id, owner, nonce);
+    assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
+    assert_ne!(
+        bound,
+        outbe_common::pow::compute_pow_hash(nod_id.to_u256(), nonce)
+    );
+    let solved = find_valid_nonce(nod_id, owner);
+    assert!(runtime::validate_pow(nod_id, owner, solved).is_ok());
+    assert_ne!(
+        runtime::compute_pow_hash(nod_id, owner, solved),
+        runtime::compute_pow_hash(nod_id, other, solved)
+    );
 }
 
 struct World {
@@ -106,6 +134,18 @@ impl World {
         provider.set_block_number(1);
         provider.set_timestamp(U256::from(1_700_000_000));
         let scope = ExecutionScope::new();
+        provider.stub_sub_call_at_selector(
+            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall::SELECTOR,
+            Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
+                &U256::ONE,
+            )),
+        );
+        provider.stub_sub_call_at_selector(
+            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+            IVaultRouter::depositCall::SELECTOR,
+            Bytes::from(IVaultRouter::depositCall::abi_encode_returns(&U256::ONE)),
+        );
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage);
             begin_block(storage, &scope).unwrap();
@@ -129,6 +169,16 @@ impl World {
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
         self.enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, input))
             .unwrap()
+    }
+
+    fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
+        let owner = self.enter(|storage, scope, parent| {
+            nod_api::get_item(&storage, scope, parent, nod_id)
+                .unwrap()
+                .expect("issued Nod")
+                .owner
+        });
+        find_valid_nonce(nod_id, owner)
     }
 
     fn settle_and_mine(
@@ -166,23 +216,42 @@ impl World {
         })
     }
 
-    /// Publishes `asset` as the only asset registered under the Nod's reference
-    /// currency, which is the asset a covering PayNote must carry.
+    /// Publishes `asset` as a vaulted USD (840) token, the default reference rail.
     fn register_reference_currency_asset(&mut self, asset: Address) {
-        self.register_reference_currency_assets(vec![asset]);
+        self.register_settlement_asset(asset, 840);
+    }
+
+    fn register_settlement_asset(&mut self, asset: Address, iso_code: u16) {
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            Bytes::from(IReferenceCurrency::isoCodeCall::abi_encode_returns(
+                &iso_code,
+            )),
+        );
+        self.set_asset_decimals(asset, 6);
     }
 
     fn register_reference_currency_assets(&mut self, assets: Vec<Address>) {
-        use outbe_vaultrouter::api::IVaultRouter;
-
-        self.provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-            IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
-            Bytes::from(IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&assets)),
-        );
         for asset in assets {
-            self.set_asset_decimals(asset, 6);
+            self.register_settlement_asset(asset, 840);
         }
+    }
+
+    fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
+        self.enter(|storage, _, _| {
+            let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+            outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                pair,
+                rate,
+                1,
+                storage.timestamp().unwrap().to::<u64>(),
+            )
+            .unwrap();
+        });
     }
 
     fn set_asset_decimals(&mut self, asset: Address, decimals: u8) {
@@ -387,7 +456,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
     world.qualify(nod_id);
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -418,7 +487,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     world.qualify(nod_id);
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     world
         .enter(|storage, scope, parent| {
@@ -451,7 +520,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -519,7 +588,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -550,11 +619,13 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 // covered, and exactly one spend per note.
 
 const NOTE_ASSET: Address = Address::new([0x71; 20]);
+const EUR_ASSET: Address = Address::new([0x72; 20]);
+const SIX_DECIMALS: u64 = 1_000_000;
 
 #[test]
 fn a_cost_that_does_not_divide_evenly_is_floored_and_the_note_matches_it() {
     // 500.001 six-decimal units: the chain charges 500, the figure
-    // `costAmountMinor` advertises. Rounding up would demand 501.
+    // `settlementCostMinor` advertises. Rounding up would demand 501.
     let mut world = World::new();
     let input = NodIssueParams {
         entry_price_minor: U256::from(500_001u64),
@@ -566,7 +637,7 @@ fn a_cost_that_does_not_divide_evenly_is_floored_and_the_note_matches_it() {
     let cost = cost_of(&input);
     assert_eq!(cost, 500);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let minted = world
         .settle_and_mine(
@@ -590,7 +661,7 @@ fn a_note_in_a_wider_asset_pays_the_cost_scaled_to_its_decimals() {
     world.set_asset_decimals(NOTE_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
     let (proof, _nullifier) = world.fund_note_u256(NOTE_ASSET, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let minted = world
         .settle_and_mine(
@@ -614,7 +685,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let minted = world
         .settle_and_mine(
@@ -662,7 +733,7 @@ fn a_paynote_over_the_cost_leaves_the_nod_and_the_note_intact() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost + 1, cost + 1);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let error = world
         .settle_and_mine(
@@ -700,7 +771,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let error = world
         .settle_and_mine(
@@ -738,7 +809,7 @@ fn rejected_settlement_unbooks_the_nullifier_it_had_already_spent() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     world
         .settle_and_mine(
@@ -765,7 +836,7 @@ fn a_paynote_naming_another_owner_cannot_pay_this_nod() {
     let cost = cost_of(&input);
     let stranger = Address::repeat_byte(0x65);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let error = world
         .settle_and_mine(
@@ -788,30 +859,33 @@ fn a_paynote_naming_another_owner_cannot_pay_this_nod() {
 }
 
 #[test]
-fn a_stranger_cannot_lift_the_owners_paynote() {
+fn a_stranger_cannot_pay_a_nod_with_a_proof_naming_themselves() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x66));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
-    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
     let stranger = Address::repeat_byte(0x67);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
 
     let error = world.settle(nod_id, stranger, &proof).unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::PayNoteOwnerMismatch {
-                expected: stranger,
-                actual: input.owner,
+                expected: input.owner,
+                actual: stranger,
             }
             .to_string()),
         "unexpected error: {error:?}"
     );
+    assert!(
+        !world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap())
+    );
 }
 
 #[test]
-fn a_stranger_can_pay_a_nod_with_their_own_paynote() {
+fn a_stranger_can_relay_a_paynote_proof_naming_the_nod_owner() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x68));
     let nod_id = world.issue(&input);
@@ -819,7 +893,7 @@ fn a_stranger_can_pay_a_nod_with_their_own_paynote() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let stranger = Address::repeat_byte(0x69);
-    let (proof, nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
 
     world.settle(nod_id, stranger, &proof).unwrap();
 
@@ -849,7 +923,7 @@ fn a_stranger_can_mine_with_the_owners_auth() {
     world.qualify(nod_id);
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     let stranger = Address::repeat_byte(0x6b);
 
     let minted = world
@@ -891,9 +965,10 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
     let other_asset = Address::repeat_byte(0x67);
+    world.register_settlement_asset(other_asset, 978);
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(other_asset, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let error = world
         .settle_and_mine(
@@ -906,11 +981,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::SettlementAssetMismatch {
-                asset: other_asset,
-                reference_currency: input.reference_currency,
-            }
-            .to_string()),
+            if reason == &NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 }.to_string()),
         "unexpected error: {error:?}"
     );
 }
@@ -927,7 +998,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     world.register_reference_currency_assets(vec![NOTE_ASSET, second_asset]);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(second_asset, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let minted = world
         .settle_and_mine(
@@ -952,11 +1023,12 @@ fn one_note_cannot_pay_two_nods() {
     let cost = cost_of(&first);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, first.owner, cost, cost);
 
+    let first_nonce = world.pow_nonce(first_id);
     world
         .settle_and_mine(
             first_id,
             first.owner,
-            find_valid_nonce(first_id),
+            first_nonce,
             mine_auth(first.owner, first.gratis_load_minor),
             &proof,
         )
@@ -968,11 +1040,12 @@ fn one_note_cannot_pay_two_nods() {
     };
     let second_id = world.issue(&second);
     world.qualify(second_id);
+    let second_nonce = world.pow_nonce(second_id);
     let error = world
         .settle_and_mine(
             second_id,
             second.owner,
-            find_valid_nonce(second_id),
+            second_nonce,
             mine_auth(second.owner, second.gratis_load_minor),
             &proof,
         )
@@ -996,7 +1069,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
     let (proof, nullifier) = world.fund_note_u256(NOTE_ASSET, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
 
     let minted = world
         .settle_and_mine(
@@ -1061,6 +1134,24 @@ fn certified_generation_has_no_public_installation_selector() {
 
 mod materialization;
 
+fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
+    world.enter(|storage, scope, parent| {
+        let bytes = outbe_nod::precompile::dispatch(
+            storage,
+            scope,
+            parent,
+            &INod::nodDataCall {
+                nodId: nod_id.to_u256(),
+            }
+            .abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        INod::nodDataCall::abi_decode_returns(&bytes).unwrap()
+    })
+}
+
 /// Settlement at the deadline remains valid; the paid Nod can then be mined.
 #[test]
 fn a_called_nod_still_mines_at_the_settlement_deadline() {
@@ -1072,10 +1163,11 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
+    assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 2);
 
     let proof = world.covering_proof(&input);
     world.settle(nod_id, input.owner, &proof).unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -1107,6 +1199,15 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 1);
 
+    let data = public_nod_data(&mut world, nod_id);
+    assert_eq!(data.effectiveState, 4);
+    assert!(data.isQualified);
+    assert!(!data.isSettled);
+    assert_eq!(
+        data.settlementDeadline,
+        called_at + u64::from(CALL_NOTICE_PERIOD)
+    );
+
     let error = world.settle(nod_id, input.owner, &[]).unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
@@ -1131,12 +1232,6 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         "unqualified"
     );
     world.qualify(nod_id);
-    assert!(
-        world
-            .settle(nod_id, Address::repeat_byte(0x82), &proof)
-            .is_err(),
-        "lifted proof: caller is not the named PayNote owner"
-    );
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
@@ -1172,13 +1267,14 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         "duplicate settlement"
     );
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * 86_400);
-    let nonce = find_valid_nonce(nod_id);
+    assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 3);
+    let nonce = world.pow_nonce(nod_id);
     for (caller, candidate, auth) in [
         (Address::repeat_byte(0x82), nonce, dummy_auth()),
         (
             input.owner,
             (0..100_000)
-                .find(|n| runtime::validate_pow(nod_id, *n).is_err())
+                .find(|n| runtime::validate_pow(nod_id, input.owner, *n).is_err())
                 .unwrap(),
             dummy_auth(),
         ),
@@ -1327,7 +1423,7 @@ fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     world.settle(nod_id, input.owner, &proof).unwrap();
     let before = world.provider.storage.clone();
     let events = world.provider.get_ordered_events().to_vec();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     world
         .provider
         .fail_mutation_at_address(outbe_primitives::addresses::FIDELITY_ADDRESS);
@@ -1390,8 +1486,14 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
     );
     world.qualify(nod_id);
-    let error = settle(&mut world, stranger, Address::ZERO).unwrap_err();
-    assert!(error.to_string().contains("settlement asset"));
+    let foreign = Address::repeat_byte(0x99);
+    world.register_settlement_asset(foreign, 978);
+    let error = settle(&mut world, stranger, foreign).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 })
+            .to_string()
+    );
     assert!(
         !world
             .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
@@ -1455,20 +1557,19 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     let deadline = called_at + u64::from(CALL_NOTICE_PERIOD);
+    let foreign = Address::repeat_byte(0x94);
+    world.register_settlement_asset(foreign, 978);
     for (timestamp, expected) in [
         (deadline + 1, NodFactoryError::CallDeadlineExpired),
         (
             deadline,
-            NodFactoryError::SettlementAssetMismatch {
-                asset: Address::ZERO,
-                reference_currency: 840,
-            },
+            NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 },
         ),
     ] {
         world.set_timestamp(timestamp);
         let error = world
             .enter(|storage, scope, parent| {
-                api::settle_nod(&storage, scope, parent, input.owner, nod_id, Address::ZERO)
+                api::settle_nod(&storage, scope, parent, input.owner, nod_id, foreign)
             })
             .unwrap_err();
         assert_eq!(
@@ -1476,4 +1577,243 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
             PrecompileError::from(expected).to_string()
         );
     }
+}
+
+fn dual_currency_params(owner: Address) -> NodIssueParams {
+    NodIssueParams {
+        issuance_currency: 978,
+        reference_currency: 840,
+        ..params(owner)
+    }
+}
+
+fn paid_event(world: &World) -> INodFactory::NodPaid {
+    world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .last()
+        .expect("NodPaid event")
+}
+
+fn is_settled(world: &mut World, nod_id: WwdEntityId) -> bool {
+    world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .unwrap()
+        .is_settled
+}
+
+#[test]
+fn the_issuance_currency_settles_through_the_coen_pivot() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa1));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let reference_cost = cost_of(&input);
+    let issuance_cost = reference_cost / 2;
+    let (proof, _nullifier) = world.fund_note(EUR_ASSET, input.owner, issuance_cost, issuance_cost);
+
+    world.settle(nod_id, input.owner, &proof).unwrap();
+
+    let paid = paid_event(&world);
+    assert_eq!(paid.asset, EUR_ASSET);
+    assert_eq!(paid.amountCovered, U256::from(issuance_cost));
+    assert!(is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn quote_agrees_with_what_settling_charges_on_both_rails() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa2));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(NOTE_ASSET, 840);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+
+    let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage, scope, parent| {
+        let (ref_iso, ref_amount) =
+            api::quote_settlement(&storage, scope, parent, nod_id, NOTE_ASSET).unwrap();
+        let (iss_iso, iss_amount) =
+            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET).unwrap();
+        (ref_iso, ref_amount, iss_iso, iss_amount)
+    });
+    assert_eq!(ref_iso, 840);
+    assert_eq!(iss_iso, 978);
+    assert_eq!(ref_amount, U256::from(cost_of(&input)));
+    assert_eq!(iss_amount, ref_amount / U256::from(2u64));
+
+    let spend = u128::try_from(iss_amount).unwrap();
+    let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert_eq!(paid_event(&world).amountCovered, iss_amount);
+}
+
+#[test]
+fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa3));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.provider.stub_sub_call_at_selector(
+        EUR_ASSET,
+        IERC20::transferFromCall::SELECTOR,
+        Bytes::from(IERC20::transferFromCall::abi_encode_returns(&true)),
+    );
+    world.provider.stub_sub_call_at_selector(
+        EUR_ASSET,
+        IERC20::approveCall::SELECTOR,
+        Bytes::from(IERC20::approveCall::abi_encode_returns(&true)),
+    );
+    world.provider.stub_sub_call_at_selector(
+        EUR_ASSET,
+        IERC20::balanceOfCall::SELECTOR,
+        Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO)),
+    );
+
+    let quoted = world
+        .enter(|storage, scope, parent| {
+            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+        })
+        .unwrap();
+    assert_eq!(quoted.0, 978);
+    assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
+
+    // Admission and conversion ran; the fixed balance stub cannot show a delta.
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, input.owner, nod_id, EUR_ASSET)
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn settle_rejects_an_asset_with_no_registered_vault() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0xa4));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    world.provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        Bytes::from(IVaultRouter::assetVaultsCountCall::abi_encode_returns(
+            &U256::ZERO,
+        )),
+    );
+    let cost = cost_of(&input);
+    let (proof, _) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
+
+    let paynote_error = world.settle(nod_id, input.owner, &proof).unwrap_err();
+    assert_eq!(
+        paynote_error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered { asset: NOTE_ASSET })
+            .to_string()
+    );
+    let erc20_error = world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(&storage, scope, parent, input.owner, nod_id, NOTE_ASSET)
+        })
+        .unwrap_err();
+    assert_eq!(
+        erc20_error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered { asset: NOTE_ASSET })
+            .to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn issuance_rail_rejects_a_stale_leg_without_settling() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa5));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let now = 1_700_000_000u64;
+    world.enter(|storage, _, _| {
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::AddressPair::new_coen_to(978),
+            U256::from(SIX_DECIMALS),
+            1,
+            now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+        )
+        .unwrap();
+    });
+    let spend = cost_of(&input) / 2;
+    let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
+
+    let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
+    assert!(
+        error.to_string().contains("stale"),
+        "unexpected error: {error}"
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn issuance_rail_rejects_a_missing_cross_rate() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa6));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    let spend = cost_of(&input) / 2;
+    let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
+
+    let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
+    assert!(
+        error.to_string().contains("not registered"),
+        "unexpected error: {error}"
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn quote_settlement_dispatch() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa7));
+    let nod_id = world.issue(&input);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+
+    let out = world
+        .enter(|storage, scope, parent| {
+            crate::precompile::dispatch(
+                storage,
+                scope,
+                parent,
+                &INodFactory::quoteSettlementCall {
+                    nodId: nod_id.to_u256(),
+                    asset: EUR_ASSET,
+                }
+                .abi_encode(),
+                input.owner,
+                U256::ZERO,
+            )
+        })
+        .unwrap();
+    let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
+    assert_eq!(ret.settlementCurrency, 978);
+    assert_eq!(ret.payableUnits, U256::from(cost_of(&input) / 2));
 }

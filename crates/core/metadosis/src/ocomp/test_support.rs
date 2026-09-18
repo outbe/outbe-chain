@@ -44,8 +44,8 @@ use outbe_ocomp_protocol::{
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{
-        desis_request_brief_hash, ActivationOutcome, BudgetSplitDestination,
-        RequestBudgetSplitReceiptV1,
+        desis_request_brief_hash, ActivationOutcome, LimitSplitDestination,
+        RequestLimitSplitReceiptV1,
     },
     registry::HashDomain,
     result::{
@@ -111,7 +111,7 @@ thread_local! {
 
 #[cfg(test)]
 pub(crate) fn inject_receipt_fault(
-    request_receipt: &mut RequestBudgetSplitReceiptV1,
+    request_receipt: &mut RequestLimitSplitReceiptV1,
     receipts: &mut LysisOwnerReceiptsV1,
 ) {
     match ACTIVATION_RECEIPT_FAULT.with(Cell::take) {
@@ -714,8 +714,8 @@ pub fn fork_install_fixture(
     }
 }
 
-fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
-    RequestBudgetSplitReceiptV1 {
+fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
+    RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: bundle_hash,
         wwd: TEST_WWD.value(),
         pending_nonce: 0,
@@ -723,7 +723,7 @@ fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
         day_limit: U256::from(100),
         lysis_limit_minor: U256::from(60),
         desis_limit_minor: U256::from(40),
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
             desis_request_brief_hash(
                 bundle_hash,
@@ -780,7 +780,7 @@ fn intent(
             lysis_limit_minor: U256::from(60),
             desis_limit_minor: U256::from(40),
             auction_entry_prices: test_entry_prices(),
-            request_budget_split_receipt_hash: request_receipt_hash,
+            request_limit_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: TEST_REQUEST_HEIGHT,
         logical_evaluation_time: TEST_LOGICAL_TIME,
@@ -1212,7 +1212,7 @@ pub struct ActivationFixture {
     pub finality: FixedFinality,
     pub intent_id: B256,
     pub limits: SchemaLimits,
-    pub request_receipt: RequestBudgetSplitReceiptV1,
+    pub request_receipt: RequestLimitSplitReceiptV1,
 }
 
 impl ActivationFixture {
@@ -1618,11 +1618,11 @@ impl ActivationFixture {
         })
     }
 
-    pub fn replace_request_receipt(&mut self, receipt: &RequestBudgetSplitReceiptV1) {
+    pub fn replace_request_receipt(&mut self, receipt: &RequestLimitSplitReceiptV1) {
         let encoded = receipt.encode_canonical(&self.limits).unwrap();
         StorageHandle::enter(&mut self.provider, |storage| {
             MetadosisContract::new(storage)
-                .ocomp_request_budget_receipts
+                .ocomp_request_limit_receipts
                 .get_bytes(&TEST_WWD)
                 .write(&encoded)
                 .unwrap();

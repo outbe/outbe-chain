@@ -309,7 +309,7 @@ fn execute_root_reduce_leaf(
             floor_price_minor: record.nod_action.floor_price_minor,
             gratis_load_minor: record.nod_action.gratis_load_minor,
             entry_price_minor: record.nod_action.entry_price_minor,
-            cost_amount_minor: record.nod_action.cost_amount_minor,
+            settlement_cost_minor: record.nod_action.settlement_cost_minor,
             issuance_currency: record.nod_action.issuance_currency,
             reference_currency: record.nod_action.reference_currency,
             issued_at: record.nod_action.issued_at,
@@ -370,7 +370,9 @@ fn execute_root_reduce_leaf(
         "root reducer Nod Gratis total",
     )?;
     let nod_cost_total = checked_sum(
-        nod_actions.iter().map(|action| action.cost_amount_minor),
+        nod_actions
+            .iter()
+            .map(|action| action.settlement_cost_minor),
         "root reducer Nod cost total",
     )?;
     let summary = RootReduceSummaryV1 {

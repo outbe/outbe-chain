@@ -101,7 +101,7 @@ fn certified_action(index: usize) -> NodActionV1 {
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor: U256::from(510),
-        cost_amount_minor: U256::ZERO,
+        settlement_cost_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,

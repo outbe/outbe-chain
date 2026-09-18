@@ -84,12 +84,39 @@ impl Rpc {
         currency: u16,
         exclude_from_intex_issuance: bool,
     ) -> Option<String> {
+        let caller = eth::address_of(key)?;
+        let l2_chain_id = self.l2_chain_by_l1_address(caller)?;
+        self.tribute_offer_for_network_with_params(
+            key,
+            l2_chain_id,
+            wwd,
+            amount_base,
+            amount_micro,
+            currency,
+            exclude_from_intex_issuance,
+        )
+    }
+
+    /// Submit through a registered network independently of the caller's own
+    /// operator mapping, preserving the real caller-bound proof and CLI path.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tribute_offer_for_network_with_params(
+        &self,
+        key: &str,
+        l2_chain_id: u64,
+        wwd: &str,
+        amount_base: &str,
+        amount_micro: &str,
+        currency: u16,
+        exclude_from_intex_issuance: bool,
+    ) -> Option<String> {
         let started = Instant::now();
         let caller = eth::address_of(key)?;
         let worldwide_day = wwd.parse::<u32>().expect("numeric worldwide day");
         let (draft_id, su_hash) = l2_fixture::offer_identifiers("cli-offer", caller, worldwide_day);
-        let zk = self.prove_offer(
+        let zk = self.prove_offer_for_network(
             caller,
+            l2_chain_id,
             worldwide_day,
             currency,
             (amount_base, amount_micro),
@@ -360,6 +387,39 @@ impl Rpc {
         assert_ne!(
             l2_chain_id, 0,
             "offer fixtures register the operator's L2 network before offering: {caller:#x}"
+        );
+        self.prove_offer_for_network(
+            caller,
+            l2_chain_id,
+            worldwide_day,
+            tribute_currency,
+            (amount_base, amount_micro),
+            draft_id,
+            su_hash,
+        )
+    }
+
+    /// A caller-bound tribute proof for a selected registered network. Network
+    /// ownership and the user submitting the Tribute are independent identities.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prove_offer_for_network(
+        &self,
+        caller: Address,
+        l2_chain_id: u64,
+        worldwide_day: u32,
+        tribute_currency: u16,
+        (amount_base, amount_micro): (&str, &str),
+        draft_id: B256,
+        su_hash: B256,
+    ) -> TributeOfferZk {
+        assert_ne!(
+            l2_chain_id, 0,
+            "selected fixture network must be registered"
+        );
+        let (_, registered_key) = self.l2_network(l2_chain_id).expect("selected L2 network");
+        assert_eq!(
+            registered_key,
+            l2_fixture::root_signing_public_key(l2_chain_id)
         );
         let host_chain_id = self
             .chain_id(self.cfg.primary_port())

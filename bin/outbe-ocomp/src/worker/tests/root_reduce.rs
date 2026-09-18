@@ -20,7 +20,7 @@ fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header(
                 gratis_load_minor: U256::from(1),
                 entry_price_minor: U256::from(2),
                 floor_price_minor: U256::from(3),
-                cost_amount_minor: U256::from(4),
+                settlement_cost_minor: U256::from(4),
                 issuance_currency: 840,
                 reference_currency: 978,
                 exclude_from_intex_issuance: false,

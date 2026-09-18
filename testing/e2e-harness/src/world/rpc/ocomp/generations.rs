@@ -57,7 +57,7 @@ impl Rpc {
             nod_count: nod.nodCount,
             bucket_count: nod.bucketCount,
             nod_amount_total: nod.nodAmountTotal,
-            lysis_allocation_minor: nod.nodGratisConsumed,
+            lysis_allocation_minor: nod.lysisAllocationMinor,
             issued_at: nod.issuedAt,
             next_nod_ordinal: 0,
             last_progress_height: activation.block_number,

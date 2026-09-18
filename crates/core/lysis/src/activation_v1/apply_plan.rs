@@ -10,7 +10,7 @@ use outbe_ocomp_protocol::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RequestBudgetSplitApplyV1 {
+pub(super) struct RequestLimitSplitApplyV1 {
     pub protocol_bundle_hash: B256,
     pub wwd: u32,
     pub pending_nonce: u64,
@@ -158,8 +158,8 @@ impl CarryOverApplyV1 {
 pub struct LysisApplyPlanV1 {
     call_core: ActivationCallCoreV1,
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
-    request_budget_split: RequestBudgetSplitApplyV1,
+    request_limit_split_receipt_hash: B256,
+    request_limit_split: RequestLimitSplitApplyV1,
     nod: NodGenerationApplyV1,
     contributors: ContributorRootApplyV1,
     tribute: TributeRetirementApplyV1,
@@ -178,12 +178,12 @@ impl LysisApplyPlanV1 {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
-    pub(super) const fn request_budget_split(&self) -> &RequestBudgetSplitApplyV1 {
-        &self.request_budget_split
+    pub(super) const fn request_limit_split(&self) -> &RequestLimitSplitApplyV1 {
+        &self.request_limit_split
     }
 
     #[must_use]
@@ -210,8 +210,8 @@ impl LysisApplyPlanV1 {
 pub(super) struct LysisApplyPlanPartsV1 {
     pub call_core: ActivationCallCoreV1,
     pub binding: EffectBindingV1,
-    pub request_budget_split_receipt_hash: B256,
-    pub request_budget_split: RequestBudgetSplitApplyV1,
+    pub request_limit_split_receipt_hash: B256,
+    pub request_limit_split: RequestLimitSplitApplyV1,
     pub nod: NodGenerationApplyV1,
     pub contributors: ContributorRootApplyV1,
     pub tribute: TributeRetirementApplyV1,
@@ -223,8 +223,8 @@ impl From<LysisApplyPlanPartsV1> for LysisApplyPlanV1 {
         Self {
             call_core: parts.call_core,
             binding: parts.binding,
-            request_budget_split_receipt_hash: parts.request_budget_split_receipt_hash,
-            request_budget_split: parts.request_budget_split,
+            request_limit_split_receipt_hash: parts.request_limit_split_receipt_hash,
+            request_limit_split: parts.request_limit_split,
             nod: parts.nod,
             contributors: parts.contributors,
             tribute: parts.tribute,

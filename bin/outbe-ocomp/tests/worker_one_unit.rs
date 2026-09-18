@@ -198,9 +198,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         tribute_id: derive_poseidon_entity_id(owner, day).expect("fixture Tribute id"),
         owner,
         worldwide_day: day,
-        issuance_amount_minor: U256::from(9),
+        issuance_amount_minor: U256::from(90_000_000),
         issuance_currency: 840,
-        nominal_amount_minor: U256::from(10),
+        nominal_amount_minor: U256::from(100_000_000),
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
         exclude_from_intex_issuance: false,
@@ -361,6 +361,11 @@ fn real_worker_processes_execute_through_output_finalize() {
         planner_spec_version: 1,
         reducer_spec_version: 1,
     };
+    let desis_limit_minor = U256::from(1_000);
+    assert!(
+        plan.lysis_limit_minor + desis_limit_minor <= tribute.nominal_amount_minor,
+        "fixture budgets must fit within the sealed Tribute nominal"
+    );
     let plan_hash = plan.plan_hash(&limits).expect("fixture plan hash");
     let plan_ref = cas
         .publish_bytes(
@@ -1640,20 +1645,20 @@ fn real_worker_processes_execute_through_output_finalize() {
         source_availability_policy_id: B256::repeat_byte(0x44),
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
             day_type: DayType::Green,
-            day_limit: plan.lysis_limit_minor + U256::from(1_000),
+            day_limit: plan.lysis_limit_minor + desis_limit_minor,
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
             day_gratis_limit_minor: U256::from(20),
             lysis_limit_minor: plan.lysis_limit_minor,
-            desis_limit_minor: U256::from(1_000),
+            desis_limit_minor,
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: B256::repeat_byte(0x45),
+            request_limit_split_receipt_hash: B256::repeat_byte(0x45),
         },
         logical_evaluation_height: manifest.checkpoint.finalized_block_number,
         logical_evaluation_time: plan.logical_evaluation_time,
@@ -1990,7 +1995,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     gratis_load_minor: U256::from(1),
                     entry_price_minor: U256::from(2),
                     floor_price_minor: U256::from(3),
-                    cost_amount_minor: U256::from(4),
+                    settlement_cost_minor: U256::from(4),
                     issuance_currency: 840,
                     reference_currency: 978,
                     exclude_from_intex_issuance: raw_ordinal == 0,

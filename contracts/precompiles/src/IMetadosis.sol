@@ -67,9 +67,9 @@ interface IMetadosis {
         uint256 tributeTotals,
         uint256 dayGratisDemand,
         uint256 dayGratisLimit,
-        uint256 dayGratisAllocation,
-        uint256 dayGratisAllocationRemainder,
-        uint256 netDayGratisAllocation,
+        uint256 lysisLimitMinor,
+        uint256 unusedLysisLimitMinor,
+        uint256 lysisAllocationMinor,
         uint256 dayMetadosisLimitRemainder,
         string status,
         uint64 blockNumber

@@ -3,3 +3,5 @@
 use alloy_sol_types::sol;
 
 sol!("../../../contracts/tokens/src/interfaces/IERC20.sol");
+
+sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");

@@ -3,12 +3,12 @@ use super::*;
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_ocomp_protocol::{
     intent::{AuctionEntryPriceSource, DayType, ReferenceEntryPriceV1},
-    receipts::{desis_request_brief_hash, BudgetSplitDestination},
+    receipts::{desis_request_brief_hash, LimitSplitDestination},
 };
 use outbe_primitives::error::PrecompileError;
 
-use crate::ocomp_budget::{
-    apply_auction_brief, apply_fresh_request_budget_effect, RequestBudgetEffect, RequestBudgetSplit,
+use crate::ocomp_limits::{
+    apply_auction_brief, apply_fresh_request_limit_effect, RequestLimitEffect, RequestLimitSplit,
 };
 
 /// The day's frozen price table: one dollar row, as a single-currency day carries.
@@ -22,10 +22,10 @@ fn entry_prices() -> Vec<ReferenceEntryPriceV1> {
 }
 
 #[test]
-fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
+fn request_limit_split_is_exact_at_zero_max_and_rejects_over_limit() {
     assert_eq!(
-        RequestBudgetSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, true).unwrap(),
-        RequestBudgetSplit {
+        RequestLimitSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, true).unwrap(),
+        RequestLimitSplit {
             day_limit: U256::ZERO,
             lysis_limit_minor: U256::ZERO,
             desis_limit_minor: U256::ZERO,
@@ -34,8 +34,8 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
     );
     // Lysis takes the whole emission, so nothing is credited and nothing is drawn.
     assert_eq!(
-        RequestBudgetSplit::derive(U256::MAX, U256::MAX, U256::MAX, U256::ZERO, true).unwrap(),
-        RequestBudgetSplit {
+        RequestLimitSplit::derive(U256::MAX, U256::MAX, U256::MAX, U256::ZERO, true).unwrap(),
+        RequestLimitSplit {
             day_limit: U256::MAX,
             lysis_limit_minor: U256::MAX,
             desis_limit_minor: U256::ZERO,
@@ -44,12 +44,12 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
     );
     // A draw the effective ceiling could not represent is rejected rather than wrapped.
     assert!(matches!(
-        RequestBudgetSplit::derive(U256::MAX, U256::ZERO, U256::MAX, U256::ZERO, true),
+        RequestLimitSplit::derive(U256::MAX, U256::ZERO, U256::MAX, U256::ZERO, true),
         Err(PrecompileError::Revert(_))
     ));
     // Lysis above the day's own emission is corruption, not a clamp.
     assert!(matches!(
-        RequestBudgetSplit::derive(
+        RequestLimitSplit::derive(
             U256::from(9),
             U256::from(10),
             U256::from(9),
@@ -61,10 +61,10 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
 }
 
 #[test]
-fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbriefed() {
+fn request_limit_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbriefed() {
     // A day that earned less than the limit auctions the rest of what it earned; the headroom is
     // not briefed and goes back to the warehouse instead.
-    let weak = RequestBudgetSplit::derive(
+    let weak = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(32),
         U256::from(100),
@@ -76,7 +76,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
     assert_eq!(weak.carry_over_credit, U256::from(968));
 
     // A day that earned past its own emission is bounded by what the accumulator holds.
-    let strong = RequestBudgetSplit::derive(
+    let strong = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(320),
         U256::from(5_000),
@@ -87,7 +87,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
     assert_eq!(strong.desis_limit_minor, U256::from(680));
 
     // The same day reaches past its own emission once the accumulator has something to give.
-    let funded = RequestBudgetSplit::derive(
+    let funded = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(320),
         U256::from(5_000),
@@ -99,7 +99,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
     assert_eq!(funded.day_limit, U256::from(3_680));
 
     // Lysis alone can exhaust the day's emission, and then only the accumulator funds the auction.
-    let exhausted = RequestBudgetSplit::derive(
+    let exhausted = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(1_000),
         U256::from(5_000),
@@ -111,12 +111,12 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
 
     // A day with no tributes auctions nothing.
     let empty =
-        RequestBudgetSplit::derive(U256::from(1_000), U256::ZERO, U256::ZERO, U256::ZERO, true)
+        RequestLimitSplit::derive(U256::from(1_000), U256::ZERO, U256::ZERO, U256::ZERO, true)
             .unwrap();
     assert_eq!(empty.desis_limit_minor, U256::ZERO);
 
     // A red day draws nothing, however much the accumulator holds.
-    let red = RequestBudgetSplit::derive(
+    let red = RequestLimitSplit::derive(
         U256::from(1_000),
         U256::from(4),
         U256::from(100),
@@ -131,7 +131,7 @@ fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbri
 #[test]
 fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
     with_storage(|storage| {
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_101,
             pending_nonce: 1,
@@ -143,8 +143,8 @@ fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
-            .expect("GREEN request budget effect");
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("GREEN request limit effect");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
@@ -152,7 +152,7 @@ fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
         assert_eq!(receipt.day_limit, U256::from(160));
         assert_eq!(receipt.lysis_limit_minor, U256::from(40));
         assert_eq!(receipt.desis_limit_minor, U256::from(60));
-        assert_eq!(receipt.destination, BudgetSplitDestination::DesisAuction);
+        assert_eq!(receipt.destination, LimitSplitDestination::DesisAuction);
         assert_eq!(receipt.carry_over_credit, U256::from(60));
         assert_eq!(
             receipt.desis_brief_hash,
@@ -192,7 +192,7 @@ fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
 #[test]
 fn red_request_briefs_nothing_and_credits_the_exact_desis_limit() {
     with_storage(|storage| {
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_102,
             pending_nonce: 1,
@@ -204,12 +204,12 @@ fn red_request_briefs_nothing_and_credits_the_exact_desis_limit() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
-            .expect("RED request budget effect");
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("RED request limit effect");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
-        assert_eq!(receipt.destination, BudgetSplitDestination::CarryOver);
+        assert_eq!(receipt.destination, LimitSplitDestination::CarryOver);
         assert!(receipt.desis_brief_hash.is_some());
         assert_eq!(receipt.carry_over_credit, U256::from(60));
         let desis = DesisContract::new(storage.clone());
@@ -244,7 +244,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
         PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(U256::from(5))
             .unwrap();
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: wwd.into(),
             pending_nonce: 1,
@@ -258,7 +258,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
 
         // The request itself only credits; the refusal comes when the auction tries to brief a day
         // Desis already holds.
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("the request credits without touching Desis");
         let credited = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
@@ -288,7 +288,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
         PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(before)
             .unwrap();
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_106,
             pending_nonce: 1,
@@ -300,7 +300,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             logical_anchor: 1_699_920_005,
         };
 
-        assert!(apply_fresh_request_budget_effect(storage.clone(), request.clone()).is_err());
+        assert!(apply_fresh_request_limit_effect(storage.clone(), request.clone()).is_err());
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
@@ -320,7 +320,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
 #[test]
 fn an_unpriced_day_commits_a_canonical_empty_price_table() {
     with_storage(|storage| {
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_109,
             pending_nonce: 1,
@@ -332,8 +332,8 @@ fn an_unpriced_day_commits_a_canonical_empty_price_table() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
-            .expect("an unpriced day still commits its budget split");
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("an unpriced day still commits its limit split");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
         assert!(receipt.auction_entry_prices.is_empty());
@@ -361,7 +361,7 @@ fn an_unpriced_day_commits_a_canonical_empty_price_table() {
 #[test]
 fn a_weak_day_credits_the_headroom_it_never_briefed() {
     with_storage(|storage| {
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_110,
             pending_nonce: 1,
@@ -373,8 +373,8 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
-            .expect("a weak day commits its budget split");
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("a weak day commits its limit split");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
@@ -404,7 +404,7 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
 #[test]
 fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
     with_storage(|storage| {
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_111,
             pending_nonce: 1,
@@ -416,8 +416,8 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
-            .expect("a weak RED day commits its budget split");
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
+            .expect("a weak RED day commits its limit split");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
 
@@ -441,7 +441,7 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
             .checked_add_carry_over(U256::from(5_000))
             .unwrap();
 
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_112,
             pending_nonce: 1,
@@ -453,7 +453,7 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("a day funded past its own emission");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
@@ -487,7 +487,7 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             .checked_add_carry_over(U256::from(100))
             .unwrap();
 
-        let request = RequestBudgetEffect {
+        let request = RequestLimitEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
             wwd: 20_260_114,
             pending_nonce: 1,
@@ -499,7 +499,7 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
             .expect("a day the accumulator cannot fully serve");
         // The brief waits for the Lysis deadline; drive it here.
         apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");

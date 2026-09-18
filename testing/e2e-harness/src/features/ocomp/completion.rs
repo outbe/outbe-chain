@@ -410,13 +410,13 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod(world: &m
     );
 }
 
-#[then("Lysis and OCOMP use the WWD VWAP below the active S-curve")]
-fn lysis_and_ocomp_use_wwd_below_scurve(world: &mut World) {
-    let activation = world
+#[then("Lysis and OCOMP use the independently frozen rolling entry price")]
+fn lysis_and_ocomp_use_frozen_entry_price(world: &mut World) {
+    let request = world
         .state
-        .ocomp_activation
+        .ocomp_job_request
         .as_ref()
-        .expect("finalized OCOMP activation");
+        .expect("finalized public JobIntent");
     let generation = world
         .state
         .ocomp_certified_generation
@@ -426,21 +426,25 @@ fn lysis_and_ocomp_use_wwd_below_scurve(world: &mut World) {
     let [action] = actions.as_slice() else {
         panic!("single-Tribute pricing scenario must produce exactly one Nod action")
     };
-    let (wwd_vwap, scurve) = world
+    let wwd_vwap = world
         .rpc
-        .oracle_wwd_vwap_and_scurve(
+        .ocomp_job_record_at_on(
             world.validators.primary_port(),
-            activation.worldwide_day,
-            840,
+            request.intent_id,
+            request.request_height,
         )
-        .expect("read canonical WWD VWAP and active S-curve");
-    assert!(
-        scurve > wwd_vwap,
-        "fixture must keep an active S-curve above the WWD VWAP"
+        .expect("read request-time WWD price")
+        .intent
+        .frozen_metadosis_values
+        .current_vwap;
+    let expected = crate::features::oracle_expectations::frozen_entry_price(world);
+    assert_ne!(
+        expected, wwd_vwap,
+        "fixture distinguishes entry price from WWD VWAP"
     );
     assert_eq!(
-        action.entry_price_minor, wwd_vwap,
-        "Lysis/Nod must carry WWD VWAP rather than the higher S-curve"
+        action.entry_price_minor, expected,
+        "Lysis/Nod must carry the independently recomputed frozen entry price"
     );
 }
 

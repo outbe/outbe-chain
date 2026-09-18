@@ -625,7 +625,7 @@ fn require_chunk_summary(
         alloy_primitives::U256::ZERO,
         |total, action| {
             total
-                .checked_add(action.cost_amount_minor)
+                .checked_add(action.settlement_cost_minor)
                 .ok_or(ProtocolError::IntegerOverflow {
                     what: "result chunk Nod cost total",
                 })

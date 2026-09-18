@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
@@ -27,6 +27,13 @@ pub enum DesisError {
 
     #[error("relayed bid batch carries {0} bids, over the {1} the codec may send")]
     BidBatchTooLarge(usize, usize),
+
+    #[error("Desis Allocation {allocation} exceeds Desis Limit {limit} for worldwide day {wwd}")]
+    DesisAllocationExceedsLimit {
+        wwd: WorldwideDay,
+        allocation: U256,
+        limit: U256,
+    },
 }
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {

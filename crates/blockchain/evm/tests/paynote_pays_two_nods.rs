@@ -107,17 +107,24 @@ fn always_returns(word: B256) -> AccountInfo {
     }
 }
 
-/// Returns six for `decimals()` and true for `transferFrom` and `approve`.
+/// Returns six for `decimals()`, the reference currency for `isoCode()`,
+/// and true for `transferFrom` and `approve`.
 fn settlement_asset() -> AccountInfo {
-    let code = alloy_primitives::hex!(
-        // Load the selector, compare with decimals(), and jump to offset 25.
-        "60003560e01c63313ce56714601957"
+    let mut code = alloy_primitives::hex!(
+        // Dispatch decimals() to offset 40 and isoCode() to offset 51.
+        "60003560e01c63313ce56714602857"
+        "60003560e01c63dfa3b54114603357"
         // Return true for ERC20 transfers and approvals.
         "600160005260206000f3"
         // JUMPDEST; return six decimals, matching COST's reference minor units.
         "5b600660005260206000f3"
-    );
-    let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&code));
+        // JUMPDEST; PUSH2 <reference currency>.
+        "5b61"
+    )
+    .to_vec();
+    code.extend_from_slice(&REFERENCE_CURRENCY.to_be_bytes());
+    code.extend_from_slice(&alloy_primitives::hex!("60005260206000f3"));
+    let bytecode = Bytecode::new_raw(Bytes::from(code));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -339,7 +346,9 @@ fn settle_and_mine(
         B256::from(U256::from(CHAIN_ID)),
     );
     let nonce = (0_u64..1_000_000)
-        .find(|candidate| outbe_nodfactory::runtime::validate_pow(nod_id, *candidate).is_ok())
+        .find(|candidate| {
+            outbe_nodfactory::runtime::validate_pow(nod_id, ALICE1, *candidate).is_ok()
+        })
         .expect("every nod id has a PoW nonce in the bounded search");
     call(
         ctx,
@@ -511,20 +520,6 @@ fn measure_settle_gem_gas_with_real_paynote() {
     let leaf = u32::try_from(tree.append(funding.commitment).unwrap()).unwrap();
     let proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
 
-    // The deposited asset keeps its six-decimal response. All other views in
-    // settlement are isoCode(), so return USD instead of the transfer stub's 1.
-    let asset_code = alloy_primitives::hex!(
-        "60003560e01c63313ce56714601a5761034860005260206000f35b600660005260206000f3"
-    );
-    let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&asset_code));
-    ctx.journaled_state.database.insert_account_info(
-        ASSET,
-        AccountInfo {
-            code_hash: bytecode.hash_slow(),
-            code: Some(bytecode),
-            ..Default::default()
-        },
-    );
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {

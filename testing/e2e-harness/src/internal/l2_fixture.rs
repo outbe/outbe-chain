@@ -88,7 +88,7 @@ pub(crate) struct TributeOfferStatement<'a> {
     pub host_chain_id: u64,
     /// Offer caller; the binding is derived from exactly this address.
     pub caller: Address,
-    /// The caller's registered L2 chain id, which selects the circuit.
+    /// The selected registered L2 chain id; its administrator need not be the caller.
     pub l2_chain_id: u64,
     pub worldwide_day: u64,
     pub tribute_currency: u16,
