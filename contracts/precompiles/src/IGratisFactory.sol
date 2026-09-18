@@ -35,19 +35,11 @@ interface IGratisFactory {
     /// @param asset         Stablecoin the credis will later be disbursed in.
     /// @param maxGratis     Slippage cap: reverts if the oracle-derived gratis cost
     ///                      exceeds it. Authenticated by the transaction signature.
-    /// @param reservationId Live `IVaultRouter` hold the CCA created for this credit
-    ///        before the pledge. Must cover `asset` and at least `amountStables` and
-    ///        must not have expired. The hold is not consumed here; `issueCredis` is.
     /// @return pledgeHandle The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
-    function pledgeGratis(
-        uint256 amountStables,
-        address asset,
-        uint256 maxGratis,
-        bytes32 reservationId,
-        bytes32 mac,
-        uint64 opNonce
-    ) external returns (bytes32 pledgeHandle);
+    function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
+        external
+        returns (bytes32 pledgeHandle);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by

@@ -102,15 +102,8 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("\nSending pledgeGratis(amountStables, asset, maxGratis, reservationId, mac, opNonce)...");
-  const tx = await gratisFactory.pledgeGratis(
-    amountStables,
-    erc20Address,
-    maxGratis,
-    offer.reservationId,
-    mac,
-    opNonce,
-  );
+  console.log("\nSending pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)...");
+  const tx = await gratisFactory.pledgeGratis(amountStables, erc20Address, maxGratis, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("pledgeGratis tx receipt missing");

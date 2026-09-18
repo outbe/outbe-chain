@@ -162,7 +162,6 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], B256), Stri
         pledge_stables(),
         ASSET,
         U256::MAX,
-        reservation_id,
         auth(GratisOp::Pledge, pledge_stables(), 1),
     )
     .map_err(|error| error.to_string())?;

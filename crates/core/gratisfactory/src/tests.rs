@@ -21,7 +21,6 @@ use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
-use outbe_vaultrouter::{StablesReservation, VaultRouterContract};
 
 const CHAIN_ID: u64 = 1;
 const CREATED_AT: u64 = 1_700_000_000;
@@ -145,48 +144,14 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     out
 }
 
-/// Parks a live vault reservation covering `amount` of [`asset`] so a pledge can
-/// quote against it. Written through VaultRouter storage because these tests stub
-/// EVM sub-calls into the router.
-fn seed_reservation(storage: &StorageHandle<'_>, amount: U256) -> B256 {
-    let contract = VaultRouterContract::new(storage.clone());
-    let nonce = contract
-        .reservation_nonce
-        .read()
-        .unwrap()
-        .saturating_add(U256::from(1));
-    contract.reservation_nonce.write(nonce).unwrap();
-    let id = B256::from(nonce);
-    contract
-        .reservations
-        .create(&StablesReservation {
-            id,
-            asset: asset(),
-            amount,
-            smart_account: alice(),
-            cca: address!("0xcccccccccccccccccccccccccccccccccccccccc"),
-            vault: address!("0x0000000000000000000000000000000000000777"),
-            expires_at: CREATED_AT + 15 * 60,
-        })
-        .unwrap();
-    id
-}
-
-/// `pledgeGratis(amountStables, asset, maxGratis, reservationId, mac, opNonce)`
-/// calldata. `max_gratis` is the caller's slippage cap; pass `U256::MAX` when the
-/// test does not exercise it.
-fn pledge_call(
-    a: ModifyAuth,
-    amount_stables: U256,
-    max_gratis: U256,
-    reservation_id: B256,
-) -> Bytes {
+/// `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` calldata. `max_gratis`
+/// is the caller's slippage cap; pass `U256::MAX` when the test does not exercise it.
+fn pledge_call(a: ModifyAuth, amount_stables: U256, max_gratis: U256) -> Bytes {
     Bytes::from(
         IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
             amountStables: amount_stables,
             asset: asset(),
             maxGratis: max_gratis,
-            reservationId: reservation_id,
             mac: FixedBytes(a.mac),
             opNonce: a.op_nonce,
         })
@@ -208,7 +173,6 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        let reservation_id = seed_reservation(&storage, pledge_stables());
 
         // Pledge at op-nonce 1 (mine advanced it from 0). The MAC binds the STABLES.
         let out = dispatch(
@@ -217,7 +181,6 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
                 auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
                 pledge_stables(),
                 U256::MAX,
-                reservation_id,
             ),
             alice(),
             U256::ZERO,
@@ -235,32 +198,6 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost()
         );
-    });
-}
-
-#[test]
-fn pledge_rejects_a_missing_reservation() {
-    with_env(|storage| {
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_cost(),
-            auth(GratisOp::Mint, alice(), pledge_cost(), 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        let err = runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_stables(),
-            asset(),
-            U256::MAX,
-            B256::ZERO,
-            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("reservation not found"), "{err}");
-        assert_eq!(view_balance(&storage, alice()), pledge_cost());
     });
 }
 
@@ -292,7 +229,6 @@ fn pledge_rejects_a_stale_oracle_rate_without_debiting_gratis() {
                 auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
                 pledge_stables(),
                 U256::MAX,
-                B256::ZERO,
             ),
             alice(),
             U256::ZERO,
@@ -321,7 +257,6 @@ fn pledge_rounds_collateral_down_before_checking_the_cap() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        let reservation_id = seed_reservation(&storage, stable_raw);
 
         let (handle, charged) = runtime::pledge_gratis(
             storage.clone(),
@@ -329,7 +264,6 @@ fn pledge_rounds_collateral_down_before_checking_the_cap() {
             stable_raw,
             asset(),
             gratis_raw,
-            reservation_id,
             auth(GratisOp::Pledge, alice(), stable_raw, 1),
         )
         .unwrap();
@@ -377,7 +311,6 @@ fn pledge_rejects_when_derived_gratis_exceeds_max() {
                 auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
                 pledge_stables(),
                 pledge_cost() - U256::from(1u64),
-                B256::ZERO,
             ),
             alice(),
             U256::ZERO,
@@ -411,7 +344,6 @@ fn pledge_rejects_a_quote_that_rounds_to_zero_without_changing_balances() {
             U256::ONE,
             asset(),
             U256::MAX,
-            B256::ZERO,
             auth(GratisOp::Pledge, alice(), U256::ONE, 1),
         )
         .unwrap_err();
@@ -436,7 +368,6 @@ fn pledge_rejects_wrong_op_nonce() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        let reservation_id = seed_reservation(&storage, pledge_stables());
 
         // op-nonce is 1 after the mine; a stale/forged 5 must be rejected.
         let err = dispatch(
@@ -445,7 +376,6 @@ fn pledge_rejects_wrong_op_nonce() {
                 auth(GratisOp::Pledge, alice(), pledge_stables(), 5),
                 pledge_stables(),
                 U256::MAX,
-                reservation_id,
             ),
             alice(),
             U256::ZERO,
@@ -473,7 +403,6 @@ fn pledge_rejects_zero_asset() {
             pledge_stables(),
             Address::ZERO,
             U256::MAX,
-            B256::ZERO,
             auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
         )
         .unwrap_err();
@@ -492,14 +421,12 @@ fn unpledge_returns_collateral_to_pledger() {
         )
         .unwrap();
         seed_fidelity(storage.clone(), alice());
-        let reservation_id = seed_reservation(&storage, pledge_stables());
         let (handle, gratis_cost) = runtime::pledge_gratis(
             storage.clone(),
             alice(),
             pledge_stables(),
             asset(),
             U256::MAX,
-            reservation_id,
             auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
         )
         .unwrap();
@@ -696,7 +623,6 @@ fn rejects_msg_value() {
                 amountStables: U256::from(1u64),
                 asset: asset(),
                 maxGratis: U256::MAX,
-                reservationId: B256::ZERO,
                 mac: FixedBytes([0u8; 32]),
                 opNonce: 0,
             })
