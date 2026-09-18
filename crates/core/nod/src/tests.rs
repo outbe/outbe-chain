@@ -1063,3 +1063,87 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(!svg.contains("Floor Price"));
     });
 }
+
+/// A settled Nod keeps its bucket's call stamp, and an unbounded notice has no deadline to
+/// show: neither may leak call rows onto the card.
+#[test]
+fn nod_card_hides_call_rows_it_cannot_honour() {
+    use crate::precompile::{dispatch, INod};
+    use crate::schema::CallTerms;
+    use alloy_sol_types::SolCall;
+    use base64::Engine;
+
+    for (paid, notice) in [(true, 17), (false, 0)] {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(118));
+        let scope = ExecutionScope::new();
+        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+        let json = StorageHandle::enter(&mut provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), &scope).unwrap();
+            let item = item(Address::repeat_byte(0x88), U256::from(13), USD);
+            api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+            let mut nod = NodContract::new(storage.clone());
+            nod.seal_bucket_call_terms(
+                item.bucket_key,
+                CallTerms {
+                    call_price: U256::from(937),
+                    reference_currency: USD,
+                    call_rate: 23,
+                    call_window: 432_000,
+                    call_threshold: 172_800,
+                    call_notice_period: notice,
+                },
+            )
+            .unwrap();
+            nod.qualify_bucket(&scope, &parent, item.bucket_key)
+                .unwrap();
+            nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
+            if paid {
+                let bucket_id =
+                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+                api::settle_nod(
+                    &storage,
+                    &scope,
+                    api::load_item(&storage, &scope, &parent, item.nod_id)
+                        .unwrap()
+                        .unwrap(),
+                    api::load_bucket(&storage, &scope, &parent, bucket_id)
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap();
+            }
+            let out = dispatch(
+                storage.clone(),
+                &scope,
+                &parent,
+                &INod::tokenURICall {
+                    nodId: item.nod_id.to_u256(),
+                }
+                .abi_encode(),
+                item.owner,
+                U256::ZERO,
+            )
+            .unwrap();
+            let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+                    .unwrap(),
+            )
+            .unwrap()
+        });
+
+        assert!(!json.contains("Settlement Deadline"), "{json}");
+        if paid {
+            assert!(json.contains(r#"{"trait_type":"State","value":"Settled"}"#));
+            assert!(!json.contains("Called At"), "{json}");
+        } else {
+            assert!(json.contains(r#"{"trait_type":"State","value":"Called"}"#));
+            assert!(
+                json.contains(r#"{"trait_type":"Called At","value":100,"display_type":"date"}"#)
+            );
+        }
+    }
+}
