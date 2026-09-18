@@ -264,31 +264,47 @@ contract RefundDayGasTest is RefundGasBase {
         _elapseCompactResetPeriod();
     }
 
-    function _deliverChunk(uint16 winnerCount) internal returns (uint256 spent) {
+    function _deliverChunk(uint16 winnerCount, uint16 chunkIndex, uint16 totalChunks) internal returns (uint256 spent) {
         uint16 partialIndex = winnerCount == 0 ? 0 : winnerCount - 1;
         uint16 partialWon = winnerCount == 0 ? 0 : QUANTITY / 2;
         bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(
-            DAY, 0, 1, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
+            DAY, chunkIndex, totalChunks, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
         );
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         spent = before - gasleft();
+    }
 
+    /// @dev The day's only chunk: it settles its winners and routes the day's proceeds.
+    function _deliverClosingChunk(uint16 winnerCount) internal returns (uint256 spent) {
+        spent = _deliverChunk(winnerCount, 0, 1);
         (, bool finalized,) = escrow.getAuctionStatus(DAY);
         assertTrue(finalized, "the only chunk closes the day");
     }
 
     function test_ADayWith40Winners() public {
-        emit log_named_uint("day_chunk_40w", _deliverChunk(40));
+        emit log_named_uint("day_chunk_40w", _deliverClosingChunk(40));
+    }
+
+    /// @dev A chunk that does not close the day pays for its winners, its withdrawal and the day's clearing
+    ///      snapshot, and routes nothing: this is the base every chunk carries.
+    function test_AChunkThatDoesNotCloseTheDay() public {
+        emit log_named_uint("day_chunk_40w_open", _deliverChunk(40, 0, 2));
+        (, bool finalized,) = escrow.getAuctionStatus(DAY);
+        assertFalse(finalized, "an unfinished day stays open");
     }
 
     function test_AWidestChunkFitsItsQuote() public {
-        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+        uint256 spent = _deliverClosingChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
         emit log_named_uint("day_chunk_64w", spent);
-        assertLt(spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN), "the widest chunk must fit its quote");
+        assertLt(
+            spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true), "the widest chunk must fit its quote"
+        );
     }
 
     function test_AChainWithoutWinners() public {
-        emit log_named_uint("day_chunk_empty", _deliverChunk(0));
+        uint256 spent = _deliverClosingChunk(0);
+        emit log_named_uint("day_chunk_empty", spent);
+        assertLt(spent, IntexGas.refund(0, false), "a chunk with no winners must fit its quote");
     }
 }

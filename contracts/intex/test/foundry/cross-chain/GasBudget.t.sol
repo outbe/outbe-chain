@@ -516,7 +516,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, 600_000, 1e6, who, 0, 0));
 
         emit log_named_uint("refund_full_chunk", spent);
-        assertLt(spent, IntexGas.refund(winners), "the widest refund chunk must fit the quote");
+        assertLt(spent, IntexGas.refund(winners, true), "the widest refund chunk must fit the quote");
     }
 
     function test_TheQuoteCoversAuctionResult() public {
