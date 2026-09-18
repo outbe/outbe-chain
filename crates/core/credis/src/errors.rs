@@ -31,6 +31,8 @@ pub enum CredisError {
     ArithmeticOverflow,
     #[error("index out of bounds")]
     IndexOutOfBounds,
+    #[error("position is non-transferable")]
+    NonTransferable,
 }
 
 impl From<CredisError> for PrecompileError {

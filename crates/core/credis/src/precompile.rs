@@ -1,10 +1,13 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
-use outbe_primitives::dispatch::{dispatch_call, view};
-use outbe_primitives::erc::ERC165_INTERFACE_ID;
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::erc::{
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
+};
 use outbe_primitives::error::Result;
 
+use crate::constants::{TOKEN_NAME, TOKEN_SYMBOL};
 use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
@@ -12,6 +15,13 @@ use crate::schema::CredisContract;
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
+const SUPPORTED_INTERFACES: [[u8; 4]; 4] = [
+    ERC165_INTERFACE_ID,
+    ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
+    ERC4906_INTERFACE_ID,
+];
 
 sol!("../../../contracts/precompiles/src/ICredis.sol");
 
@@ -26,6 +36,13 @@ pub fn dispatch(
         let contract = CredisContract::new(storage.clone());
         use ICredis::ICredisCalls::*;
         match call {
+            name(_) => metadata::<ICredis::nameCall>(|| Ok(TOKEN_NAME.to_string())),
+            symbol(_) => metadata::<ICredis::symbolCall>(|| Ok(TOKEN_SYMBOL.to_string())),
+            tokenURI(c) => view(c, |c| {
+                let position = contract.get_position(c.positionId)?;
+                let now = contract.storage.timestamp()?.to::<u64>();
+                crate::metadata::token_uri(&position, now)
+            }),
             totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
             getPosition(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
@@ -35,6 +52,13 @@ pub fn dispatch(
                 let position = contract.get_position(c.positionId)?;
                 Ok(position.smart_account)
             }),
+            transferFrom(_)
+            | safeTransferFrom_0(_)
+            | safeTransferFrom_1(_)
+            | approve(_)
+            | setApprovalForAll(_) => Err(CredisError::NonTransferable.into()),
+            getApproved(c) => view(c, |_| Ok(Address::ZERO)),
+            isApprovedForAll(c) => view(c, |_| Ok(false)),
             positionByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
                 Ok(abi_position(&contract.position_at(index)?))
@@ -61,10 +85,9 @@ pub fn dispatch(
                     _1: outstanding,
                 })
             }),
-            supportsInterface(c) => view(c, |c| {
-                let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID)
-            }),
+            supportsInterface(c) => {
+                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            }
         }
     })
 }

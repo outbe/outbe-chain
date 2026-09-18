@@ -194,6 +194,11 @@ impl CredisContract<'_> {
             self.append_to_global_index(position_id)?;
             self.insert_active(position_id)?;
 
+            self.emit(ICredis::Transfer {
+                from: Address::ZERO,
+                to: params.smart_account,
+                tokenId: position_id,
+            })?;
             self.emit(ICredis::PositionCreated {
                 positionId: position_id,
                 smartAccount: params.smart_account,
@@ -223,6 +228,9 @@ impl CredisContract<'_> {
             positionId: position_id,
             calledAt: now,
             settlementDeadline: settlement_deadline(&position),
+        })?;
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: position_id,
         })?;
         Ok(true)
     }
@@ -311,6 +319,9 @@ impl CredisContract<'_> {
                 positionId: position_id,
             })?;
         }
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: position_id,
+        })?;
 
         Ok(Settlement {
             interest,
@@ -378,6 +389,9 @@ impl CredisContract<'_> {
                 gratisBurned: gratis_burned,
                 principalWrittenOff: principal_written_off,
                 interestWrittenOff: interest_written_off,
+            })?;
+            self.emit(ICredis::MetadataUpdate {
+                _tokenId: position_id,
             })?;
 
             Ok(Void {

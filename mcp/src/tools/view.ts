@@ -117,9 +117,16 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Gem -------------------------------------------------------------------
   server.tool(
     "gem_get",
-    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued).",
+    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued) " +
+      "plus parsed tokenURI metadata.",
     { id: z.string().describe("Gem token id (decimal or 0x hex)") },
-    handler(async ({ id }) => ok(await view(ctx, "gem", "getGemStatus", [BigInt(id)]))),
+    handler(async ({ id }) => {
+      const [data, metadata] = await Promise.all([
+        view(ctx, "gem", "getGemStatus", [BigInt(id)]),
+        view(ctx, "gem", "tokenURI", [BigInt(id)]),
+      ]);
+      return ok({ gemId: id, data, metadata });
+    }),
   );
 
   server.tool(
@@ -158,6 +165,21 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
         gems.push(await view(ctx, "gem", "getGemStatus", [BigInt(tokenId as string)]));
       }
       return ok({ owner, count: balance, gems });
+    }),
+  );
+
+  // --- Credis ----------------------------------------------------------------
+  server.tool(
+    "credis_position_get",
+    "Credis position by id (decoded: principal, outstanding, collateral, prices, state) " +
+      "plus parsed tokenURI metadata.",
+    { id: z.string().describe("Position id (decimal or 0x hex)") },
+    handler(async ({ id }) => {
+      const [data, metadata] = await Promise.all([
+        view(ctx, "credis", "getPosition", [BigInt(id)]),
+        view(ctx, "credis", "tokenURI", [BigInt(id)]),
+      ]);
+      return ok({ positionId: id, data, metadata });
     }),
   );
 

@@ -109,6 +109,23 @@ fn open_pos(credis: &mut CredisContract<'_>, tag: u8) -> U256 {
     credis.open_position(params(handle(tag), alice())).unwrap()
 }
 
+/// Bonds the test CCA that `open_position` requires, for tests that keep the provider.
+fn bond_test_cca(storage: &StorageHandle<'_>) {
+    storage
+        .increase_balance(
+            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        )
+        .unwrap();
+    outbe_ccaregistry::runtime::bond(
+        storage.clone(),
+        cca(),
+        outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .unwrap();
+}
+
 fn at(day: u64) -> u64 {
     ORIGINATED_AT + day * DAY
 }
@@ -1388,4 +1405,273 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
             collateral()
         );
     });
+}
+
+#[test]
+fn precompile_names_the_collection_and_is_soulbound() {
+    with_credis(|storage| {
+        let call = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO);
+        let out = call(ICredis::nameCall {}.abi_encode()).unwrap();
+        assert_eq!(
+            ICredis::nameCall::abi_decode_returns(&out).unwrap(),
+            "Credis"
+        );
+        let out = call(ICredis::symbolCall {}.abi_encode()).unwrap();
+        assert_eq!(
+            ICredis::symbolCall::abi_decode_returns(&out).unwrap(),
+            "CREDIS"
+        );
+
+        let position = U256::from(7);
+        for data in [
+            ICredis::transferFromCall {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::safeTransferFrom_0Call {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::safeTransferFrom_1Call {
+                from: alice(),
+                to: bob(),
+                positionId: position,
+                data: Default::default(),
+            }
+            .abi_encode(),
+            ICredis::approveCall {
+                to: bob(),
+                positionId: position,
+            }
+            .abi_encode(),
+            ICredis::setApprovalForAllCall {
+                operator: bob(),
+                approved: true,
+            }
+            .abi_encode(),
+        ] {
+            let err = call(data).unwrap_err();
+            assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+        }
+        let out = call(
+            ICredis::getApprovedCall {
+                positionId: position,
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(
+            ICredis::getApprovedCall::abi_decode_returns(&out).unwrap(),
+            Address::ZERO
+        );
+        let out = call(
+            ICredis::isApprovedForAllCall {
+                owner: alice(),
+                operator: bob(),
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert!(!ICredis::isApprovedForAllCall::abi_decode_returns(&out).unwrap());
+    });
+}
+
+#[test]
+fn open_position_announces_the_mint() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(ORIGINATED_AT));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        bond_test_cca(&storage);
+        open_pos(&mut CredisContract::new(storage), 1)
+    });
+
+    let transfers: Vec<(Address, Address, U256)> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::Transfer::decode_log_data(log).ok())
+        .map(|event| (event.from, event.to, event.tokenId))
+        .collect();
+    assert_eq!(transfers, vec![(Address::ZERO, alice(), id)]);
+}
+
+#[test]
+fn supported_interfaces_match_the_implemented_selectors() {
+    use alloy_sol_types::SolEvent;
+    use outbe_primitives::erc::{
+        ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
+        ERC721_METADATA_INTERFACE_ID,
+    };
+
+    let interface_id = |selectors: &[[u8; 4]]| {
+        selectors.iter().fold([0u8; 4], |acc, selector| {
+            std::array::from_fn(|i| acc[i] ^ selector[i])
+        })
+    };
+    assert_eq!(
+        interface_id(&[
+            ICredis::balanceOfCall::SELECTOR,
+            ICredis::ownerOfCall::SELECTOR,
+            ICredis::safeTransferFrom_0Call::SELECTOR,
+            ICredis::safeTransferFrom_1Call::SELECTOR,
+            ICredis::transferFromCall::SELECTOR,
+            ICredis::approveCall::SELECTOR,
+            ICredis::setApprovalForAllCall::SELECTOR,
+            ICredis::getApprovedCall::SELECTOR,
+            ICredis::isApprovedForAllCall::SELECTOR,
+        ]),
+        ERC721_INTERFACE_ID
+    );
+    assert_eq!(
+        interface_id(&[
+            ICredis::nameCall::SELECTOR,
+            ICredis::symbolCall::SELECTOR,
+            ICredis::tokenURICall::SELECTOR,
+        ]),
+        ERC721_METADATA_INTERFACE_ID
+    );
+
+    with_credis(|storage| {
+        let supports = |id: [u8; 4]| {
+            let data = ICredis::supportsInterfaceCall {
+                interfaceId: id.into(),
+            }
+            .abi_encode();
+            let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+            ICredis::supportsInterfaceCall::abi_decode_returns(&out).unwrap()
+        };
+        assert!(supports(ERC165_INTERFACE_ID));
+        assert!(supports(ERC721_INTERFACE_ID));
+        assert!(supports(ERC721_METADATA_INTERFACE_ID));
+        assert!(supports(ERC4906_INTERFACE_ID));
+        assert_eq!(
+            ICredis::MetadataUpdate::SIGNATURE,
+            "MetadataUpdate(uint256)"
+        );
+        assert_eq!(
+            ICredis::BatchMetadataUpdate::SIGNATURE,
+            "BatchMetadataUpdate(uint256,uint256)"
+        );
+        assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
+        assert!(!supports([0xff; 4]));
+    });
+}
+
+fn token_uri_parts(storage: &StorageHandle, position_id: U256) -> (serde_json::Value, String) {
+    use base64::Engine;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let data = ICredis::tokenURICall {
+        positionId: position_id,
+    }
+    .abi_encode();
+    let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+    let uri = ICredis::tokenURICall::abi_decode_returns(&out).unwrap();
+    let json = engine
+        .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    let svg = engine
+        .decode(
+            json["image"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:image/svg+xml;base64,")
+                .unwrap(),
+        )
+        .unwrap();
+    (json, String::from_utf8(svg).unwrap())
+}
+
+fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value> {
+    json["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["trait_type"] == name)
+        .map(|entry| entry["value"].clone())
+}
+
+#[test]
+fn token_uri_renders_the_position_image_and_metadata() {
+    with_credis(|storage| {
+        let id = open_pos(&mut CredisContract::new(storage.clone()), 1);
+        let (json, svg) = token_uri_parts(&storage, id);
+
+        let short = outbe_common::nft_card::short_id(id);
+        assert_eq!(json["name"], format!("Credis {short}"));
+        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Open");
+        assert_eq!(trait_value(&json, "Principal").unwrap(), 1000);
+        assert_eq!(trait_value(&json, "Outstanding").unwrap(), 1000);
+        assert_eq!(trait_value(&json, "Accrued Interest").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
+        assert_eq!(trait_value(&json, "Call Price").unwrap(), 0.82);
+        assert_eq!(trait_value(&json, "Policy Rate").unwrap(), 0.04);
+        assert_eq!(trait_value(&json, "Collateral").unwrap(), 2000);
+        assert_eq!(trait_value(&json, "Reference Currency").unwrap(), 978);
+        assert_eq!(trait_value(&json, "CCA").unwrap(), cca().to_string());
+        assert_eq!(trait_value(&json, "Originated At").unwrap(), ORIGINATED_AT);
+        assert!(trait_value(&json, "Settlement Deadline").is_none());
+        assert!(!json.to_string().contains("eoa"));
+
+        assert!(svg.contains(">CREDIS</text>"));
+        assert!(svg.contains(&format!(">{short}</text>")));
+        assert!(svg.contains(">OPEN</text>"));
+        assert!(svg.contains(">Outstanding</text>"));
+        assert!(svg.contains(">1,000</text>"));
+        assert!(svg.contains(">0.82</text>"));
+    });
+}
+
+#[test]
+fn a_called_position_shows_its_settlement_deadline() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = open_pos(&mut credis, 1);
+        credis.mark_called(id, at(3)).unwrap();
+        let deadline = settlement_deadline(&credis.get_position(id).unwrap());
+
+        let (json, svg) = token_uri_parts(&storage, id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+        assert_eq!(trait_value(&json, "Called At").unwrap(), at(3));
+        assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
+        assert!(svg.contains(">CALLED</text>"));
+        assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+    });
+}
+
+#[test]
+fn metadata_update_marks_call_settlement_and_void() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(ORIGINATED_AT));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        bond_test_cca(&storage);
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis, 1);
+        credis.mark_called(id, at(3)).unwrap();
+        let interest =
+            CredisContract::accrued_interest(&credis.get_position(id).unwrap(), at(5)).unwrap();
+        credis
+            .settle(id, interest + U256::from(PRINCIPAL / 10), at(5))
+            .unwrap();
+        let deadline = settlement_deadline(&credis.get_position(id).unwrap());
+        credis.void_position(id, deadline).unwrap();
+        id
+    });
+
+    let updates: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::MetadataUpdate::decode_log_data(log).ok())
+        .map(|event| event._tokenId)
+        .collect();
+    assert_eq!(updates, vec![id; 3]);
 }
