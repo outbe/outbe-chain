@@ -160,6 +160,15 @@ impl World {
             nod,
             cost,
         };
+        let quote = world.view(
+            NOD_FACTORY_ADDRESS,
+            INodFactory::quoteSettlementCall {
+                nodId: nod.to_u256(),
+                asset: ASSET,
+            },
+        );
+        assert_eq!(quote.settlementCurrency, 840);
+        assert_eq!(quote.payableUnits, cost);
         world.ok(
             owner,
             ASSET,
