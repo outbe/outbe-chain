@@ -176,9 +176,6 @@ contract IntexAuction is
 
         IntexAuctionStorage storage $ = _s();
         IEscrowAdapter current = $.escrowContract;
-        // Don't rotate away from an escrow that still holds live locks.
-        if (address(current) != address(0) && current.hasOutstandingLocks()) revert EscrowHasLiveLocks();
-
         $.escrowContract = IEscrowAdapter(_escrow);
         emit EscrowWired(address(current), _escrow);
     }
