@@ -1043,7 +1043,6 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(value(&json, "Floor Price").unwrap(), 0.5);
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
         assert_eq!(value(&json, "Gratis Load").unwrap(), 1250.12);
-        assert_eq!(value(&json, "Cost Amount").unwrap(), 500.04);
         assert!(value(&json, "Settlement Deadline").is_none());
 
         assert!(svg.contains(">NOD</text>"));

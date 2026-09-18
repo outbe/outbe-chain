@@ -27,7 +27,6 @@ pub(crate) fn token_uri(
     } else {
         sealed_call_price
     };
-    let cost_amount = api::settlement_cost_minor(bucket.entry_price_minor, item.gratis_load_minor)?;
     let called = called_at != 0 && !item.is_settled;
     let state = if item.is_settled {
         nft_card::SETTLED
@@ -61,11 +60,6 @@ pub(crate) fn token_uri(
         "Call Price",
         nft_card::amount_grouped(call_price, PRICE_PRECISION),
     ));
-    rows.push((
-        "Cost Amount",
-        nft_card::amount_grouped(cost_amount, AMOUNT_PRECISION),
-    ));
-    rows.push(("Worldwide Day", item.worldwide_day.to_string()));
     let mut traits = vec![
         Trait::text("State", state.label),
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
@@ -74,7 +68,6 @@ pub(crate) fn token_uri(
         Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
         Trait::amount("Gratis Load", item.gratis_load_minor, AMOUNT_PRECISION),
-        Trait::amount("Cost Amount", cost_amount, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),
         Trait::integer("Reference Currency", item.reference_currency),
     ];
