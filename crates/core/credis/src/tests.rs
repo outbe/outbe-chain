@@ -1502,6 +1502,7 @@ fn open_position_announces_the_mint() {
 
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
+    use alloy_sol_types::SolEvent;
     use outbe_primitives::erc::{
         ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
         ERC721_METADATA_INTERFACE_ID,
@@ -1548,6 +1549,14 @@ fn supported_interfaces_match_the_implemented_selectors() {
         assert!(supports(ERC721_INTERFACE_ID));
         assert!(supports(ERC721_METADATA_INTERFACE_ID));
         assert!(supports(ERC4906_INTERFACE_ID));
+        assert_eq!(
+            ICredis::MetadataUpdate::SIGNATURE,
+            "MetadataUpdate(uint256)"
+        );
+        assert_eq!(
+            ICredis::BatchMetadataUpdate::SIGNATURE,
+            "BatchMetadataUpdate(uint256,uint256)"
+        );
         assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
     });

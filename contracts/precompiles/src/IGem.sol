@@ -53,6 +53,8 @@ interface IGem {
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     /// @notice ERC-4906: the metadata of `_tokenId` changed.
     event MetadataUpdate(uint256 _tokenId);
+    /// ERC-4906: the metadata of every token in `[_fromTokenId, _toTokenId]` changed.
+    event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
     /// @notice Issued gem promoted to Qualified by the daily qualification sweep.
     event GemQualified(uint256 indexed gemId, uint64 qualifiedAt);
     /// @notice Qualified gem force-called by the daily Call scan.

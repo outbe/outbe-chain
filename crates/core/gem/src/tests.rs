@@ -1786,6 +1786,7 @@ fn transfer_logs_announce_mint_and_burn() {
 
 #[test]
 fn supported_interfaces_match_the_implemented_selectors() {
+    use alloy_sol_types::SolEvent;
     use outbe_primitives::erc::{
         ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
         ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
@@ -1825,6 +1826,11 @@ fn supported_interfaces_match_the_implemented_selectors() {
             IGem::tokenOfOwnerByIndexCall::SELECTOR,
         ]),
         ERC721_ENUMERABLE_INTERFACE_ID
+    );
+    assert_eq!(IGem::MetadataUpdate::SIGNATURE, "MetadataUpdate(uint256)");
+    assert_eq!(
+        IGem::BatchMetadataUpdate::SIGNATURE,
+        "BatchMetadataUpdate(uint256,uint256)"
     );
 
     with_storage(|storage| {
