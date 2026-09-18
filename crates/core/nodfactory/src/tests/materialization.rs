@@ -36,7 +36,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor: U256::from(500_000),
-        cost_amount_minor: U256::from(500),
+        settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
@@ -628,7 +628,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = outbe_nod::api::cost_amount_minor(
+    let cost = outbe_nod::api::settlement_cost_minor(
         population.actions[0].entry_price_minor,
         population.actions[0].gratis_load_minor,
     )
@@ -640,7 +640,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world
         .settle(nod_id, population.actions[0].owner, &paynote_proof)
         .unwrap();
-    let nonce = find_valid_nonce(nod_id);
+    let nonce = world.pow_nonce(nod_id);
     assert_eq!(
         world
             .enter(|storage, scope, parent| {

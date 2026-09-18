@@ -106,7 +106,7 @@ fn chunk(spec: &UnitSpecV1, chunk_ordinal: u32) -> ResultChunkV1 {
             floor_price_minor: U256::from(2),
             gratis_load_minor: U256::from(3),
             entry_price_minor: U256::from(4),
-            cost_amount_minor: U256::from(5),
+            settlement_cost_minor: U256::from(5),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 2_026_072_500,

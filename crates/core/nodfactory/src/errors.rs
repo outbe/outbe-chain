@@ -28,13 +28,11 @@ pub enum NodFactoryError {
     #[error("PayNote proof names owner {actual}, expected {expected}")]
     PayNoteOwnerMismatch { expected: Address, actual: Address },
 
-    #[error(
-        "settlement asset {asset} is not registered for reference currency {reference_currency}"
-    )]
-    SettlementAssetMismatch {
-        asset: Address,
-        reference_currency: u16,
-    },
+    #[error("settlement asset {asset} has no registered vault")]
+    SettlementAssetNotRegistered { asset: Address },
+
+    #[error("settlement asset currency {iso_code} does not match the nod")]
+    SettlementCurrencyMismatch { iso_code: u16 },
 
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,

@@ -496,7 +496,7 @@ pub fn encode_amount_run(
         encoded.write_u256(record.gratis_load_minor)?;
         encoded.write_u256(record.entry_price_minor)?;
         encoded.write_u256(record.floor_price_minor)?;
-        encoded.write_u256(record.cost_amount_minor)?;
+        encoded.write_u256(record.settlement_cost_minor)?;
         encoded.write_u16(record.issuance_currency)?;
         encoded.write_u16(record.reference_currency)?;
         encoded.write_bool(record.exclude_from_intex_issuance)?;
@@ -535,7 +535,7 @@ pub fn decode_amount_run(
             gratis_load_minor: input.read_u256()?,
             entry_price_minor: input.read_u256()?,
             floor_price_minor: input.read_u256()?,
-            cost_amount_minor: input.read_u256()?,
+            settlement_cost_minor: input.read_u256()?,
             issuance_currency: input.read_u16()?,
             reference_currency: input.read_u16()?,
             exclude_from_intex_issuance: input.read_bool()?,
@@ -698,7 +698,7 @@ pub fn encode_finalized_output_run(
         encoded.write_u256(nod.floor_price_minor)?;
         encoded.write_u256(nod.gratis_load_minor)?;
         encoded.write_u256(nod.entry_price_minor)?;
-        encoded.write_u256(nod.cost_amount_minor)?;
+        encoded.write_u256(nod.settlement_cost_minor)?;
         encoded.write_u16(nod.issuance_currency)?;
         encoded.write_u16(nod.reference_currency)?;
         encoded.write_b256(nod.bucket_key)?;
@@ -743,7 +743,7 @@ pub fn decode_finalized_output_run(
         let floor_price_minor = input.read_u256()?;
         let gratis_load_minor = input.read_u256()?;
         let entry_price_minor = input.read_u256()?;
-        let cost_amount_minor = input.read_u256()?;
+        let settlement_cost_minor = input.read_u256()?;
         let issuance_currency = input.read_u16()?;
         let reference_currency = input.read_u16()?;
         let bucket_key = input.read_b256()?;
@@ -766,7 +766,7 @@ pub fn decode_finalized_output_run(
                 floor_price_minor,
                 gratis_load_minor,
                 entry_price_minor,
-                cost_amount_minor,
+                settlement_cost_minor,
                 issuance_currency,
                 reference_currency,
                 bucket_key,

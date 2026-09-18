@@ -35,7 +35,7 @@ fn activation_verifier_has_a_storage_free_closed_input_boundary() {
     )
     .unwrap();
     assert_eq!(
-        plan.request_budget_split_receipt_hash(),
+        plan.request_limit_split_receipt_hash(),
         fixture
             .request_receipt
             .receipt_hash(&fixture.limits)

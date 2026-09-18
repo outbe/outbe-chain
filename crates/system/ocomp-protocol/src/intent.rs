@@ -83,6 +83,8 @@ wire_struct! {
 impl_top_level_codec!(PreAdmissionEnvelopeV1, PreAdmissionEnvelopeV1);
 
 wire_struct! {
+    /// Frozen Lysis and Desis limits are capacity ceilings, in protocol units
+    /// (1,000,000 per whole COEN), not actual allocations into rights.
     pub struct FrozenMetadosisValuesV1 {
         pub day_type: DayType,
         pub day_limit: U256,
@@ -93,7 +95,7 @@ wire_struct! {
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
         pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
-        pub request_budget_split_receipt_hash: B256,
+        pub request_limit_split_receipt_hash: B256,
     }
 }
 
@@ -308,13 +310,13 @@ impl JobIntentV1 {
             .lysis_limit_minor
             .checked_add(self.frozen_metadosis_values.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "Metadosis budget split",
+                what: "Metadosis limit split",
             })?;
         // A day issues at most its own nominal; the unissued headroom is credited back to the
         // warehouse, and the exact identity is enforced on the split receipt.
         require(
             split_total <= self.frozen_metadosis_values.day_limit,
-            "Metadosis budget split",
+            "Metadosis limit split",
         )?;
         self.activation_preconditions.validate_for_intent(self)
     }

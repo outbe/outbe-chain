@@ -13,7 +13,7 @@ use outbe_ocomp_protocol::{
         VerifiedFinalizedIntentV1,
     },
     profile::ProtocolBundleV1,
-    receipts::{ActivationOutcome, RequestBudgetSplitReceiptV1},
+    receipts::{ActivationOutcome, RequestLimitSplitReceiptV1},
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
@@ -304,11 +304,11 @@ fn apply_certified_result(
     } = certified;
     let binding = plan.binding().clone();
     let mut request_receipt = metadosis
-        .request_budget_receipt(
+        .request_limit_receipt(
             outbe_primitives::time::WorldwideDay::new(plan.carry_over().source_wwd()),
             limits,
         )?
-        .ok_or_else(|| storage_corruption_message("OCOMP request budget receipt is missing"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP request limit receipt is missing"))?;
     let active_generation = ActiveGenerationV1 {
         job_id: binding.job_id,
         program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -382,7 +382,7 @@ fn apply_certified_result(
             ));
         }
         // Lysis has closed and returned what it did not spend, so the auction can now draw.
-        crate::ocomp_budget::apply_auction_brief(storage.clone(), &request_receipt)?;
+        crate::ocomp_limits::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {
             nod,
             contributor,
@@ -426,7 +426,7 @@ fn apply_certified_result(
 }
 
 fn inject_test_receipt_fault(
-    request_receipt: &mut RequestBudgetSplitReceiptV1,
+    request_receipt: &mut RequestLimitSplitReceiptV1,
     receipts: &mut LysisOwnerReceiptsV1,
 ) {
     #[cfg(test)]

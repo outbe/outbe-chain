@@ -226,7 +226,7 @@ impl ProgramExecutionV1 {
                 second: second_league,
             });
         }
-        let cost_amount_minor =
+        let settlement_cost_minor =
             calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id =
             derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day).map_err(|error| {
@@ -251,7 +251,7 @@ impl ProgramExecutionV1 {
             floor_price_minor,
             gratis_load_minor: pending.gratis_load_minor,
             entry_price_minor,
-            cost_amount_minor,
+            settlement_cost_minor,
             issuance_currency: tribute.issuance_currency,
             reference_currency: tribute.reference_currency,
             bucket_key,
@@ -531,7 +531,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn higher_leagues_receive_higher_fractions_within_budget() {
+    fn higher_leagues_receive_higher_fractions_within_limit() {
         for (populations, nominals, allocation) in [
             ([1_u32, 1, 1], [1_000_000_u64; 3], 960_000_u64),
             ([1000, 50, 1], [999_998, 1, 1], 320_000),

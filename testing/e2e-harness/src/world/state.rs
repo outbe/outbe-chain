@@ -402,6 +402,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    pub(crate) tee_observability: Option<crate::features::tee_observability::TeeObservation>,
     pub tee_lease: TeeLeaseEvidenceV1,
     /// Public restart measurements saved before process teardown.
     pub restart_observations: Vec<serde_json::Value>,
@@ -697,6 +698,7 @@ impl Default for FixtureState {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
+            tee_observability: None,
             restart_observations: Vec::new(),
             lifecycle_before: None,
             lifecycle_incarnations: std::collections::BTreeMap::new(),

@@ -2393,7 +2393,7 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             gratis_load_minor: U256::from(1),
             entry_price_minor: SIX_DECIMAL_SCALE,
             floor_price_minor: SIX_DECIMAL_SCALE,
-            cost_amount_minor: U256::from(1),
+            settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
             exclude_from_intex_issuance: true,

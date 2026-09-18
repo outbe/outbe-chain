@@ -35,9 +35,9 @@ use outbe_ocomp_protocol::{
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, empty_apply_event_summary_hash,
-        ActivationOutcome, AggregateActivationReceiptV1, BudgetSplitDestination,
-        CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1, NodBatchReceiptV1,
-        RequestBudgetSplitReceiptV1, TributeReceiptV1,
+        ActivationOutcome, AggregateActivationReceiptV1, CarryOverReceiptV1, ContributorReceiptV1,
+        EffectBindingV1, LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1,
+        TributeReceiptV1,
     },
     registry::{HashDomain, ListKind, ObjectKind},
     result::{
@@ -208,7 +208,7 @@ fn intent() -> JobIntentV1 {
                 source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: hash(113),
+            request_limit_split_receipt_hash: hash(113),
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
@@ -805,7 +805,7 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         contributor_receipt_hash: None,
         tribute_receipt_hash: None,
         carry_over_receipt_hash: None,
-        request_budget_split_receipt_hash: hash(113),
+        request_limit_split_receipt_hash: hash(113),
         active_generation_hash: None,
         effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
         event_summary_hash: empty_apply_event_summary_hash().unwrap(),
@@ -1041,7 +1041,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         retired_generation: 3,
         state_event_digest: hash(112),
     };
-    let request_budget_split_receipt = RequestBudgetSplitReceiptV1 {
+    let request_limit_split_receipt = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
@@ -1049,7 +1049,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         day_limit: U256::ZERO,
         lysis_limit_minor: U256::ZERO,
         desis_limit_minor: U256::ZERO,
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1189,9 +1189,9 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     );
     assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
     assert_round_trip!(
-        request_budget_split_receipt,
-        RequestBudgetSplitReceiptV1,
-        RequestBudgetSplitReceiptV1
+        request_limit_split_receipt,
+        RequestLimitSplitReceiptV1,
+        RequestLimitSplitReceiptV1
     );
     assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
     assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
@@ -1643,7 +1643,7 @@ fn a_split_short_of_the_day_limit_is_accepted() {
 
 #[test]
 fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
-    let credited_headroom = RequestBudgetSplitReceiptV1 {
+    let credited_headroom = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
@@ -1651,7 +1651,7 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
         day_limit: U256::from(10),
         lysis_limit_minor: U256::from(4),
         desis_limit_minor: U256::from(5),
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::from(1),
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1668,13 +1668,13 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
     dropped_headroom.carry_over_credit = U256::ZERO;
     assert!(matches!(
         dropped_headroom.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("request budget split"))
+        Err(ProtocolError::InvalidInvariant("request limit split"))
     ));
 
     // A red day briefs nothing, so its base returns together with the headroom.
     let mut red_returns_everything = credited_headroom;
     red_returns_everything.day_type = DayType::Red;
-    red_returns_everything.destination = BudgetSplitDestination::CarryOver;
+    red_returns_everything.destination = LimitSplitDestination::CarryOver;
     red_returns_everything.carry_over_credit = U256::from(6);
     red_returns_everything.encode_canonical(&LIMITS).unwrap();
 }
@@ -1686,10 +1686,10 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     invalid_intent.frozen_metadosis_values.desis_limit_minor = U256::from(2);
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("Metadosis budget split"))
+        Err(ProtocolError::InvalidInvariant("Metadosis limit split"))
     ));
 
-    let green_split = RequestBudgetSplitReceiptV1 {
+    let green_split = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
@@ -1697,7 +1697,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         day_limit: U256::from(10),
         lysis_limit_minor: U256::from(4),
         desis_limit_minor: U256::from(6),
-        destination: BudgetSplitDestination::DesisAuction,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1711,19 +1711,19 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     green_split.encode_canonical(&LIMITS).unwrap();
 
     let mut green_to_carry_over = green_split.clone();
-    green_to_carry_over.destination = BudgetSplitDestination::CarryOver;
+    green_to_carry_over.destination = LimitSplitDestination::CarryOver;
     green_to_carry_over.desis_brief_hash = None;
     green_to_carry_over.carry_over_credit = green_to_carry_over.desis_limit_minor;
     assert!(matches!(
         green_to_carry_over.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
     let mut red_split = green_split;
     red_split.day_type = DayType::Red;
-    red_split.destination = BudgetSplitDestination::CarryOver;
+    red_split.destination = LimitSplitDestination::CarryOver;
     red_split.carry_over_credit = red_split.desis_limit_minor;
     red_split.encode_canonical(&LIMITS).unwrap();
 
@@ -1732,18 +1732,18 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     assert!(matches!(
         red_without_brief.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
     let mut red_to_desis = red_split;
-    red_to_desis.destination = BudgetSplitDestination::DesisAuction;
+    red_to_desis.destination = LimitSplitDestination::DesisAuction;
     red_to_desis.desis_brief_hash = Some(hash(113));
     red_to_desis.carry_over_credit = U256::ZERO;
     assert!(matches!(
         red_to_desis.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
@@ -1752,7 +1752,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     invalid_lysis_conservation.conservation.lysis_limit_minor = U256::from(1);
     assert!(matches!(
         invalid_lysis_conservation.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("Lysis budget conservation"))
+        Err(ProtocolError::InvalidInvariant("Lysis limit conservation"))
     ));
 
     let mut invalid_carry_over = result();

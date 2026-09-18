@@ -1,5 +1,5 @@
 pub mod certified;
-pub mod ocomp_budget;
+pub mod ocomp_limits;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

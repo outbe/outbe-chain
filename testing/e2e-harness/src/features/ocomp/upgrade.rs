@@ -188,7 +188,6 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .validators
         .operator("validator-0")
         .expect("resolve OCOMP successor proposer");
-    let proposal_id = world.state.proposal_id;
     let propose_tx = world
         .rpc
         .send_propose(&proposer, &format!("{UPDATE_ADDR:#x}"), &payload)
@@ -197,6 +196,10 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         world.rpc.wait_successful_receipt(&propose_tx, 40),
         "OCOMP successor proposal transaction failed: {propose_tx}"
     );
+    let proposal_id = world
+        .rpc
+        .proposal_id_from_receipt(world.validators.primary_port(), &propose_tx)
+        .expect("read the allocated OCOMP successor proposal id");
     for validator_index in 0..3 {
         let validator = world.validators.get(validator_index);
         let vote_tx = world
@@ -517,10 +520,17 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .expect("validator-1 V2 Tribute owner")
         .evm_key()
         .expect("validator-1 V2 Tribute key");
-    crate::features::l2_registration::ensure_tribute_offer_operator(world, &offerer);
     let tribute_tx = world
         .rpc
-        .tribute_offer(&offerer, &successor_wwd_value.to_string())
+        .tribute_offer_for_network_with_params(
+            &offerer,
+            57_005,
+            &successor_wwd_value.to_string(),
+            "100",
+            "0",
+            840,
+            false,
+        )
         .expect("submit fresh V2-era Tribute");
     assert!(
         world.rpc.wait_successful_receipt(&tribute_tx, 240),

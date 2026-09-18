@@ -25,7 +25,7 @@ wire_enum_u8! {
 }
 
 wire_enum_u8! {
-    pub enum BudgetSplitDestination {
+    pub enum LimitSplitDestination {
         DesisAuction = 1,
         CarryOver = 2,
     }
@@ -90,7 +90,7 @@ wire_struct! {
 impl_top_level_codec!(TributeReceiptV1, TributeReceiptV1);
 
 wire_struct! {
-    pub struct RequestBudgetSplitReceiptV1 {
+    pub struct RequestLimitSplitReceiptV1 {
         pub protocol_bundle_hash: B256,
         pub wwd: u32,
         pub pending_nonce: u64,
@@ -98,15 +98,15 @@ wire_struct! {
         pub day_limit: U256,
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
-        pub destination: BudgetSplitDestination,
+        pub destination: LimitSplitDestination,
         pub desis_brief_hash: Option<B256>,
         pub carry_over_credit: U256,
         pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub logical_anchor: u64,
     }
-    validate = validate_request_budget_split_receipt;
+    validate = validate_request_limit_split_receipt;
 }
-impl_top_level_codec!(RequestBudgetSplitReceiptV1, RequestBudgetSplitReceiptV1);
+impl_top_level_codec!(RequestLimitSplitReceiptV1, RequestLimitSplitReceiptV1);
 
 wire_struct! {
     pub struct CarryOverReceiptV1 {
@@ -173,7 +173,7 @@ wire_struct! {
         pub contributor_receipt_hash: Option<B256>,
         pub tribute_receipt_hash: Option<B256>,
         pub carry_over_receipt_hash: Option<B256>,
-        pub request_budget_split_receipt_hash: B256,
+        pub request_limit_split_receipt_hash: B256,
         pub active_generation_hash: Option<B256>,
         pub effect_commitment: B256,
         pub event_summary_hash: B256,
@@ -267,11 +267,7 @@ macro_rules! receipt_hash {
 receipt_hash!(NodBatchReceiptV1, receipt_hash, NodReceipt);
 receipt_hash!(ContributorReceiptV1, receipt_hash, ContributorReceipt);
 receipt_hash!(TributeReceiptV1, receipt_hash, TributeReceipt);
-receipt_hash!(
-    RequestBudgetSplitReceiptV1,
-    receipt_hash,
-    BudgetSplitReceipt
-);
+receipt_hash!(RequestLimitSplitReceiptV1, receipt_hash, LimitSplitReceipt);
 receipt_hash!(CarryOverReceiptV1, receipt_hash, CarryOverReceipt);
 
 macro_rules! validate_projection_digest {
@@ -414,23 +410,23 @@ pub fn desis_request_brief_hash(
     hash_framed(HashDomain::DesisRequestBrief, &payload)
 }
 
-impl RequestBudgetSplitReceiptV1 {
+impl RequestLimitSplitReceiptV1 {
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         let green = self.day_type == DayType::Green
-            && self.destination == BudgetSplitDestination::DesisAuction
+            && self.destination == LimitSplitDestination::DesisAuction
             && self.desis_brief_hash.is_some();
         let red = self.day_type == DayType::Red
-            && self.destination == BudgetSplitDestination::CarryOver
+            && self.destination == LimitSplitDestination::CarryOver
             && self.desis_brief_hash.is_some();
-        require(green || red, "request budget split destination")?;
+        require(green || red, "request limit split destination")?;
         // The Desis Limit a red day never opens is still a share of the day limit.
         let split_total = self
             .lysis_limit_minor
             .checked_add(self.desis_limit_minor)
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "request budget split",
+                what: "request limit split",
             })?;
-        require(split_total <= self.day_limit, "request budget split")?;
+        require(split_total <= self.day_limit, "request limit split")?;
         // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
         // the warehouse; a red day briefs nothing, so its limit returns with the headroom.
         let briefed = if green {
@@ -443,14 +439,14 @@ impl RequestBudgetSplitReceiptV1 {
             .checked_add(briefed)
             .and_then(|sum| sum.checked_add(self.carry_over_credit))
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "request budget split",
+                what: "request limit split",
             })?;
-        require(accounted == self.day_limit, "request budget split")
+        require(accounted == self.day_limit, "request limit split")
     }
 }
 
-fn validate_request_budget_split_receipt(
-    receipt: &RequestBudgetSplitReceiptV1,
+fn validate_request_limit_split_receipt(
+    receipt: &RequestLimitSplitReceiptV1,
     _limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     receipt.validate_semantics()

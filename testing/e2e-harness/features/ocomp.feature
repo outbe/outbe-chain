@@ -5,7 +5,7 @@ Feature: Off-chain computation and Metadosis
   WWD failure, or mutation transition. Validator membership is tested in the
   validator-lifecycle suite.
 
-  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01 @nod-settlement
+  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01 @nod-settlement @price-oracle
   # OCOMP-TEST-ID: OCM-E2E-001
   # OCOMP-TEST-ID: OCM-E2E-008
   # OCOMP-TEST-ID: OCM-TRC-001
@@ -36,20 +36,22 @@ Feature: Off-chain computation and Metadosis
     Then three matching validator domains atomically apply Lysis and create the Nod
     And every validator independently verifies the V1 Nod commitment encoding
     And the one-league Nod fields and root match the public input arithmetic on every validator
-    And Lysis and OCOMP use the WWD VWAP below the active S-curve
+    And Lysis and OCOMP use the independently frozen rolling entry price
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
     And all four OCOMP domains use the production basedir contract
     And the fresh OCOMP domains retain their authenticated workers across the time changes
     When the feeder publishes a Nod qualification quote before the next UTC day
-    And a fresh post-activation Tribute completes through the V2 worker lane
+    Then the original Nod entry-price snapshot survives Oracle updates and restart
+    When a fresh post-activation Tribute completes through the V2 worker lane
     Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
     When validator 0 SnapshotExporter restarts with its committed export intact
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
+    And the original Nod entry-price snapshot survives Oracle updates and restart
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
     And the certified contributor authority for that day is identical on every validator
@@ -62,10 +64,12 @@ Feature: Off-chain computation and Metadosis
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
     And validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN
+    And a third party pays another public Nod in ERC20 and mines Gratis only for its owner
 
-  @ocomp-materialization
+  @ocomp-materialization @price-oracle
   Scenario: A certified generation is materialized into user NODs in bounded batches
     Given a fresh four-validator OCOMP public capacity localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When 10 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 10 public Tributes for the capacity day
     And the submitted Nod input bodies are independently authenticated before processing
@@ -85,9 +89,10 @@ Feature: Off-chain computation and Metadosis
     When the day's auction proceeds arrive from one chain
     Then every certified contributor is paid their share
 
-  @ocomp-capacity
+  @ocomp-capacity @price-oracle
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When all 257 capacity owners submit one encrypted Tribute each
     Then all validators observe exactly 257 public Tributes for the capacity day
     When the committee logical clock reaches the public capacity processing time

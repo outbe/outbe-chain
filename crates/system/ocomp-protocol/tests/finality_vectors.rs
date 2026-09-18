@@ -141,7 +141,7 @@ fn intent() -> JobIntentV1 {
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: hash(9),
+            request_limit_split_receipt_hash: hash(9),
         },
         logical_evaluation_height: FINALIZED_BLOCK_NUMBER,
         logical_evaluation_time: 1_000,

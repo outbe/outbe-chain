@@ -243,7 +243,7 @@ where
         .lysis_limit_minor
         .checked_sub(streamed.lysis_allocation_minor)
         .ok_or(LysisFinalizationErrorV1::Authority(
-            "Lysis consumption within the frozen limit",
+            "Lysis allocation within the frozen limit",
         ))?;
     let counts = ExactCountsV1 {
         tribute_count: streamed.tribute_count,
@@ -558,10 +558,13 @@ where
             lysis_allocation_minor = checked_add(
                 lysis_allocation_minor,
                 action.gratis_load_minor,
-                "Nod Gratis consumed",
+                "Lysis allocation",
             )?;
-            nod_cost_total =
-                checked_add(nod_cost_total, action.cost_amount_minor, "Nod cost total")?;
+            nod_cost_total = checked_add(
+                nod_cost_total,
+                action.settlement_cost_minor,
+                "Nod cost total",
+            )?;
         }
         bucket_records.sort_by_key(|record| (record.bucket_key, record.raw_ordinal));
         let bucket_record_bytes = bucket_records
@@ -740,7 +743,7 @@ fn require_leaf_summary(
         .ordered_nod_actions
         .iter()
         .try_fold(U256::ZERO, |total, action| {
-            checked_add(total, action.cost_amount_minor, "leaf Nod cost")
+            checked_add(total, action.settlement_cost_minor, "leaf Nod cost")
         })?;
     if summary.protocol_bundle_hash != plan.protocol_bundle_hash
         || summary.job_id != plan.job_id

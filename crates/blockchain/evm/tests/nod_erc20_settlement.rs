@@ -160,6 +160,15 @@ impl World {
             nod,
             cost,
         };
+        let quote = world.view(
+            NOD_FACTORY_ADDRESS,
+            INodFactory::quoteSettlementCall {
+                nodId: nod.to_u256(),
+                asset: ASSET,
+            },
+        );
+        assert_eq!(quote.settlementCurrency, 840);
+        assert_eq!(quote.payableUnits, cost);
         world.ok(
             owner,
             ASSET,
@@ -323,7 +332,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(world.balances(), balances);
 
     let nonce = (0..100_000)
-        .find(|n| outbe_nodfactory::runtime::validate_pow(world.nod, *n).is_ok())
+        .find(|n| outbe_nodfactory::runtime::validate_pow(world.nod, world.owner, *n).is_ok())
         .unwrap();
     let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
     let mac = modify_mac(
