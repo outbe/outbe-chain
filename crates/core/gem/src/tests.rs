@@ -1912,6 +1912,19 @@ fn token_uri_renders_the_gem_card() {
 }
 
 #[test]
+fn an_issued_card_leads_with_the_load_and_shows_the_floor_price() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let (_, svg) = token_uri_parts(storage, gem_id);
+
+        let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
+        assert!(row("Promis Load") < row("Entry Price"));
+        assert!(row("Entry Price") < row("Floor Price"));
+        assert!(row("Floor Price") < row("Call Price"));
+    });
+}
+
+#[test]
 fn token_uri_stays_called_past_the_call_deadline() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));

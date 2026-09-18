@@ -1022,6 +1022,10 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         let (json, svg) = read();
         assert_eq!(value(&json, "State").unwrap(), "Issued");
         assert!(svg.contains(">ISSUED</text>"));
+        let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
+        assert!(row("Gratis Load") < row("Entry Price"));
+        assert!(row("Entry Price") < row("Floor Price"));
+        assert!(row("Floor Price") < row("Call Price"));
 
         NodContract::new(storage.clone())
             .qualify_bucket(&scope, &parent, body.bucket_key)

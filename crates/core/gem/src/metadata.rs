@@ -17,18 +17,24 @@ pub(crate) fn token_uri(item: &GemData) -> String {
 
     let mut rows = vec![
         (
-            "Entry Price",
-            nft_card::amount_grouped(item.entry_price_minor, PRICE_PRECISION),
-        ),
-        (
-            "Call Price",
-            nft_card::amount_grouped(item.call_price_minor, PRICE_PRECISION),
-        ),
-        (
             "Promis Load",
             nft_card::amount_grouped(item.promis_load_minor, AMOUNT_PRECISION),
         ),
+        (
+            "Entry Price",
+            nft_card::amount_grouped(item.entry_price_minor, PRICE_PRECISION),
+        ),
     ];
+    if state == nft_card::ISSUED {
+        rows.push((
+            "Floor Price",
+            nft_card::amount_grouped(item.floor_price_minor, PRICE_PRECISION),
+        ));
+    }
+    rows.push((
+        "Call Price",
+        nft_card::amount_grouped(item.call_price_minor, PRICE_PRECISION),
+    ));
     let mut traits = vec![
         Trait::text("State", state.label),
         gem_type(item.gem_type),

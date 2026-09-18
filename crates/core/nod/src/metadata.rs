@@ -43,23 +43,29 @@ pub(crate) fn token_uri(
     let id = format!("{}-{}", item.worldwide_day, &hex[8..16]);
     let mut rows = vec![
         (
-            "Entry Price",
-            nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
-        ),
-        (
-            "Call Price",
-            nft_card::amount_grouped(call_price, PRICE_PRECISION),
-        ),
-        (
             "Gratis Load",
             nft_card::amount_grouped(item.gratis_load_minor, AMOUNT_PRECISION),
         ),
         (
-            "Cost Amount",
-            nft_card::amount_grouped(cost_amount, AMOUNT_PRECISION),
+            "Entry Price",
+            nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
         ),
-        ("Worldwide Day", item.worldwide_day.to_string()),
     ];
+    if state == nft_card::ISSUED {
+        rows.push((
+            "Floor Price",
+            nft_card::amount_grouped(item.floor_price_minor, PRICE_PRECISION),
+        ));
+    }
+    rows.push((
+        "Call Price",
+        nft_card::amount_grouped(call_price, PRICE_PRECISION),
+    ));
+    rows.push((
+        "Cost Amount",
+        nft_card::amount_grouped(cost_amount, AMOUNT_PRECISION),
+    ));
+    rows.push(("Worldwide Day", item.worldwide_day.to_string()));
     let mut traits = vec![
         Trait::text("State", state.label),
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
