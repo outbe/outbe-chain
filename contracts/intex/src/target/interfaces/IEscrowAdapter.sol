@@ -57,7 +57,8 @@ interface IEscrowAdapter {
     struct AuctionEscrowState {
         /// @notice Total payment-token currently locked for the series.
         uint128 totalLocked;
-        /// @notice Number of bid locks created for the series.
+        /// @notice Number of bid locks the series ever took; claims delete their locks but never lower it,
+        ///         which is what keeps `assetVersion` meaningful for a day whose locks are all claimed.
         uint32 lockCount;
         /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds); 0 if never finalized.
         uint32 finalizedAt;
@@ -362,7 +363,7 @@ interface IEscrowAdapter {
 
     /// @notice Get series escrow status.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @return hasLocks True if the series has at least one lock.
+    /// @return hasLocks True if the series ever took a lock; claimed locks do not lower it.
     /// @return isFinalized True if the series escrow is finalized.
     /// @return totalLocked Total payment-token currently locked for the series.
     function getAuctionStatus(uint32 worldwideDay)
