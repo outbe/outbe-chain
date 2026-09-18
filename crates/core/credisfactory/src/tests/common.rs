@@ -26,6 +26,7 @@ use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
     pledge_secret, spend_auth_mac,
 };
+use outbe_vaultrouter::{StablesReservation, VaultRouterContract};
 
 use crate::runtime;
 
@@ -62,7 +63,7 @@ pub fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
-/// The originating agent. `requestCredis`'s caller is recorded on the position.
+/// The originating agent. `issueCredis`'s caller is recorded on the position.
 pub fn cca() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
@@ -112,19 +113,22 @@ pub fn pledge_stake() -> U256 {
 }
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
-/// return the resulting handle. The gratis it costs is derived from the seeded rate.
-pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
+/// return the resulting handle plus the reservation the pledge required. The gratis
+/// it costs is derived from the seeded rate.
+pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, B256) {
+    let reservation_id = seed_reservation(storage, who, pledge_stables());
     let (handle, gratis_cost) = gf::pledge_gratis(
         storage.clone(),
         who,
         pledge_stables(),
         asset(),
         U256::MAX,
+        reservation_id,
         auth(GratisOp::Pledge, who, pledge_stables(), nonce),
     )
     .unwrap();
     assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
-    handle
+    (handle, reservation_id)
 }
 
 /// Pledge and open a position for alice, originated by [`cca`].
@@ -134,20 +138,66 @@ pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
 
 /// Pledge and open a position owned by `who`, originated by [`cca`].
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
-    let handle = pledge(storage, who, nonce);
+    let (handle, reservation_id) = pledge(storage, who, nonce);
     let spend = credis_spend_auth(who, handle, who);
     fund_stake(storage, pledge_stake());
-    let (position_id, _) = runtime::request_credis(
+    let (position_id, _) = runtime::issue_credis(
         storage.clone(),
         cca(),
         who,
         handle,
         spend,
         REFERENCE_ISO,
+        reservation_id,
         pledge_stake(),
     )
     .unwrap();
     position_id
+}
+
+/// Parks a live vault reservation for `smart_account` so `issue_credis` can
+/// consume it. The hold is written through VaultRouter storage, not the ABI,
+/// because these tests stub EVM sub-calls into the router.
+pub fn seed_reservation(storage: &StorageHandle<'_>, smart_account: Address, amount: U256) -> B256 {
+    seed_reservation_at(
+        storage,
+        cca(),
+        smart_account,
+        asset(),
+        amount,
+        storage.timestamp().unwrap().to::<u64>() + 15 * 60,
+    )
+}
+
+pub fn seed_reservation_at(
+    storage: &StorageHandle<'_>,
+    originator: Address,
+    smart_account: Address,
+    reserved_asset: Address,
+    amount: U256,
+    expires_at: u64,
+) -> B256 {
+    let contract = VaultRouterContract::new(storage.clone());
+    let nonce = contract
+        .reservation_nonce
+        .read()
+        .unwrap()
+        .saturating_add(U256::from(1));
+    contract.reservation_nonce.write(nonce).unwrap();
+    let id = B256::from(nonce);
+    contract
+        .reservations
+        .create(&StablesReservation {
+            id,
+            asset: reserved_asset,
+            amount,
+            smart_account,
+            cca: originator,
+            vault: address!("0x0000000000000000000000000000000000000777"),
+            expires_at,
+        })
+        .unwrap();
+    id
 }
 
 pub fn chain_b256() -> B256 {
@@ -155,7 +205,7 @@ pub fn chain_b256() -> B256 {
 }
 
 /// Registers the `COEN/840` and `COEN/978` pairs, seeds both spot rates, the USD
-/// policy rate, and the reference-currency registry `request_credis` validates
+/// policy rate, and the reference-currency registry `issue_credis` validates
 /// the elected anchor against. Idempotent - `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
@@ -202,7 +252,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the one
-/// `request_credis` strikes a position's entry price from.
+/// `issue_credis` strikes a position's entry price from.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
@@ -414,7 +464,7 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     deploy_smart_account(storage, who);
 }
 
-/// Gives `who` non-empty code so `request_credis`'s deployed-account guard passes.
+/// Gives `who` non-empty code so `issue_credis`'s deployed-account guard passes.
 /// The bytes are never executed - `HashMapStorageProvider` runs no EVM - only the
 /// code hash is read.
 pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
@@ -425,7 +475,7 @@ pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
 
 /// Credits the factory with the stake the payable boundary would have credited.
 ///
-/// Tests drive `runtime::request_credis` directly, below the precompile boundary that
+/// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
 /// moves `msg.value`, so without this the escrow would have a claim with no COEN
 /// behind it and the release would underflow.
 pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {

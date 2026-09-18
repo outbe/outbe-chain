@@ -16,6 +16,14 @@ pub enum GratisFactoryError {
     OracleConversionOverflow,
     #[error("pledge cost exceeds maxGratis")]
     GratisCapExceeded,
+    #[error("reservation not found")]
+    ReservationNotFound,
+    #[error("reservation expired")]
+    ReservationExpired,
+    #[error("reservation asset mismatch")]
+    ReservationAssetMismatch,
+    #[error("reservation amount is below the pledged credit")]
+    ReservationInsufficient,
 }
 
 impl From<GratisFactoryError> for PrecompileError {

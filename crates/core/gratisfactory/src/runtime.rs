@@ -10,7 +10,7 @@
 //!
 //! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
 //! credit they want and this module derives the gratis it costs, sealing both plus
-//! the asset and the rate into the ticket. `requestCredis` then reads that quote back
+//! the asset and the rate into the ticket. `issueCredis` then reads that quote back
 //! out instead of re-pricing the collateral a transaction later.
 
 use alloy_primitives::{Address, B256, U256};
@@ -66,17 +66,20 @@ fn convert_stables_to_gratis(
 /// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The loan's own terms - the policy rate, the floor and call prices -
+/// `issueCredis`. The loan's own terms - the policy rate, the floor and call prices -
 /// are sealed on the Credis position, not on the pledge.
+///
+/// A live vault reservation must already exist: the CCA locks stables first so the
+/// pledger is quoting against credit that can actually be disbursed.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
     amount_stables: U256,
     asset: Address,
     max_gratis: U256,
+    reservation_id: B256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    // todo add asset validation and check if it is enought liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }
@@ -92,6 +95,21 @@ pub fn pledge_gratis(
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }
+
+    let reservation = outbe_vaultrouter::api::reservation_of(&storage, reservation_id)?;
+    if reservation.asset.is_zero() {
+        return Err(GratisFactoryError::ReservationNotFound.into());
+    }
+    let now = storage.timestamp()?.to::<u64>();
+    if now > reservation.expires_at {
+        return Err(GratisFactoryError::ReservationExpired.into());
+    }
+    if reservation.asset != asset {
+        return Err(GratisFactoryError::ReservationAssetMismatch.into());
+    }
+    if amount_stables > reservation.amount {
+        return Err(GratisFactoryError::ReservationInsufficient.into());
+    }
     let terms = PledgeTerms {
         stables_amount: amount_stables,
         gratis_amount,
@@ -101,7 +119,6 @@ pub fn pledge_gratis(
 
     // Fold a read-only league probe into the pledge round-trip (no separate
     // fidelity call): the pledge op returns the caller's current league.
-    let now = storage.timestamp()?.to::<u64>();
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
     let (handle, outcome) =

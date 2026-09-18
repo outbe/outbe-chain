@@ -8912,6 +8912,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 

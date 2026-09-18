@@ -175,6 +175,30 @@ fn dispatch_local(
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
+            hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
+            reservationOf(c) => view(c, |c| {
+                let record = runtime::reservation_of(&storage, c.id)?;
+                Ok(IVaultRouter::StablesReservation {
+                    asset: record.asset,
+                    amount: record.amount,
+                    smartAccount: record.smart_account,
+                    cca: record.cca,
+                    vault: record.vault,
+                    expiresAt: record.expires_at,
+                })
+            }),
+
+            // --- reservations ---
+            reserveStables(c) => mutate(c, caller, |sender, c| {
+                runtime::reserve_stables(storage.clone(), sender, c.smartAccount, c.asset, c.amount)
+            }),
+            releaseReservation(c) => mutate(c, caller, |sender, c| {
+                let target = runtime::registered_liquidity_target(&storage, sender)?;
+                runtime::release_reservation(storage.clone(), c.id, c.receiver, c.amount, target)
+            }),
+            returnReservation(c) => mutate(c, caller, |sender, c| {
+                runtime::return_reservation(storage.clone(), sender, c.id)
+            }),
 
             // --- rebalance (CCA-gated; caller supplies the destination asset) ---
             rebalance(c) => mutate(c, caller, |sender, c| {

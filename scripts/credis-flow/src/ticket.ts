@@ -25,9 +25,21 @@ export interface Ticket {
   txHash: string;
   chainId: string;
   createdAt: string;
+  reservationId: string; // vault hold the CCA created before this pledge
   // Filled by `request-credis` so `user-settles` can address the position.
   positionId?: string; // decimal string (uint256)
   smartAccount?: string; // the smart account the pledge was bound to
+}
+
+export interface ReservationOffer {
+  reservationId: string;
+  smartAccount: string;
+  asset: string;
+  amount: string;
+  blockNumber: number;
+  txHash: string;
+  chainId: string;
+  createdAt: string;
 }
 
 const TICKETS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../tickets");
@@ -60,7 +72,7 @@ export function deleteTicket(path: string): void {
 export function listTickets(): { path: string; ticket: Ticket }[] {
   if (!existsSync(TICKETS_DIR)) return [];
   return readdirSync(TICKETS_DIR)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.startsWith("pledge-") && f.endsWith(".json"))
     .map((f) => resolve(TICKETS_DIR, f))
     .map((path) => ({ path, ticket: readTicket(path), mtime: statSync(path).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
@@ -70,6 +82,21 @@ export function listTickets(): { path: string; ticket: Ticket }[] {
 /** Most recently modified ticket file, or null if the directory is empty. */
 export function findLatestTicket(): { path: string; ticket: Ticket } | null {
   return listTickets()[0] ?? null;
+}
+
+const RESERVATION_FILE = "reservation.json";
+
+export function writeReservation(offer: ReservationOffer): string {
+  ensureDir();
+  const path = resolve(TICKETS_DIR, RESERVATION_FILE);
+  writeFileSync(path, JSON.stringify(offer, null, 2) + "\n");
+  return path;
+}
+
+export function readReservation(path?: string): ReservationOffer | null {
+  const resolved = path ?? resolve(TICKETS_DIR, RESERVATION_FILE);
+  if (!existsSync(resolved)) return null;
+  return JSON.parse(readFileSync(resolved, "utf-8")) as ReservationOffer;
 }
 
 export { TICKETS_DIR };
