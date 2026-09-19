@@ -453,7 +453,8 @@ fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
     if progress.is_none_or(|p| p.done) {
         return;
     }
-    eth::send_call(
+    // A fixed limit: the relay stops quietly when gas runs short, so an estimate buys a no-op.
+    eth::send_call_outcome(
         &venue.url,
         venue.target_router,
         crate::world::forge::DEPLOYER_KEY,
