@@ -21,6 +21,8 @@ use crate::world::venue_probes;
 use crate::world::venue_probes::IAuctionStage;
 use crate::world::venue_probes::IProceedsRoute;
 #[cfg(feature = "ocomp-integration")]
+use crate::world::venue_probes::IVenueSchedule;
+#[cfg(feature = "ocomp-integration")]
 use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken, IRefundClaim};
 use crate::world::{origin_venue, World};
 
@@ -160,16 +162,64 @@ mod tests {
     }
 }
 
-/// An e2e build runs the auction on minute-long windows, so the run waits the
-/// stages out rather than moving the clock across a day it never formed.
 #[cfg(feature = "ocomp-integration")]
 const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(2400);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
+    jump_committee_past_window(world, target_stage);
     for side in venue_sides(world) {
         advance_one_venue_to_stage(world, &side, target_stage);
     }
+}
+
+/// Jump the committee to the end of the window a stage waits on instead of sitting it out.
+/// The e2e windows lie inside one day, so the jump crosses nothing the wait would not.
+#[cfg(feature = "ocomp-integration")]
+fn jump_committee_past_window(world: &mut World, target_stage: u8) {
+    let side = venue_side(world);
+    let schedule = eth::read_call(
+        &side.url,
+        side.auction,
+        &IVenueSchedule::auctionsCall {
+            worldwideDay: settled_day(world),
+        },
+    )
+    .expect("the venue reports the day's schedule")
+    .schedule;
+    let window_end = match target_stage {
+        1 => schedule.commitEnd,
+        2 => schedule.revealEnd,
+        _ => return,
+    };
+    let target = u64::from(window_end) + 1;
+    let port = world.validators.primary_port();
+    let now = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee head timestamp");
+    if now >= target {
+        return;
+    }
+    let (_, _, height, pending) =
+        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    for peer in world.validators.committee_ports() {
+        assert!(
+            world.rpc.wait_finalized_at_least(peer, height, 240),
+            "validator on port {peer} did not finalize past the window jump"
+        );
+    }
+    if let Some(pending) = pending {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            assert!(
+                Instant::now() < deadline,
+                "post-jump feeder did not finalize"
+            );
+            sleep(Duration::from_millis(500));
+        }
+    }
+    committee_clock_settles(world);
 }
 
 /// Each chain runs the day on its own clock, so every venue has to reach the
