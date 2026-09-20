@@ -558,7 +558,7 @@ fn header_artifact(
     Ok(artifact)
 }
 
-fn canonical_body_leaf(
+pub(crate) fn canonical_body_leaf(
     domain: CeDomain,
     raw_id: WwdEntityId,
     bytes: &[u8],

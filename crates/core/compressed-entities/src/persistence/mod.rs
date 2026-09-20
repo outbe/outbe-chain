@@ -15,7 +15,10 @@ mod identity;
 mod readonly;
 mod snapshot;
 mod tables;
-pub use audit::{CeAuditError, CeAuditLimits, CeAuditReport, CeAuditVisitor, CeAuditWork};
+pub use audit::{
+    CeAuditError, CeAuditLimits, CeAuditReport, CeAuditVisitor, CeAuditWork, CeBodyAudit,
+    CeBodyAuditReport,
+};
 #[cfg(feature = "test-utils")]
 mod test_support;
 

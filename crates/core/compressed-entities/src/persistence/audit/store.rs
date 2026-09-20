@@ -145,6 +145,610 @@ fn store_error(error: impl std::fmt::Display) -> CkbError {
     CkbError::Store(error.to_string())
 }
 
+use super::{CeAuditError, CeAuditWork};
+use std::{
+    cmp::Reverse,
+    collections::BinaryHeap,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+const RUN_MAGIC: [u8; 8] = *b"CEAUDT01";
+const RUN_HEADER_BYTES: u64 = 32;
+static NEXT_SORT_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Sort fixed-width records by an encoded identity prefix. Payload bytes are
+/// compared only after identity; every identity must occur exactly once.
+/// Work owns all files, and both this builder and its output borrow that owner.
+pub(super) struct RecordSorter<'a, const N: usize> {
+    work: &'a CeAuditWork,
+    directory: PathBuf,
+    key_len: usize,
+    buffer: Vec<[u8; N]>,
+    run_count: u64,
+    peak_buffered: usize,
+    failed: bool,
+}
+
+impl<'a, const N: usize> RecordSorter<'a, N> {
+    pub(super) fn new(work: &'a CeAuditWork, key_len: usize) -> Result<Self, CeAuditError> {
+        if N == 0
+            || key_len == 0
+            || key_len > N
+            || work.limits.records_per_run == 0
+            || work.limits.merge_fan_in < 2
+        {
+            return Err(sort_invalid("invalid sort dimensions or limits"));
+        }
+        // Reject impossible layouts before allocating or creating anything.
+        checked_buffer_bytes(N, work.limits.records_per_run)?;
+        let merge_entry_bytes = std::mem::size_of::<RunReader<N>>()
+            .checked_add(std::mem::size_of::<Reverse<([u8; N], usize)>>())
+            .ok_or_else(|| sort_invalid("sort merge layout overflow"))?;
+        checked_buffer_bytes(merge_entry_bytes, work.limits.merge_fan_in)?;
+        run_length::<N>(
+            u64::try_from(work.limits.records_per_run)
+                .map_err(|_| sort_invalid("sort run count overflow"))?,
+        )?;
+        let mut buffer = Vec::new();
+        buffer
+            .try_reserve_exact(work.limits.records_per_run)
+            .map_err(|_| sort_invalid("cannot reserve sort buffer"))?;
+        let id = NEXT_SORT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| sort_invalid("sort directory counter overflow"))?;
+        let directory = work.root.join(format!("sort-{id:020}"));
+        fs::create_dir(&directory)?;
+        Ok(Self {
+            work,
+            directory,
+            key_len,
+            buffer,
+            run_count: 0,
+            peak_buffered: 0,
+            failed: false,
+        })
+    }
+
+    pub(super) fn peak_buffered_records(&self) -> usize {
+        self.peak_buffered
+    }
+
+    pub(super) fn push(&mut self, record: [u8; N]) -> Result<(), CeAuditError> {
+        if self.failed {
+            return Err(sort_invalid("sorter already failed"));
+        }
+        self.buffer.push(record);
+        self.peak_buffered = self.peak_buffered.max(self.buffer.len());
+        if self.buffer.len() == self.work.limits.records_per_run {
+            if let Err(error) = self.flush() {
+                self.failed = true;
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), CeAuditError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        // Unstable sorting is in-place and does not allocate a second run buffer.
+        self.buffer.sort_unstable();
+        let next_count = self
+            .run_count
+            .checked_add(1)
+            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+        let count =
+            u64::try_from(self.buffer.len()).map_err(|_| sort_invalid("sort count overflow"))?;
+        let mut writer = RunWriter::<N>::create(
+            &run_path(&self.directory, 0, self.run_count),
+            self.key_len,
+            count,
+        )?;
+        for record in &self.buffer {
+            writer.write_record(*record)?;
+        }
+        writer.finish()?;
+        self.buffer.clear();
+        self.run_count = next_count;
+        Ok(())
+    }
+
+    pub(super) fn finish(mut self) -> Result<SortedRecords<'a, N>, CeAuditError> {
+        if self.failed {
+            return Err(sort_invalid("sorter already failed"));
+        }
+        self.flush()?;
+        // Release the input buffer before allocating merge readers and heads.
+        self.buffer = Vec::new();
+        let fan_in = u64::try_from(self.work.limits.merge_fan_in)
+            .map_err(|_| sort_invalid("sort fan-in overflow"))?;
+        let mut pass = 0_u64;
+        while self.run_count > 1 {
+            let next_pass = pass
+                .checked_add(1)
+                .ok_or_else(|| sort_invalid("sort pass overflow"))?;
+            let mut start = 0_u64;
+            let mut outputs = 0_u64;
+            while start < self.run_count {
+                let count = fan_in.min(self.run_count - start);
+                merge_runs::<N>(
+                    &self.directory,
+                    pass,
+                    start,
+                    count,
+                    next_pass,
+                    outputs,
+                    self.key_len,
+                )?;
+                start = start
+                    .checked_add(count)
+                    .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+                outputs = outputs
+                    .checked_add(1)
+                    .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+            }
+            self.run_count = outputs;
+            pass = next_pass;
+        }
+        let reader = if self.run_count == 0 {
+            None
+        } else {
+            Some(RunReader::open(
+                &run_path(&self.directory, pass, 0),
+                self.key_len,
+            )?)
+        };
+        Ok(SortedRecords {
+            _work: self.work,
+            reader,
+        })
+    }
+}
+
+/// Streaming output; an I/O or integrity error terminates this iterator.
+pub(super) struct SortedRecords<'a, const N: usize> {
+    _work: &'a CeAuditWork,
+    reader: Option<RunReader<N>>,
+}
+
+impl<const N: usize> Iterator for SortedRecords<'_, N> {
+    type Item = Result<[u8; N], CeAuditError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.reader.as_mut()?.next_record() {
+            Ok(Some(record)) => Some(Ok(record)),
+            Ok(None) => {
+                self.reader = None;
+                None
+            }
+            Err(error) => {
+                self.reader = None;
+                Some(Err(error))
+            }
+        }
+    }
+}
+
+impl<const N: usize> std::iter::FusedIterator for SortedRecords<'_, N> {}
+
+fn checked_buffer_bytes(width: usize, count: usize) -> Result<(), CeAuditError> {
+    let bytes = width
+        .checked_mul(count)
+        .ok_or_else(|| sort_invalid("sort buffer size overflow"))?;
+    if bytes > isize::MAX as usize {
+        return Err(sort_invalid("sort buffer exceeds addressable memory"));
+    }
+    Ok(())
+}
+
+fn sort_invalid(message: &str) -> CeAuditError {
+    CeAuditError::Invalid(message.into())
+}
+
+fn run_path(directory: &Path, pass: u64, index: u64) -> PathBuf {
+    directory.join(format!("run-{pass:020}-{index:020}.bin"))
+}
+
+fn run_length<const N: usize>(count: u64) -> Result<u64, CeAuditError> {
+    u64::try_from(N)
+        .ok()
+        .and_then(|width| width.checked_mul(count))
+        .and_then(|bytes| bytes.checked_add(RUN_HEADER_BYTES))
+        .ok_or_else(|| sort_invalid("sort run length overflow"))
+}
+
+struct RunWriter<const N: usize> {
+    file: File,
+    key_len: usize,
+    expected: u64,
+    written: u64,
+    previous: Option<[u8; N]>,
+}
+
+impl<const N: usize> RunWriter<N> {
+    fn create(path: &Path, key_len: usize, count: u64) -> Result<Self, CeAuditError> {
+        run_length::<N>(count)?;
+        let width = u64::try_from(N).map_err(|_| sort_invalid("sort width overflow"))?;
+        let key_width =
+            u64::try_from(key_len).map_err(|_| sort_invalid("sort key width overflow"))?;
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        file.write_all(&RUN_MAGIC)?;
+        file.write_all(&width.to_be_bytes())?;
+        file.write_all(&key_width.to_be_bytes())?;
+        file.write_all(&count.to_be_bytes())?;
+        Ok(Self {
+            file,
+            key_len,
+            expected: count,
+            written: 0,
+            previous: None,
+        })
+    }
+
+    fn write_record(&mut self, record: [u8; N]) -> Result<(), CeAuditError> {
+        if self.written >= self.expected {
+            return Err(sort_invalid("too many sort records"));
+        }
+        ensure_increasing(self.previous.as_ref(), &record, self.key_len)?;
+        self.file.write_all(&record)?;
+        self.written += 1; // Bounded above by the checked expected count.
+        self.previous = Some(record);
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<(), CeAuditError> {
+        if self.written != self.expected {
+            return Err(sort_invalid("missing sort records"));
+        }
+        self.file.flush()?;
+        Ok(())
+    }
+}
+
+struct RunReader<const N: usize> {
+    file: File,
+    key_len: usize,
+    count: u64,
+    read: u64,
+    previous: Option<[u8; N]>,
+}
+
+impl<const N: usize> RunReader<N> {
+    fn open(path: &Path, key_len: usize) -> Result<Self, CeAuditError> {
+        let mut file = File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(sort_invalid("sort run is not a regular file"));
+        }
+        let mut header = [0; RUN_HEADER_BYTES as usize];
+        file.read_exact(&mut header)?;
+        let word = |offset| {
+            let mut bytes = [0; 8];
+            bytes.copy_from_slice(&header[offset..offset + 8]);
+            u64::from_be_bytes(bytes)
+        };
+        let count = word(24);
+        if header[..8] != RUN_MAGIC
+            || word(8) != u64::try_from(N).map_err(|_| sort_invalid("sort width overflow"))?
+            || word(16)
+                != u64::try_from(key_len).map_err(|_| sort_invalid("sort key width overflow"))?
+            || metadata.len() != run_length::<N>(count)?
+        {
+            return Err(sort_invalid("invalid sort run header or length"));
+        }
+        Ok(Self {
+            file,
+            key_len,
+            count,
+            read: 0,
+            previous: None,
+        })
+    }
+
+    fn next_record(&mut self) -> Result<Option<[u8; N]>, CeAuditError> {
+        if self.read == self.count {
+            if self.file.read(&mut [0; 1])? != 0 {
+                return Err(sort_invalid("trailing sort run bytes"));
+            }
+            return Ok(None);
+        }
+        let mut record = [0; N];
+        self.file.read_exact(&mut record)?;
+        ensure_increasing(self.previous.as_ref(), &record, self.key_len)?;
+        self.read += 1; // Bounded above by the checked header count.
+        self.previous = Some(record);
+        Ok(Some(record))
+    }
+}
+
+fn ensure_increasing<const N: usize>(
+    previous: Option<&[u8; N]>,
+    record: &[u8; N],
+    key_len: usize,
+) -> Result<(), CeAuditError> {
+    if previous.is_some_and(|previous| previous[..key_len] >= record[..key_len]) {
+        return Err(sort_invalid("duplicate or unordered sort identity"));
+    }
+    Ok(())
+}
+
+fn merge_runs<const N: usize>(
+    directory: &Path,
+    pass: u64,
+    start: u64,
+    count: u64,
+    next_pass: u64,
+    output: u64,
+    key_len: usize,
+) -> Result<(), CeAuditError> {
+    let capacity = usize::try_from(count).map_err(|_| sort_invalid("sort merge count overflow"))?;
+    let mut readers = Vec::new();
+    readers
+        .try_reserve_exact(capacity)
+        .map_err(|_| sort_invalid("cannot reserve sort readers"))?;
+    let mut heads = BinaryHeap::new();
+    heads
+        .try_reserve_exact(capacity)
+        .map_err(|_| sort_invalid("cannot reserve sort heads"))?;
+    let mut total = 0_u64;
+    for offset in 0..count {
+        let index = start
+            .checked_add(offset)
+            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+        let reader = RunReader::<N>::open(&run_path(directory, pass, index), key_len)?;
+        total = total
+            .checked_add(reader.count)
+            .ok_or_else(|| sort_invalid("sort record count overflow"))?;
+        readers.push(reader);
+    }
+    let mut writer =
+        RunWriter::<N>::create(&run_path(directory, next_pass, output), key_len, total)?;
+    for (index, reader) in readers.iter_mut().enumerate() {
+        if let Some(record) = reader.next_record()? {
+            heads.push(Reverse((record, index)));
+        }
+    }
+    while let Some(Reverse((record, index))) = heads.pop() {
+        writer.write_record(record)?;
+        if let Some(next) = readers[index].next_record()? {
+            heads.push(Reverse((next, index)));
+        }
+    }
+    writer.finish()?;
+    drop(readers);
+    for offset in 0..count {
+        let index = start
+            .checked_add(offset)
+            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+        fs::remove_file(run_path(directory, pass, index))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod sorter_tests {
+    use super::RecordSorter;
+    use crate::persistence::{
+        audit::{CeAuditError, CeAuditLimits, CeAuditWork},
+        TreeKey,
+    };
+    use alloy_primitives::B256;
+    use std::{fs, path::PathBuf};
+
+    fn work(records_per_run: usize, merge_fan_in: usize) -> (tempfile::TempDir, CeAuditWork) {
+        let parent = tempfile::tempdir().unwrap();
+        let work = CeAuditWork::create(
+            parent.path().join("sort"),
+            CeAuditLimits {
+                records_per_run,
+                merge_fan_in,
+            },
+        )
+        .unwrap();
+        (parent, work)
+    }
+
+    fn only_run(work: &CeAuditWork) -> PathBuf {
+        let child = fs::read_dir(&work.root)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut files = fs::read_dir(child).unwrap();
+        let path = files.next().unwrap().unwrap().path();
+        assert!(files.next().is_none());
+        path
+    }
+
+    #[test]
+    fn sorter_boundaries_multipass_and_reverse_input_have_identical_output() {
+        for count in [0_u16, 1, 2, 3, 4, 5, 17, 33] {
+            for reverse in [false, true] {
+                let (_parent, work) = work(2, 2);
+                let mut sorter = RecordSorter::<3>::new(&work, 2).unwrap();
+                let expected = (0..count)
+                    .map(|value| {
+                        let [a, b] = value.to_be_bytes();
+                        [a, b, 99]
+                    })
+                    .collect::<Vec<_>>();
+                let mut input = expected.clone();
+                if reverse {
+                    input.reverse();
+                }
+                for record in input {
+                    sorter.push(record).unwrap();
+                }
+                assert_eq!(sorter.peak_buffered_records(), usize::from(count).min(2));
+                let mut records = sorter.finish().unwrap();
+                let actual = records.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+                assert_eq!(actual, expected);
+                assert!(records.next().is_none());
+                assert!(records.next().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn sorter_rejects_duplicate_identity_with_different_payload_across_runs() {
+        let (_parent, work) = work(2, 2);
+        let mut sorter = RecordSorter::<2>::new(&work, 1).unwrap();
+        for record in [[1, 10], [3, 30], [2, 20], [1, 11]] {
+            sorter.push(record).unwrap();
+        }
+        let result = sorter
+            .finish()
+            .and_then(|records| records.collect::<Result<Vec<_>, _>>());
+        assert!(result.is_err(), "duplicate prefix survived separate runs");
+    }
+
+    #[test]
+    fn sorter_rejects_duplicate_identity_within_one_run() {
+        let (_parent, work) = work(3, 2);
+        let mut sorter = RecordSorter::<2>::new(&work, 1).unwrap();
+        sorter.push([1, 10]).unwrap();
+        sorter.push([1, 11]).unwrap();
+        let result = sorter
+            .finish()
+            .and_then(|records| records.collect::<Result<Vec<_>, _>>());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sorter_uses_reversed_native_tree_key_bytes_in_body_tuples() {
+        let (_parent, work) = work(1, 2);
+        let mut low_lex = [0_u8; 32];
+        low_lex[31] = 1;
+        let mut high_lex = [0_u8; 32];
+        high_lex[0] = 1;
+        assert!(low_lex < high_lex);
+        let low = TreeKey::try_from(B256::from(low_lex)).unwrap();
+        let high = TreeKey::try_from(B256::from(high_lex)).unwrap();
+        assert!(high < low);
+        let tuple = |mut key: [u8; 32], payload: u8| {
+            let mut record = [0; 101];
+            record[0] = 1; // CollectionShard namespace tag.
+            key.reverse();
+            record[37..69].copy_from_slice(&key);
+            record[100] = payload;
+            record
+        };
+        let first = tuple(low.encode(), 1);
+        let second = tuple(high.encode(), 2);
+        let mut sorter = RecordSorter::<101>::new(&work, 69).unwrap();
+        sorter.push(first).unwrap();
+        sorter.push(second).unwrap();
+        assert_eq!(
+            sorter
+                .finish()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![second, first]
+        );
+    }
+
+    #[test]
+    fn sorter_instances_share_work_without_overwriting_each_other() {
+        let (parent, work) = work(1, 2);
+        let sentinel = parent.path().join("protected");
+        fs::write(&sentinel, b"keep").unwrap();
+        let mut first = RecordSorter::<2>::new(&work, 1).unwrap();
+        let mut second = RecordSorter::<2>::new(&work, 1).unwrap();
+        first.push([1, 2]).unwrap();
+        second.push([3, 4]).unwrap();
+        let first = first
+            .finish()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let second = second
+            .finish()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(first, vec![[1, 2]]);
+        assert_eq!(second, vec![[3, 4]]);
+        drop(work);
+        assert_eq!(fs::read(sentinel).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn sorter_rejects_invalid_limits_before_creating_files_or_allocating() {
+        let (_parent, mut work) = work(2, 2);
+        assert!(RecordSorter::<0>::new(&work, 0).is_err());
+        assert!(RecordSorter::<2>::new(&work, 0).is_err());
+        assert!(RecordSorter::<2>::new(&work, 3).is_err());
+        for (records_per_run, merge_fan_in) in [(0, 2), (2, 1), (usize::MAX, 2), (2, usize::MAX)] {
+            work.limits = CeAuditLimits {
+                records_per_run,
+                merge_fan_in,
+            };
+            assert!(RecordSorter::<2>::new(&work, 1).is_err());
+        }
+        assert!(fs::read_dir(&work.root).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn sorter_rejects_corrupt_run_metadata_lengths_and_identity_order() {
+        // Header: magic/version[8], record width[8], key length[8], count[8].
+        for corruption in 0..9 {
+            let (_parent, work) = work(2, 2);
+            let mut sorter = RecordSorter::<2>::new(&work, 1).unwrap();
+            sorter.push([1, 10]).unwrap();
+            sorter.push([2, 20]).unwrap();
+            let path = only_run(&work);
+            let mut bytes = fs::read(&path).unwrap();
+            match corruption {
+                0 => bytes[0] ^= 0xff,
+                1 => bytes[8..16].copy_from_slice(&3_u64.to_be_bytes()),
+                2 => bytes[16..24].copy_from_slice(&2_u64.to_be_bytes()),
+                3 => bytes[24..32].copy_from_slice(&3_u64.to_be_bytes()),
+                4 => bytes[24..32].copy_from_slice(&u64::MAX.to_be_bytes()),
+                5 => {
+                    bytes.pop();
+                }
+                6 => bytes.push(0),
+                7 => {
+                    bytes[32] = 2;
+                    bytes[34] = 1;
+                }
+                8 => bytes[34] = 1,
+                _ => unreachable!(),
+            }
+            fs::write(path, bytes).unwrap();
+            let result = sorter
+                .finish()
+                .and_then(|records| records.collect::<Result<Vec<_>, _>>());
+            assert!(result.is_err(), "accepted corruption {corruption}");
+        }
+    }
+
+    #[test]
+    fn sorter_iterator_emits_one_terminal_error_then_fuses() {
+        let (_parent, work) = work(2, 2);
+        let mut sorter = RecordSorter::<2>::new(&work, 1).unwrap();
+        sorter.push([1, 10]).unwrap();
+        sorter.push([2, 20]).unwrap();
+        let path = only_run(&work);
+        let mut records = sorter.finish().unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(32)
+            .unwrap();
+        assert!(matches!(records.next(), Some(Err(CeAuditError::Io(_)))));
+        assert!(records.next().is_none());
+        assert!(records.next().is_none());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;

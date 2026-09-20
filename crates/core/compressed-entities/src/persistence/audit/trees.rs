@@ -92,7 +92,7 @@ pub(in crate::persistence) fn audit(
         }
         let store = ScratchTreeStore::new(&rebuilt, namespace);
         let mut tree = PoseidonSmt::open_with_store(TreeRoot::EMPTY, store);
-        let mut buffer = Vec::with_capacity(work.limits.records_per_run);
+        let mut buffer = Vec::new();
         let mut cursor = source.cursor_read::<tables::CeLeaves>()?;
         let mut row = cursor.seek(namespace_bytes.clone())?;
         while let Some((key, value)) = row {
@@ -118,6 +118,11 @@ pub(in crate::persistence) fn audit(
                     CollectionKey::try_from(key.into_inner())
                         .map_err(|error| invalid(error.to_string()))?,
                 )?;
+            }
+            if buffer.capacity() == 0 {
+                buffer
+                    .try_reserve_exact(work.limits.records_per_run)
+                    .map_err(|_| invalid("cannot reserve tree leaf buffer"))?;
             }
             buffer.push((
                 smt_key,
