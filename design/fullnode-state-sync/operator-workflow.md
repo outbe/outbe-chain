@@ -54,6 +54,11 @@ identifies packaged domain paths and their ordinary target roots/configuration
 arguments; donor absolute paths never control recipient placement. See the
 [native layout](data-layout.md) for the exact boundary.
 
+Manifest decoding checks its format and consistent inventory fields. It preserves
+declared paths and member order; it does not require a path location or lexical
+sorting. Signature verification uses the exact original bytes. The optional file
+check compares actual files with the declared checksums.
+
 The manifest and signature are separate portable evidence. The mandatory signature
 covers exact raw manifest bytes using the fixed domain-separated scheme in
 [task02](task-planning/02-create-a-signed-snapshot-for-new-nodes.md). Missing key or

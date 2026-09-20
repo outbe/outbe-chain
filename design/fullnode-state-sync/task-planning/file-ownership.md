@@ -65,7 +65,7 @@ Baseline: main `e5d545ce`. Registration-only edits are administrative; they do n
 | `crates/blockchain/snapshot/src/fs.rs` | 02 new | 02: Contained file access, no-follow enumeration, same-directory pending publication/fsync and scoped cleanup; no host runtime lease namespace. |
 | `crates/blockchain/snapshot/src/layout.rs` | 01 new | 01: ResolvedDomain/ProtectedPaths and disjoint-path checks; reject overlap with config/key/signing-safety paths, output/staging or another domain. |
 | `crates/blockchain/snapshot/src/lib.rs` | 01 new; 02 administrative | 01: Export only offline schema/layout APIs needed by create/validate.; 02: Register create/archive/provenance/fs exports. |
-| `crates/blockchain/snapshot/src/manifest.rs` | 01 new | 01: SnapshotManifestV1, NativeProgress, DomainInventory, FileEntry and structural validation; finite logical domains, exact raw manifest digest and sorted member order. |
+| `crates/blockchain/snapshot/src/manifest.rs` | 01 new | 01: SnapshotManifestV1, NativeProgress, DomainInventory, FileEntry and format validation; finite logical domains, exact raw manifest digest and preserved declared member order. Do not impose path-location or sorted-order policy on manifest values. |
 | `crates/blockchain/snapshot/src/provenance.rs` | 02 new | 02: Domain-separated manifest digest, signature envelope and expected-key verification using existing secp256k1 format; signature is independent of semantic validity. |
 | `crates/blockchain/snapshot/tests/create.rs` | 02 new | 02: Streaming creation, moved archive, source mutation, failure cleanup and nonempty data round trip. |
 | `crates/blockchain/snapshot/tests/layout.rs` | 01 new | 01: Native domain layout, alias/protected overlap and malformed schema tests. |
