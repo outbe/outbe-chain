@@ -398,16 +398,10 @@ fn committee_clock_settles(world: &mut World) {
     }
 }
 
-/// A loopback venue cannot relay its bids from inside the clearing delivery -
-/// that would be a nested send in the same transaction - so it parks the relay
-/// for a permissionless retry. Production has a keeper for this; the run does it
-/// itself.
-/// The loopback adapter isolates a failed delivery by parking it, and a real
-/// transport is what retries. Nothing plays that part in a localnet, so the
-/// scenario does: retrying is permissionless and a still-broken delivery simply
-/// parks again.
+/// A loopback delivery runs inside the sending transaction on the gas its message type budgets
+/// for it, so a park means a wrong budget or a reverting handler - the run's to report, not retry.
 #[cfg(feature = "ocomp-integration")]
-fn flush_parked_deliveries(world: &mut World) {
+fn assert_no_parked_deliveries(world: &World) {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(loopback) = world
         .state
@@ -417,19 +411,14 @@ fn flush_parked_deliveries(world: &mut World) {
     else {
         return;
     };
-    let parked =
-        eth::read_call(&url, loopback, &IParkedWork::nextParkedIdxCall {}).unwrap_or_default();
-    let mut idx = U256::ZERO;
-    while idx < parked {
-        let _ = eth::send_call(
-            &url,
-            loopback,
-            crate::world::forge::DEPLOYER_KEY,
-            &IParkedWork::retryDeliveryCall { idx },
-            None,
-        );
-        idx += U256::from(1);
-    }
+    let parked = eth::read_call(&url, loopback, &IParkedWork::nextParkedIdxCall {})
+        .expect("the loopback adapter's parked count");
+    assert_eq!(
+        parked,
+        U256::ZERO,
+        "a loopback delivery parked during this run: {}",
+        venue_probes::parked_deliveries(world)
+    );
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -571,11 +560,11 @@ fn auction_clears(world: &mut World) {
                 worldwideDay: worldwide_day,
             },
         );
+        assert_no_parked_deliveries(world);
         if stage == Some(5) {
             return;
         }
         flush_parked_bid_relays(world, worldwide_day);
-        flush_parked_deliveries(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
@@ -715,6 +704,7 @@ fn refunds_landed_on(world: &World, side: &VenueSide) {
         if received {
             break;
         }
+        assert_no_parked_deliveries(world);
         assert!(
             Instant::now() < deadline,
             "day {worldwide_day} cleared but the escrow never received refund instructions \
