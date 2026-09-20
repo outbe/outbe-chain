@@ -141,8 +141,8 @@ impl Fixture {
 }
 
 // Cover the entire fixture, including configuration and key sentinels. Preserve
-// membership, size and modes even for MDBX's existing reader bookkeeping file;
-// only its mutable reader-slot bytes are excluded from the digest comparison.
+// membership and modes even for MDBX's existing reader bookkeeping file; its
+// reader-slot bytes and size can change when MDBX opens a read-only environment.
 pub(super) fn fingerprint(
     root: &std::path::Path,
 ) -> std::collections::BTreeMap<std::path::PathBuf, (bool, u64, u32, u64)> {
@@ -174,7 +174,11 @@ pub(super) fn fingerprint(
                 path.strip_prefix(root).unwrap().to_path_buf(),
                 (
                     is_directory,
-                    metadata.len(),
+                    if entry.file_name() == "mdbx.lck" {
+                        0
+                    } else {
+                        metadata.len()
+                    },
                     metadata.permissions().mode(),
                     digest.finish(),
                 ),

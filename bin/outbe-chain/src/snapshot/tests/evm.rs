@@ -246,8 +246,11 @@ fn derived_source_tries_do_not_replace_authoritative_state() {
 fn referenced_code_is_verified_even_when_the_account_root_matches() {
     use reth_primitives_traits::Bytecode;
     let code = [0x60, 0x01, 0x00];
-    for variant in [0, 1, 2] {
-        let (_source, layout, _) = state_fixture(2);
+    for (version, variant) in [1, 2]
+        .into_iter()
+        .flat_map(|version| [0, 1, 2].map(move |variant| (version, variant)))
+    {
+        let (_source, layout, _) = state_fixture(version);
         let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
         let tx = db.tx_mut().unwrap();
         let address = Address::repeat_byte(0x11);
@@ -263,8 +266,13 @@ fn referenced_code_is_verified_even_when_the_account_root_matches() {
                 U256::from(123),
             )])),
         )]);
-        tx.put::<tables::HashedAccounts>(keccak256(address), account)
-            .unwrap();
+        if version == 1 {
+            tx.put::<tables::PlainAccountState>(address, account)
+                .unwrap();
+        } else {
+            tx.put::<tables::HashedAccounts>(keccak256(address), account)
+                .unwrap();
+        }
         let mut header = tx
             .get::<tables::Headers<OutbeHeader>>(101)
             .unwrap()
@@ -423,24 +431,36 @@ fn execution_selection_does_not_require_projection_configuration_or_ocomp() {
 
 #[test]
 fn orphan_and_duplicate_storage_are_not_silently_ignored() {
-    for duplicate in [false, true] {
-        let (_source, layout, _) = state_fixture(2);
+    for (version, duplicate) in [1, 2]
+        .into_iter()
+        .flat_map(|version| [false, true].map(move |duplicate| (version, duplicate)))
+    {
+        let (_source, layout, _) = state_fixture(version);
         let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
         let tx = db.tx_mut().unwrap();
-        let address = if duplicate {
-            keccak256(Address::repeat_byte(0x11))
+        let address = Address::repeat_byte(if duplicate { 0x11 } else { 77 });
+        let slot = B256::repeat_byte(0x22);
+        if version == 1 {
+            tx.put::<tables::PlainStorageState>(
+                address,
+                StorageEntry {
+                    key: slot,
+                    value: U256::from(124),
+                },
+            )
+            .unwrap();
+            assert_eq!(tx.entries::<tables::PlainStorageState>().unwrap(), 2);
         } else {
-            B256::repeat_byte(77)
-        };
-        tx.put::<tables::HashedStorages>(
-            address,
-            StorageEntry {
-                key: keccak256(B256::repeat_byte(0x22)),
-                value: U256::from(124),
-            },
-        )
-        .unwrap();
-        assert_eq!(tx.entries::<tables::HashedStorages>().unwrap(), 2);
+            tx.put::<tables::HashedStorages>(
+                keccak256(address),
+                StorageEntry {
+                    key: keccak256(slot),
+                    value: U256::from(124),
+                },
+            )
+            .unwrap();
+            assert_eq!(tx.entries::<tables::HashedStorages>().unwrap(), 2);
+        }
         tx.commit().unwrap();
         drop(db);
         let scratch = tempfile::tempdir().unwrap();
