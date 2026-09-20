@@ -2,7 +2,7 @@ use std::{ffi::OsString, fs, path::Path};
 
 use super::super::config::{parse_node_inputs, resolve_layout};
 
-fn native_arguments(root: &Path) -> Vec<OsString> {
+pub(super) fn native_arguments(root: &Path) -> Vec<OsString> {
     let genesis = root.join("genesis.json");
     crate::tee_genesis::run(&[
         "outbe-chain".into(),
