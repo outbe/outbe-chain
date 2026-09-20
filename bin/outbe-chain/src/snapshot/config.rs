@@ -49,7 +49,9 @@ pub(crate) fn parse_node_inputs(
                 .iter()
                 .any(|name| *value == std::ffi::OsStr::new(name))
         })
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+        // Reth tries a file first, then accepts inline genesis JSON.
+        .filter(|path| path.is_file());
     Ok(NodeInputs {
         cli: NativeCli::from_arg_matches_mut(&mut matches)?,
         chain_source,

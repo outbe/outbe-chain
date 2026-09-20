@@ -128,3 +128,19 @@ fn mongo_is_reported_as_unsupported_without_connecting() {
         .contains("RocksDB"));
     assert!(!root.path().join("chain").exists());
 }
+
+#[test]
+fn inline_genesis_is_configuration_data_not_a_protected_file_path() {
+    let root = tempfile::tempdir().unwrap();
+    let mut arguments = native_arguments(root.path());
+    let inline = fs::read_to_string(root.path().join("genesis.json")).unwrap();
+    arguments[1] = inline.clone().into();
+    let inputs = parse_node_inputs(arguments).unwrap();
+    let layout = resolve_layout(&inputs).unwrap();
+    assert!(!layout
+        .protected
+        .0
+        .contains(&std::path::PathBuf::from(inline)));
+    assert_eq!(layout.chain.chain().id(), 54322345);
+    assert!(!layout.chain_root.exists());
+}
