@@ -9705,6 +9705,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-snapshot"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+]
+
+[[package]]
 name = "outbe-sparse-merkle-tree-v061"
 version = "0.6.1"
 
