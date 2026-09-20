@@ -219,3 +219,121 @@ fn headers_in_native_static_files_are_inspected_without_copying_them_into_mdbx()
     assert_eq!(progress.execution.hash, hex::encode(e.hash_slow()));
     assert_eq!(fingerprint(&layout.chain_root), before);
 }
+
+#[test]
+fn stopped_stores_keep_ce_projection_and_sparse_ocomp_progress_distinct() {
+    use super::super::native::{ce_identity, inspect_stopped_stores};
+    use alloy_primitives::B256;
+    use outbe_compressed_entities::{CeMdbx, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
+    use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
+    use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+    use outbe_primitives::projection::ProjectionCheckpoint;
+    use std::sync::Arc;
+
+    let (root, layout, h, _) = fixture();
+    let genesis_hash = layout.chain.genesis_hash();
+    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let genesis = FinalizedMarker {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        height: 0,
+        block_hash: genesis_hash,
+        parent_block_hash: B256::ZERO,
+        parent_root: B256::ZERO,
+        new_root: empty_root,
+    };
+    // Give the real CE fixture a small test geometry before its normal initializer.
+    drop(
+        reth_ethereum::provider::db::create_db(
+            layout.chain_root.join("compressed_entities/smt"),
+            DatabaseArguments::test(),
+        )
+        .unwrap(),
+    );
+    let ce = CeMdbx::open(&layout.chain_root, ce_identity(&layout), genesis).unwrap();
+    ce.test_seed_finalized_marker(FinalizedMarker {
+        height: 100,
+        block_hash: h.hash_slow(),
+        parent_root: empty_root,
+        ..genesis
+    })
+    .unwrap();
+    drop(ce);
+    fs::create_dir_all(&layout.offchain_root).unwrap();
+    let projection = Arc::new(RocksDbStorage::open(&layout.offchain_root).unwrap());
+    let p = ProjectionCheckpoint {
+        block_number: 98,
+        block_hash: B256::repeat_byte(98),
+    };
+    let state = outbe_offchain_data::ProjectionState {
+        chain_id: layout.chain.chain().id(),
+        genesis_hash,
+        storage_schema_version: outbe_offchain_data::STORAGE_SCHEMA_VERSION,
+        start_block: layout.projection_start_block,
+        checkpoint: Some(p),
+    };
+    projection
+        .put(
+            Namespace::new("projection_state").unwrap(),
+            &Key::new(b"offchain_data".to_vec()).unwrap(),
+            &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
+        )
+        .unwrap();
+    drop(projection);
+    let baseline = ProjectionCheckpoint {
+        block_number: 0,
+        block_hash: genesis_hash,
+    };
+    let closure_root = layout
+        .ocomp_root
+        .join("exporter-v1/discovery/closure-checkpoint-v1");
+    let closure = ContiguousCheckpointStoreV1::open(&closure_root, baseline).unwrap();
+    let c = ProjectionCheckpoint {
+        block_number: 97,
+        block_hash: B256::repeat_byte(97),
+    };
+    closure.compare_and_advance_to(baseline, c).unwrap();
+    drop(closure);
+    let before = fingerprint(&layout.chain_root);
+    let projection_before = fingerprint(&layout.offchain_root);
+    let ocomp_before = fingerprint(&layout.ocomp_root);
+    let closure_before = fs::read(closure_root.join("checkpoint.v1")).unwrap();
+    let result = inspect_stopped_stores(&layout, &root.path().join("audit-scratch")).unwrap();
+    assert_eq!(result.finalized.number, 100);
+    assert_eq!(result.execution.number, 101);
+    assert_eq!(result.ce.number, 100);
+    assert_eq!(result.projection.number, 98);
+    assert_eq!(result.ocomp_current.number, 97);
+    assert_eq!(result.ocomp_previous.number, 0);
+    assert_eq!(result.ocomp_baseline.hash, hex::encode(genesis_hash));
+    assert_eq!(fingerprint(&layout.chain_root), before);
+    assert_eq!(
+        fs::read(closure_root.join("checkpoint.v1")).unwrap(),
+        closure_before
+    );
+    assert_eq!(fingerprint(&layout.offchain_root), projection_before);
+    assert_eq!(fingerprint(&layout.ocomp_root), ocomp_before);
+    assert!(!root.path().join("secondary").exists());
+
+    fs::remove_file(closure_root.join("checkpoint.v1")).unwrap();
+    let error = inspect_stopped_stores(&layout, &root.path().join("audit-scratch")).unwrap_err();
+    assert!(error.to_string().contains("checkpoint.v1"), "{error:#}");
+    assert!(!closure_root.join("checkpoint.v1").exists());
+}
+
+#[test]
+fn inspection_scratch_cannot_write_inside_any_native_root() {
+    let (_root, layout, _, _) = fixture();
+    for native in [
+        &layout.chain_root,
+        &layout.consensus_root,
+        &layout.ocomp_root,
+        &layout.offchain_root,
+        &layout.static_files_root,
+        &layout.execution_rocksdb_root,
+    ] {
+        let scratch = native.join("audit-scratch");
+        let error = super::super::native::inspect_stopped_stores(&layout, &scratch).unwrap_err();
+        assert!(error.to_string().contains("overlaps"), "{error:#}");
+        assert!(!scratch.exists());
+    }
+}
