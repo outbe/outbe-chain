@@ -144,3 +144,137 @@ fn inline_genesis_is_configuration_data_not_a_protected_file_path() {
     assert_eq!(layout.chain.chain().id(), 54322345);
     assert!(!layout.chain_root.exists());
 }
+
+#[test]
+fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
+    use super::super::inventory::enumerate_native_files;
+    use outbe_snapshot::manifest::{DomainKind, NativeRoot};
+    let root = tempfile::tempdir().unwrap();
+    let inputs = parse_node_inputs(native_arguments(root.path())).unwrap();
+    let layout = resolve_layout(&inputs).unwrap();
+    let job = "11".repeat(32);
+    let bundle = "22".repeat(32);
+    let mut expected = Vec::new();
+    let samples = [
+        (NativeRoot::Chain, DomainKind::ExecutionDb, layout.chain_root.clone(), "db/mdbx.dat".to_owned()),
+        (NativeRoot::Chain, DomainKind::Ce, layout.chain_root.clone(), "compressed_entities/smt/mdbx.dat".to_owned()),
+        (NativeRoot::StaticFiles, DomainKind::StaticFiles, layout.static_files_root.clone(), "header.data".to_owned()),
+        (NativeRoot::ExecutionRocksDb, DomainKind::ExecutionRocksDb, layout.execution_rocksdb_root.clone(), "CURRENT".to_owned()),
+        (NativeRoot::Offchain, DomainKind::OffchainProjection, layout.offchain_root.clone(), "CURRENT".to_owned()),
+        (NativeRoot::Consensus, DomainKind::MarshalBlocks, layout.consensus_root.clone(), "outbe-marshal-blocks-metadata/0".to_owned()),
+        (NativeRoot::Consensus, DomainKind::MarshalFinalizations, layout.consensus_root.clone(), "outbe-marshal-finalizations-ordinal/0".to_owned()),
+        (NativeRoot::Consensus, DomainKind::MarshalCache, layout.consensus_root.clone(), "outbe-marshal-cache-0/0".to_owned()),
+        (NativeRoot::Consensus, DomainKind::MarshalMetadata, layout.consensus_root.clone(), "outbe-marshal-application-metadata/0".to_owned()),
+        (NativeRoot::Consensus, DomainKind::ParentCertificates, layout.consensus_root.clone(), "finalized_parent_certs/100".to_owned()),
+        (NativeRoot::Consensus, DomainKind::OcompRetention, layout.consensus_root.clone(), "ocomp_retention/pin.v1".to_owned()),
+        (NativeRoot::Ocomp, DomainKind::ClosureCheckpoint, layout.ocomp_root.clone(), "exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1".to_owned()),
+        (NativeRoot::Ocomp, DomainKind::Discovery, layout.ocomp_root.clone(), format!("exporter-v1/discovery/{bundle}/pending/{job}.pending")),
+        (NativeRoot::Ocomp, DomainKind::ProtocolBundles, layout.ocomp_root.clone(), format!("protocol-bundles-v1/{bundle}.ocb1")),
+        (NativeRoot::Ocomp, DomainKind::CasObjects, layout.ocomp_root.clone(), "cas-v1/objects/11/abcdef".to_owned()),
+        (NativeRoot::Ocomp, DomainKind::InputReferences, layout.ocomp_root.clone(), format!("exporter-v1/input-refs/{job}/catalog.prepared")),
+        (NativeRoot::Ocomp, DomainKind::ExportReceipts, layout.ocomp_root.clone(), format!("exporter-v1/receipts/{job}/receipt.ref")),
+        (NativeRoot::Ocomp, DomainKind::ExportBindings, layout.ocomp_root.clone(), format!("supervisor-v1/export-bindings/{job}/binding.lock")),
+        (NativeRoot::Ocomp, DomainKind::JobPublicRecords, layout.ocomp_root.clone(), format!("supervisor-v1/jobs/{job}/admissions/catalog.header")),
+        (NativeRoot::Ocomp, DomainKind::JobPublicRecords, layout.ocomp_root.clone(), format!("supervisor-v1/jobs/{job}/contributor-payout-v1.bin")),
+        (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{job}/17/{job}.materialization-refs-v1.json")),
+        (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{job}/23/{job}.materialization-refs-v1.tmp")),
+        (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{bundle}/5/{bundle}.materialization-refs-v1.json")),
+        (NativeRoot::Ocomp, DomainKind::LocalResults, layout.ocomp_root.clone(), format!("node-v1/local-results/.{job}.pending")),
+        (NativeRoot::Ocomp, DomainKind::FatalEvidence, layout.ocomp_root.clone(), "node-v1/fatal-evidence/sticky-fatal-v1".to_owned()),
+    ];
+    for (native_root, kind, base, name) in &samples {
+        let path = base.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, name).unwrap();
+        expected.push((*native_root, *kind, path));
+    }
+    let secrets = [
+        layout.chain_root.join("keys/private.hex"),
+        layout.consensus_root.join("dkg_share.hex"),
+        layout.consensus_root.join("outbe-simplex-1/vote"),
+        layout.ocomp_root.join("ocomp-evm-key.hex"),
+        layout.ocomp_root.join("ocomp-key-v1.hex"),
+        layout.ocomp_root.join("worker-inbox-v1/input"),
+        layout.ocomp_root.join("supervisor-v1/sign-once/signed"),
+        layout
+            .ocomp_root
+            .join("supervisor-v1/vote-submissions/signed"),
+        layout
+            .ocomp_root
+            .join("supervisor-v1/materialization-submissions/signed"),
+        layout
+            .ocomp_root
+            .join("supervisor-v1/payout-submissions/signed"),
+        layout
+            .ocomp_root
+            .join(format!("supervisor-v1/jobs/{job}/replay-inbox/input")),
+        layout.ocomp_root.join("cas-v1/staging/incomplete"),
+    ];
+    for path in &secrets {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "private sentinel").unwrap();
+    }
+    let inventory = enumerate_native_files(&layout).unwrap();
+    assert_eq!(inventory.domains.len(), 23);
+    for (native_root, kind, path) in expected {
+        assert!(
+            inventory.domains.iter().any(|domain| domain.kind == kind
+                && domain.native_root == native_root
+                && domain
+                    .members
+                    .iter()
+                    .any(|member| domain.root.join(member) == path)),
+            "{}",
+            path.display()
+        );
+    }
+    for path in secrets {
+        assert!(
+            inventory.domains.iter().all(|domain| domain
+                .members
+                .iter()
+                .all(|member| domain.root.join(member) != path)),
+            "{}",
+            path.display()
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), "private sentinel");
+    }
+    let exex = inventory
+        .domains
+        .iter()
+        .find(|domain| domain.kind == DomainKind::ExexCheckpoint)
+        .unwrap();
+    assert!(exex.members.is_empty());
+    assert!(!layout.ocomp_root.join("node-v1/exex-checkpoint").exists());
+    let fatal = layout.ocomp_root.join("node-v1/fatal-evidence");
+    fs::remove_file(fatal.join("sticky-fatal-v1")).unwrap();
+    fs::remove_dir(&fatal).unwrap();
+    let empty = enumerate_native_files(&layout).unwrap();
+    assert!(empty
+        .domains
+        .iter()
+        .find(|domain| domain.kind == DomainKind::FatalEvidence)
+        .unwrap()
+        .members
+        .is_empty());
+    assert!(!fatal.exists());
+
+    let mut simplex_layout = resolve_layout(&inputs).unwrap();
+    simplex_layout.offchain_root = simplex_layout.consensus_root.join("outbe-simplex-1");
+    let error = enumerate_native_files(&simplex_layout).unwrap_err();
+    assert!(error.to_string().contains("protected"), "{error:#}");
+
+    let mut protected_layout = layout;
+    protected_layout
+        .protected
+        .0
+        .push(protected_layout.offchain_root.join("CURRENT"));
+    assert!(enumerate_native_files(&protected_layout)
+        .unwrap_err()
+        .to_string()
+        .contains("protected"));
+    assert_eq!(
+        fs::read_to_string(protected_layout.offchain_root.join("CURRENT")).unwrap(),
+        "CURRENT"
+    );
+}

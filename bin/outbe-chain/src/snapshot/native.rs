@@ -147,6 +147,11 @@ pub(crate) fn inspect_stopped_stores(
         layout.execution_rocksdb_root.clone(),
     ]);
     outbe_snapshot::layout::validate_layout(&[], &protected, &[scratch.to_path_buf()])?;
+    let retention_root = layout.consensus_root.join("ocomp_retention");
+    if retention_root.join("pin.v1").try_exists()? {
+        outbe_node::ocomp::retention::inspect_retention_journal(&retention_root)
+            .wrap_err("inspect existing OCOMP retention journal")?;
+    }
     let reth = inspect_reth(layout)?;
     let ce = CeMdbxReadOnly::open(&layout.chain_root, ce_identity(layout))?.marker()?;
     let projection = read_projection_state(

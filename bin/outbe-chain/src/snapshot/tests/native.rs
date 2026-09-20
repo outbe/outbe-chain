@@ -337,3 +337,18 @@ fn inspection_scratch_cannot_write_inside_any_native_root() {
         assert!(!scratch.exists());
     }
 }
+
+#[test]
+fn existing_retention_journal_is_inspected_without_recovery_or_replacement() {
+    let (_root, layout, _, _) = fixture();
+    let retention = layout.consensus_root.join("ocomp_retention");
+    fs::create_dir_all(&retention).unwrap();
+    fs::write(retention.join("pin.v1"), "damaged native journal").unwrap();
+    fs::write(retention.join("pin.v1.tmp"), "pending native journal").unwrap();
+    let before = fingerprint(&retention);
+    let scratch = layout.chain_root.parent().unwrap().join("audit-scratch");
+    let error = super::super::native::inspect_stopped_stores(&layout, &scratch).unwrap_err();
+    assert!(error.to_string().contains("retention"), "{error:#}");
+    assert_eq!(fingerprint(&retention), before);
+    assert!(!scratch.exists());
+}
