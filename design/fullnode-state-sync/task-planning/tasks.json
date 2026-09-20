@@ -254,6 +254,16 @@
           "change": "Create signed native fixture, use conventional extraction/file-copy test glue into independent native roots, compare bytes and use ordinary read-only native openers. No product restore command/helper."
         },
         {
+          "path": "bin/outbe-chain/tests/snapshot_create.rs",
+          "action": "administrative",
+          "change": "Reuse the shared test fixture without changing create assertions or product behavior."
+        },
+        {
+          "path": "bin/outbe-chain/tests/common/snapshot.rs",
+          "action": "new",
+          "change": "Test-only shared stopped native fixture and process helpers extracted from snapshot_create.rs for file-placement acceptance; no production API or duplicated test registration."
+        },
+        {
           "path": "design/fullnode-state-sync/data-layout.md",
           "action": "modify",
           "change": "Publish payload-domain to ordinary target-root mapping, native format/mode expectations and separation of recipient identity/configuration."

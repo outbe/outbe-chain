@@ -80,6 +80,58 @@ unrelated cut. This feature supplies no multi-root installer, force replacement,
 restore/resume/rollback journal or automatic evidence merge. Ordinary filesystem
 placement/permissions and new-node provisioning stay operator actions.
 
+### Create and place the files
+
+After stopping all donor writers, use the donor's ordinary node configuration:
+
+```sh
+outbe-chain snapshot create \
+  --output /srv/snapshots/snapshot.tar \
+  --signing-key /etc/outbe/snapshot-creator.hex \
+  --creator "operator label" --source "donor label" \
+  -- \
+  --chain /etc/outbe/genesis.json \
+  --datadir /srv/outbe/chain \
+  --consensus.storage-dir /srv/outbe/consensus \
+  --projection.storage-config /etc/outbe/offchain.toml
+```
+
+The signing key must already exist. The output's parent directory must exist and
+the output file must be absent and outside the native stores and protected paths.
+Pass any donor static-file/execution-RocksDB overrides after `--` as well.
+Creation reports the archive path, finalized height/hash, file count/bytes and
+creator public key. This authenticates the recorded cut; it is not a full data audit.
+
+Transfer the archive using any existing file-transfer method. On the recipient,
+extract it into a separate directory with ordinary `tar`, then copy each payload
+domain's contents into the corresponding root from the
+[destination table](data-layout.md#portable-archive-paths-and-ordinary-destinations):
+
+```sh
+mkdir -p /srv/received/snapshot
+tar --no-same-owner -xpf /srv/received/snapshot.tar -C /srv/received/snapshot
+
+# Example: D is the recipient's configured chain directory.
+mkdir -p /srv/new-node/chain
+cp -a --no-preserve=ownership -- /srv/received/snapshot/payload/execution-db/. /srv/new-node/chain/
+cp -a --no-preserve=ownership -- /srv/received/snapshot/payload/ce/. /srv/new-node/chain/
+```
+
+The two copy commands illustrate the D domains only. Place **every supplied
+domain with recorded entries** using the destination table, including separately configured roots, while
+recipient writers remain stopped. Use the intended node filesystem owner and
+preserve native modes. On a new node, use empty data destinations; do not merge a
+different existing database into the received cut. Keep recipient keys, configuration,
+enclave identity and signing journals separate from these copy operations.
+An empty entries list records an absent optional population: its empty archive
+wrapper does not require creating a missing store. Preserve explicitly recorded
+empty native directory entries.
+
+No snapshot-specific command is required after placement. The optional validation
+command is independent; ordinary startup consumes the placed native files and the
+recipient's normal configuration. Starting and subsequent restarts do not consume
+the archive, manifest, signature or validation report.
+
 ## Optional offline validation
 
 The independent command can inspect received native files or an existing stopped
@@ -136,4 +188,7 @@ transport service, vendor patch, dependency upgrade or Credis change.
 Tests precede implementation. Main E2E uses the recommended post-Lysis cut and checks saved Tribute/NOD,
 results and remaining ordinary actions. Creation fixtures prove there is no
 completion gate; transferring donor unfinished computation is not required.
-Plans describe future work; no implementation or executed acceptance is claimed.
+The create command and conventional file placement have process-level native-store
+coverage, including byte preservation and opening copied stores without the donor or
+artifact sidecars. Optional semantic validation and ordinary continuation have separate
+acceptance tasks; passing creation and placement tests does not claim those have passed.

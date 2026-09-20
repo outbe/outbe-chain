@@ -17,6 +17,8 @@ File portability acceptance with the create delivery (tasks01+02+03). This is te
 | File | Action | Responsibility |
 |---|---|---|
 | `bin/outbe-chain/tests/snapshot_files.rs` | new | Create signed native fixture, use conventional extraction/file-copy test glue into independent native roots, compare bytes and use ordinary read-only native openers. No product restore command/helper. |
+| `bin/outbe-chain/tests/common/snapshot.rs` | new | Test-only shared stopped native fixture and process helpers extracted from snapshot_create.rs for file-placement acceptance; no production API or duplicated test registration. |
+| `bin/outbe-chain/tests/snapshot_create.rs` | administrative | Reuse the shared test fixture without changing create assertions or product behavior. |
 | `design/fullnode-state-sync/data-layout.md` | modify | Publish payload-domain to ordinary target-root mapping, native format/mode expectations and separation of recipient identity/configuration. |
 | `design/fullnode-state-sync/operator-workflow.md` | modify | Document stop -> create -> transfer -> place ready files -> optional validate -> ordinary start; explain tar extraction is byte handling, not state reconstruction. |
 

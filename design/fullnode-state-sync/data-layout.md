@@ -14,7 +14,8 @@ This is the input contract for tasks 01–06, not a new runtime layout.
 - Honor explicit static-file and execution-RocksDB path overrides.
 
 H is the exact Reth `ChainStateKey::LastFinalizedBlock` value and its canonical
-header/hash. E is actual stored execution state; M is the CE marker; P also names
+header/hash. E is the observed Execution-stage height and its canonical header;
+the optional EVM audit separately establishes complete state at E. M is the CE marker; P also names
 the observed projection checkpoint when discussing progress; C is native OCOMP
 closure. Record each independently. Execution or public local work may be ahead
 of H; closure may lag. Copy the native tail and progress unchanged. No truncation,
@@ -59,6 +60,37 @@ Uncommitted CAS staging and worker replay inboxes are not completed public resul
 The exact enumerator is a finite domain allowlist with tests for every class;
 copying the entire consensus/OCOMP parent is not the implementation.
 
+## Portable archive paths and ordinary destinations
+
+The archive contains `manifest.json`, `signature.json`, then `payload/<domain-id>/`.
+Entries under each domain preserve their native paths relative to the root below.
+For example, `payload/execution-db/db/mdbx.dat` becomes `D/db/mdbx.dat`,
+and `payload/materialization-references/supervisor-v1/materialization-references/J/17/J.materialization-refs-v1.json`
+becomes the same relative path under O. Nothing is imported into a database.
+
+| Payload domain ID | Ordinary destination root |
+|---|---|
+| `execution-db`, `ce` | D: `--datadir` |
+| `static-files` | `--datadir.static-files`, default D/static_files |
+| `execution-rocks-db` | `--datadir.rocksdb`, default D/rocksdb |
+| `offchain-projection` | P: RocksDB primary from `--projection.storage-config` |
+| `marshal-finalizations`, `marshal-blocks`, `marshal-metadata`, `marshal-cache`, `parent-certificates`, `ocomp-retention` | S: `--consensus.storage-dir`, default D/consensus |
+| `closure-checkpoint`, `discovery`, `protocol-bundles`, `cas-objects`, `input-references`, `export-receipts`, `export-bindings`, `job-public-records`, `materialization-references`, `local-results`, `exex-checkpoint`, `fatal-evidence` | O: parent(D)/ocomp/domain-v1 |
+
+Domain wrappers are transport directories. Copy their **contents** into the chosen
+root; do not replace the root with one wrapper or copy the donor's entire S/O.
+Current creation records `native_path` as the empty string because each member
+already includes its path relative to `native_root`. An empty entries list records
+an absent optional population; it does not request creating a missing native store.
+A present empty native directory has its own directory entry. The manifest retains
+the observed order; lexical ordering is not a requirement.
+
+Files retain their native bytes and permission bits. The recipient supplies the
+ordinary filesystem ownership used by its node; donor UIDs are not an identity
+provisioning mechanism. Preserve catalog lock placeholders, pending public records,
+all nested ordinal directories and fatal evidence. Keep both metadata files outside
+the native roots when retaining them for later optional checks.
+
 ## Protected recipient authority/configuration
 
 Do not export or replace recipient P2P/JWT/private keys, native configuration,
@@ -91,7 +123,7 @@ source labels as metadata only; absolute donor paths never authorize extraction.
 - Reuse `inspect_retention_journal`. Add a closure inspector and owner-local
   public artifact readers where current open methods create/recover records.
 - Validator native recovery uses its persisted finalized/execution anchor;
-  follower uses archive/execution/processed progress. Exact recovered H/hash is
+  follower uses archive/execution/processed progress. The ordinary recovered anchor/hash is
   ACKed without executing EVM again. OCOMP scans canonical blocks/receipts from
   C+1, using copied retention/discovery/results. Missing history remains an
   ordinary recovery prerequisite, not a reason to manufacture cursors.
