@@ -65,6 +65,9 @@ mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
+#[cfg(test)]
+mod snapshot;
+
 use cli::chain_spec::{validate_outbe_chain_spec, OutbeChainSpecParser, OutbeRpcModuleValidator};
 
 use cli::defaults::{apply_outbe_gas_price_oracle_defaults, initialize_crs_for_command};

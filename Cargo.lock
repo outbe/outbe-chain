@@ -8265,6 +8265,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-radicle 0.1.0",
  "outbe-rpc",
+ "outbe-snapshot",
  "outbe-tee",
  "outbe-txpool",
  "outbe-update",
