@@ -5,6 +5,7 @@
 //! is authenticated materialization only: the exact EVM root remains the sole
 //! consensus authority.
 
+mod audit;
 mod checkpoint;
 mod codec;
 mod collections;
@@ -14,6 +15,7 @@ mod identity;
 mod readonly;
 mod snapshot;
 mod tables;
+pub use audit::{CeAuditError, CeAuditLimits, CeAuditReport, CeAuditVisitor, CeAuditWork};
 #[cfg(feature = "test-utils")]
 mod test_support;
 

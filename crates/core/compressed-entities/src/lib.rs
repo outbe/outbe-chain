@@ -60,9 +60,10 @@ pub use lifecycle::{
 };
 pub use outbe_primitives::wwd_entity_id::WwdEntityId;
 pub use persistence::{
-    classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
-    DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,
-    FinalizedMarker, PersistenceError, RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH,
+    classify_restart, ApplyOutcome, CeAuditError, CeAuditLimits, CeAuditReport, CeAuditVisitor,
+    CeAuditWork, CeMdbx, CeMdbxReadOnly, CeRetentionCursor, DurableFinalizedCheckpoint,
+    EnvironmentIdentity, ExactParentIdentity, FinalizationStage, FinalizedMarker, LeafValue,
+    PersistenceError, RestartClassification, TreeKey, TreeNamespace, CE_SMT_RELATIVE_PATH,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
 pub use proof::{
