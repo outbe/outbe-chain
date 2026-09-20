@@ -8254,6 +8254,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
+ "outbe-intex",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",

@@ -31,6 +31,28 @@ pub(crate) struct NativeLayout {
     pub protected: ProtectedPaths,
 }
 
+/// Configuration prerequisites. Other native roots come directly from ordinary
+/// node arguments; only projection inspection needs the separate storage TOML.
+pub(crate) struct NativeReadSelection {
+    pub projection: bool,
+}
+
+pub(crate) struct ProjectionLocation {
+    pub root: PathBuf,
+    pub start_block: u64,
+}
+
+pub(crate) struct RequestedLayout {
+    pub chain: Arc<ChainSpec<OutbeHeader>>,
+    pub chain_root: PathBuf,
+    pub consensus_root: PathBuf,
+    pub ocomp_root: PathBuf,
+    pub static_files_root: PathBuf,
+    pub execution_rocksdb_root: PathBuf,
+    pub projection: Option<ProjectionLocation>,
+    pub protected: ProtectedPaths,
+}
+
 /// Parse trailing ordinary node options; never run or configure the parsed command.
 pub(crate) fn parse_node_inputs(
     arguments: impl IntoIterator<Item = OsString>,
@@ -59,6 +81,27 @@ pub(crate) fn parse_node_inputs(
 }
 
 pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> {
+    let layout = resolve_requested_layout(inputs, NativeReadSelection { projection: true })?;
+    let projection = layout
+        .projection
+        .ok_or_else(|| eyre::eyre!("missing required projection configuration"))?;
+    Ok(NativeLayout {
+        chain: layout.chain,
+        chain_root: layout.chain_root,
+        consensus_root: layout.consensus_root,
+        ocomp_root: layout.ocomp_root,
+        offchain_root: projection.root,
+        static_files_root: layout.static_files_root,
+        execution_rocksdb_root: layout.execution_rocksdb_root,
+        projection_start_block: projection.start_block,
+        protected: layout.protected,
+    })
+}
+
+pub(crate) fn resolve_requested_layout(
+    inputs: &NodeInputs,
+    selection: NativeReadSelection,
+) -> eyre::Result<RequestedLayout> {
     let Commands::Node(node) = &inputs.cli.command else {
         eyre::bail!("snapshot native inputs must describe a node");
     };
@@ -73,13 +116,19 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
         .parent()
         .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP parent"))?
         .join("ocomp/domain-v1");
-    let storage_path = args.offchain_data()?.storage_config;
-    let storage = StorageConfig::load(&storage_path)?;
-    let StorageBackend::RocksDb(rocks) = storage.backend else {
-        eyre::bail!("filesystem snapshots require RocksDB offchain storage");
+    let projection = if selection.projection {
+        let storage = StorageConfig::load(&args.offchain_data()?.storage_config)?;
+        let StorageBackend::RocksDb(rocks) = storage.backend else {
+            eyre::bail!("filesystem snapshots require RocksDB offchain storage");
+        };
+        Some(ProjectionLocation {
+            root: rocks.path,
+            start_block: storage.start_block,
+        })
+    } else {
+        None
     };
     let mut protected = vec![
-        storage_path,
         args.keys_dir
             .clone()
             .unwrap_or_else(|| chain_root.join("keys")),
@@ -93,6 +142,7 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
             .clone()
             .unwrap_or_else(|| datadir.jwt()),
     ];
+    protected.extend(args.projection_storage_config.clone());
     protected.extend(inputs.chain_source.clone());
     protected.extend(
         [
@@ -106,15 +156,14 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
         .into_iter()
         .flatten(),
     );
-    Ok(NativeLayout {
+    Ok(RequestedLayout {
         chain: node.chain.clone(),
         chain_root,
         consensus_root,
         ocomp_root,
-        offchain_root: rocks.path,
         static_files_root: datadir.static_files(),
         execution_rocksdb_root: datadir.rocksdb(),
-        projection_start_block: storage.start_block,
+        projection,
         protected: ProtectedPaths(protected),
     })
 }

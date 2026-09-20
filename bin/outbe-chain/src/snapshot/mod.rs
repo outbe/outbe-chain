@@ -6,4 +6,7 @@ pub(crate) mod inventory;
 pub(crate) mod native;
 
 #[cfg(test)]
+pub(crate) mod validation;
+
+#[cfg(test)]
 mod tests;
