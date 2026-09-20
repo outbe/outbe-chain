@@ -71,6 +71,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
+tempfile.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
@@ -82,7 +83,6 @@ commonware-storage.workspace = true
 commonware-utils.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 reqwest.workspace = true
-tempfile.workspace = true
 
 [build-dependencies]
 vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }

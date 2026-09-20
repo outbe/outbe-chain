@@ -2,6 +2,35 @@ use std::{ffi::OsString, fs, path::Path};
 
 use super::super::config::{parse_node_inputs, resolve_layout};
 
+#[test]
+fn create_cli_requires_signing_key_and_forwards_native_arguments() {
+    use crate::cli::snapshot::{SnapshotCli, SnapshotCommand};
+    use clap::Parser;
+    let error = SnapshotCli::try_parse_from(["snapshot", "create", "--output", "snapshot.tar"])
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("--signing-key"));
+    let parsed = SnapshotCli::try_parse_from([
+        "snapshot",
+        "create",
+        "--output",
+        "snapshot.tar",
+        "--signing-key",
+        "creator.hex",
+        "--",
+        "--chain",
+        "genesis.json",
+        "--datadir",
+        "chain",
+    ])
+    .unwrap();
+    let SnapshotCommand::Create(args) = parsed.command;
+    assert_eq!(
+        args.node_args,
+        ["--chain", "genesis.json", "--datadir", "chain"].map(std::ffi::OsString::from)
+    );
+}
+
 pub(super) fn native_arguments(root: &Path) -> Vec<OsString> {
     let genesis = root.join("genesis.json");
     crate::tee_genesis::run(&[

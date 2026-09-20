@@ -65,7 +65,6 @@ mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
-#[cfg(test)]
 mod snapshot;
 
 use cli::chain_spec::{validate_outbe_chain_spec, OutbeChainSpecParser, OutbeRpcModuleValidator};
@@ -134,6 +133,9 @@ fn main() -> eyre::Result<()> {
     }
     if args.len() > 1 && args[1] == "ocomp" {
         return ocomp_genesis::run(&args);
+    }
+    if args.len() > 1 && args[1] == "snapshot" {
+        return cli::snapshot::run(&args);
     }
 
     // Intercept `--version` / `-V` so that the user sees Outbe-side build
