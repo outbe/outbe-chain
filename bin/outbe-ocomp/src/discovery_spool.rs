@@ -821,6 +821,37 @@ pub enum CheckpointAdvanceOutcomeV1 {
     ExactReplay,
 }
 
+/// The three native frontiers observed in an existing closure checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClosureCheckpointInspectionV1 {
+    pub baseline: ProjectionCheckpoint,
+    pub previous: ProjectionCheckpoint,
+    pub current: ProjectionCheckpoint,
+}
+
+/// Inspect a stopped store without initializing, locking, recovering or writing it.
+///
+/// `root` is the native closure-checkpoint directory. Its writer must already
+/// be stopped; a successful read does not establish that precondition.
+pub fn inspect_closure_checkpoint(
+    root: impl AsRef<Path>,
+    expected_baseline: ProjectionCheckpoint,
+) -> Result<ClosureCheckpointInspectionV1, DiscoverySpoolError> {
+    validate_checkpoint(expected_baseline)?;
+    let state = decode_checkpoint_state(&read_bounded_private_file(
+        &root.as_ref().join(CHECKPOINT_FILE),
+        CHECKPOINT_FIXED_BYTES,
+    )?)?;
+    if state.baseline != expected_baseline {
+        return Err(DiscoverySpoolError::CheckpointBaselineMismatch);
+    }
+    Ok(ClosureCheckpointInspectionV1 {
+        baseline: state.baseline,
+        previous: state.previous,
+        current: state.current,
+    })
+}
+
 pub struct ContiguousCheckpointStoreV1 {
     root: PathBuf,
     baseline: ProjectionCheckpoint,

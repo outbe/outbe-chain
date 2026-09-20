@@ -780,6 +780,120 @@ fn checkpoint(number: u64, byte: u8) -> ProjectionCheckpoint {
 }
 
 #[test]
+fn inspect_closure_checkpoint_preserves_nonzero_native_progress_without_writes() {
+    let temp = TempDir::new().expect("temporary directory");
+    let root = temp.path().join("checkpoint");
+    let baseline = checkpoint(100, 0x10);
+    let previous = checkpoint(101, 0x11);
+    let current = checkpoint(1_000, 0x12);
+    let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("native checkpoint");
+    store
+        .compare_and_advance(baseline, previous)
+        .expect("first advance");
+    store
+        .compare_and_advance_to(previous, current)
+        .expect("sparse advance");
+    drop(store);
+    // The offline reader must neither recreate the runtime lock nor recover a
+    // leftover temporary. Those operations belong only to the ordinary writer.
+    fs::remove_file(root.join(".lock")).expect("remove writer lock");
+    fs::write(
+        root.join("checkpoint.v1.tmp"),
+        b"incomplete writer temporary",
+    )
+    .expect("temporary sentinel");
+    let before = fs::read(root.join("checkpoint.v1")).expect("native bytes");
+
+    let observed = outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, baseline)
+        .expect("offline inspection");
+
+    assert_eq!(observed.baseline, baseline);
+    assert_eq!(observed.previous, previous);
+    assert_eq!(observed.current, current);
+    assert_eq!(
+        fs::read(root.join("checkpoint.v1")).expect("native bytes"),
+        before
+    );
+    assert!(!root.join(".lock").exists());
+    assert_eq!(
+        fs::read(root.join("checkpoint.v1.tmp")).expect("temporary untouched"),
+        b"incomplete writer temporary"
+    );
+    assert_eq!(fs::read_dir(&root).expect("native directory").count(), 2);
+}
+
+#[test]
+fn inspect_closure_checkpoint_missing_store_never_initializes_or_recovers() {
+    let temp = TempDir::new().expect("temporary directory");
+    let root = temp.path().join("checkpoint");
+    let baseline = checkpoint(100, 0x10);
+    assert!(outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, baseline).is_err());
+    assert!(!root.exists());
+
+    let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("native checkpoint");
+    drop(store);
+    fs::remove_file(root.join(".lock")).expect("remove writer lock");
+    fs::rename(root.join("checkpoint.v1"), root.join("checkpoint.v1.tmp"))
+        .expect("leave only a temporary");
+    let before = fs::read(root.join("checkpoint.v1.tmp")).expect("temporary bytes");
+    assert!(outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, baseline).is_err());
+    assert!(!root.join("checkpoint.v1").exists());
+    assert!(!root.join(".lock").exists());
+    assert_eq!(
+        fs::read(root.join("checkpoint.v1.tmp")).expect("temporary remains"),
+        before
+    );
+    assert_eq!(fs::read_dir(&root).expect("directory").count(), 1);
+}
+
+#[test]
+fn inspect_closure_checkpoint_rejects_wrong_baseline_and_damaged_bytes_unchanged() {
+    let temp = TempDir::new().expect("temporary directory");
+    let root = temp.path().join("checkpoint");
+    let baseline = checkpoint(100, 0x10);
+    let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("native checkpoint");
+    drop(store);
+    fs::remove_file(root.join(".lock")).expect("remove writer lock");
+    let path = root.join("checkpoint.v1");
+    let original = fs::read(&path).expect("native bytes");
+    assert!(matches!(
+        outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, checkpoint(100, 0x20)),
+        Err(DiscoverySpoolError::CheckpointBaselineMismatch)
+    ));
+    assert_eq!(fs::read(&path).expect("native bytes"), original);
+
+    let mut corrupt = original.clone();
+    *corrupt.last_mut().expect("checksum") ^= 1;
+    for bytes in [vec![], original[..original.len() - 1].to_vec(), corrupt] {
+        fs::write(&path, &bytes).expect("write damaged fixture");
+        assert!(outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, baseline).is_err());
+        assert_eq!(fs::read(&path).expect("damaged bytes retained"), bytes);
+        assert!(!root.join(".lock").exists());
+        assert_eq!(fs::read_dir(&root).expect("directory").count(), 1);
+    }
+}
+
+#[test]
+fn inspect_closure_checkpoint_rejects_a_symlink_without_touching_its_target() {
+    let temp = TempDir::new().expect("temporary directory");
+    let root = temp.path().join("checkpoint");
+    let baseline = checkpoint(100, 0x10);
+    let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("native checkpoint");
+    drop(store);
+    fs::remove_file(root.join(".lock")).expect("remove writer lock");
+    let target = temp.path().join("outside-checkpoint");
+    fs::rename(root.join("checkpoint.v1"), &target).expect("move native bytes");
+    let before = fs::read(&target).expect("target bytes");
+    symlink(&target, root.join("checkpoint.v1")).expect("symlink fixture");
+    assert!(matches!(
+        outbe_ocomp::discovery_spool::inspect_closure_checkpoint(&root, baseline),
+        Err(DiscoverySpoolError::UnsafePath(_))
+    ));
+    assert_eq!(fs::read(&target).expect("target unchanged"), before);
+    assert!(!root.join(".lock").exists());
+}
+
+#[test]
 fn checkpoint_store_initializes_restarts_and_advances_contiguously() {
     let temp = support::tempdir().expect("tempdir");
     let root = temp.path().join("checkpoint");
