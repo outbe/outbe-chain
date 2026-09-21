@@ -206,7 +206,7 @@ impl NodContract<'_> {
         // ISO 0 is not a currency, and its bin namespace aliases the
         // un-namespaced key while never appearing in the oracle's
         // reference-currency registry — a bucket parked there would be
-        // invisible to the qualifier forever.
+        // invisible to the call scan forever.
         if item.reference_currency == 0 {
             return Err(NodError::ZeroReferenceCurrency.into());
         }
@@ -262,14 +262,10 @@ impl NodContract<'_> {
                     .write(&item.bucket_key, item.worldwide_day)?;
                 self.callable_bucket_issued_at
                     .write(&item.bucket_key, item.issued_at)?;
-                self.insert_unqualified(
-                    item.bucket_key,
-                    item.floor_price_minor,
-                    item.reference_currency,
-                )?;
                 if let Some(terms) = derived_call_terms(entry_price_minor, item.reference_currency)?
                 {
                     self.seal_bucket_call_terms(item.bucket_key, terms)?;
+                    self.insert_call_bin(item.bucket_key)?;
                 }
                 Some(bucket)
             }
@@ -356,9 +352,9 @@ impl NodContract<'_> {
         let (mut item, current_item) = item.into_parts();
         let (mut bucket, current_bucket) = bucket.into_parts();
         self.check_loaded_bucket(&item, &current_bucket)?;
-        if item.is_settled || !bucket.is_qualified {
+        if item.is_settled || !self.settlement_open(&bucket)? {
             return Err(outbe_primitives::error::PrecompileError::Revert(
-                "Nod settlement requires an unpaid qualified item".into(),
+                "Nod settlement requires an unpaid item of a called or qualified bucket".into(),
             ));
         }
         bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
@@ -380,6 +376,17 @@ impl NodContract<'_> {
             current_bucket,
             BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
         )
+    }
+
+    /// Whether an unpaid member may settle: its bucket is called and the deadline has
+    /// not passed, or the bucket has qualified. A lapsed call is refused by the caller.
+    fn settlement_open(&self, bucket: &NodBucketState) -> Result<bool> {
+        let storage = self.storage_handle();
+        let deadline = crate::api::settlement_deadline(&storage, bucket.bucket_key)?;
+        if deadline != 0 && storage.timestamp()?.to::<u64>() <= deadline {
+            return Ok(true);
+        }
+        crate::api::is_qualified(&storage, bucket)
     }
 
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
@@ -437,30 +444,61 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Parks `bucket_key` in `reference_currency`'s bin for `floor_price` and
-    /// marks the bin non-empty in that currency's bitmap trie. Called from
-    /// `record_nod_issued` when a new bucket is created (i.e., the first NOD
-    /// with a given `(wwd, floor_price, reference_currency)` triple).
-    pub(crate) fn insert_unqualified(
-        &mut self,
-        bucket_key: B256,
-        floor_price: U256,
-        reference_currency: u16,
-    ) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
-        let scoped = Self::scoped(reference_currency, bin_id);
-        let count = self.unqualified_bin_count.read(&scoped)?;
-        self.unqualified_bin_buckets.write(
-            &Self::bin_index_key(reference_currency, bin_id, count),
-            bucket_key,
-        )?;
+    /// Parks a new bucket in the bin of the call price it sealed at issuance and
+    /// marks the bin non-empty in its currency's bitmap trie.
+    pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
+        let iso = self.callable_bucket_currency.read(&bucket_key)?;
+        let bin_id = Self::price_to_bin(self.callable_bucket_call_price.read(&bucket_key)?)?;
+        let scoped = Self::scoped(iso, bin_id);
+        let count = self.call_bin_count.read(&scoped)?;
         let next_count = count.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod unqualified bin {reference_currency}:{bin_id} member count overflow"
+                "Nod call bin {iso}:{bin_id} member count overflow"
             ))
         })?;
-        self.unqualified_bin_count.write(&scoped, next_count)?;
-        tree_math::add(&CurrencyBins(self, reference_currency), bin_id)?;
+        self.call_bin_buckets
+            .write(&Self::bin_index_key(iso, bin_id, count), bucket_key)?;
+        self.call_bin_count.write(&scoped, next_count)?;
+        self.call_bucket_bin
+            .write(&bucket_key, pack_bin_slot(bin_id, count))?;
+        tree_math::add(&CallBins(self, iso), bin_id)?;
+        Ok(())
+    }
+
+    /// Swap-removes a bucket from its call-price bin, clearing the bin's trie bit once
+    /// it empties. No-op for a bucket the trie does not hold.
+    pub(crate) fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
+        let packed = self.call_bucket_bin.read(&bucket_key)?;
+        if packed == 0 {
+            return Ok(());
+        }
+        let (bin_id, index) = unpack_bin_slot(packed);
+        let iso = self.callable_bucket_currency.read(&bucket_key)?;
+        let scoped = Self::scoped(iso, bin_id);
+        let last = self
+            .call_bin_count
+            .read(&scoped)?
+            .checked_sub(1)
+            .filter(|last| index <= *last)
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
+                ))
+            })?;
+        let last_key = Self::bin_index_key(iso, bin_id, last);
+        if index != last {
+            let moved = self.call_bin_buckets.read(&last_key)?;
+            self.call_bin_buckets
+                .write(&Self::bin_index_key(iso, bin_id, index), moved)?;
+            self.call_bucket_bin
+                .write(&moved, pack_bin_slot(bin_id, index))?;
+        }
+        self.call_bin_buckets.write(&last_key, B256::ZERO)?;
+        self.call_bin_count.write(&scoped, last)?;
+        self.call_bucket_bin.clear(&bucket_key)?;
+        if last == 0 {
+            tree_math::remove(&CallBins(self, iso), bin_id)?;
+        }
         Ok(())
     }
 
@@ -468,7 +506,7 @@ impl NodContract<'_> {
     //
     // The compressed-entity store answers "give me this Nod" but never "give me
     // this bucket's Nods", so the forfeit sweep needs its own enumeration. The
-    // shape mirrors the unqualified-bin index: a count plus a keccak-of-concat
+    // shape mirrors the call-price bin index: a count plus a keccak-of-concat
     // positional map, with a reverse map for O(1) swap-remove.
 
     /// Storage key for the `index`-th Nod parked in `bucket_key`.
@@ -549,8 +587,7 @@ impl NodContract<'_> {
     // --- Callable-bucket index ----------------------------------------------
 
     /// Writes the call terms a new bucket sealed at issuance. Later Nods that
-    /// join the same bucket inherit this copy. Qualification only lists the
-    /// bucket; it never reads the constants again.
+    /// join the same bucket inherit this copy; nothing reads the constants again.
     pub(crate) fn seal_bucket_call_terms(
         &mut self,
         bucket_key: B256,
@@ -571,13 +608,11 @@ impl NodContract<'_> {
         self.widen_max_call_window(terms.reference_currency, terms.call_window)
     }
 
-    /// Arms a freshly qualified bucket for the daily call scan. Terms were
-    /// sealed at issuance; this only puts the bucket on the dense list the
-    /// scan walks.
-    pub(crate) fn insert_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let index = self.callable_buckets.len()?;
-        self.callable_buckets.push(bucket_key)?;
-        self.callable_bucket_index.write(&bucket_key, index)
+    /// Puts a called bucket on the list the forfeit arm walks.
+    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        let index = self.called_buckets.len()?;
+        self.called_buckets.push(bucket_key)?;
+        self.called_bucket_index.write(&bucket_key, index)
     }
 
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
@@ -604,35 +639,41 @@ impl NodContract<'_> {
         Ok(())
     }
 
-    /// Swap-removes a bucket from the callable list and clears its call state.
-    /// No-op for a bucket that never qualified, so the removal funnel can call
-    /// it unconditionally.
-    pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let len = self.callable_buckets.len()?;
-        let index = self.callable_bucket_index.read(&bucket_key)?;
+    /// Swap-removes a bucket from the called list. No-op for a bucket it does not hold.
+    fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        let len = self.called_buckets.len()?;
+        let index = self.called_bucket_index.read(&bucket_key)?;
         let listed = index < len
             && self
-                .callable_buckets
+                .called_buckets
                 .get(index)?
                 .is_some_and(|listed| listed == bucket_key);
         if listed {
             let last = len.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "Nod callable list underflow removing bucket {bucket_key}"
+                    "Nod called list underflow removing bucket {bucket_key}"
                 ))
             })?;
             if index != last {
-                let moved = self.callable_buckets.get(last)?.ok_or_else(|| {
+                let moved = self.called_buckets.get(last)?.ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                        "Nod callable list slot {last} is empty during removal"
+                        "Nod called list slot {last} is empty during removal"
                     ))
                 })?;
-                self.callable_buckets.set(index, moved)?;
-                self.callable_bucket_index.write(&moved, index)?;
+                self.called_buckets.set(index, moved)?;
+                self.called_bucket_index.write(&moved, index)?;
             }
-            self.callable_buckets.pop()?;
+            self.called_buckets.pop()?;
         }
-        self.callable_bucket_index.clear(&bucket_key)?;
+        self.called_bucket_index.clear(&bucket_key)
+    }
+
+    /// Drops a bucket from whichever part of the call index holds it and clears its
+    /// call state. No-op for a bucket it never held, so the removal funnel can call
+    /// it unconditionally.
+    pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        self.remove_call_bin(bucket_key)?;
+        self.remove_called_bucket(bucket_key)?;
         self.callable_bucket_call_price.clear(&bucket_key)?;
         self.callable_bucket_currency.get(&bucket_key).delete()?;
         self.callable_bucket_call_rate.get(&bucket_key).delete()?;
@@ -663,41 +704,45 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
-// --- BinTreeStorage impl ---------------------------------------------------
-//
-// Adapter between one currency's slice of the contract's three bin-tree
-// storage columns and the `tree_math::BinTreeStorage` trait. Mirrors
-// `outbe_intexfactory::state::QualifiedBinTree`, which runs two tries on one
-// contract the same way.
-//
-// The trait functions take `&self` - storage writes go through the DSL's
-// interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
-// Construct the view inline at each `tree_math` call rather than binding it,
-// so it never conflicts with a `&mut NodContract` borrow.
+/// A bucket's place in the call-price trie: its bin, and its index there plus one.
+const fn pack_bin_slot(bin_id: u32, index: u32) -> u64 {
+    ((bin_id as u64) << 32) | (index as u64 + 1)
+}
 
-pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
+const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
+}
 
-impl BinTreeStorage for CurrencyBins<'_, '_> {
+/// The call-price trie of one reference currency, like `outbe_gem::state::CallBins`.
+/// The trait functions take `&self`: storage writes go through the DSL's
+/// interior-mutable `StorageHandle`.
+pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
+
+impl BinTreeStorage for CallBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.0.bin_tree_root.read(&self.1)
+        self.0.call_bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.0.bin_tree_root.write(&self.1, value)
+        self.0.call_bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.bin_tree_mid.read(&NodContract::scoped(self.1, key))
+        self.0
+            .call_bin_tree_mid
+            .read(&NodContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .bin_tree_mid
+            .call_bin_tree_mid
             .write(&NodContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.bin_tree_leaf.read(&NodContract::scoped(self.1, key))
+        self.0
+            .call_bin_tree_leaf
+            .read(&NodContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .bin_tree_leaf
+            .call_bin_tree_leaf
             .write(&NodContract::scoped(self.1, key), value)
     }
 }

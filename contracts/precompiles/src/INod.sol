@@ -24,11 +24,7 @@ interface INod {
 
     event NodBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
 
-    event NodBucketQualified(
-        bytes32 indexed bucketKey, uint256 worldwideDay, uint256 floorPriceMinor, uint16 referenceCurrency
-    );
-
-    /// Qualified bucket force-called by the daily Call scan: the reference price
+    /// Bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
     /// Nod in the bucket must be settled by `settlementDeadline` or it
     /// is forfeit-burned.
@@ -38,11 +34,7 @@ interface INod {
     /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
-    /// @notice A reference currency was left out of one day's qualification because its
-    ///         day price could not be indexed. The next day's pass tries it again.
-    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
     ///         gave its place to a newer day and will not be walked.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
@@ -59,6 +51,8 @@ interface INod {
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
         /// at six-decimal precision; payment in an asset is quoted separately.
         uint256 settlementCostMinor;
+        /// A finalized daily VWAP in referenceCurrency closed above the floor on the
+        /// first full UTC day after the bucket's issuance or later. Derived, never stored.
         bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;

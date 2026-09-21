@@ -94,10 +94,10 @@ fn run_outbe_pre_execution_hooks_inner(
     // underperformers EXITING.
     <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // Nod qualification and call/forfeit mutate compressed bucket bodies, so
-    // the daily trigger and per-block continuation both run inside the
-    // receipt-visible CycleTick system transaction (not here). Oracle has
-    // already published the rate that transaction observes.
+    // Nod forfeits mutate compressed bodies, so the daily trigger and per-block
+    // continuation both run inside the receipt-visible CycleTick system
+    // transaction (not here). Oracle has already published the rate that
+    // transaction observes.
     let _ = readers;
 
     // GEM: carry on the daily call sweep the Cycle trigger opened, pinned to a

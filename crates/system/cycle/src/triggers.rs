@@ -114,7 +114,7 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
-/// The qualify and Called sweeps are daily in production. An e2e run seeds the days
+/// The Called sweep is daily in production. An e2e run seeds the days
 /// they read rather than living through them, so they need to come round sooner.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
@@ -171,7 +171,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_daily",
             period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to qualify and call series; no
+            // Reads finalized oracle VWAP history to call series; no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot
@@ -225,7 +225,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_drain_notices",
             period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Drains a queue the qualify sweep filled; reads no accounting state.
+            // Drains a queue the call sweep filled; reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,
@@ -247,7 +247,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
-            // Qualifies, calls and forfeits using the latest completed UTC day.
+            // Calls and forfeits using the latest completed UTC day.
             // Missed slots would repeat the same scan against the current clock.
             requires_accounting_window: false,
             coalesces_backlog: true,

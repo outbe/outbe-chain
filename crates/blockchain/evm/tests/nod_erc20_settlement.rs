@@ -49,6 +49,30 @@ const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
 const GRATIS_LOAD: u64 = 1_000;
 const TIMESTAMP: u64 = 1_700_000_000;
+
+/// Closes the bucket's first full day above its floor, which qualifies it.
+fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
+    let issued_at = NodContract::new(storage.clone())
+        .callable_bucket_issued_at
+        .read(&bucket_key)
+        .unwrap();
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let mut index = oracle.pair_index_of(pair).unwrap();
+    if index == 0 {
+        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+    }
+    let day = outbe_primitives::time::first_full_day(issued_at);
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, floor + U256::ONE)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
+}
+
 type EvmCtx = revm::Context<
     revm::context::BlockEnv,
     revm::context::TxEnv,
@@ -142,9 +166,7 @@ impl World {
             let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
             let bucket =
                 NodContract::bucket_key(params.worldwide_day, params.floor_price_minor, 840);
-            NodContract::new(storage)
-                .qualify_bucket(&scope, &parent, bucket)
-                .unwrap();
+            qualify(&storage, bucket, params.floor_price_minor, 840);
             nod
         });
         provider.flush().unwrap();
@@ -308,7 +330,8 @@ impl World {
 
 #[test]
 fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
-    let cost = (U256::ONE << 160) + U256::from(500);
+    // Above u128, yet inside the price ladder the call index bins by.
+    let cost = (U256::ONE << 129) + U256::from(500);
     let mut world = World::new(OWNER, cost, true);
     assert!(matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(

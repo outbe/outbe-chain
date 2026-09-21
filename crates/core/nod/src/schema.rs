@@ -106,12 +106,14 @@ pub struct NodBucketState {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
     pub floor_price_minor: U256,
+    /// Not read: qualification is derived, see `api::is_qualified`. Kept so bodies
+    /// encode the same.
     pub is_qualified: bool,
     pub entry_price_minor: U256,
 
     /// Denomination of `floor_price_minor`, propagated from the Nods in the
-    /// bucket. The qualifier compares the floor against the COEN rate for this
-    /// currency only, and the bin index is namespaced by it.
+    /// bucket. Qualification compares the floor against the COEN day price for this
+    /// currency only, and the call index is namespaced by it.
     pub reference_currency: u16,
 
     /// Live paid entitlements; decreases when exercised.
@@ -175,17 +177,12 @@ impl NodCertifiedGenerationProjection {
 /// Nod item and bucket bodies live in the compressed-entity store, not here.
 /// Bucket key = keccak256(worldwide_day ++ floor_price_minor ++ reference_currency).
 ///
-/// Unqualified buckets are tracked by a PancakeSwap-Liquidity-Book-style
-/// 3-level radix-256 bitmap trie indexed by `floor_price_minor`. Each set
-/// leaf bit identifies a non-empty price bin; per-bin bucket lists live in
-/// `unqualified_bin_count` + `unqualified_bin_buckets`.
-///
-/// Prices in different currencies are not comparable, so every bin column is
-/// namespaced by the bucket's `reference_currency` and each currency gets its
-/// own independent trie. See `state::CurrencyBins`.
+/// Uncalled buckets wait in a PancakeSwap-Liquidity-Book-style 3-level radix-256
+/// bitmap trie indexed by their sealed call price, one trie per reference
+/// currency. See `state::CallBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=49 in declaration order. New fields append, which keeps the
+/// 0..=60 in declaration order. New fields append, which keeps the
 /// genesis-seeded materialization FIFO counters at slots 19 and 20.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
@@ -195,42 +192,20 @@ pub struct NodContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- Unqualified-bucket bin index (PancakeSwap LB-style trie) ---
-
-    // slot 1: top-level 256-bit bitmap per currency. Bit `i` is set iff
-    // `bin_tree_mid[(iso, i)]` is non-zero. Indexed by bits [16:24] of bin_id.
+    // Retired with the qualify sweep, like every `retired_*` field below: never read,
+    // declared only so the fields after it keep their slots. Not to be reused.
     #[attribute(order = 10)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-
-    // slot 2: mid-level bitmaps. Key = `state::scoped(iso, bits [16:24] of
-    // bin_id)`. Bit `j` is set iff `bin_tree_leaf[(key << 8) | j]` is non-zero.
+    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 11)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-
-    // slot 3: leaf-level bitmaps. Key = `state::scoped(iso, bits [8:24] of
-    // bin_id)`. Bit `k` is set iff bin `(key << 8) | k` currently holds at
-    // least one bucket_key.
+    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 12)]
-    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-
-    // slot 4: per-bin count of bucket_keys parked in the bin, keyed by
-    // `state::scoped(iso, bin_id)`.
+    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 13)]
-    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-
-    // slot 5: per-bin bucket index - keccak(iso ++ bin_id ++ index) ->
-    // bucket_key. Insertion-ordered; on qualification, the bin is either
-    // drained wholesale (count := 0, bit cleared) or compacted (survivors
-    // moved up).
+    pub retired_unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     #[attribute(order = 14)]
-    pub unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
-
-    // slot 6: next bucket position to inspect in a partially processed bin,
-    // keyed by `state::scoped(iso, bin_id)`. This keeps begin-block
-    // qualification bounded without starving later buckets when the tail bin
-    // contains more work than one block can inspect.
+    pub retired_unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 17)]
-    pub unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub retired_unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
@@ -314,7 +289,7 @@ pub struct NodContract {
     pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// `bucket_nod_key(bucket_key, index)` -> Nod id. Insertion-ordered and
-    /// swap-popped, matching the unqualified-bin index.
+    /// swap-popped, matching the call-price bin index.
     #[attribute(order = 36)]
     pub bucket_nods: Mapping<B256, WwdEntityId>,
 
@@ -323,14 +298,10 @@ pub struct NodContract {
     #[attribute(order = 37)]
     pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 
-    // --- Callable-bucket index: dense list of the buckets the daily call scan
-    // visits. Membership invariant: a bucket is listed iff it has qualified and
-    // still has members.
     #[attribute(order = 38)]
-    pub callable_buckets: outbe_primitives::storage::dsl::List<B256>,
-
+    pub retired_callable_buckets: outbe_primitives::storage::dsl::List<B256>,
     #[attribute(order = 39)]
-    pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub retired_callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
     /// the daily scan never loads a bucket body just to decide.
@@ -345,10 +316,8 @@ pub struct NodContract {
     #[attribute(order = 42)]
     pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// Resume position of the daily call scan, stored as `index + 1`. Zero means
-    /// the last pass completed and the next starts from the top.
     #[attribute(order = 43)]
-    pub call_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub retired_call_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     /// Protocol bundle the certified generation was produced under. Materialization
     /// reads it here rather than from a runtime job registry, which the node is free
@@ -393,35 +362,68 @@ pub struct NodContract {
     #[attribute(order = 53)]
     pub entry_price_value: Mapping<WorldwideDay, Mapping<u16, U256>>,
 
-    /// First member's `issued_at`, sealed when the bucket is created. Daily
-    /// qualification and the call scan both cut the VWAP window at
-    /// `first_full_day` of this stamp so a delayed materialization cannot
-    /// inherit pre-issuance days, and a partial issuance UTC day does not
-    /// count. Later members inherit it, the same way they inherit call terms.
+    /// First member's `issued_at`, sealed when the bucket is created. Qualification
+    /// and the call scan both cut the VWAP history at `first_full_day` of this stamp
+    /// so a delayed materialization cannot inherit pre-issuance days, and a partial
+    /// issuance UTC day does not count. Later members inherit it, the same way they
+    /// inherit call terms.
     #[attribute(order = 54)]
     pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // --- Frozen-day sweeps. An unfinished walk keeps the UTC day it opened on
+    #[attribute(order = 55)]
+    pub retired_qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 56)]
+    pub retired_qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 57)]
+    pub retired_qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 58)]
+    pub retired_qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // --- Frozen-day call sweep. An unfinished walk keeps the UTC day it opened on
     // so a later CycleTick cannot reprice the remainder. 0 = idle; a date key
     // is never 0. One day waits behind the in-flight one at most.
-    /// UTC day an unfinished qualification sweep is pinned to.
-    #[attribute(order = 55)]
-    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 56)]
-    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
-    /// Registry ISO the qualify sweep resumes at, so a heavy currency cannot
-    /// starve the ones behind it and each currency is walked once per day.
-    #[attribute(order = 57)]
-    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    /// Next bin this currency's qualify sweep visits. Non-zero only while a
-    /// sweep was cut short by the per-block budget.
-    #[attribute(order = 58)]
-    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
     /// UTC day an unfinished call sweep is pinned to.
     #[attribute(order = 59)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 60)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    // --- Call-price bin index: every uncalled bucket with sealed terms waits here
+    // from issuance on. Keyed like the Gem and Intex indexes, by
+    // `state::scoped(iso, trie key)` and `bin_index_key(iso, bin, index)`.
+    #[attribute(order = 61)]
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    #[attribute(order = 62)]
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 63)]
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 64)]
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    #[attribute(order = 65)]
+    pub call_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Bucket key -> `(bin << 32) | (index + 1)` of its place in the trie; 0 = not there.
+    #[attribute(order = 66)]
+    pub call_bucket_bin: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    // --- Called buckets, which the forfeit arm walks until they empty.
+    #[attribute(order = 67)]
+    pub called_buckets: outbe_primitives::storage::dsl::List<B256>,
+    #[attribute(order = 68)]
+    pub called_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// Resume position of the forfeit arm in `called_buckets`, stored as `index + 1`.
+    /// Zero starts the arm from the top.
+    #[attribute(order = 69)]
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    /// Registry ISO the call arm resumes at; `CALL_ARM_DONE` once every currency of
+    /// the pinned day was walked.
+    #[attribute(order = 70)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    /// Per currency, `(bin << 32) | remaining` of the call arm's walk: the bin it
+    /// resumes at and how many of its entries, from the bottom, are still to visit.
+    /// Zero remaining walks the bin from its top.
+    #[attribute(order = 71)]
+    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 }
 
 impl<'storage> NodContract<'storage> {
