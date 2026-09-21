@@ -7,6 +7,7 @@ pub(crate) mod evm;
 pub(crate) mod headers;
 pub(crate) mod ocomp;
 pub(crate) mod report;
+pub(crate) mod run;
 
 /// Required native input cannot establish the requested complete observation.
 #[derive(Debug)]

@@ -206,3 +206,90 @@ fn diagnostic_is_bounded_on_unicode_boundaries_and_replaced_not_accumulated() {
     assert!(report.check(CheckName::Ocomp).diagnostic.is_none());
     assert!(report.success());
 }
+
+mod selection {
+    use super::CheckName;
+    use crate::snapshot::validation::run::CheckSelection;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn native_selection_opens_only_actual_prerequisites() {
+        use CheckName::*;
+        for (requested, expected, projection) in [
+            ("headers", vec![Headers], false),
+            ("evm", vec![Headers, Evm], false),
+            ("ce", vec![Headers, Ce], false),
+            ("bodies", vec![Headers, Ce, Bodies], true),
+            ("ocomp", vec![Headers, Evm, Ocomp], true),
+            ("evm,headers,evm", vec![Headers, Evm], false),
+        ] {
+            let selection = CheckSelection::resolve(requested, false, false).unwrap();
+            assert_eq!(
+                selection.checks,
+                expected.into_iter().collect::<BTreeSet<_>>(),
+                "{requested}"
+            );
+            assert_eq!(selection.needs_projection(), projection, "{requested}");
+        }
+    }
+
+    #[test]
+    fn native_all_does_not_claim_unsigned_artifacts_were_checked() {
+        use CheckName::*;
+        assert_eq!(
+            CheckSelection::resolve("all", false, false).unwrap().checks,
+            [Headers, Evm, Ce, Bodies, Ocomp].into_iter().collect()
+        );
+        assert_eq!(
+            CheckSelection::resolve("all", true, false).unwrap().checks,
+            CheckName::ALL.into_iter().collect()
+        );
+        // Supplying unrelated metadata does not expand an explicit native check.
+        assert_eq!(
+            CheckSelection::resolve("evm", true, false).unwrap().checks,
+            [Headers, Evm].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn explicit_artifact_checks_and_expected_signer_remain_required_without_inputs() {
+        use CheckName::*;
+        assert_eq!(
+            CheckSelection::resolve("files", false, false)
+                .unwrap()
+                .checks,
+            [Files, Provenance].into_iter().collect()
+        );
+        assert!(CheckSelection::resolve("files", false, false)
+            .unwrap()
+            .needs_projection());
+        assert_eq!(
+            CheckSelection::resolve("provenance", false, false)
+                .unwrap()
+                .checks,
+            [Provenance].into_iter().collect()
+        );
+        assert_eq!(
+            CheckSelection::resolve("evm", false, true).unwrap().checks,
+            [Headers, Evm, Provenance].into_iter().collect()
+        );
+        let report = super::ValidationReport::new(
+            CheckSelection::resolve("evm", false, true).unwrap().checks,
+        );
+        assert_eq!(
+            report.check(Provenance).status,
+            super::CheckStatus::Incomplete
+        );
+        assert!(!report.success());
+    }
+
+    #[test]
+    fn unknown_or_empty_check_selection_is_an_error() {
+        for input in ["", "unknown", "all,evm", "evm,", ",headers", "EVM"] {
+            assert!(
+                CheckSelection::resolve(input, false, false).is_err(),
+                "{input}"
+            );
+        }
+    }
+}
