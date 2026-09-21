@@ -416,9 +416,7 @@ pub(crate) fn reserve_stables(
     asset: Address,
     amount: U256,
 ) -> Result<U256> {
-    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
-        return Err(VaultRouterError::CcaNotActive(caller).into());
-    }
+    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
     if smart_account.is_zero() || asset.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
@@ -610,9 +608,7 @@ pub(crate) fn rebalance(
     amount: U256,
     max_amount_to: U256,
 ) -> Result<U256> {
-    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
-        return Err(VaultRouterError::CcaNotActive(caller).into());
-    }
+    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
     if vault_from == vault_to {
         return Err(VaultRouterError::SameVaultRebalance.into());
     }

@@ -80,8 +80,6 @@ pub enum VaultRouterError {
     RebalanceInputExceedsMax { required: U256, max_amount_to: U256 },
     #[error("unsupported asset decimals: {0}")]
     UnsupportedAssetDecimals(u8),
-    #[error("cca not active: {0}")]
-    CcaNotActive(Address),
     #[error("invalid reservation amount")]
     InvalidReservationAmount,
     #[error("reservation exists: {0}")]

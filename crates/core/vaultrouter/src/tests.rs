@@ -1854,7 +1854,7 @@ fn rebalance_rejects_an_unregistered_stranger() {
             U256::MAX,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("cca not active"), "{err}");
+        assert!(err.to_string().contains("CCA is not active"), "{err}");
     });
 }
 
@@ -2166,7 +2166,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             U256::from(10),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("cca not active"), "{err}");
+        assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert!(runtime::reservation_of(&storage, U256::ZERO)
             .unwrap()
             .asset

@@ -43,7 +43,6 @@ interface IVaultRouter {
     error RebalanceVaultNotRegistered(address vault);
     error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
     error UnsupportedAssetDecimals(uint8 decimals);
-    error CcaNotActive(address cca);
     error ReservationExists(uint256 id);
     error ReservationNotFound(uint256 id);
     error ReservationExpired(uint256 id);

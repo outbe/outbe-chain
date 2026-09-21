@@ -1001,17 +1001,6 @@
   },
   {
     "type": "error",
-    "name": "CcaNotActive",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InsufficientSharesForWithdraw",
     "inputs": [
       {

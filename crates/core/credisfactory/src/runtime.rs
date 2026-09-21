@@ -60,9 +60,7 @@ pub fn issue_credis(
     }
 
     // Origination requires an active, fully bonded CCA.
-    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
-        return Err(CredisFactoryError::CcaNotActive.into());
-    }
+    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
 
     // The loan is delivered by a call into the smart account, and a CALL to a codeless
     // account succeeds returning empty - so an undeployed account would take the loan
