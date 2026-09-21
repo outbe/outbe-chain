@@ -13,6 +13,16 @@ use outbe_nod::schema::NodCertifiedGenerationProjection;
 use outbe_ocomp::payout_artifact::{
     verify_contributor_payout_artifact, PayoutArtifactError, CONTRIBUTOR_PAYOUT_ARTIFACT_FILE,
 };
+use outbe_ocomp::{
+    admission_catalog::AdmissionCatalogReader,
+    bundle::PinnedProtocolBundle,
+    cas::{CasLimits, FilesystemCasReader},
+    control::poc_schema_limits,
+    input_artifacts::poc_input_list_limits,
+    input_ref_catalog::VerifiedInputChunkRefCatalog,
+    lysis_plan_audit::LocalLysisPlanAuditV1,
+    nod_materialization::build_nod_materialization_batch_with_references,
+};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_ocomp_protocol::state::OcompJobRecordV1;
 use outbe_snapshot::layout::{validate_layout, ProtectedPaths};
@@ -25,6 +35,13 @@ use reth_ethereum::provider::db::{
     DatabaseEnv, TableSet,
 };
 use std::path::Path;
+
+#[derive(Debug, Default)]
+pub(crate) struct NodInputsAudit {
+    pub jobs: u64,
+    pub batches: u64,
+    pub actions: u64,
+}
 
 /// Scratch-only sets avoid retaining the permanent series index in RAM.
 #[derive(Debug)]
@@ -252,6 +269,110 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         &self.active_jobs
     }
 
+    /// Prove the remaining canonical NOD inputs with the same pure batch builder
+    /// used by the node. This advances only a local copy of each queue cursor.
+    pub(crate) fn verify_nod_inputs(
+        &self,
+        ocomp_root: &Path,
+        cas_limits: CasLimits,
+        subtree_height: u8,
+        maximum_batches: Option<u64>,
+    ) -> eyre::Result<NodInputsAudit> {
+        let mut result = NodInputsAudit::default();
+        self.visit_nod(&mut |sequence, projection| {
+            let mut verify = || -> eyre::Result<()> {
+                let limits = poc_schema_limits();
+                let job = hex::encode(projection.job_id);
+                let cas = FilesystemCasReader::open(ocomp_root.join("cas-v1"), cas_limits)?;
+                let bundle = read_pinned_bundle(ocomp_root, projection.protocol_bundle_hash)?;
+                ensure!(
+                    bundle.bundle().lysis_program_semantics_hash
+                        == projection.program_semantics_hash,
+                    "canonical NOD program semantics differ from protocol bundle"
+                );
+                let inputs = VerifiedInputChunkRefCatalog::reopen(
+                    ocomp_root.join("exporter-v1/input-refs").join(&job),
+                    &cas,
+                    limits,
+                    poc_input_list_limits(),
+                )?;
+                let admissions = AdmissionCatalogReader::open_existing(
+                    ocomp_root
+                        .join("supervisor-v1/jobs")
+                        .join(&job)
+                        .join("admissions"),
+                    &cas,
+                    limits,
+                )?;
+                let audit = LocalLysisPlanAuditV1::open_read_only(
+                    &admissions,
+                    &inputs,
+                    &cas,
+                    &bundle,
+                    &limits,
+                )?;
+                ensure!(
+                    audit.plan().job_id == projection.job_id
+                        && audit.plan().protocol_bundle_hash == projection.protocol_bundle_hash
+                        && audit.plan().wwd == projection.worldwide_day.value()
+                        && audit.plan().tribute_count == projection.tribute_count
+                        && projection.nod_count == projection.tribute_count,
+                    "canonical NOD generation differs from native plan"
+                );
+                let mut head = NodMaterializationHeadV1 {
+                    queue_sequence: sequence,
+                    job_id: projection.job_id,
+                    program_semantics_hash: projection.program_semantics_hash,
+                    worldwide_day: projection.worldwide_day.value(),
+                    generation: projection.generation,
+                    nod_root: projection.nod_root,
+                    nod_count: projection.nod_count,
+                    next_nod_ordinal: projection.next_nod_ordinal,
+                    last_progress_height: projection.last_progress_height,
+                };
+                while head.next_nod_ordinal < head.nod_count {
+                    if maximum_batches.is_some_and(|maximum| result.batches >= maximum) {
+                        return Err(Incomplete(format!(
+                            "NOD job {job} stopped at {}/{} ordinals after {} batches",
+                            head.next_nod_ordinal, head.nod_count, result.batches
+                        ))
+                        .into());
+                    }
+                    let built = build_nod_materialization_batch_with_references(
+                        &audit,
+                        &head,
+                        subtree_height,
+                    )?;
+                    let count = u32::try_from(built.batch.actions.len())?;
+                    let next = head
+                        .next_nod_ordinal
+                        .checked_add(count)
+                        .ok_or_else(|| eyre::eyre!("NOD ordinal overflow"))?;
+                    ensure!(
+                        count > 0 && next <= head.nod_count,
+                        "invalid NOD batch progress"
+                    );
+                    head.next_nod_ordinal = next;
+                    result.batches = result
+                        .batches
+                        .checked_add(1)
+                        .ok_or_else(|| eyre::eyre!("NOD batch count overflow"))?;
+                    result.actions = result
+                        .actions
+                        .checked_add(u64::from(count))
+                        .ok_or_else(|| eyre::eyre!("NOD action count overflow"))?;
+                }
+                result.jobs = result
+                    .jobs
+                    .checked_add(1)
+                    .ok_or_else(|| eyre::eyre!("NOD job count overflow"))?;
+                Ok(())
+            };
+            verify().map_err(|error| classify_nod_input_error(error, projection.job_id))
+        })?;
+        Ok(result)
+    }
+
     /// Check the public handoff for every unpaid canonical day. Intermediate
     /// plans, CE bodies and signing journals are not authority for this file.
     pub(crate) fn verify_payout_files(&self, ocomp_root: &Path) -> eyre::Result<u64> {
@@ -348,6 +469,124 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         }
         Ok(())
     }
+}
+
+fn read_pinned_bundle(root: &Path, hash: B256) -> eyre::Result<PinnedProtocolBundle> {
+    use std::io::Read;
+    let limits = poc_schema_limits();
+    let source = outbe_snapshot::fs::SourceRoot::open(root)?;
+    let catalog =
+        std::path::PathBuf::from("protocol-bundles-v1").join(format!("{}.ocb1", hex::encode(hash)));
+    let (path, mut entry) = match source.open_entry(&catalog) {
+        Ok(entry) => (catalog, entry),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let path = std::path::PathBuf::from("protocol-bundle-v1.ocb1");
+            let entry = source.open_entry(&path)?;
+            (path, entry)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let cap = limits
+        .codec
+        .max_body_bytes
+        .checked_add(outbe_ocomp_protocol::codec::OCB1_HEADER_LEN)
+        .ok_or_else(|| eyre::eyre!("bundle codec limit overflow"))?;
+    ensure!(
+        !entry.identity.is_directory,
+        "protocol bundle is not a file"
+    );
+    ensure!(
+        entry.identity.size <= u64::try_from(cap)?,
+        "protocol bundle exceeds codec limit"
+    );
+    let mut bytes = Vec::new();
+    (&mut entry.file)
+        .take(entry.identity.size + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 == entry.identity.size,
+        "protocol bundle changed size"
+    );
+    entry.verify_unchanged()?;
+    source.reopen(&path, &entry.identity)?;
+    source.verify_unchanged()?;
+    Ok(PinnedProtocolBundle::decode(&bytes, hash, &limits)?)
+}
+
+fn classify_nod_input_error(error: eyre::Report, job: B256) -> eyre::Report {
+    if error.downcast_ref::<Incomplete>().is_some() {
+        return error;
+    }
+    if missing_native_input(error.as_ref()) {
+        return error.wrap_err(Incomplete(format!(
+            "missing required NOD input for job {job}"
+        )));
+    }
+    error.wrap_err(format!("NOD inputs for job {job}"))
+}
+
+/// Transparent native wrappers can omit the wrapped enum from Error::source().
+/// Follow their typed edges so missing records remain distinct from corrupt data.
+fn missing_native_input(error: &(dyn std::error::Error + 'static)) -> bool {
+    use outbe_ocomp::{
+        admission_catalog::AdmissionCatalogError as Admission,
+        input_artifacts::InputArtifactError as Input,
+        input_ref_catalog::InputRefCatalogError as Refs,
+        lysis_plan_audit::ExactLysisPlanError as Plan,
+        lysis_result_catalog::LysisResultCatalogError as ResultCatalog,
+        nod_materialization::NodMaterializationBuildErrorV1 as Build,
+    };
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return error.kind() == std::io::ErrorKind::NotFound;
+    }
+    if let Some(error) = error.downcast_ref::<Admission>() {
+        return match error {
+            Admission::MissingHeader | Admission::MissingAdmission { .. } => true,
+            Admission::Cas(error) => missing_native_input(error),
+            Admission::Io { source, .. } => missing_native_input(source),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<Refs>() {
+        return match error {
+            Refs::MissingHeader | Refs::MissingReference { .. } => true,
+            Refs::Cas(error) => missing_native_input(error),
+            Refs::Io { source, .. } => missing_native_input(source),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<Input>() {
+        return match error {
+            Input::Cas(error) => missing_native_input(error),
+            Input::InputRefCatalog(error) => missing_native_input(error),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<Plan>() {
+        return match error {
+            Plan::Admission(error) => missing_native_input(error),
+            Plan::InputRef(error) => missing_native_input(error),
+            Plan::InputArtifact(error) => missing_native_input(error),
+            Plan::Cas(error) => missing_native_input(error),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<ResultCatalog>() {
+        return match error {
+            ResultCatalog::Plan(error) => missing_native_input(error),
+            ResultCatalog::Admission(error) => missing_native_input(error),
+            ResultCatalog::Cas(error) => missing_native_input(error),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<Build>() {
+        return match error {
+            Build::Plan(error) => missing_native_input(error),
+            Build::ResultCatalog(error) => missing_native_input(error),
+            _ => false,
+        };
+    }
+    error.source().is_some_and(missing_native_input)
 }
 
 /// Counts from a complete native payout bitmap, including non-prefix payments.
