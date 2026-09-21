@@ -317,3 +317,170 @@ pub(crate) fn audit_artifact(inputs: &ValidationInputs, files_requested: bool) -
         archive_result,
     }
 }
+
+/// Compare installed native files to a structurally valid inventory. All host
+/// roots and member opens come from native enumeration, never donor locations.
+/// This establishes file equality only, independently of native semantic checks.
+pub(crate) fn verify_native_files(
+    layout: &super::super::config::NativeLayout,
+    manifest: &outbe_snapshot::manifest::SnapshotManifestV1,
+) -> eyre::Result<()> {
+    use k256::sha2::{Digest, Sha256};
+    use outbe_snapshot::{fs::SourceRoot, manifest::EntryKind};
+    use std::{collections::BTreeMap, io::Read, path::Path};
+
+    manifest.validate()?;
+    // The owner enforces required native populations even when omitted by a donor.
+    let inventory = super::super::inventory::enumerate_native_files(layout)?;
+    let mut declared = vec![None; inventory.domains.len()];
+    for domain in &manifest.domains {
+        let index = inventory
+            .domains
+            .iter()
+            .position(|native| {
+                native.kind == domain.kind && native.native_root == domain.native_root
+            })
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "manifest domain has no matching native population: {:?}",
+                    domain.kind
+                )
+            })?;
+        eyre::ensure!(
+            declared[index].is_none(),
+            "duplicate native population in manifest: {:?}",
+            domain.kind
+        );
+        declared[index] = Some(domain);
+    }
+    let mut opened = Vec::new();
+    let mut files = 0_u64;
+    let mut bytes = 0_u64;
+    for (native, declared) in inventory.domains.iter().zip(declared) {
+        let Some(domain) = declared else {
+            eyre::ensure!(
+                native.members.is_empty(),
+                "manifest omits nonempty native population: {:?}",
+                native.kind
+            );
+            continue;
+        };
+        let wanted: BTreeMap<_, _> = domain
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect();
+        let names = native
+            .members
+            .iter()
+            .map(|path| {
+                path.to_str().ok_or_else(|| {
+                    eyre::eyre!("native member path is not UTF-8: {}", path.display())
+                })
+            })
+            .collect::<eyre::Result<BTreeSet<_>>>()?;
+        eyre::ensure!(
+            names == wanted.keys().copied().collect(),
+            "native member inventory differs for {:?}",
+            native.kind
+        );
+        // The writer does not observe roots or modes of empty optional populations.
+        if native.members.is_empty() {
+            continue;
+        }
+        let root = SourceRoot::open(&native.root)?;
+        eyre::ensure!(
+            root.open_entry(Path::new(""))?.identity.mode & 0o7777 == domain.mode,
+            "native root mode differs for {:?}",
+            native.kind
+        );
+        let mut observed = Vec::new();
+        for member in &native.members {
+            let name = member
+                .to_str()
+                .ok_or_else(|| eyre::eyre!("native member path is not UTF-8"))?;
+            let expected = wanted
+                .get(name)
+                .ok_or_else(|| eyre::eyre!("native member is not declared"))?;
+            let mut entry = root.open_entry(member)?;
+            eyre::ensure!(
+                entry.identity.mode & 0o7777 == expected.mode,
+                "native member mode differs: {name}"
+            );
+            eyre::ensure!(
+                entry.identity.is_directory == (expected.kind == EntryKind::Directory),
+                "native member kind differs: {name}"
+            );
+            if !entry.identity.is_directory {
+                eyre::ensure!(
+                    entry.identity.size == expected.size,
+                    "native member size differs: {name}"
+                );
+                let limit = expected
+                    .size
+                    .checked_add(1)
+                    .ok_or_else(|| eyre::eyre!("native file size overflow"))?;
+                let mut reader = (&mut entry.file).take(limit);
+                let mut hash = Sha256::new();
+                let mut length = 0_u64;
+                let mut buffer = [0; 64 * 1024];
+                loop {
+                    let count = reader.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    length = length
+                        .checked_add(count as u64)
+                        .ok_or_else(|| eyre::eyre!("native file length overflow"))?;
+                    hash.update(&buffer[..count]);
+                }
+                eyre::ensure!(
+                    length == expected.size,
+                    "native member length changed: {name}"
+                );
+                eyre::ensure!(
+                    expected.sha256.as_deref() == Some(hex::encode(hash.finalize()).as_str()),
+                    "native member checksum differs: {name}"
+                );
+                files = files
+                    .checked_add(1)
+                    .ok_or_else(|| eyre::eyre!("native file count overflow"))?;
+                bytes = bytes
+                    .checked_add(length)
+                    .ok_or_else(|| eyre::eyre!("native byte count overflow"))?;
+            }
+            entry.verify_unchanged()?;
+            observed.push((member, entry.identity));
+        }
+        opened.push((root, observed));
+    }
+    eyre::ensure!(
+        files == manifest.file_count && bytes == manifest.total_bytes,
+        "native file inventory totals differ"
+    );
+    let after = super::super::inventory::enumerate_native_files(layout)?;
+    eyre::ensure!(
+        after.domains.len() == inventory.domains.len(),
+        "native domains changed during verification"
+    );
+    for before in &inventory.domains {
+        let current = after
+            .domains
+            .iter()
+            .find(|domain| domain.kind == before.kind && domain.native_root == before.native_root)
+            .ok_or_else(|| eyre::eyre!("native domain disappeared during verification"))?;
+        eyre::ensure!(
+            current.root == before.root
+                && current.members.iter().collect::<BTreeSet<_>>()
+                    == before.members.iter().collect::<BTreeSet<_>>(),
+            "native member inventory changed during verification"
+        );
+    }
+    for (root, observed) in opened {
+        root.verify_unchanged()?;
+        for (member, identity) in observed {
+            root.reopen(member, &identity)?;
+        }
+    }
+    Ok(())
+}

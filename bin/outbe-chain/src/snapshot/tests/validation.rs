@@ -306,7 +306,7 @@ mod artifact {
     };
     use std::{fs, io::Write, path::Path};
 
-    fn manifest() -> Vec<u8> {
+    pub(super) fn manifest() -> Vec<u8> {
         let block = |n| serde_json::json!({"number":n,"hash":"11".repeat(32)});
         serde_json::to_vec_pretty(&serde_json::json!({
             "version":1,"chain_id":54322345,"genesis_hash":"22".repeat(32),
@@ -323,7 +323,7 @@ mod artifact {
         .unwrap()
     }
 
-    fn sign(raw: &[u8], seed: u8) -> SignatureEnvelope {
+    pub(super) fn sign(raw: &[u8], seed: u8) -> SignatureEnvelope {
         let key = k256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
         let (signature, recovery) = key.sign_prehash_recoverable(&signing_digest(raw)).unwrap();
         let mut bytes = [0; 65];
@@ -604,5 +604,297 @@ mod artifact {
         assert_eq!(result.provenance.signature_valid, Some(false));
         assert_eq!(result.provenance.signer, None);
         assert_eq!(result.provenance.expected_signer_match, None);
+    }
+}
+
+mod native_files {
+    use crate::snapshot::{
+        config::{parse_node_inputs, resolve_layout, NativeLayout},
+        inventory::enumerate_native_files,
+        validation::run::verify_native_files,
+    };
+    use outbe_snapshot::manifest::{
+        DomainInventory, DomainKind, EntryKind, FileEntry, NativeRoot, SnapshotManifestV1,
+    };
+    use std::{
+        fs,
+        os::unix::fs::{symlink, PermissionsExt},
+    };
+
+    // Structural native-file fixture only: these bytes are deliberately not
+    // semantic MDBX/CE/projection/OCOMP data. The existing writer signs inventory.
+    fn fixture() -> (tempfile::TempDir, NativeLayout, SnapshotManifestV1) {
+        let root = tempfile::tempdir().unwrap();
+        let inputs =
+            parse_node_inputs(super::super::layout::native_arguments(root.path())).unwrap();
+        let layout = resolve_layout(&inputs).unwrap();
+        for path in [
+            layout.chain_root.join("db/mdbx.dat"),
+            layout.chain_root.join("compressed_entities/smt/mdbx.dat"),
+            layout.offchain_root.join("CURRENT"),
+            layout
+                .ocomp_root
+                .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
+            layout.ocomp_root.join("cas-v1/objects/11/object"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"native bytes").unwrap();
+        }
+        fs::create_dir(layout.chain_root.join("db/empty")).unwrap();
+        fs::create_dir_all(layout.chain_root.join("keys")).unwrap();
+        fs::write(
+            layout.chain_root.join("keys/private.hex"),
+            b"private sentinel",
+        )
+        .unwrap();
+        let inventory = enumerate_native_files(&layout).unwrap();
+        let mut manifest = SnapshotManifestV1::from_bytes(&super::artifact::manifest()).unwrap();
+        manifest.domains = inventory
+            .domains
+            .iter()
+            .enumerate()
+            .map(|(n, domain)| DomainInventory {
+                id: format!("fixture-{n}"),
+                kind: domain.kind,
+                native_root: domain.native_root,
+                native_path: String::new(),
+                mode: 0o700,
+                entries: domain
+                    .members
+                    .iter()
+                    .map(|path| FileEntry {
+                        path: path.to_str().unwrap().into(),
+                        kind: EntryKind::File,
+                        size: 0,
+                        sha256: None,
+                        mode: 0,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let roots = inventory
+            .domains
+            .iter()
+            .map(|domain| domain.root.clone())
+            .collect::<Vec<_>>();
+        let output = tempfile::tempdir().unwrap();
+        let manifest = outbe_snapshot::create::create_snapshot(
+            &output.path().join("snapshot.tar"),
+            manifest,
+            &roots,
+            |raw| Ok(super::artifact::sign(raw, 7)),
+            || Ok(()),
+        )
+        .unwrap();
+        (root, layout, manifest)
+    }
+
+    fn run(
+        root: &std::path::Path,
+        layout: &NativeLayout,
+        manifest: &SnapshotManifestV1,
+    ) -> eyre::Result<()> {
+        let before = super::super::headers::fingerprint(root);
+        let result = verify_native_files(layout, manifest);
+        assert_eq!(super::super::headers::fingerprint(root), before);
+        result
+    }
+
+    fn recount(manifest: &mut SnapshotManifestV1) {
+        let files = manifest
+            .domains
+            .iter()
+            .flat_map(|d| &d.entries)
+            .filter(|entry| entry.kind == EntryKind::File);
+        (manifest.file_count, manifest.total_bytes) = files
+            .fold((0, 0), |(count, bytes), entry| {
+                (count + 1, bytes + entry.size)
+            });
+    }
+
+    fn db_domain(manifest: &mut SnapshotManifestV1) -> &mut DomainInventory {
+        manifest
+            .domains
+            .iter_mut()
+            .find(|domain| domain.kind == DomainKind::ExecutionDb)
+            .unwrap()
+    }
+
+    #[test]
+    fn writer_inventory_passes_independent_of_order_labels_and_donor_host_paths() {
+        let (root, layout, mut manifest) = fixture();
+        run(root.path(), &layout, &manifest).unwrap();
+        manifest.domains.reverse();
+        for (n, domain) in manifest.domains.iter_mut().enumerate() {
+            domain.entries.reverse();
+            domain.id = format!("operator label {n}");
+            domain.native_path = format!("/donor/unavailable/{n}/../../never-open");
+        }
+        run(root.path(), &layout, &manifest).unwrap();
+        assert!(!layout.static_files_root.exists());
+        assert!(!layout.execution_rocksdb_root.exists());
+        assert!(!layout.consensus_root.exists());
+    }
+
+    #[test]
+    fn optional_empty_populations_can_be_omitted_without_waiving_required_domains() {
+        let (root, layout, mut manifest) = fixture();
+        assert!(manifest
+            .domains
+            .iter()
+            .any(|domain| domain.entries.is_empty()));
+        // The writer leaves empty domain mode synthetic; it never stats the root.
+        for domain in manifest
+            .domains
+            .iter_mut()
+            .filter(|domain| domain.entries.is_empty())
+        {
+            domain.mode = 0o123;
+        }
+        run(root.path(), &layout, &manifest).unwrap();
+        manifest.domains.retain(|domain| !domain.entries.is_empty());
+        run(root.path(), &layout, &manifest).unwrap();
+        assert!(!layout.consensus_root.exists());
+        manifest
+            .domains
+            .retain(|domain| domain.kind != DomainKind::ExecutionDb);
+        recount(&mut manifest);
+        fs::remove_dir_all(layout.chain_root.join("db")).unwrap();
+        assert!(run(root.path(), &layout, &manifest).is_err());
+        assert!(!layout.chain_root.join("db").exists());
+    }
+
+    #[test]
+    fn missing_extra_and_omitted_nonempty_members_or_domains_fail() {
+        let (root, layout, original) = fixture();
+        for variant in 0..4 {
+            let mut manifest = original.clone();
+            match variant {
+                0 => {
+                    db_domain(&mut manifest).entries.pop();
+                }
+                1 => {
+                    db_domain(&mut manifest).entries.push(FileEntry {
+                        path: "db/undeclared-directory".into(),
+                        kind: EntryKind::Directory,
+                        size: 0,
+                        sha256: None,
+                        mode: 0o700,
+                    });
+                }
+                2 => manifest
+                    .domains
+                    .retain(|domain| domain.kind != DomainKind::CasObjects),
+                _ => {
+                    manifest.file_count += 1;
+                }
+            }
+            if variant != 3 {
+                recount(&mut manifest);
+            }
+            assert!(
+                run(root.path(), &layout, &manifest).is_err(),
+                "variant {variant}"
+            );
+        }
+        fs::write(layout.chain_root.join("db/extra"), b"extra").unwrap();
+        assert!(run(root.path(), &layout, &original).is_err());
+        fs::remove_file(layout.chain_root.join("db/extra")).unwrap();
+        fs::remove_file(layout.chain_root.join("db/mdbx.dat")).unwrap();
+        assert!(run(root.path(), &layout, &original).is_err());
+    }
+
+    #[test]
+    fn digest_size_kind_and_permission_mismatches_are_detected() {
+        let (root, layout, original) = fixture();
+        for variant in 0..5 {
+            let mut manifest = original.clone();
+            let domain = db_domain(&mut manifest);
+            if variant == 4 {
+                domain.mode ^= 0o100;
+            } else {
+                let entry = domain
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.kind == EntryKind::File)
+                    .unwrap();
+                match variant {
+                    0 => entry.sha256 = Some("00".repeat(32)),
+                    1 => entry.size += 1,
+                    2 => {
+                        entry.kind = EntryKind::Directory;
+                        entry.size = 0;
+                        entry.sha256 = None;
+                    }
+                    _ => entry.mode ^= 0o100,
+                }
+            }
+            recount(&mut manifest);
+            assert!(
+                run(root.path(), &layout, &manifest).is_err(),
+                "variant {variant}"
+            );
+        }
+        fs::write(layout.chain_root.join("db/mdbx.dat"), b"altered data").unwrap();
+        assert!(run(root.path(), &layout, &original).is_err());
+    }
+
+    #[test]
+    fn foreign_member_names_are_inventory_mismatches_and_donor_paths_are_not_authority() {
+        let (root, layout, original) = fixture();
+        let outside = tempfile::tempdir().unwrap();
+        let sentinel = outside.path().join("sentinel");
+        fs::write(&sentinel, b"native bytes").unwrap();
+        let before = super::super::headers::fingerprint(outside.path());
+        for name in [sentinel.to_str().unwrap(), "../outside/sentinel"] {
+            let mut manifest = original.clone();
+            let entry = db_domain(&mut manifest)
+                .entries
+                .iter_mut()
+                .find(|entry| entry.kind == EntryKind::File)
+                .unwrap();
+            entry.path = name.into();
+            assert!(run(root.path(), &layout, &manifest).is_err());
+        }
+        assert_eq!(super::super::headers::fingerprint(outside.path()), before);
+    }
+
+    #[test]
+    fn duplicate_semantic_domains_and_wrong_native_roots_fail() {
+        let (root, layout, original) = fixture();
+        let mut duplicate = original.clone();
+        let mut domain = duplicate.domains[0].clone();
+        domain.id = "another-label".into();
+        duplicate.domains.push(domain);
+        recount(&mut duplicate);
+        assert!(run(root.path(), &layout, &duplicate).is_err());
+        let mut wrong_root = original;
+        db_domain(&mut wrong_root).native_root = NativeRoot::Ocomp;
+        assert!(run(root.path(), &layout, &wrong_root).is_err());
+    }
+
+    #[test]
+    fn unsafe_native_links_are_rejected_without_touching_external_bytes() {
+        let (root, layout, manifest) = fixture();
+        let source = layout.chain_root.join("db/mdbx.dat");
+        let external = tempfile::tempdir().unwrap();
+        let target = external.path().join("target");
+        fs::write(&target, b"native bytes").unwrap();
+        let before = super::super::headers::fingerprint(external.path());
+        fs::remove_file(&source).unwrap();
+        symlink(&target, &source).unwrap();
+        let mode = fs::symlink_metadata(&source).unwrap().permissions().mode();
+        // The shared recursive fingerprint intentionally accepts no symlinks.
+        assert!(verify_native_files(&layout, &manifest).is_err());
+        assert_eq!(fs::read_link(&source).unwrap(), target);
+        assert_eq!(
+            fs::symlink_metadata(&source).unwrap().permissions().mode(),
+            mode
+        );
+        assert_eq!(super::super::headers::fingerprint(external.path()), before);
+        fs::remove_file(&source).unwrap();
+        fs::hard_link(&target, &source).unwrap();
+        assert!(run(root.path(), &layout, &manifest).is_err());
+        assert_eq!(super::super::headers::fingerprint(external.path()), before);
     }
 }
