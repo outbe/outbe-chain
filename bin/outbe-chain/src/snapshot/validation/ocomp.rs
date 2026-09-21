@@ -590,6 +590,93 @@ impl TableSet for InventoryRows {
     }
 }
 
+/// Disposable membership of refs emitted by successful native item audits.
+/// A set entry is scoped to a job and preserves every native reference field.
+pub(crate) struct ReferenceMembership {
+    db: DatabaseEnv,
+    // Release MDBX before removing its external directory.
+    _directory: tempfile::TempDir,
+}
+
+impl ReferenceMembership {
+    pub(crate) fn create(scratch_parent: &Path, protected: &ProtectedPaths) -> eyre::Result<Self> {
+        validate_layout(&[], protected, &[scratch_parent.to_path_buf()])?;
+        let directory = tempfile::Builder::new()
+            .prefix("outbe-ocomp-refs-")
+            .tempdir_in(scratch_parent)?;
+        let mut db = create_db(directory.path(), DatabaseArguments::default())?;
+        db.create_and_track_tables_for::<InventoryRows>()?;
+        Ok(Self {
+            db,
+            _directory: directory,
+        })
+    }
+
+    fn key(job: B256, reference: &outbe_ocomp_protocol::CasObjectRefV1) -> Vec<u8> {
+        let mut key = Vec::with_capacity(75);
+        key.extend_from_slice(job.as_slice());
+        key.extend_from_slice(reference.transport_digest.as_slice());
+        key.extend_from_slice(&reference.encoded_bytes.to_be_bytes());
+        match reference.expected_ocb1_kind {
+            None => key.push(0),
+            Some(kind) => {
+                key.push(1);
+                key.extend_from_slice(&kind.to_be_bytes());
+            }
+        }
+        key
+    }
+
+    /// Call only for refs emitted by the native plan/result item validation.
+    /// Discard the job's membership observations if their enclosing audit fails.
+    pub(crate) fn insert(
+        &self,
+        job: B256,
+        reference: &outbe_ocomp_protocol::CasObjectRefV1,
+    ) -> eyre::Result<()> {
+        let tx = self.db.tx_mut()?;
+        tx.put::<InventoryRows>(Self::key(job, reference), Vec::new())?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn verify(
+        &self,
+        job: B256,
+        reference: &outbe_ocomp_protocol::CasObjectRefV1,
+        cas: &FilesystemCasReader,
+        complete_evidence: bool,
+    ) -> eyre::Result<()> {
+        cas.read_verified(reference).map_err(|error| {
+            if missing_native_input(&error) {
+                eyre::Report::new(error).wrap_err(Incomplete(format!(
+                    "missing retained CAS object {} for job {job}",
+                    reference.transport_digest
+                )))
+            } else {
+                eyre::Report::new(error)
+            }
+        })?;
+        let present = self
+            .db
+            .tx()?
+            .get::<InventoryRows>(Self::key(job, reference))?
+            .is_some();
+        if !present && !complete_evidence {
+            return Err(Incomplete(format!(
+                "reference {} has no verified membership in partial job {job}",
+                reference.transport_digest
+            ))
+            .into());
+        }
+        ensure!(
+            present,
+            "retained reference does not belong to verified job {job}"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct InventoryBounds {
     pub active_intents: u64,
