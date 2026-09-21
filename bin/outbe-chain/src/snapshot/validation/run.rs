@@ -650,6 +650,20 @@ pub(crate) fn validate_snapshot(
     Ok(report)
 }
 
+/// Resolve report destinations without opening native stores or requiring any
+/// native semantic check. Unknown configured roots prevent file publication.
+pub(crate) fn report_protected_paths(
+    node_args: Vec<std::ffi::OsString>,
+) -> eyre::Result<outbe_snapshot::layout::ProtectedPaths> {
+    if node_args.is_empty() {
+        // Artifact-only inspection may supply no native dataset at all.
+        return Ok(outbe_snapshot::layout::ProtectedPaths::default());
+    }
+    let inputs = crate::snapshot::config::parse_node_inputs(node_args)?;
+    let layout = crate::snapshot::config::resolve_report_layout(&inputs)?;
+    Ok(validation_protected(&layout))
+}
+
 fn validation_protected(
     layout: &crate::snapshot::config::RequestedLayout,
 ) -> outbe_snapshot::layout::ProtectedPaths {

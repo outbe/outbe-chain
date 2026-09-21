@@ -154,7 +154,11 @@ Results are Passed, Failed for contradictory bytes, Incomplete for unavailable
 required input/view, or NotRequested. Selected Failed/Incomplete returns nonzero.
 Native-only all includes native checks and adds artifact checks when metadata is
 supplied; explicitly requested files/provenance without metadata is Incomplete.
-A report is optional evidence and never startup authority.
+A report is optional evidence and never startup authority. With `--report`, supplied
+node configuration also determines protected output paths, even for provenance-only
+checks. If that configuration cannot be resolved, semantic JSON is still printed
+to stdout but no report file is published. Artifact-only validation with no native
+arguments needs no node configuration, including when writing an external report.
 
 Each native check requires its own header: an unavailable historical CE header
 does not prevent checking an available current EVM state. When CE and projection

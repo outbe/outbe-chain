@@ -98,6 +98,20 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
     })
 }
 
+/// Resolve every explicitly configured root before publishing an audit report.
+/// This is output isolation, independent of which semantic checks were selected.
+pub(crate) fn resolve_report_layout(inputs: &NodeInputs) -> eyre::Result<RequestedLayout> {
+    let Commands::Node(node) = &inputs.cli.command else {
+        eyre::bail!("snapshot native inputs must describe a node");
+    };
+    resolve_requested_layout(
+        inputs,
+        NativeReadSelection {
+            projection: node.ext.projection_storage_config.is_some(),
+        },
+    )
+}
+
 pub(crate) fn resolve_requested_layout(
     inputs: &NodeInputs,
     selection: NativeReadSelection,

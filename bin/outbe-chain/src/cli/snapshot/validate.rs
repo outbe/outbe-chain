@@ -1,6 +1,6 @@
 use crate::snapshot::validation::{
     report::ValidationReport,
-    run::{validate_snapshot, ValidationInputs},
+    run::{report_protected_paths, validate_snapshot, ValidationInputs},
 };
 use std::{
     ffi::OsString,
@@ -61,7 +61,13 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
     // The validation engine creates its own bounded work under this external
     // disposable directory. No scratch is placed in the copied native stores.
     let scratch = tempfile::tempdir()?;
-    let report = validate_snapshot(&inputs, args.node_args, scratch.path())?;
+    // Resolve output isolation separately, but preserve semantic stdout results
+    // even when supplied configuration prevents safe report publication.
+    let report_paths = args
+        .report
+        .as_ref()
+        .map(|_| report_protected_paths(args.node_args.clone()));
+    let mut report = validate_snapshot(&inputs, args.node_args, scratch.path())?;
     scratch.close()?;
     let console_result = (|| -> eyre::Result<()> {
         let mut stdout = std::io::stdout().lock();
@@ -70,6 +76,9 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
         Ok(())
     })();
     if let Some(path) = args.report {
+        if let Some(paths) = report_paths {
+            report.protected_paths.0.extend(paths?.0);
+        }
         write_report(&path, &report)?;
     }
     console_result?;
@@ -90,6 +99,136 @@ mod tests {
     struct Arguments {
         #[command(flatten)]
         validate: ValidateArgs,
+    }
+
+    fn genesis(root: &Path) -> OsString {
+        let output = root.join("genesis.json");
+        crate::tee_genesis::run(&[
+            "outbe-chain".into(),
+            "tee".into(),
+            "genesis".into(),
+            "--input".into(),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json"
+            )
+            .into(),
+            "--output".into(),
+            output.to_str().unwrap().into(),
+            "--mode".into(),
+            "gramine-direct-dev".into(),
+        ])
+        .unwrap();
+        output.into_os_string()
+    }
+
+    fn provenance_args(report: Option<PathBuf>, node_args: Vec<OsString>) -> ValidateArgs {
+        ValidateArgs {
+            checks: "provenance".into(),
+            manifest: None,
+            signature: None,
+            archive: None,
+            expected_signer: None,
+            report,
+            node_args,
+        }
+    }
+
+    #[test]
+    fn report_publication_protects_native_roots_in_provenance_only_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let config = root.join("projection.toml");
+        std::fs::write(&config, "version = 1\nbackend = 'rocksdb'\n[rocksdb]\npath = 'projection'\nsecondary_path = 'secondary'\n").unwrap();
+        let arguments: Vec<OsString> = vec![
+            "--chain".into(),
+            genesis(root),
+            "--datadir".into(),
+            root.join("chain").into_os_string(),
+            "--consensus.storage-dir".into(),
+            root.join("consensus").into_os_string(),
+            "--consensus.keys-dir".into(),
+            root.join("keys").into_os_string(),
+            "--projection.storage-config".into(),
+            config.into_os_string(),
+            "--datadir.static-files".into(),
+            root.join("static").into_os_string(),
+            "--datadir.rocksdb".into(),
+            root.join("execution-rocks").into_os_string(),
+        ];
+        for relative in [
+            "chain/db",
+            "static",
+            "execution-rocks",
+            "consensus",
+            "ocomp/domain-v1",
+            "keys",
+            "projection",
+        ] {
+            let native = root.join(relative);
+            std::fs::create_dir_all(&native).unwrap();
+            let sentinel = native.join("sentinel");
+            std::fs::write(&sentinel, b"native bytes").unwrap();
+            let target = native.join("audit.json");
+            assert!(run(provenance_args(Some(target.clone()), arguments.clone())).is_err());
+            assert!(
+                !target.exists(),
+                "report changed native directory: {}",
+                native.display()
+            );
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"native bytes");
+            assert_eq!(std::fs::read_dir(&native).unwrap().count(), 1);
+        }
+        let target = root.join("external-report.json");
+        let outcome = run(provenance_args(Some(target.clone()), arguments));
+        assert!(outcome.is_err());
+        assert!(target.is_file(), "{outcome:?}");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(target).unwrap()).unwrap();
+        assert_eq!(report["checks"]["provenance"]["status"], "incomplete");
+    }
+
+    #[test]
+    fn report_publication_refuses_unresolved_native_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("audit.json");
+        let arguments = vec![
+            "--datadir".into(),
+            directory.path().into(),
+            "--invalid-native-option".into(),
+        ];
+        assert!(run(provenance_args(Some(target.clone()), arguments)).is_err());
+        assert!(
+            !target.exists(),
+            "unresolved roots must not permit report publication"
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn report_publication_without_projection_configuration_is_supported() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("audit.json");
+        let arguments = vec![
+            "--chain".into(),
+            genesis(directory.path()),
+            "--datadir".into(),
+            directory.path().join("chain").into_os_string(),
+        ];
+        let outcome = run(provenance_args(Some(target.clone()), arguments));
+        assert!(outcome.is_err());
+        assert!(target.is_file(), "{outcome:?}");
+        assert!(!directory.path().join("chain").exists());
+    }
+
+    #[test]
+    fn report_publication_for_artifacts_needs_no_native_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("audit.json");
+        assert!(run(provenance_args(Some(target.clone()), Vec::new())).is_err());
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(target).unwrap()).unwrap();
+        assert_eq!(report["checks"]["provenance"]["status"], "incomplete");
     }
 
     #[test]

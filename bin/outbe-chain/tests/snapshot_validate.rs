@@ -162,7 +162,7 @@ fn validate_help_is_available_without_node_startup_and_restore_is_not_a_command(
 }
 
 #[test]
-fn missing_artifact_and_expected_signer_write_incomplete_report_without_parsing_native_args() {
+fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("missing.json");
     let output = run(binary()
@@ -178,14 +178,28 @@ fn missing_artifact_and_expected_signer_write_incomplete_report_without_parsing_
         .arg(&target)
         .args(["--", "--intentionally-invalid-native-option"]));
     assert!(!output.status.success(), "{}", transcript(&output));
-    let report = read_report(&target);
+    assert!(!target.exists());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(status(&report, "provenance"), "incomplete");
     assert_eq!(status(&report, "headers"), "not_requested");
     assert_eq!(status(&report, "evm"), "not_requested");
     assert!(report["provenance"]["signature_valid"].is_null());
     assert!(report["provenance"]["expected_signer_match"].is_null());
-    assert!(!transcript(&output)
-        .contains("unexpected argument '--intentionally-invalid-native-option'"));
+    assert!(
+        transcript(&output).contains("unexpected argument '--intentionally-invalid-native-option'")
+    );
+    let stdout_only = run(binary().args([
+        "snapshot",
+        "validate",
+        "--checks",
+        "provenance",
+        "--",
+        "--intentionally-invalid-native-option",
+    ]));
+    assert!(!stdout_only.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&stdout_only.stdout).unwrap();
+    assert_eq!(status(&report, "provenance"), "incomplete");
+    assert!(!transcript(&stdout_only).contains("unexpected argument"));
 }
 
 #[test]
@@ -233,7 +247,8 @@ fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad
     native_arguments(&mut command, &fixture);
     let output = run(&mut command);
     assert!(!output.status.success(), "{}", transcript(&output));
-    let report = read_report(&target);
+    assert!(!target.exists());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_ne!(status(&report, "bodies"), "passed");
     assert_eq!(fingerprint(&fixture.donor), before);
 }

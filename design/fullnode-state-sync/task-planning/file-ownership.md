@@ -107,3 +107,14 @@ Baseline: main `e5d545ce`. Registration-only edits are administrative; they do n
 | `testing/e2e-harness/src/world/state.rs` | 09 modify | 09: Typed snapshot scenario observations: artifact path/digest, native heights/hashes, receiver identity fingerprints and CLI exit reports. |
 
 No changes to consensus/DKG/launch/shutdown, contract transitions/ABI/storage formats, vendor, or Credis are planned. Task04 adds one read-only Metadosis Rust view and its public facade re-export; it changes no runtime writer. Ordinary ExEx and payout scheduling/submission behavior stays unchanged; task01 and task06 add owner-local read-only APIs while leaving writer/recovery behavior intact. Task05 adds observational CE/body readers.
+
+### Approved audit corrections (2026-09-21)
+
+The user authorized outbe-chain-dk5c and outbe-chain-xvd2 after the independent audit. Task06 adds these bounded owner changes:
+
+| File | Responsibility |
+|---|---|
+| `bin/outbe-ocomp/src/input_ref_catalog.rs` | User-approved audit correction outbe-chain-dk5c: nonblocking shared lock open and regular-descriptor check; preserve writable catalog behavior. |
+| `bin/outbe-chain/src/snapshot/config.rs` | User-approved audit correction outbe-chain-xvd2: resolve configured report roots without opening stores, including projection only when configured. |
+
+The existing task06 CLI/run/readers tests also cover publication isolation and bounded input-lock rejection. No startup, writer, dependency or snapshot format change.
