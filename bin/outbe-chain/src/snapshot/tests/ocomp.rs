@@ -937,6 +937,355 @@ mod payout_inventory {
 }
 
 mod nod_inventory {
+    mod present_admissions {
+        use super::*;
+        use crate::snapshot::validation::ocomp::verify_present_admissions;
+        use outbe_ocomp::admission_catalog::VerifiedAdmissionRecordV1;
+
+        struct Expected {
+            manifest: InputManifestV1,
+            lysis_limit: U256,
+            evaluation_time: u64,
+            topology: LysisPlanTopologyV1,
+            records: Vec<VerifiedAdmissionRecordV1>,
+        }
+
+        fn admission_root(root: &Path, f: &Fixture) -> PathBuf {
+            root.join("supervisor-v1/jobs")
+                .join(hex::encode(f.job_id))
+                .join("admissions")
+        }
+        fn record_path(root: &Path, f: &Fixture, ordinal: u32) -> PathBuf {
+            admission_root(root, f).join(format!("{ordinal:010}.admission"))
+        }
+        fn cas_path(f: &Fixture, reference: &CasObjectRefV1) -> PathBuf {
+            let digest = hex::encode(reference.transport_digest);
+            f.cas_root
+                .join("objects")
+                .join(&digest[..2])
+                .join(&digest[2..])
+        }
+
+        fn expected(root: &Path, f: &Fixture) -> Expected {
+            let limits = poc_schema_limits();
+            let cas = FilesystemCasReader::open(&f.cas_root, CAS_LIMITS).unwrap();
+            let inputs = VerifiedInputChunkRefCatalog::reopen(
+                root.join("exporter-v1/input-refs")
+                    .join(hex::encode(f.job_id)),
+                &cas,
+                limits,
+                poc_input_list_limits(),
+            )
+            .unwrap();
+            let admissions =
+                AdmissionCatalogReader::open_existing(admission_root(root, f), &cas, limits)
+                    .unwrap();
+            let audit = LocalLysisPlanAuditV1::open_read_only(
+                &admissions,
+                &inputs,
+                &cas,
+                &f.bundle,
+                &limits,
+            )
+            .unwrap();
+            let topology = LysisPlanTopologyV1::new(audit.plan().primary_work_unit_count).unwrap();
+            Expected {
+                manifest: audit.manifest().clone(),
+                lysis_limit: audit.plan().lysis_limit_minor,
+                evaluation_time: audit.plan().logical_evaluation_time,
+                topology,
+                records: (0..topology.total_unit_count())
+                    .map(|ordinal| admissions.read(ordinal).unwrap())
+                    .collect(),
+            }
+        }
+
+        fn keep_only(root: &Path, f: &Fixture, expected: &Expected, ordinals: &[u32]) {
+            for ordinal in 0..expected.topology.total_unit_count() {
+                if !ordinals.contains(&ordinal) {
+                    fs::remove_file(record_path(root, f, ordinal)).unwrap();
+                }
+            }
+        }
+
+        fn run(
+            root: &Path,
+            expected: &Expected,
+            maximum: Option<u64>,
+            visitor: &mut impl FnMut(&CasObjectRefV1) -> eyre::Result<()>,
+        ) -> eyre::Result<(u32, u32, u32)> {
+            let before = fingerprint(root);
+            let result = verify_present_admissions(
+                root,
+                &expected.manifest,
+                expected.lysis_limit,
+                expected.evaluation_time,
+                CAS_LIMITS,
+                maximum,
+                visitor,
+            )
+            .map(|audit| (audit.expected, audit.present, audit.result_chunks));
+            assert_eq!(fingerprint(root), before);
+            result
+        }
+
+        fn sorted(mut refs: Vec<CasObjectRefV1>) -> Vec<CasObjectRefV1> {
+            refs.sort_by_key(|reference| {
+                (
+                    reference.transport_digest,
+                    reference.encoded_bytes,
+                    reference.expected_ocb1_kind,
+                )
+            });
+            refs
+        }
+
+        fn references(records: &[VerifiedAdmissionRecordV1]) -> Vec<CasObjectRefV1> {
+            records
+                .iter()
+                .flat_map(|record| {
+                    std::iter::once(record.artifact_ref.clone()).chain(
+                        record
+                            .result_chunk
+                            .as_ref()
+                            .map(|chunk| chunk.output_manifest_entry.result_chunk_ref.clone()),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn complete_present_catalog_emits_exact_native_artifact_and_result_references() {
+            let root = tempfile::tempdir().unwrap();
+            let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+            let expected = expected(root.path(), &f);
+            let total = expected.topology.total_unit_count();
+            let mut visited = Vec::new();
+            let counts = run(
+                root.path(),
+                &expected,
+                Some(u64::from(total)),
+                &mut |reference| {
+                    visited.push(reference.clone());
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(counts, (total, total, 1));
+            assert_eq!(sorted(visited), sorted(references(&expected.records)));
+        }
+
+        #[test]
+        fn independent_partial_tail_and_empty_catalog_are_valid_without_full_plan_cursor() {
+            for keep_first in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+                let expected = expected(root.path(), &f);
+                let first = expected
+                    .topology
+                    .plan_ordinal_of(PlannedUnitPositionV1::Primary {
+                        phase: UnitPhase::Enumerate,
+                        ordinal: 0,
+                    })
+                    .unwrap();
+                let keep = if keep_first { vec![first] } else { vec![] };
+                keep_only(root.path(), &f, &expected, &keep);
+                let mut visited = Vec::new();
+                let counts = run(
+                    root.path(),
+                    &expected,
+                    Some(keep.len() as u64),
+                    &mut |reference| {
+                        visited.push(reference.clone());
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    counts,
+                    (expected.topology.total_unit_count(), keep.len() as u32, 0)
+                );
+                let wanted = if keep_first {
+                    vec![expected.records[first as usize].artifact_ref.clone()]
+                } else {
+                    vec![]
+                };
+                assert_eq!(visited, wanted);
+            }
+        }
+
+        #[test]
+        fn absent_independent_earlier_work_does_not_hide_corrupt_later_present_artifact() {
+            let root = tempfile::tempdir().unwrap();
+            let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 257);
+            let expected = expected(root.path(), &f);
+            let later = expected
+                .topology
+                .plan_ordinal_of(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::Enumerate,
+                    ordinal: 1,
+                })
+                .unwrap();
+            assert!(later > 0);
+            keep_only(root.path(), &f, &expected, &[later]);
+            assert_eq!(
+                run(root.path(), &expected, None, &mut |_| Ok(())).unwrap(),
+                (expected.topology.total_unit_count(), 1, 0)
+            );
+            let path = cas_path(&f, &expected.records[later as usize].artifact_ref);
+            let mut bytes = fs::read(&path).unwrap();
+            *bytes.last_mut().unwrap() ^= 1;
+            fs::write(path, bytes).unwrap();
+            let error = run(root.path(), &expected, None, &mut |_| Ok(())).unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+        }
+
+        #[test]
+        fn present_consumer_without_required_producer_admission_is_incomplete() {
+            let root = tempfile::tempdir().unwrap();
+            let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+            let expected = expected(root.path(), &f);
+            let consumer = expected
+                .topology
+                .plan_ordinal_of(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::FidelityMap,
+                    ordinal: 0,
+                })
+                .unwrap();
+            keep_only(root.path(), &f, &expected, &[consumer]);
+            let mut calls = 0;
+            let error = run(root.path(), &expected, None, &mut |_| {
+                calls += 1;
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+            assert_eq!(
+                calls, 0,
+                "unbound consumer must not emit a verified reference"
+            );
+        }
+
+        #[test]
+        fn present_root_leaf_requires_its_exact_result_chunk_and_cas_corruption_fails() {
+            for missing in [true, false] {
+                let root = tempfile::tempdir().unwrap();
+                let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+                let expected = expected(root.path(), &f);
+                let path = cas_path(&f, &f.result_chunk_refs[0]);
+                if missing {
+                    fs::remove_file(path).unwrap();
+                } else {
+                    let mut bytes = fs::read(&path).unwrap();
+                    *bytes.last_mut().unwrap() ^= 1;
+                    fs::write(path, bytes).unwrap();
+                }
+                let error = run(root.path(), &expected, None, &mut |_| Ok(())).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<Incomplete>().is_some(),
+                    missing,
+                    "{error:#}"
+                );
+            }
+        }
+
+        #[test]
+        fn present_foreign_admission_and_noncanonical_extra_locators_are_failed() {
+            for damage in ["foreign", "out_of_range", "malformed"] {
+                let root = tempfile::tempdir().unwrap();
+                let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+                let expected = expected(root.path(), &f);
+                match damage {
+                    "foreign" => {
+                        let foreign = fixture(root.path(), 0x40, WorldwideDay::new(20_260_726), 10);
+                        fs::copy(
+                            record_path(root.path(), &foreign, 0),
+                            record_path(root.path(), &f, 0),
+                        )
+                        .unwrap();
+                    }
+                    "out_of_range" => {
+                        fs::copy(
+                            record_path(root.path(), &f, 0),
+                            record_path(root.path(), &f, expected.topology.total_unit_count()),
+                        )
+                        .unwrap();
+                    }
+                    "malformed" => {
+                        fs::write(
+                            admission_root(root.path(), &f).join("1.admission"),
+                            b"foreign entry",
+                        )
+                        .unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                let error = run(root.path(), &expected, None, &mut |_| Ok(())).unwrap_err();
+                assert!(
+                    error.downcast_ref::<Incomplete>().is_none(),
+                    "{damage}: {error:#}"
+                );
+            }
+        }
+
+        #[test]
+        fn canonical_export_manifest_and_frozen_plan_scalar_mismatches_are_failed() {
+            let root = tempfile::tempdir().unwrap();
+            let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+            for damage in ["manifest_checkpoint", "lysis_limit", "evaluation_time"] {
+                let mut expected = expected(root.path(), &f);
+                match damage {
+                    "manifest_checkpoint" => {
+                        expected.manifest.checkpoint.finalized_block_number += 1
+                    }
+                    "lysis_limit" => expected.lysis_limit += U256::ONE,
+                    "evaluation_time" => expected.evaluation_time += 1,
+                    _ => unreachable!(),
+                }
+                let mut calls = 0;
+                let error = run(root.path(), &expected, None, &mut |_| {
+                    calls += 1;
+                    Ok(())
+                })
+                .unwrap_err();
+                assert!(
+                    error.downcast_ref::<Incomplete>().is_none(),
+                    "{damage}: {error:#}"
+                );
+                assert_eq!(
+                    calls, 0,
+                    "authority must be checked before reference callbacks"
+                );
+            }
+        }
+
+        #[test]
+        fn budget_and_visitor_failures_are_incomplete_not_partial_success() {
+            let root = tempfile::tempdir().unwrap();
+            let f = fixture(root.path(), 0x30, WorldwideDay::new(20_260_725), 10);
+            let expected = expected(root.path(), &f);
+            for maximum in [0, u64::from(expected.topology.total_unit_count() - 1)] {
+                let error =
+                    run(root.path(), &expected, Some(maximum), &mut |_| Ok(())).unwrap_err();
+                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+            }
+            let mut calls = 0;
+            let error = run(root.path(), &expected, None, &mut |_| {
+                calls += 1;
+                Err(Incomplete("reference visitor resource bound".into()).into())
+            })
+            .unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+            assert!(
+                error
+                    .to_string()
+                    .contains("reference visitor resource bound"),
+                "{error:#}"
+            );
+            assert_eq!(calls, 1);
+        }
+    }
+
     use super::super::headers::fingerprint;
     use super::{
         queued_owner, seed_nod_generation, with_owner_storage, CanonicalInventory, Incomplete,
@@ -2477,6 +2826,355 @@ mod frames_inventory {
 }
 // Append as a child module of snapshot::tests::ocomp.
 mod pin_authority {
+    mod local_result {
+        use super::super::with_prepared_owner_storage;
+        use super::{canonical_job, stored_job};
+        use crate::{
+            snapshot::{tests::headers::fingerprint, validation::ocomp::verify_local_result},
+            OutbeHeader,
+        };
+        use alloy_primitives::{B256, U256};
+        use outbe_node::ocomp::local_result::LocalLysisResultStore;
+        use outbe_ocomp_protocol::{
+            hash::hash_framed,
+            profile::poc_schema_limits,
+            registry::HashDomain,
+            result::{
+                lysis_v1_empty_semantic_event_root, CarryOverCreditActionV1, CarryOverReason,
+                CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisResultV1,
+                MetadosisCompletionSummaryV1, ResultRootsV1,
+            },
+            state::{OcompJobRecordV1, OcompJobStatus},
+        };
+        use outbe_primitives::time::WorldwideDay;
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+        };
+
+        fn refresh_arithmetic(result: &mut LysisResultV1) {
+            result.arithmetic_commitment = hash_framed(
+                HashDomain::LysisArithmetic,
+                &result
+                    .arithmetic_summary()
+                    .encode_canonical(&poc_schema_limits())
+                    .unwrap(),
+            )
+            .unwrap();
+            result.encode_canonical(&poc_schema_limits()).unwrap();
+        }
+
+        // Compact native-result fixture, bound to the actual canonical JobIntent
+        // and B-derived JobId. This proves stored evidence, not worker execution.
+        fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
+            let intent = &job.intent;
+            let frozen = &intent.frozen_metadosis_values;
+            let unused = frozen.lysis_limit_minor;
+            let conservation = ConservationTotalsV1 {
+                tribute_nominal_total: intent.authenticated_day_nominal,
+                eligible_nominal_total: U256::ZERO,
+                day_limit: frozen.day_limit,
+                gratis_demand: frozen.gratis_demand,
+                day_gratis_limit_minor: frozen.day_gratis_limit_minor,
+                lysis_limit_minor: frozen.lysis_limit_minor,
+                desis_limit_minor: frozen.desis_limit_minor,
+                lysis_allocation_minor: U256::ZERO,
+                unused_lysis_limit_minor: unused,
+                carry_over_credit: unused,
+                nod_cost_total: U256::ZERO,
+            };
+            let mut result = LysisResultV1 {
+                protocol_bundle_hash: intent.protocol_bundle_hash,
+                job_id: job.finalized.as_ref().unwrap().job_id,
+                attempt: intent.attempt,
+                input_manifest_hash: B256::repeat_byte(0x35),
+                plan_hash: B256::repeat_byte(0x36),
+                unit_artifact_root: B256::repeat_byte(0x37),
+                fidelity_fraction_root: B256::repeat_byte(0x38),
+                gratis_prefix_root: B256::repeat_byte(0x39),
+                result_chunk_count: 1,
+                result_chunk_list_root: B256::repeat_byte(0x3a),
+                carry_over_credit: CarryOverCreditActionV1 {
+                    source_wwd: intent.wwd,
+                    reason: CarryOverReason::UnusedLysis,
+                    amount: unused,
+                },
+                metadosis_completion_summary: MetadosisCompletionSummaryV1 {
+                    wwd: intent.wwd,
+                    pending_nonce: intent.pending_nonce,
+                    day_type: frozen.day_type,
+                    tribute_nominal_total: intent.authenticated_day_nominal,
+                    day_limit: frozen.day_limit,
+                    gratis_demand: frozen.gratis_demand,
+                    day_gratis_limit_minor: frozen.day_gratis_limit_minor,
+                    lysis_limit_minor: frozen.lysis_limit_minor,
+                    desis_limit_minor: frozen.desis_limit_minor,
+                    lysis_allocation_minor: U256::ZERO,
+                    unused_lysis_limit_minor: unused,
+                    carry_over_credit: unused,
+                    status: CompletionStatus::Completed,
+                    logical_evaluation_height: intent.logical_evaluation_height,
+                    logical_evaluation_time: intent.logical_evaluation_time,
+                },
+                tribute_count: intent.authenticated_day_count,
+                tribute_nominal_total: intent.authenticated_day_nominal,
+                unused_lysis_limit_minor: unused,
+                roots: ResultRootsV1 {
+                    nod_root: B256::repeat_byte(0x31),
+                    bucket_root: B256::repeat_byte(0x32),
+                    contributor_root: B256::repeat_byte(0x33),
+                    output_manifest_root: B256::repeat_byte(0x34),
+                },
+                counts: ExactCountsV1 {
+                    tribute_count: intent.authenticated_day_count,
+                    nod_count: intent.authenticated_day_count,
+                    bucket_count: 0,
+                    contributor_count: 0,
+                    semantic_event_count: 0,
+                },
+                conservation,
+                arithmetic_commitment: B256::ZERO,
+                event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
+            };
+            refresh_arithmetic(&mut result);
+            result.validate_finalized_intent(intent).unwrap();
+            result
+        }
+
+        fn authority(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
+            let limits = poc_schema_limits();
+            let mut job = canonical_job(request, completed);
+            if completed {
+                let result = result_for(&job);
+                let digest = result.result_digest(&limits).unwrap();
+                job.finalized
+                    .as_mut()
+                    .unwrap()
+                    .quorum
+                    .as_mut()
+                    .unwrap()
+                    .result_digest = digest;
+                let binding = job
+                    .terminal
+                    .as_mut()
+                    .unwrap()
+                    .completed_binding
+                    .as_mut()
+                    .unwrap();
+                binding.result_digest = digest;
+                binding.result_evidence_hash = result.result_evidence_hash(&limits).unwrap();
+                binding.terminal_receipt.binding.result_digest = digest;
+                binding.terminal_receipt.event_summary_hash = result.event_summary_hash;
+                binding.terminal_receipt_hash = binding
+                    .terminal_receipt
+                    .terminal_receipt_hash(&limits)
+                    .unwrap();
+            } else {
+                job.status = OcompJobStatus::VotingOpen;
+            }
+            job.validate_semantics(&limits).unwrap();
+            job
+        }
+
+        fn with_authority(version: u32, completed: bool, check: impl FnOnce(OcompJobRecordV1)) {
+            with_prepared_owner_storage(
+                version,
+                400,
+                |request| {
+                    let job = authority(request, completed);
+                    stored_job(
+                        job.intent.intent_id(&poc_schema_limits()).unwrap(),
+                        &job.encode_canonical(&poc_schema_limits()).unwrap(),
+                    )
+                },
+                |state, view| {
+                    let expected = authority(&view.header(100).unwrap().unwrap(), completed);
+                    let actual = state
+                        .metadosis_job(
+                            expected.intent.intent_id(&poc_schema_limits()).unwrap(),
+                            WorldwideDay::new(expected.intent.wwd),
+                            Some(expected.finalized.as_ref().unwrap().job_id),
+                        )
+                        .unwrap();
+                    assert_eq!(actual, expected);
+                    check(actual);
+                },
+            );
+        }
+
+        fn result_root(root: &Path) -> PathBuf {
+            root.join("node-v1/local-results")
+        }
+
+        fn write_result(root: &Path, result: &LysisResultV1) -> PathBuf {
+            fs::create_dir_all(root.join("node-v1")).unwrap();
+            let directory = result_root(root);
+            let writer = LocalLysisResultStore::open(&directory, poc_schema_limits()).unwrap();
+            writer
+                .commit(
+                    result.job_id,
+                    &result.encode_canonical(&poc_schema_limits()).unwrap(),
+                )
+                .unwrap();
+            drop(writer);
+            directory.join(format!(
+                "{}.lysis-result-v1.ocb1",
+                hex::encode(result.job_id)
+            ))
+        }
+
+        fn inspect(
+            root: &Path,
+            job: &OcompJobRecordV1,
+        ) -> eyre::Result<Option<(LysisResultV1, bool)>> {
+            let before = fingerprint(root);
+            let result = verify_local_result(root, job).map(|observation| {
+                observation.map(|audit| (audit.result, audit.terminal_digest_checked))
+            });
+            assert_eq!(
+                fingerprint(root),
+                before,
+                "local result inspection mutated source"
+            );
+            result
+        }
+
+        #[test]
+        fn voting_open_accepts_native_local_result_without_terminal_or_old_intermediates() {
+            for version in [1, 2] {
+                with_authority(version, false, |job| {
+                    assert_eq!(job.status, OcompJobStatus::VotingOpen);
+                    assert!(job.terminal.is_none());
+                    let public = tempfile::tempdir().unwrap();
+                    let result = result_for(&job);
+                    write_result(public.path(), &result);
+                    assert_eq!(inspect(public.path(), &job).unwrap(), Some((result, false)));
+                    assert!(!public.path().join("exporter-v1").exists());
+                    assert!(!public.path().join("supervisor-v1").exists());
+                });
+            }
+        }
+
+        #[test]
+        fn completed_binding_compares_exact_native_digest_without_plan_or_admissions() {
+            for version in [1, 2] {
+                with_authority(version, true, |job| {
+                    let public = tempfile::tempdir().unwrap();
+                    let result = result_for(&job);
+                    write_result(public.path(), &result);
+                    assert_eq!(inspect(public.path(), &job).unwrap(), Some((result, true)));
+                    assert!(!public.path().join("exporter-v1").exists());
+                    assert!(!public.path().join("supervisor-v1").exists());
+                });
+            }
+        }
+
+        #[test]
+        fn absent_optional_root_or_job_is_none_even_after_canonical_completion() {
+            for completed in [false, true] {
+                with_authority(1, completed, |job| {
+                    let public = tempfile::tempdir().unwrap();
+                    assert_eq!(inspect(public.path(), &job).unwrap(), None);
+                    assert!(!public.path().join("node-v1").exists());
+                    fs::create_dir(public.path().join("node-v1")).unwrap();
+                    let writer = LocalLysisResultStore::open(
+                        result_root(public.path()),
+                        poc_schema_limits(),
+                    )
+                    .unwrap();
+                    drop(writer);
+                    assert_eq!(inspect(public.path(), &job).unwrap(), None);
+                    // A valid result for a different job does not fabricate this
+                    // job's missing result, and is not a filename corruption.
+                    let mut unrelated = result_for(&job);
+                    unrelated.job_id = B256::repeat_byte(0x91);
+                    refresh_arithmetic(&mut unrelated);
+                    write_result(public.path(), &unrelated);
+                    assert_eq!(inspect(public.path(), &job).unwrap(), None);
+                });
+            }
+        }
+
+        #[test]
+        fn semantically_valid_local_result_with_different_terminal_digest_fails() {
+            with_authority(1, true, |job| {
+                let public = tempfile::tempdir().unwrap();
+                let mut changed = result_for(&job);
+                changed.input_manifest_hash = B256::repeat_byte(0x92);
+                refresh_arithmetic(&mut changed);
+                changed.validate_finalized_intent(&job.intent).unwrap();
+                assert_ne!(
+                    changed.result_digest(&poc_schema_limits()).unwrap(),
+                    job.terminal
+                        .as_ref()
+                        .unwrap()
+                        .completed_binding
+                        .as_ref()
+                        .unwrap()
+                        .result_digest
+                );
+                write_result(public.path(), &changed);
+                assert!(inspect(public.path(), &job).is_err());
+            });
+        }
+
+        #[test]
+        fn matching_job_id_does_not_authorize_foreign_intent_fields() {
+            with_authority(1, false, |job| {
+                for field in 0..5 {
+                    let public = tempfile::tempdir().unwrap();
+                    let mut changed = result_for(&job);
+                    match field {
+                        0 => changed.protocol_bundle_hash = B256::repeat_byte(0x93),
+                        1 => changed.attempt += 1,
+                        2 => changed.metadosis_completion_summary.pending_nonce += 1,
+                        3 => changed.metadosis_completion_summary.logical_evaluation_time += 1,
+                        _ => {
+                            changed.metadosis_completion_summary.wwd += 1;
+                            changed.carry_over_credit.source_wwd += 1;
+                        }
+                    }
+                    refresh_arithmetic(&mut changed);
+                    assert!(changed.validate_finalized_intent(&job.intent).is_err());
+                    write_result(public.path(), &changed);
+                    assert!(
+                        inspect(public.path(), &job).is_err(),
+                        "accepted foreign field {field}"
+                    );
+                }
+            });
+        }
+
+        #[test]
+        fn pending_publication_corrupt_bytes_and_foreign_filename_are_not_repaired() {
+            with_authority(1, false, |job| {
+                for damage in ["pending", "linked-pending", "foreign", "corrupt"] {
+                    let public = tempfile::tempdir().unwrap();
+                    let result = result_for(&job);
+                    let path = write_result(public.path(), &result);
+                    let pending = result_root(public.path())
+                        .join(format!(".{}.pending", hex::encode(result.job_id)));
+                    match damage {
+                        "pending" => fs::rename(&path, &pending).unwrap(),
+                        "linked-pending" => fs::hard_link(&path, &pending).unwrap(),
+                        "foreign" => {
+                            let foreign = result_root(public.path()).join(format!(
+                                "{}.lysis-result-v1.ocb1",
+                                hex::encode(B256::repeat_byte(0x94))
+                            ));
+                            fs::rename(&path, foreign).unwrap();
+                        }
+                        _ => fs::write(&path, b"invalid canonical result").unwrap(),
+                    }
+                    assert!(inspect(public.path(), &job).is_err(), "accepted {damage}");
+                    if damage == "pending" || damage == "linked-pending" {
+                        assert!(pending.exists());
+                    }
+                }
+            });
+        }
+    }
+
     use super::{with_prepared_owner_storage, CanonicalState, RethReadOnlyView, DAY};
     use crate::{snapshot::validation::ocomp::verify_pin_authority, OutbeHeader};
     use alloy_consensus::Sealable;
