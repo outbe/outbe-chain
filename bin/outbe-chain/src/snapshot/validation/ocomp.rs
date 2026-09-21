@@ -659,3 +659,105 @@ pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {
     );
     Ok(day)
 }
+#[derive(Debug, Default)]
+pub(crate) struct FrameAvailability {
+    pub blocks: u64,
+    pub transactions: u64,
+}
+
+/// Check the retained inputs used by ordinary OCOMP replay, one transaction and
+/// receipt at a time. This is availability/identity validation, not EVM replay.
+pub(crate) fn verify_retained_frames(
+    view: &super::super::native::RethReadOnlyView,
+    start: u64,
+    end: outbe_snapshot::manifest::BlockIdentity,
+    maximum_transactions: Option<u64>,
+) -> eyre::Result<FrameAvailability> {
+    use alloy_consensus::Sealable;
+    use outbe_primitives::{OutbeHeader, OutbeReceipt};
+    use reth_ethereum::provider::db::tables;
+    use reth_provider::{
+        BlockHashReader, HeaderProvider, ReceiptProvider, StaticFileSegment, TransactionsProvider,
+    };
+
+    let mut result = FrameAvailability::default();
+    if start > end.number {
+        return Ok(result);
+    }
+    let expected_end = B256::try_from(hex::decode(&end.hash)?.as_slice())?;
+    let tx = view.read_transaction()?;
+    let mut previous = None;
+    for height in start..=end.number {
+        let header = match tx.get::<tables::Headers<OutbeHeader>>(height)? {
+            Some(header) => Some(header),
+            None => view.static_files.header_by_number(height)?,
+        }
+        .ok_or_else(|| Incomplete(format!("missing replay header at {height}")))?;
+        let hash = match tx.get::<tables::CanonicalHeaders>(height)? {
+            Some(hash) => Some(hash),
+            None => view.static_files.block_hash(height)?,
+        }
+        .ok_or_else(|| Incomplete(format!("missing replay canonical hash at {height}")))?;
+        ensure!(
+            header.inner.number == height && header.hash_slow() == hash,
+            "replay header differs from canonical identity at {height}"
+        );
+        if let Some(previous) = previous {
+            ensure!(
+                header.inner.parent_hash == previous,
+                "replay header parent differs at {height}"
+            );
+        }
+        previous = Some(hash);
+        if height == end.number {
+            ensure!(
+                hash == expected_end,
+                "replay target hash differs at {height}"
+            );
+        }
+        let indices = tx
+            .get::<tables::BlockBodyIndices>(height)?
+            .ok_or_else(|| Incomplete(format!("missing replay body indices at {height}")))?;
+        let tx_end = indices
+            .first_tx_num
+            .checked_add(indices.tx_count)
+            .ok_or_else(|| eyre::eyre!("replay transaction range overflows at {height}"))?;
+        for number in indices.first_tx_num..tx_end {
+            if maximum_transactions.is_some_and(|maximum| result.transactions >= maximum) {
+                return Err(Incomplete(format!(
+                    "replay frame scan stopped at block {height}/{}, transaction {number}/{tx_end}; {} blocks, {} transactions visited",
+                    end.number, result.blocks, result.transactions
+                )).into());
+            }
+            // Match the pinned Reth provider: transactions are static-only;
+            // receipts choose one native backend by its high-water mark. A hole
+            // below that mark must not be disguised by a different backend.
+            view.static_files
+                .transaction_by_id(number)?
+                .ok_or_else(|| {
+                    Incomplete(format!(
+                        "missing replay transaction {number} at block {height}"
+                    ))
+                })?;
+            view.static_files
+                .get_with_static_file_or_database(
+                    StaticFileSegment::Receipts,
+                    number,
+                    |files| files.receipt(number),
+                    || Ok(tx.get::<tables::Receipts<OutbeReceipt>>(number)?),
+                )?
+                .ok_or_else(|| {
+                    Incomplete(format!("missing replay receipt {number} at block {height}"))
+                })?;
+            result.transactions = result
+                .transactions
+                .checked_add(1)
+                .ok_or_else(|| eyre::eyre!("replay transaction count overflow"))?;
+        }
+        result.blocks = result
+            .blocks
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("replay block count overflow"))?;
+    }
+    Ok(result)
+}
