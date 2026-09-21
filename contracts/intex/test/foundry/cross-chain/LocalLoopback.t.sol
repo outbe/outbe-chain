@@ -303,25 +303,21 @@ contract LocalLoopbackTest is Test {
         assertEq(result.issuedUnits, 50, "issued");
         assertEq(result.auctionClearingRate, 700_000, "clearing rate");
 
-        // 6. REFUND_INSTRUCTIONS: the delivery finalizes the escrow AND routes the paid wCOEN to
-        //    the origin (sync token leg + unwrap + factory hand-off), all inside the refund budget.
+        // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND routes the paid wCOEN to
+        //    the origin (sync token leg + unwrap + factory hand-off), all inside the refund budget; the
+        //    rest of each lock waits for its claim. iba2 is the partial fill: 20 of 40.
         address[] memory bidders = new address[](2);
         bidders[0] = iba1;
         bidders[1] = iba2;
-        uint128[] memory refunded = new uint128[](2);
-        refunded[0] = 3e18; // lock 24 WCOEN - paid 30*1*0.7
-        refunded[1] = 14e18; // lock 28 WCOEN - paid 20*1*0.7
-        uint128[] memory paid = new uint128[](2);
-        paid[0] = 21e18;
-        paid[1] = 14e18;
         vm.prank(address(desis));
-        origin.sendRefundInstructions(local, DAY, 0, 1, bidders, refunded, paid);
+        origin.sendRefundInstructions(local, DAY, 0, 1, 700_000, PROMIS_LOAD_MINOR, bidders, 1, 20);
 
-        assertEq(
-            uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Finalized), "iba1 not final"
-        );
-        assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund");
-        assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund");
+        assertEq(uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won");
+        assertEq(escrow.getBidLock(DAY, iba2).quantity, 20, "iba2 partial");
+        escrow.claimRefund(DAY, iba1);
+        escrow.claimRefund(DAY, iba2);
+        assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
+        assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
         assertEq(factory.calls(), 1, "proceeds not distributed");
         assertEq(factory.lastValue(), 35e18, "proceeds amount");
         assertEq(factory.lastSrcChainId(), local, "proceeds source chain");

@@ -213,13 +213,13 @@ contract BridgeMsgCodecValidationTest is Test {
 
     /// @dev decodeRefundInstructions enforces a symmetric inbound cap so a peer compromise or a
     ///      future encoder change cannot deliver an oversized REFUND that exhausts the receiver's
-    ///      gas in the per-bidder loop. Built by hand to bypass the now-capping encoder.
+    ///      gas in the per-winner loop. Built by hand to bypass the now-capping encoder.
     function test_DecodeRefund_OverOutboundCap_RevertsRefundBatchTooLarge() public {
-        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1; // 65, over the outbound cap
+        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         bytes memory overCap = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(1), uint16(0), uint16(1), new address[](n), new uint128[](n), new uint128[](n))
+            abi.encode(uint32(1), uint16(0), uint16(1), uint64(1), uint128(1), new address[](n), uint16(0), uint16(0))
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -337,7 +337,7 @@ contract BridgeMsgCodecValidationTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, uint64, uint128, address[] memory, uint16, uint16)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }
@@ -347,7 +347,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
+        return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, 1, 1, new address[](n), 0, 0);
     }
 
     function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks) external pure returns (bytes memory) {

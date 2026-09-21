@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -26,7 +25,7 @@ contract ClosableEscrowAdapter {
         closed = true;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata, bool)
+    function finalizeAuction(uint32, bytes32, address[] calldata, uint16, uint16, uint64, uint128, bool)
         external
         returns (uint128)
     {
@@ -58,11 +57,10 @@ contract TargetRouterRefundAckTest is CrossChainTest {
     }
 
     function _deliverChunk(uint16 chunkIndex, uint16 totalChunks) internal {
-        address[] memory bidders = new address[](1);
-        bidders[0] = makeAddr("bidder");
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(
-            DAY, chunkIndex, totalChunks, bidders, new uint128[](1), new uint128[](1)
-        );
+        address[] memory winners = new address[](1);
+        winners[0] = makeAddr("bidder");
+        bytes memory packet =
+            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 600_000, 1e6, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 

@@ -100,7 +100,7 @@ contract EscrowAdapterHardeningTest is Test {
         _fund(bidderA, max);
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, max);
+        escrow.lockFunds(SERIES, bidderA, max, 1_000_000, 1);
 
         (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked");
@@ -114,11 +114,11 @@ contract EscrowAdapterHardeningTest is Test {
         _fund(bidderB, 1);
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, max);
+        escrow.lockFunds(SERIES, bidderA, max, 1_000_000, 1);
 
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
-        escrow.lockFunds(SERIES, bidderB, 1);
+        escrow.lockFunds(SERIES, bidderB, 1, 1_000_000, 1);
 
         (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked unchanged after overflow revert");
@@ -140,7 +140,7 @@ contract EscrowAdapterHardeningTest is Test {
 
         vm.prank(auction);
         vm.expectRevert();
-        feeEscrow.lockFunds(SERIES, bidderA, 1_000e6);
+        feeEscrow.lockFunds(SERIES, bidderA, 1_000e6, 1_000_000, 1);
 
         (,, uint128 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, 0, "no state written on a fee-token lock");

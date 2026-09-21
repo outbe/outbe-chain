@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
@@ -197,17 +198,13 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
-        address[] memory bidders = new address[](1);
-        bidders[0] = address(0x1);
-        uint128[] memory refundedAmounts = new uint128[](1);
-        refundedAmounts[0] = 100e6;
-        uint128[] memory paidAmounts = new uint128[](1);
-        paidAmounts[0] = 50e6;
+        address[] memory winners = new address[](1);
+        winners[0] = address(0x1);
 
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, winners, 0, 0
         );
     }
 
@@ -251,33 +248,27 @@ contract OriginRouterTest is CrossChainTest {
         );
     }
 
-    function test_sendRefundInstructions_revert_empty_array() public {
-        address[] memory bidders = new address[](0);
-        uint128[] memory refundedAmounts = new uint128[](0);
-        uint128[] memory paidAmounts = new uint128[](0);
+    function test_sendRefundInstructions_emptyWinners_ok() public {
+        // A chain whose bids all lost still gets a chunk, which closes its day.
+        vm.prank(desis);
+        originRouter.sendAuctionStageStart(_baseStageStartParams());
 
         vm.prank(desis);
-        vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
-        );
+        originRouter.sendRefundInstructions(BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, new address[](0), 0, 0);
     }
 
-    function test_sendRefundInstructions_revert_array_length_mismatch() public {
-        address[] memory bidders = new address[](2);
-        uint128[] memory refundedAmounts = new uint128[](2);
-        uint128[] memory paidAmounts = new uint128[](1); // Mismatch
+    function test_sendRefundInstructions_revert_partial_outside_winners() public {
+        vm.prank(desis);
+        originRouter.sendAuctionStageStart(_baseStageStartParams());
 
-        bidders[0] = address(0x1);
-        bidders[1] = address(0x2);
-        refundedAmounts[0] = 100e6;
-        refundedAmounts[1] = 200e6;
-        paidAmounts[0] = 50e6;
+        address[] memory winners = new address[](2);
+        winners[0] = address(0x1);
+        winners[1] = address(0x2);
 
         vm.prank(desis);
-        vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, winners, 2, 1
         );
     }
 

@@ -194,8 +194,6 @@ interface IIntexAuction {
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
-    /// @notice `wire` called while the current escrow still holds live locks.
-    error EscrowHasLiveLocks();
     /// @notice Auction does not exist.
     error AuctionNotFound();
     /// @notice Auction already exists.
@@ -224,6 +222,9 @@ interface IIntexAuction {
     // --- Admin ---
 
     /// @notice Wire contract dependencies.
+    /// @dev A lock keeps its money on the escrow that took it and stays claimable there, so a rotation between
+    ///      days costs nothing. Rotating while a day is still taking reveals splits that day's locks over two
+    ///      escrows, and its refunds only reach the one the target router points at.
     /// @param _escrow Escrow contract address.
     function wire(address _escrow) external;
 

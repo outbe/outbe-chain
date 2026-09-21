@@ -39,6 +39,19 @@
     },
     {
       "type": "function",
+      "name": "currentAssetVersion",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "finalizeAuction",
       "inputs": [
         {
@@ -52,26 +65,29 @@
           "internalType": "bytes32"
         },
         {
-          "name": "instructions",
-          "type": "tuple[]",
-          "internalType": "struct IEscrowAdapter.FinalizationInstruction[]",
-          "components": [
-            {
-              "name": "bidder",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "refundedAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "paidAmount",
-              "type": "uint128",
-              "internalType": "uint128"
-            }
-          ]
+          "name": "winners",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "partialWon",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "basis",
+          "type": "uint128",
+          "internalType": "uint128"
         },
         {
           "name": "completesDay",
@@ -87,6 +103,42 @@
         }
       ],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getAssetVersion",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "asset",
+          "type": "tuple",
+          "internalType": "struct IEscrowAdapter.AssetVersion",
+          "components": [
+            {
+              "name": "compact",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "paymentToken",
+              "type": "address",
+              "internalType": "contract IERC20"
+            },
+            {
+              "name": "lockId",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -154,6 +206,16 @@
               "internalType": "enum IEscrowAdapter.LockStatus"
             },
             {
+              "name": "bidRate",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "quantity",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
               "name": "failedRefund",
               "type": "uint128",
               "internalType": "uint128"
@@ -164,6 +226,35 @@
               "internalType": "bool"
             }
           ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getClaimableRefund",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "amount",
+          "type": "uint128",
+          "internalType": "uint128"
+        },
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"
@@ -198,6 +289,11 @@
               "name": "lockedAt",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "assetVersion",
+              "type": "uint8",
+              "internalType": "uint8"
             }
           ]
         }
@@ -258,6 +354,16 @@
           "name": "amount",
           "type": "uint128",
           "internalType": "uint128"
+        },
+        {
+          "name": "bidRate",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "quantity",
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ],
       "outputs": [],
@@ -342,6 +448,37 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AssetRetired",
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "compact",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "paymentToken",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "lockId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
     },
     {
       "type": "event",
@@ -624,15 +761,25 @@
     },
     {
       "type": "error",
-      "name": "AmountMismatch",
+      "name": "BidAlreadyLocked",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ClaimAuthorizationUnsupported",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ClearingTermsMismatch",
       "inputs": [
         {
-          "name": "locked",
-          "type": "uint128",
-          "internalType": "uint128"
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
         },
         {
-          "name": "requested",
+          "name": "basis",
           "type": "uint128",
           "internalType": "uint128"
         }
@@ -640,12 +787,7 @@
     },
     {
       "type": "error",
-      "name": "BidAlreadyLocked",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ClaimAuthorizationUnsupported",
+      "name": "ClearingTermsMissing",
       "inputs": []
     },
     {
@@ -676,19 +818,24 @@
     },
     {
       "type": "error",
-      "name": "ForcedWithdrawalFailed",
-      "inputs": []
+      "name": "DayAssetRetired",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "assetVersion",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
     },
     {
       "type": "error",
-      "name": "LiveLocksOutstanding",
-      "inputs": [
-        {
-          "name": "outstanding",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
+      "name": "ForcedWithdrawalFailed",
+      "inputs": []
     },
     {
       "type": "error",
@@ -702,8 +849,51 @@
     },
     {
       "type": "error",
-      "name": "NotSelf",
-      "inputs": []
+      "name": "PartialFillNotPartial",
+      "inputs": [
+        {
+          "name": "won",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "quantity",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PartialFillOutsideChunk",
+      "inputs": [
+        {
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "winners",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PaymentExceedsLock",
+      "inputs": [
+        {
+          "name": "locked",
+          "type": "uint128",
+          "internalType": "uint128"
+        },
+        {
+          "name": "paid",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
     },
     {
       "type": "error",
