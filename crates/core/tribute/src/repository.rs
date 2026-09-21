@@ -2,9 +2,9 @@
 
 use alloy_primitives::{Address, B256};
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityRef, IdPage,
-    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
-    WwdEntityId,
+    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, CeAuditError, CeAuditWork,
+    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
+    StoredBody, StoredBodyPage, TributeBodyV1, WwdEntityId,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -180,6 +180,91 @@ impl TributeRepositoryReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         Self { storage }
+    }
+
+    /// Enumerates canonical primary bodies independently of secondary indexes.
+    /// The caller must provide a stable reader across pages.
+    pub fn scan_stored_bodies(
+        &self,
+        request: IdPageRequest,
+    ) -> Result<StoredBodyPage, TributeRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        let after = request.after.map(primary_key).transpose()?;
+        let page = self.storage.scan_prefix(
+            namespace(TRIBUTES_NAMESPACE)?,
+            ScanRequest::new(&[], after.as_ref(), limit)?,
+        )?;
+        if page.entries.len() > limit {
+            return Err(TributeRepositoryError::InvalidPageContinuation { index: "primary" });
+        }
+        let entries = page
+            .entries
+            .iter()
+            .map(|entry| {
+                let id = WwdEntityId::try_from(entry.key.as_bytes())
+                    .map_err(|_| TributeRepositoryError::MalformedPrimaryKey)?;
+                Ok((id, decode_stored_body(id, entry.value.as_bytes())?))
+            })
+            .collect::<Result<Vec<_>, TributeRepositoryError>>()?;
+        let ids = id_page_from_entries(page, request.after, "primary", |entry| {
+            WwdEntityId::try_from(entry.key.as_bytes())
+                .map_err(|_| TributeRepositoryError::MalformedPrimaryKey)
+        })?;
+        Ok(StoredBodyPage {
+            entries,
+            next_after: ids.next_after,
+        })
+    }
+
+    /// Verifies both index populations against all canonical primary bodies.
+    /// All passes must share an immutable storage view supplied by the caller.
+    pub fn audit_indexes(&self, work: &CeAuditWork) -> Result<(), CeAuditError> {
+        let primary = || {
+            AuditEntries::new(&self.storage, TRIBUTES_NAMESPACE).map(|entry| {
+                let entry = entry?;
+                let id = WwdEntityId::try_from(entry.key.as_bytes()).map_err(audit_error)?;
+                decode_body(id, entry.value.as_bytes()).map_err(audit_error)
+            })
+        };
+        work.compare_records::<OWNER_INDEX_KEY_LEN>(
+            PRIMARY_KEY_LEN,
+            primary().map(|body| {
+                let body = body?;
+                owner_audit_record(body.tribute_id, body.owner)
+            }),
+            AuditEntries::new(&self.storage, TRIBUTES_BY_OWNER_NAMESPACE).map(|entry| {
+                let entry = entry?;
+                let bytes = entry
+                    .key
+                    .as_bytes()
+                    .get(..20)
+                    .ok_or(TributeRepositoryError::MalformedIndexKey { index: "owner" })
+                    .map_err(audit_error)?;
+                let owner = Address::from_slice(bytes);
+                let id = parse_owner_index(&entry, owner).map_err(audit_error)?;
+                owner_audit_record(id, owner)
+            }),
+        )?;
+        work.compare_records::<DAY_INDEX_KEY_LEN>(
+            PRIMARY_KEY_LEN,
+            primary().map(|body| {
+                let body = body?;
+                day_audit_record(body.tribute_id, body.worldwide_day)
+            }),
+            AuditEntries::new(&self.storage, TRIBUTES_BY_DAY_NAMESPACE).map(|entry| {
+                let entry = entry?;
+                let bytes: [u8; 4] = entry
+                    .key
+                    .as_bytes()
+                    .get(..4)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or(TributeRepositoryError::MalformedIndexKey { index: "day" })
+                    .map_err(audit_error)?;
+                let day = WorldwideDay::new(u32::from_be_bytes(bytes));
+                let id = parse_day_index(&entry, day).map_err(audit_error)?;
+                day_audit_record(id, day)
+            }),
+        )
     }
 
     /// Loads one Tribute body and verifies its embedded identity.
@@ -384,6 +469,103 @@ impl TributeRepositoryReader {
         id_page_from_entries(page, request.after, "day", |entry| {
             parse_day_index(entry, worldwide_day)
         })
+    }
+}
+
+pub(crate) fn audit_error(error: impl std::fmt::Display) -> CeAuditError {
+    CeAuditError::Invalid(error.to_string())
+}
+
+fn owner_audit_record(
+    id: WwdEntityId,
+    owner: Address,
+) -> Result<[u8; OWNER_INDEX_KEY_LEN], CeAuditError> {
+    let key = owner_index_key(owner, id).map_err(audit_error)?;
+    let mut record = [0; OWNER_INDEX_KEY_LEN];
+    record[..PRIMARY_KEY_LEN].copy_from_slice(&key.as_bytes()[20..]);
+    record[PRIMARY_KEY_LEN..].copy_from_slice(&key.as_bytes()[..20]);
+    Ok(record)
+}
+
+fn day_audit_record(
+    id: WwdEntityId,
+    day: WorldwideDay,
+) -> Result<[u8; DAY_INDEX_KEY_LEN], CeAuditError> {
+    let key = day_index_key(day, id).map_err(audit_error)?;
+    let mut record = [0; DAY_INDEX_KEY_LEN];
+    record[..PRIMARY_KEY_LEN].copy_from_slice(&key.as_bytes()[4..]);
+    record[PRIMARY_KEY_LEN..].copy_from_slice(&key.as_bytes()[..4]);
+    Ok(record)
+}
+
+/// A bounded full-namespace stream shared by current and retained audits.
+pub(crate) struct AuditEntries<'a> {
+    storage: &'a StorageReaderHandle,
+    namespace: &'static str,
+    after: Option<Key>,
+    entries: std::vec::IntoIter<ScanEntry>,
+    finished: bool,
+}
+
+impl<'a> AuditEntries<'a> {
+    pub(crate) fn new(storage: &'a StorageReaderHandle, namespace: &'static str) -> Self {
+        Self {
+            storage,
+            namespace,
+            after: None,
+            entries: Vec::new().into_iter(),
+            finished: false,
+        }
+    }
+
+    fn load_page(&mut self) -> Result<(), CeAuditError> {
+        let request =
+            ScanRequest::new(&[], self.after.as_ref(), MAX_SCAN_ENTRIES).map_err(audit_error)?;
+        let page = self
+            .storage
+            .scan_prefix(namespace(self.namespace).map_err(audit_error)?, request)
+            .map_err(audit_error)?;
+        if page.entries.len() > MAX_SCAN_ENTRIES
+            || page
+                .next_after
+                .as_ref()
+                .is_some_and(|cursor| page.entries.last().map(|entry| &entry.key) != Some(cursor))
+        {
+            return Err(CeAuditError::Invalid(
+                "invalid Tribute audit page continuation".into(),
+            ));
+        }
+        let mut previous = self.after.as_ref();
+        for entry in &page.entries {
+            if previous.is_some_and(|key| &entry.key <= key) {
+                return Err(CeAuditError::Invalid(
+                    "nonascending Tribute audit page".into(),
+                ));
+            }
+            previous = Some(&entry.key);
+        }
+        self.finished = page.next_after.is_none();
+        self.after = page.next_after;
+        self.entries = page.entries.into_iter();
+        Ok(())
+    }
+}
+
+impl Iterator for AuditEntries<'_> {
+    type Item = Result<ScanEntry, CeAuditError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(entry) = self.entries.next() {
+            return Some(Ok(entry));
+        }
+        if self.finished {
+            return None;
+        }
+        if let Err(error) = self.load_page() {
+            self.finished = true;
+            return Some(Err(error));
+        }
+        self.entries.next().map(Ok)
     }
 }
 

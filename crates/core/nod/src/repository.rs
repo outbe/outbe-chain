@@ -3,8 +3,9 @@
 use alloy_primitives::Address;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, CanonicalBodyError, EntityRef, IdPage, IdPageRequest, NodBucketBodyV1,
-    NodItemBodyV1, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
+    encode_nod_item_v1, CanonicalBodyError, CeAuditError, CeAuditWork, EntityRef, IdPage,
+    IdPageRequest, NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError,
+    QueryRef, StoredBody, StoredBodyPage, WwdEntityId,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -110,6 +111,76 @@ impl NodRepositoryReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         Self { storage }
+    }
+
+    /// Scans every primary item independently of owner-index membership.
+    pub fn scan_stored_items(
+        &self,
+        request: IdPageRequest,
+    ) -> Result<StoredBodyPage, NodRepositoryError> {
+        self.scan_stored_primary(request, NODS_NAMESPACE, decode_stored_item)
+    }
+
+    /// Scans the separate bucket primary namespace, including buckets with no items.
+    pub fn scan_stored_buckets(
+        &self,
+        request: IdPageRequest,
+    ) -> Result<StoredBodyPage, NodRepositoryError> {
+        self.scan_stored_primary(request, NOD_BUCKETS_NAMESPACE, decode_stored_bucket)
+    }
+
+    fn scan_stored_primary(
+        &self,
+        request: IdPageRequest,
+        name: &'static str,
+        decode: fn(WwdEntityId, &[u8]) -> Result<StoredBody, NodRepositoryError>,
+    ) -> Result<StoredBodyPage, NodRepositoryError> {
+        let limit = validate_id_page_request(request)?;
+        let after = request.after.map(item_key).transpose()?;
+        let page = self.storage.scan_prefix(
+            namespace(name)?,
+            ScanRequest::new(&[], after.as_ref(), limit)?,
+        )?;
+        validate_audit_page(&page, after.as_ref(), limit, name)?;
+        let next_after = page
+            .next_after
+            .as_ref()
+            .map(|key| parse_primary_key(key.as_bytes()))
+            .transpose()?;
+        let mut entries = Vec::with_capacity(page.entries.len());
+        for entry in page.entries {
+            let id = parse_primary_key(entry.key.as_bytes())?;
+            entries.push((id, decode(id, entry.value.as_bytes())?));
+        }
+        Ok(StoredBodyPage {
+            entries,
+            next_after,
+        })
+    }
+
+    /// Verifies exact item/owner-index membership using bounded pages and scratch.
+    /// The caller supplies a stable read-only storage view for the entire audit.
+    pub fn audit_indexes(&self, work: &CeAuditWork) -> Result<(), CeAuditError> {
+        let expected = NodAuditEntries::new(&self.storage, NODS_NAMESPACE)
+            .map_err(index_audit_error)?
+            .map(|entry| {
+                let entry = entry.map_err(index_audit_error)?;
+                let id = parse_primary_key(entry.key.as_bytes()).map_err(index_audit_error)?;
+                let body = decode_item(id, entry.value.as_bytes()).map_err(index_audit_error)?;
+                Ok(owner_audit_record(id, body.owner))
+            });
+        let actual = NodAuditEntries::new(&self.storage, NODS_BY_OWNER_NAMESPACE)
+            .map_err(index_audit_error)?
+            .map(|entry| {
+                let entry = entry.map_err(index_audit_error)?;
+                if entry.key.as_bytes().len() != OWNER_INDEX_KEY_LEN {
+                    return Err(index_audit_error(NodRepositoryError::MalformedIndexKey));
+                }
+                let owner = Address::from_slice(&entry.key.as_bytes()[..20]);
+                let id = parse_owner_index(&entry, owner).map_err(index_audit_error)?;
+                Ok(owner_audit_record(id, owner))
+            });
+        work.compare_records(PRIMARY_KEY_LEN, expected, actual)
     }
 
     /// Loads one Nod item and verifies its embedded identity.
@@ -327,6 +398,102 @@ impl NodRepositoryReader {
         id_page_from_entries(page, request.after, "owner", |entry| {
             parse_owner_index(entry, owner)
         })
+    }
+}
+
+fn owner_audit_record(id: WwdEntityId, owner: Address) -> [u8; OWNER_INDEX_KEY_LEN] {
+    let mut record = [0; OWNER_INDEX_KEY_LEN];
+    record[..PRIMARY_KEY_LEN].copy_from_slice(id.as_slice());
+    record[PRIMARY_KEY_LEN..].copy_from_slice(owner.as_slice());
+    record
+}
+
+fn index_audit_error(error: impl std::fmt::Display) -> CeAuditError {
+    CeAuditError::Invalid(error.to_string())
+}
+
+fn validate_audit_page(
+    page: &outbe_offchain_storage::ScanPage,
+    after: Option<&Key>,
+    limit: usize,
+    index: &'static str,
+) -> Result<(), NodRepositoryError> {
+    if page.entries.len() > limit {
+        return Err(
+            StorageError::Corruption(format!("Nod {index} page exceeds requested limit")).into(),
+        );
+    }
+    if page
+        .next_after
+        .as_ref()
+        .is_some_and(|next| page.entries.last().map(|entry| &entry.key) != Some(next))
+    {
+        return Err(NodRepositoryError::InvalidPageContinuation { index });
+    }
+    let mut previous = after;
+    for entry in &page.entries {
+        if previous.is_some_and(|previous| previous.as_bytes() >= entry.key.as_bytes()) {
+            return Err(NodRepositoryError::NonAscendingIdPage { index });
+        }
+        previous = Some(&entry.key);
+    }
+    Ok(())
+}
+
+/// At most one native bounded page is retained. Only an absent continuation
+/// ends scanning; adapters may return a short page because of byte limits.
+struct NodAuditEntries<'a> {
+    storage: &'a StorageReaderHandle,
+    namespace: Namespace,
+    name: &'static str,
+    after: Option<Key>,
+    entries: std::vec::IntoIter<ScanEntry>,
+    done: bool,
+}
+
+impl<'a> NodAuditEntries<'a> {
+    fn new(
+        storage: &'a StorageReaderHandle,
+        name: &'static str,
+    ) -> Result<Self, NodRepositoryError> {
+        Ok(Self {
+            storage,
+            namespace: namespace(name)?,
+            name,
+            after: None,
+            entries: Vec::new().into_iter(),
+            done: false,
+        })
+    }
+
+    fn read_page(&mut self) -> Result<(), NodRepositoryError> {
+        let page = self.storage.scan_prefix(
+            self.namespace.clone(),
+            ScanRequest::new(&[], self.after.as_ref(), MAX_SCAN_ENTRIES)?,
+        )?;
+        validate_audit_page(&page, self.after.as_ref(), MAX_SCAN_ENTRIES, self.name)?;
+        self.done = page.next_after.is_none();
+        self.after = page.next_after;
+        self.entries = page.entries.into_iter();
+        Ok(())
+    }
+}
+
+impl Iterator for NodAuditEntries<'_> {
+    type Item = Result<ScanEntry, NodRepositoryError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(entry) = self.entries.next() {
+            return Some(Ok(entry));
+        }
+        if self.done {
+            return None;
+        }
+        if let Err(error) = self.read_page() {
+            self.done = true;
+            return Some(Err(error));
+        }
+        self.entries.next().map(Ok)
     }
 }
 
