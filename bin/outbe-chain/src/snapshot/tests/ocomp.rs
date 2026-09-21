@@ -6581,6 +6581,172 @@ mod lease_inventory {
 }
 
 mod export_inventory {
+    mod receipt_only {
+        use super::*;
+        use crate::snapshot::validation::ocomp::verify_present_receipt;
+        use outbe_ocomp::export_receipt::VerifiedExportReceipt;
+
+        fn check(
+            f: &Fixture,
+            job: &OcompJobRecordV1,
+            expected: Option<ExportAuthorityV1>,
+        ) -> eyre::Result<VerifiedExportReceipt> {
+            let before = fingerprint(f.directory.path());
+            let result = verify_present_receipt(f.directory.path(), job, expected, CAS_LIMITS);
+            assert_eq!(fingerprint(f.directory.path()), before);
+            result
+        }
+
+        fn remove_historical_siblings(f: &Fixture) {
+            fs::remove_dir_all(&f.binding_root).unwrap();
+            fs::remove_dir_all(&f.catalog_root).unwrap();
+            // A receipt is not proof of surviving input chunks or binding CAS.
+            fs::remove_file(f.cas_path(&f.binding_ref)).unwrap();
+            fs::remove_file(f.cas_path(&f.chunk_ref)).unwrap();
+        }
+
+        #[test]
+        fn receipt_survives_pruned_binding_catalog_and_their_cas_objects() {
+            let f = fixture(20, None);
+            remove_historical_siblings(&f);
+            for expected in [None, Some(f.expected())] {
+                let receipt = check(&f, &f.job, expected).unwrap();
+                assert_eq!(receipt.receipt_ref(), f.receipt_ref);
+                assert_eq!(receipt.manifest_ref(), f.manifest_ref);
+                assert_eq!(receipt.manifest_hash(), f.manifest_hash);
+                assert_eq!(receipt.committed(), f.committed);
+                assert!(!f.binding_root.exists());
+                assert!(!f.catalog_root.exists());
+            }
+            // The weaker receipt observation cannot satisfy a complete-export obligation.
+            assert!(f
+                .check(Some(f.expected()))
+                .unwrap_err()
+                .downcast_ref::<Incomplete>()
+                .is_some());
+        }
+
+        #[test]
+        fn canonical_manifest_fields_and_request_checkpoint_cannot_be_substituted() {
+            for field in [
+                "bundle",
+                "attempt",
+                "day",
+                "collection_key",
+                "collection_root",
+                "count",
+                "nominal",
+                "ce_root",
+                "height",
+                "block_hash",
+                "state_root",
+            ] {
+                let f = fixture(20, None);
+                remove_historical_siblings(&f);
+                let mut job = f.job.clone();
+                match field {
+                    "bundle" => job.intent.protocol_bundle_hash = hash(0xee),
+                    "attempt" => job.intent.attempt += 1,
+                    "day" => job.intent.wwd += 1,
+                    "collection_key" => job.intent.sealed_tribute_collection_key = hash(0xee),
+                    "collection_root" => job.intent.sealed_tribute_collection_root = hash(0xee),
+                    "count" => job.intent.authenticated_day_count += 1,
+                    "nominal" => job.intent.authenticated_day_nominal += U256::from(1),
+                    "ce_root" => job.intent.ce_sealed_root = hash(0xee),
+                    "height" => job.intent_height += 1,
+                    "block_hash" => {
+                        job.finalized.as_mut().unwrap().finalized_request_block_hash = hash(0xee)
+                    }
+                    "state_root" => {
+                        job.finalized.as_mut().unwrap().finalized_request_state_root = hash(0xee)
+                    }
+                    _ => unreachable!(),
+                }
+                let error = check(&f, &job, None).unwrap_err();
+                assert!(
+                    error.downcast_ref::<Incomplete>().is_none(),
+                    "{field}: {error:#}"
+                );
+            }
+        }
+
+        #[test]
+        fn native_consistent_receipt_must_match_canonical_checkpoint_height_and_ce_schema() {
+            for damage in ["checkpoint_height", "checkpoint_schema"] {
+                let f = fixture(20, Some(damage));
+                remove_historical_siblings(&f);
+                let error = check(&f, &f.job, None).unwrap_err();
+                assert!(
+                    error.downcast_ref::<Incomplete>().is_none(),
+                    "{damage}: {error:#}"
+                );
+            }
+        }
+
+        #[test]
+        fn optional_saved_export_authority_binds_source_lease_and_manifest() {
+            let f = fixture(20, None);
+            remove_historical_siblings(&f);
+            let expected = f.expected();
+            for changed in [
+                ExportAuthorityV1 {
+                    source_generation: 12,
+                    ..expected
+                },
+                ExportAuthorityV1 {
+                    lease_generation: 18,
+                    ..expected
+                },
+                ExportAuthorityV1 {
+                    manifest_hash: hash(0xee),
+                    ..expected
+                },
+            ] {
+                let error = check(&f, &f.job, Some(changed)).unwrap_err();
+                assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+            }
+            check(&f, &f.job, Some(expected)).unwrap();
+        }
+
+        #[test]
+        fn complete_receipt_still_requires_its_own_prepared_manifest_and_cas_evidence() {
+            for missing in [
+                "receipt_locator",
+                "prepared_locator",
+                "receipt_cas",
+                "manifest_cas",
+            ] {
+                let f = fixture(20, None);
+                remove_historical_siblings(&f);
+                let path = match missing {
+                    "receipt_locator" => f.receipt_root.join("receipt.ref"),
+                    "prepared_locator" => f.receipt_root.join("prepared.ref"),
+                    "receipt_cas" => f.cas_path(&f.receipt_ref),
+                    "manifest_cas" => f.cas_path(&f.manifest_ref),
+                    _ => unreachable!(),
+                };
+                fs::remove_file(&path).unwrap();
+                let error = check(&f, &f.job, None).unwrap_err();
+                assert!(
+                    error.downcast_ref::<Incomplete>().is_some(),
+                    "{missing}: {error:#}"
+                );
+                assert!(!path.exists());
+            }
+        }
+
+        #[test]
+        fn malformed_receipt_cas_fails_without_requiring_pruned_siblings() {
+            let f = fixture(20, None);
+            remove_historical_siblings(&f);
+            let path = f.cas_path(&f.receipt_ref);
+            let mut bytes = fs::read(&path).unwrap();
+            *bytes.last_mut().unwrap() ^= 1;
+            fs::write(path, bytes).unwrap();
+            let error = check(&f, &f.job, None).unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+        }
+    }
     use crate::snapshot::{
         tests::headers::fingerprint,
         validation::{ocomp::verify_export_inputs, Incomplete},
@@ -7404,5 +7570,82 @@ mod canonical_composition {
                 );
             },
         );
+    }
+}
+
+mod present_cas {
+    use crate::snapshot::tests::headers::fingerprint;
+    use crate::snapshot::validation::{ocomp::verify_present_cas, Incomplete};
+    use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    const LIMITS: CasLimits = CasLimits {
+        max_object_bytes: 1024,
+        max_total_bytes: 4096,
+    };
+
+    fn publish(root: &Path, bytes: &[u8]) -> PathBuf {
+        let cas =
+            FilesystemCas::open(root.join("cas-v1"), CasWriterRole::Supervisor, LIMITS).unwrap();
+        let object = cas.publish_bytes(bytes).unwrap();
+        let hash = hex::encode(object.transport_digest);
+        root.join("cas-v1/objects")
+            .join(&hash[..2])
+            .join(&hash[2..])
+    }
+
+    #[test]
+    fn absent_cas_stays_absent_and_unreferenced_native_objects_are_verified() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = verify_present_cas(root.path(), LIMITS, None).unwrap();
+        assert_eq!((absent.objects, absent.bytes), (0, 0));
+        assert!(!root.path().join("cas-v1").exists());
+        publish(root.path(), b"historical unreferenced bytes");
+        publish(root.path(), b"another object");
+        let before = fingerprint(root.path());
+        let result = verify_present_cas(root.path(), LIMITS, None).unwrap();
+        assert_eq!(result.objects, 2);
+        assert_eq!(result.bytes, 43);
+        assert_eq!(fingerprint(root.path()), before);
+        assert!(!root.path().join("supervisor-v1").exists());
+    }
+
+    #[test]
+    fn changed_unreferenced_object_is_detected_without_job_or_catalog() {
+        for replacement in [b"different bytes".as_slice(), b"short".as_slice()] {
+            let root = tempfile::tempdir().unwrap();
+            let path = publish(root.path(), b"unchanged bytes");
+            fs::write(path, replacement).unwrap();
+            let before = fingerprint(root.path());
+            let error = verify_present_cas(root.path(), LIMITS, None).unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+            assert!(error.to_string().contains("digest mismatch"), "{error:#}");
+            assert_eq!(fingerprint(root.path()), before);
+        }
+    }
+
+    #[test]
+    fn object_count_and_total_byte_budgets_cannot_pass_a_successful_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        publish(root.path(), &[1; 700]);
+        publish(root.path(), &[2; 700]);
+        for (limits, maximum) in [
+            (LIMITS, Some(1)),
+            (
+                CasLimits {
+                    max_total_bytes: 1024,
+                    ..LIMITS
+                },
+                None,
+            ),
+        ] {
+            let before = fingerprint(root.path());
+            let error = verify_present_cas(root.path(), limits, maximum).unwrap_err();
+            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+            assert_eq!(fingerprint(root.path()), before);
+        }
     }
 }
