@@ -31,7 +31,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex, enroll it in the floor-bin index, and send
+/// Capture series identity in Intex, enroll it in the call-price bin index, and send
 /// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
 /// broadcast (including a loopback leg on the origin), so there is no in-process
@@ -107,11 +107,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         })
         .collect();
 
-    // Enroll into the unqualified floor-bin index the daily qualify sweep walks.
-    factory.insert_unqualified(
+    // Enroll into the call-price bin index the daily Called scan walks.
+    factory.insert_call_bin(
         params.series_id,
         params.reference_currency,
-        floor_price_minor,
+        call_price_minor,
     )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
@@ -794,18 +794,19 @@ fn settle(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let state = series.lifecycle_state()?;
-    // Settle is allowed in Qualified (voluntary) and Called (forced).
-    if state != IntexState::Qualified && state != IntexState::Called {
-        return Err(IntexFactoryError::NotSettleable(series.state).into());
-    }
-    // The deadline only constrains forced settlement (Called).
-    if state == IntexState::Called {
-        let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-        if now > deadline {
-            return Err(IntexFactoryError::DeadlineExpired.into());
+    // Settle is allowed once called (forced, until the deadline) or once qualified
+    // (voluntary). The call check is one read; the qualification walk goes last.
+    match series.lifecycle_state()? {
+        IntexState::Called => {
+            let now = storage.timestamp()?.to::<u64>();
+            let deadline =
+                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
+            if now > deadline {
+                return Err(IntexFactoryError::DeadlineExpired.into());
+            }
         }
+        IntexState::Issued | IntexState::Qualified if is_qualified(storage, &series)? => {}
+        _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 
     let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;

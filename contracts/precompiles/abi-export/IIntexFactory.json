@@ -577,25 +577,6 @@
   },
   {
     "type": "event",
-    "name": "QualifyScanSkipped",
-    "inputs": [
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "utcDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "SeriesCalled",
     "inputs": [
       {
@@ -659,19 +640,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesQualified",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
       }
     ],
     "anonymous": false

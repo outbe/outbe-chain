@@ -709,7 +709,7 @@ mod tests {
                     .unwrap();
             }
             // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
-            // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
+            // NOD/GEM floor-price promotion resolves a live rate instead
             // of soft-skipping the scan. The qualifiers derive the pair from the
             // ISO code, so registering the pair is sufficient.
             outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)

@@ -219,7 +219,7 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
+        seed_qualifying_day(&s);
         runtime::settle_intex_with_paynote(&s, sid(7), owner(), payer, units, &fixture.proof)
             .unwrap();
 
@@ -276,7 +276,7 @@ fn with_erc20_series<R>(
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
-        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
+        seed_qualifying_day(&s);
         f(s)
     })
 }
@@ -366,10 +366,17 @@ fn settle_rejects_missing_series() {
 }
 
 #[test]
-fn settle_rejects_wrong_state_issued() {
+fn settle_rejects_an_unqualified_series() {
     with_factory(|s| {
-        // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
+        // The only closed day ends at the floor, which does not qualify.
+        write_day_vwap(
+            &OracleContract::new(s.clone()),
+            REFERENCE_ISO,
+            PAIR_ID,
+            ISSUED_AT as u64 + 2 * DAY,
+            U256::from(EXPECTED_FLOOR),
+        );
         let err =
             runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::from(1), &[])
                 .unwrap_err();

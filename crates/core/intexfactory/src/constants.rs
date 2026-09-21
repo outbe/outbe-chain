@@ -31,8 +31,7 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of each daily sweep.
-pub const QUALIFY_SWEEP: u8 = 0;
+/// `SweepDaySkipped.sweep` of the Called sweep; 0 belonged to the retired qualify sweep.
 pub const CALL_SWEEP: u8 = 1;
 
 /// Router calls one `intex_drain_notices` firing may make; an entry costing none still
@@ -77,7 +76,7 @@ pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 24;
 /// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 
-/// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
+/// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 

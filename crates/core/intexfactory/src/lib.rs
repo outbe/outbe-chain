@@ -1,6 +1,6 @@
 //! IntexFactory: Intex issuance, settlement (settle / minePromis), and the
-//! autonomous Issued -> Qualified -> Called lifecycle. Series state is written to
-//! Intex; this module owns the settlement bookkeeping and candidate index.
+//! autonomous call lifecycle. Qualification is derived from daily VWAPs, never stored;
+//! this module owns the settlement bookkeeping and the call-price index.
 
 pub mod api;
 pub mod called;

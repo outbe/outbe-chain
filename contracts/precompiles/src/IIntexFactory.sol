@@ -7,12 +7,12 @@ pragma solidity ^0.8.30;
 ///         setter. Issuance is a module-to-module call (Desis -> IntexFactory)
 ///         exposed through the Rust `api`, not a precompile selector. Series
 ///         identity + lifecycle live in Intex; this precompile owns
-///         settlement bookkeeping and the autonomous qualification index.
+///         settlement bookkeeping and the call-price index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
-    ///         settled units stay with the owner. Allowed in Qualified (voluntary)
-    ///         and Called (forced).
+    ///         settled units stay with the owner. Allowed once qualified (voluntary,
+    ///         see `isSeriesQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
@@ -135,21 +135,14 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
 
-    /// @notice The series qualified (Issued -> Qualified).
-    event SeriesQualified(bytes14 indexed seriesId);
-
-    /// @notice A reference currency was left out of one day's qualification because its
-    ///         day price could not be indexed. The next day's pass tries it again.
-    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice The series was force-called (Qualified -> Called).
+    /// @notice The series was force-called.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next day's pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 
-    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
     ///         gave its place to a newer day and will not be walked.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 

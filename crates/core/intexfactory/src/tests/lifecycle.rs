@@ -1,93 +1,18 @@
 use super::*;
 
 #[test]
-fn issue_enrolls_in_floor_bin() {
+fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let f = IntexFactoryContract::new(s.clone());
-        let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_FLOOR)).unwrap();
+        let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
-            f.unqualified_bin_count
+            f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
     });
-}
-
-#[test]
-fn insert_remove_unqualified_roundtrip() {
-    with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
-        let floor = U256::from(2_000u64);
-        let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        f.insert_unqualified(sid(11), REFERENCE_ISO, floor).unwrap();
-        f.insert_unqualified(sid(22), REFERENCE_ISO, floor).unwrap();
-        assert_eq!(
-            f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            2
-        );
-        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(11))
-            .unwrap();
-        assert_eq!(
-            f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            1
-        );
-        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(22))
-            .unwrap();
-        assert_eq!(
-            f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            0
-        );
-    });
-}
-
-#[test]
-fn try_qualify_gates_the_floor_and_latches() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        let mut f = IntexFactoryContract::new(s.clone());
-        let floor = U256::from(EXPECTED_FLOOR);
-
-        // Rate == floor (strict >) -> false.
-        assert_eq!(qualify_day(&s, &mut f, 7, floor), 0);
-        // Rate > floor -> qualifies, latched, removed from bin.
-        assert_eq!(qualify_day(&s, &mut f, 7, floor + U256::from(1)), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
-        let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        assert_eq!(
-            f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            0
-        );
-        // Already Qualified -> false.
-        assert_eq!(qualify_day(&s, &mut f, 7, floor + U256::from(1)), 0);
-    });
-}
-
-pub(super) fn qualify_series<'a>(
-    s: &StorageHandle<'a>,
-    id: u32,
-    params: IssuanceParams,
-) -> IntexFactoryContract<'a> {
-    runtime::issue(s, params).unwrap();
-    let mut f = IntexFactoryContract::new(s.clone());
-    let floor = U256::from(EXPECTED_FLOOR);
-    assert!(qualify_day(s, &mut f, id, floor + U256::from(1)) == 1);
-    f
 }
 
 /// Registry index the fixtures register the qualifier pair at; the rate
@@ -146,44 +71,20 @@ pub(super) fn fill_days(
 }
 
 #[test]
-fn qualify_enrolls_in_call_trigger_bin() {
-    with_factory(|s| {
-        let f = qualify_series(&s, 7, sample(7));
-        // Moved out of the floor index, into the call-trigger index.
-        let floor_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_FLOOR)).unwrap();
-        let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-        assert_eq!(
-            f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, floor_bin))
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, trig_bin))
-                .unwrap(),
-            1
-        );
-    });
-}
-
-#[test]
-fn insert_remove_qualified_roundtrip() {
+fn insert_remove_call_bin_roundtrip() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(11), trigger, &[sid(11)])
-            .unwrap();
-        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(22), trigger, &[sid(22)])
-            .unwrap();
+        f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
+        f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
         );
-        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(11))
+        f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(11))
             .unwrap();
         assert_eq!(
             f.qualified_bin_count
@@ -191,7 +92,7 @@ fn insert_remove_qualified_roundtrip() {
                 .unwrap(),
             1
         );
-        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(22))
+        f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(22))
             .unwrap();
         assert_eq!(
             f.qualified_bin_count
@@ -205,7 +106,8 @@ fn insert_remove_qualified_roundtrip() {
 #[test]
 fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
-        let mut f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
+        let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         // All 30 window days above the trigger (threshold is 21).
@@ -215,7 +117,7 @@ fn try_call_marks_called_when_threshold_met() {
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let group = f
-            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
         assert_eq!(
             call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
@@ -241,7 +143,8 @@ fn try_call_marks_called_when_threshold_met() {
 #[test]
 fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
-        let mut f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
+        let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -260,7 +163,7 @@ fn try_call_skips_when_below_threshold() {
         }
 
         let group = f
-            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
         assert_eq!(
             call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
@@ -271,7 +174,7 @@ fn try_call_skips_when_below_threshold() {
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intex::IntexState::Qualified
+            outbe_intex::IntexState::Issued
         );
     });
 }
@@ -280,9 +183,6 @@ fn try_call_skips_when_below_threshold() {
 fn try_call_excludes_pre_issuance_days() {
     with_factory(|s| {
         // window 30, threshold 27: only days from issuance onward may count.
-        // Seed the series directly with threshold 27 (above the 21d qualification
-        // period), since the protocol default (21) does not exceed it and a
-        // qualified series would always have >= 21 completed post-issuance days.
         outbe_intex::api::create_series(
             &s,
             outbe_intex::CreateSeriesParams {
@@ -304,7 +204,6 @@ fn try_call_excludes_pre_issuance_days() {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(&s, sid(8)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -329,7 +228,7 @@ fn try_call_excludes_pre_issuance_days() {
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intex::IntexState::Qualified
+            outbe_intex::IntexState::Issued
         );
     });
 }
@@ -422,7 +321,7 @@ mod call_sweep {
         seed_candidate_at(s, worldwide_day, issued_at, trigger)
     }
 
-    /// A Qualified series of its own day, carrying `trigger` as its call price.
+    /// A series of its own day, carrying `trigger` as its call price.
     fn seed_candidate_at(
         s: &StorageHandle<'_>,
         worldwide_day: u32,
@@ -453,14 +352,8 @@ mod call_sweep {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(s, series_id).unwrap();
         IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(
-                REFERENCE_ISO,
-                WorldwideDay::new(worldwide_day),
-                trigger,
-                &[series_id],
-            )
+            .insert_call_bin(series_id, REFERENCE_ISO, trigger)
             .unwrap();
     }
 
@@ -499,7 +392,7 @@ mod call_sweep {
             // The price index has dropped the group, and the parked copy is the
             // only way back to the series it held.
             assert!(factory
-                .qualified_group_members(REFERENCE_ISO, day)
+                .call_bin_group_members(REFERENCE_ISO, day)
                 .unwrap()
                 .is_empty());
             let bucket = IntexFactoryContract::deadline_bucket(scan_ts + 7 * DAY);
@@ -647,6 +540,7 @@ mod call_sweep {
     fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
         let day = WorldwideDay::new(20260101);
         let trigger = U256::from(TRIGGER);
+        let mut factory = IntexFactoryContract::new(s.clone());
         let mut members = Vec::new();
         for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
             let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
@@ -668,12 +562,11 @@ mod call_sweep {
                 reference_currency: REFERENCE_ISO,
             };
             outbe_intex::api::create_series(s, params).unwrap();
-            outbe_intex::api::mark_qualified(s, series_id).unwrap();
+            factory
+                .insert_call_bin(series_id, REFERENCE_ISO, trigger)
+                .unwrap();
             members.push(series_id);
         }
-        IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
-            .unwrap();
         let deadline = call_and_deadline(s, 20260101, scan_ts);
         (members, deadline)
     }
@@ -991,14 +884,8 @@ mod call_sweep {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(s, series_id).unwrap();
         IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(
-                REFERENCE_ISO,
-                WorldwideDay::new(worldwide_day),
-                trigger,
-                &[series_id],
-            )
+            .insert_call_bin(series_id, REFERENCE_ISO, trigger)
             .unwrap();
     }
 
@@ -1176,9 +1063,8 @@ mod call_sweep {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(s, series_id).unwrap();
         IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(iso, WorldwideDay::new(worldwide_day), trigger, &[series_id])
+            .insert_call_bin(series_id, iso, trigger)
             .unwrap();
     }
 
@@ -1357,7 +1243,7 @@ mod call_sweep {
         });
     }
 
-    /// A Qualified group of `iso` issued at `issued_at`, its trigger under the window.
+    /// A group of `iso` issued at `issued_at`, its trigger under the window.
     fn seed_young_candidate_for(
         s: &StorageHandle<'_>,
         iso: u16,
@@ -1387,9 +1273,8 @@ mod call_sweep {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(s, series_id).unwrap();
         IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(iso, WorldwideDay::new(worldwide_day), trigger, &[series_id])
+            .insert_call_bin(series_id, iso, trigger)
             .unwrap();
     }
 }
@@ -1594,7 +1479,7 @@ mod called_pstar {
             // Issued 10 days before the window's last day: only those days count, so
             // it cannot reach a threshold of 21 however loud they were.
             let issued_at = day_start(LAST_DAY) - 10 * DAY_SECS;
-            let series = seed_qualified(&s, issued_at as u32, U256::from(200u64));
+            let series = seed_series(&s, issued_at as u32, U256::from(200u64));
 
             let mut f = IntexFactoryContract::new(s.clone());
             let mut vwaps = DayVwaps::new(oracle.pair_index_of(pair).unwrap());
@@ -1626,8 +1511,8 @@ mod called_pstar {
         outbe_primitives::time::date_key_to_utc_timestamp(date_key)
     }
 
-    /// A Qualified series with the protocol call parameters and the given trigger.
-    fn seed_qualified(s: &StorageHandle<'_>, issued_at: u32, trigger: U256) -> SeriesId {
+    /// A series with the protocol call parameters and the given trigger.
+    fn seed_series(s: &StorageHandle<'_>, issued_at: u32, trigger: U256) -> SeriesId {
         let series_id =
             SeriesId::for_pair(WorldwideDay::new(LAST_DAY), 840, REFERENCE_ISO).unwrap();
         outbe_intex::api::create_series(
@@ -1651,7 +1536,6 @@ mod called_pstar {
             },
         )
         .unwrap();
-        outbe_intex::api::mark_qualified(s, series_id).unwrap();
         series_id
     }
 }
