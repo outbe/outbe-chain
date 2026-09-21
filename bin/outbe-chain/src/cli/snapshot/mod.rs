@@ -4,6 +4,9 @@ use clap::Parser;
 
 mod create;
 
+#[cfg(test)]
+mod validate;
+
 #[derive(Parser)]
 #[command(name = "outbe-chain snapshot")]
 pub(crate) struct SnapshotCli {

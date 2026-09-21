@@ -116,6 +116,10 @@ pub(crate) struct ActiveOcompObservation {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidationReport {
+    /// Known source/configuration paths for safe optional report publication.
+    /// Internal observations only; never serialized as validation authority.
+    #[serde(skip)]
+    pub(crate) protected_paths: outbe_snapshot::layout::ProtectedPaths,
     checks: BTreeMap<CheckName, CheckReport>,
     pub(crate) observed: ObservedFrontiers,
     pub(crate) retained_ranges: Vec<RetainedRange>,
@@ -148,6 +152,7 @@ impl ValidationReport {
             })
             .collect();
         Self {
+            protected_paths: outbe_snapshot::layout::ProtectedPaths::default(),
             checks,
             observed: ObservedFrontiers::default(),
             retained_ranges: Vec::new(),
