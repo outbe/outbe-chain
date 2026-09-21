@@ -156,6 +156,44 @@ Native-only all includes native checks and adds artifact checks when metadata is
 supplied; explicitly requested files/provenance without metadata is Incomplete.
 A report is optional evidence and never startup authority.
 
+With the recipient writers still stopped, validate the placed files using the
+recipient's ordinary configuration. Keep the report outside the native stores:
+
+```sh
+outbe-chain snapshot validate \
+  --manifest /srv/received/snapshot/manifest.json \
+  --signature /srv/received/snapshot/signature.json \
+  --expected-signer "$SNAPSHOT_CREATOR_PUBLIC_KEY" \
+  --checks all --report /srv/received/validation.json \
+  -- \
+  --chain /etc/outbe/genesis.json \
+  --datadir /srv/new-node/chain \
+  --consensus.storage-dir /srv/new-node/consensus \
+  --projection.storage-config /etc/outbe/offchain.toml
+```
+
+`SNAPSHOT_CREATOR_PUBLIC_KEY` is the public key whose signature the operator
+expects. Use the creator-key spelling reported by `snapshot create`. The command
+checks the placed native files; unpacked transport directories are not the node's
+data paths. Preserve any configured static-file/execution-RocksDB overrides.
+
+After an ordinary later stop at current height K, native checks can run without
+the original archive or metadata:
+
+```sh
+outbe-chain snapshot validate \
+  --checks headers,evm,ce,bodies,ocomp --report /srv/received/current-k.json \
+  -- \
+  --chain /etc/outbe/genesis.json \
+  --datadir /srv/new-node/chain \
+  --consensus.storage-dir /srv/new-node/consensus \
+  --projection.storage-config /etc/outbe/offchain.toml
+```
+
+In this invocation files/provenance are NotRequested. Read each selected result
+in the report; an unavailable comparison remains Incomplete rather than Passed.
+Neither invocation is part of the ordinary node command.
+
 Current OCOMP obligations come from the validated live scheduler, every pending
 NOD FIFO entry and permanent Intex series index for open unpaid payout rounds.
 Check all required remaining batches/bitmap words, not just present directories.

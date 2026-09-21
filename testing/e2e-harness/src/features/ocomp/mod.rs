@@ -53,6 +53,8 @@ mod full_node;
 mod logical_time;
 mod membership;
 mod observations;
+mod offline_snapshot;
+pub(crate) use offline_snapshot::SnapshotWorkerBeforeRequest;
 mod restart;
 mod setup;
 #[cfg(test)]
