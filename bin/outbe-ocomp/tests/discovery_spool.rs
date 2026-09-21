@@ -965,3 +965,354 @@ fn checkpoint_store_rejects_wrong_baseline_stale_conflict_and_non_contiguous() {
     drop(store);
     assert!(ContiguousCheckpointStoreV1::open(&root, checkpoint(10, 0x77)).is_err());
 }
+
+// Offline inspection must observe native lifecycle records without invoking the writer.
+use outbe_ocomp::discovery_spool::{DiscoverySpoolReaderV1, DiscoverySpoolRecordV1};
+
+fn reader_open(root: &std::path::Path) -> Result<DiscoverySpoolReaderV1, DiscoverySpoolError> {
+    DiscoverySpoolReaderV1::open_existing(root, CHAIN_ID, hash(0x11), poc_schema_limits())
+}
+
+fn reader_records(
+    root: &std::path::Path,
+) -> Result<Vec<DiscoverySpoolRecordV1>, DiscoverySpoolError> {
+    let reader = reader_open(root)?;
+    let mut records = Vec::new();
+    reader.visit_records(&mut |record| {
+        records.push(record);
+        Ok(())
+    })?;
+    Ok(records)
+}
+
+type SpoolFingerprint = std::collections::BTreeMap<std::path::PathBuf, (u32, Vec<u8>)>;
+
+fn reader_fingerprint(root: &std::path::Path) -> SpoolFingerprint {
+    fn visit(root: &std::path::Path, path: &std::path::Path, found: &mut SpoolFingerprint) {
+        let metadata = fs::symlink_metadata(path).expect("fingerprint metadata");
+        let bytes = if metadata.file_type().is_symlink() {
+            fs::read_link(path)
+                .expect("symlink target")
+                .as_os_str()
+                .as_encoded_bytes()
+                .to_vec()
+        } else if metadata.is_file() {
+            fs::read(path).expect("fingerprint file")
+        } else {
+            Vec::new()
+        };
+        found.insert(
+            path.strip_prefix(root)
+                .expect("relative path")
+                .to_path_buf(),
+            (metadata.permissions().mode(), bytes),
+        );
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path).expect("fingerprint directory") {
+                visit(root, &entry.expect("directory entry").path(), found);
+            }
+        }
+    }
+    let mut found = SpoolFingerprint::new();
+    visit(root, root, &mut found);
+    found
+}
+
+fn reader_write(path: &std::path::Path, bytes: &[u8]) {
+    fs::write(path, bytes).expect("write native test record");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("native record mode");
+}
+
+fn reader_fixture() -> (TempDir, Vec<DiscoveryOfferRefV1>) {
+    let temp = support::tempdir().expect("tempdir");
+    let writer = spool(&temp);
+    let mut offers = Vec::new();
+    for seed in 1..=4 {
+        let job = spec(seed, u64::from(seed));
+        let (offer, _) = writer.put_offer(u64::from(seed), &job).expect("offer");
+        if seed == 1 {
+            writer
+                .put_ack(
+                    &offer,
+                    &verified_receipt(&job, 1, 0x71),
+                    &support::protocol_bundle(),
+                )
+                .expect("ACK");
+        } else if seed == 3 {
+            assert!(matches!(
+                writer.put_offer(4, &job),
+                Err(DiscoverySpoolError::ConflictLatched { .. })
+            ));
+        } else if seed == 4 {
+            writer.prepare_retirement(&offer, 20).expect("retirement");
+        }
+        offers.push(offer);
+    }
+    (temp, offers)
+}
+
+#[test]
+fn readonly_spool_enumerates_all_native_record_kinds_without_lock_or_recovery() {
+    let (temp, offers) = reader_fixture();
+    let root = temp.path().join("discovery");
+    // The ordinary writer's lock is optional for stopped read-only inspection.
+    fs::remove_file(root.join(".lock")).expect("remove writer lock");
+    let before = reader_fingerprint(temp.path());
+    let records = reader_records(&root).expect("complete read-only enumeration");
+    let mut counts = [0; 5];
+    for record in records {
+        match record {
+            DiscoverySpoolRecordV1::Offer(offer) => {
+                counts[0] += 1;
+                assert!(offers.contains(&offer.reference));
+                assert_eq!(
+                    offer.spec,
+                    spec(offer.reference.generation as u8, offer.reference.generation)
+                );
+            }
+            DiscoverySpoolRecordV1::Ack(ack) => {
+                counts[1] += 1;
+                assert_eq!(ack.reference.offer_ref(), offers[0]);
+                assert_eq!(ack.committed.job_id, spec(1, 1).summary.job_id);
+                assert_eq!(ack.committed.pin_generation, 2);
+                assert_ne!(ack.lease_generation, 0);
+                assert!(!ack.manifest_hash.is_zero());
+            }
+            DiscoverySpoolRecordV1::Pending { observation } => {
+                counts[2] += 1;
+                assert!(offers[1..]
+                    .iter()
+                    .any(|offer| offer.observation_id == observation));
+            }
+            DiscoverySpoolRecordV1::Quarantine {
+                observation,
+                reason_hash,
+            } => {
+                counts[3] += 1;
+                assert_eq!(observation, offers[2].observation_id);
+                assert_eq!(reason_hash, alloy_primitives::keccak256(b"offer replay"));
+            }
+            DiscoverySpoolRecordV1::Retirement {
+                reference,
+                closed_through,
+            } => {
+                counts[4] += 1;
+                assert_eq!(reference, offers[3]);
+                assert_eq!(closed_through, 20);
+            }
+        }
+    }
+    assert_eq!(counts, [4, 1, 3, 1, 1]);
+    assert_eq!(reader_fingerprint(temp.path()), before);
+    assert!(!root.join(".lock").exists());
+}
+
+#[test]
+fn readonly_spool_preserves_partial_publication_and_retirement_stages() {
+    for stage in [
+        "offer-only",
+        "ack-with-pending",
+        "retiring-offer",
+        "retirement-only",
+        "retired",
+    ] {
+        let temp = support::tempdir().expect("tempdir");
+        let writer = spool(&temp);
+        let job = spec(0x55, 7);
+        let (offer, _) = writer.put_offer(7, &job).expect("offer");
+        let root = temp.path().join("discovery");
+        let id = hex::encode(offer.observation_id);
+        let pending = root.join("pending").join(format!("{id}.pending"));
+        let pending_bytes = fs::read(&pending).expect("native marker");
+        if stage == "ack-with-pending" {
+            writer
+                .put_ack(
+                    &offer,
+                    &verified_receipt(&job, 7, 0x75),
+                    &support::protocol_bundle(),
+                )
+                .expect("ACK");
+            reader_write(&pending, &pending_bytes);
+        } else if stage == "offer-only" {
+            fs::remove_file(&pending).expect("publication cut");
+        } else {
+            writer.prepare_retirement(&offer, 20).expect("retirement");
+            if stage == "retired" {
+                writer
+                    .complete_retirements_through(20)
+                    .expect("native retirement");
+            } else {
+                fs::remove_file(&pending).expect("pending unlink cut");
+                if stage == "retirement-only" {
+                    fs::remove_file(writer.offer_path(&offer.observation_id))
+                        .expect("offer unlink cut");
+                }
+            }
+        }
+        drop(writer);
+        let before = reader_fingerprint(temp.path());
+        let records = reader_records(&root).expect("legitimate partial stage");
+        assert_eq!(
+            records.len(),
+            match stage {
+                "ack-with-pending" => 3,
+                "retiring-offer" => 2,
+                "retired" => 0,
+                _ => 1,
+            }
+        );
+        assert_eq!(reader_fingerprint(temp.path()), before, "{stage}");
+    }
+}
+
+#[test]
+fn readonly_spool_missing_root_or_directory_stays_missing() {
+    let temp = support::tempdir().expect("tempdir");
+    let absent = temp.path().join("absent");
+    assert!(reader_open(&absent).is_err());
+    assert!(!absent.exists());
+    let writer = spool(&temp);
+    drop(writer);
+    let root = temp.path().join("discovery");
+    fs::remove_dir(root.join("acks")).expect("remove empty native directory");
+    let before = reader_fingerprint(temp.path());
+    assert!(reader_open(&root).is_err());
+    assert_eq!(reader_fingerprint(temp.path()), before);
+}
+
+#[test]
+fn readonly_spool_rejects_wrong_filenames_and_damaged_native_records() {
+    for directory in ["offers", "acks", "pending", "quarantine", "retirements"] {
+        for mutation in ["filename", "magic", "version", "truncated", "extra"] {
+            let (temp, _) = reader_fixture();
+            let root = temp.path().join("discovery");
+            let path = fs::read_dir(root.join(directory))
+                .expect("native directory")
+                .next()
+                .expect("record")
+                .expect("entry")
+                .path();
+            let mut bytes = fs::read(&path).expect("native bytes");
+            if mutation == "filename" {
+                let suffix = path
+                    .extension()
+                    .expect("extension")
+                    .to_str()
+                    .expect("ASCII");
+                fs::rename(
+                    &path,
+                    path.with_file_name(format!("{}.{}", hex::encode(hash(0xfe)), suffix)),
+                )
+                .expect("substitute filename");
+            } else {
+                match mutation {
+                    "magic" => bytes[0] ^= 1,
+                    "version" => bytes[8] ^= 1,
+                    "truncated" => {
+                        bytes.pop();
+                    }
+                    "extra" => bytes.push(0),
+                    _ => unreachable!(),
+                }
+                reader_write(&path, &bytes);
+            }
+            let before = reader_fingerprint(temp.path());
+            assert!(reader_records(&root).is_err(), "{directory}/{mutation}");
+            assert_eq!(reader_fingerprint(temp.path()), before);
+        }
+    }
+}
+
+#[test]
+fn readonly_spool_rejects_orphan_ack_pending_and_foreign_network() {
+    for orphan_ack in [false, true] {
+        let (temp, offers) = reader_fixture();
+        let root = temp.path().join("discovery");
+        let selected = if orphan_ack { &offers[0] } else { &offers[1] };
+        fs::remove_file(
+            root.join("offers")
+                .join(format!("{}.offer", hex::encode(selected.observation_id))),
+        )
+        .expect("orphan record");
+        let before = reader_fingerprint(temp.path());
+        assert!(reader_records(&root).is_err());
+        assert_eq!(reader_fingerprint(temp.path()), before);
+    }
+    let (temp, _) = reader_fixture();
+    let root = temp.path().join("discovery");
+    let before = reader_fingerprint(temp.path());
+    let reader =
+        DiscoverySpoolReaderV1::open_existing(&root, CHAIN_ID + 1, hash(0x11), poc_schema_limits())
+            .expect("existing directories");
+    assert!(reader.visit_records(&mut |_| Ok(())).is_err());
+    assert_eq!(reader_fingerprint(temp.path()), before);
+}
+
+#[test]
+fn readonly_spool_rejects_temps_symlinks_unknown_entries_and_modes_unchanged() {
+    for mutation in [
+        "temp",
+        "ambiguous-temp",
+        "symlink",
+        "directory-symlink",
+        "unknown",
+        "mode",
+    ] {
+        let temp = support::tempdir().expect("tempdir");
+        let writer = spool(&temp);
+        let (offer, _) = writer.put_offer(1, &spec(1, 1)).expect("offer");
+        let root = temp.path().join("discovery");
+        let path = writer.offer_path(&offer.observation_id);
+        let original = fs::read(&path).expect("offer bytes");
+        match mutation {
+            "temp" | "ambiguous-temp" => {
+                reader_write(
+                    &path.with_file_name(format!(
+                        "{}.tmp",
+                        path.file_name().expect("name").to_str().expect("ASCII")
+                    )),
+                    &original,
+                );
+                if mutation == "temp" {
+                    fs::remove_file(&path).expect("orphan temp");
+                }
+            }
+            "symlink" => {
+                let target = temp.path().join("sentinel");
+                reader_write(&target, &original);
+                fs::remove_file(&path).expect("remove offer");
+                symlink(&target, &path).expect("symlink record");
+            }
+            "directory-symlink" => {
+                let target = temp.path().join("outside-offers");
+                fs::rename(root.join("offers"), &target).expect("move offers");
+                symlink(&target, root.join("offers")).expect("symlink directory");
+            }
+            "unknown" => reader_write(&root.join("unknown-record"), b"unknown"),
+            "mode" => fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+                .expect("permissive mode"),
+            _ => unreachable!(),
+        }
+        let before = reader_fingerprint(temp.path());
+        assert!(reader_records(&root).is_err(), "{mutation}");
+        assert_eq!(reader_fingerprint(temp.path()), before);
+    }
+}
+
+#[test]
+fn readonly_spool_callback_failure_stops_without_mutating_source() {
+    let (temp, _) = reader_fixture();
+    let root = temp.path().join("discovery");
+    let before = reader_fingerprint(temp.path());
+    let reader = reader_open(&root).expect("read-only open");
+    let mut calls = 0;
+    let error = reader
+        .visit_records(&mut |_| {
+            calls += 1;
+            Err(DiscoverySpoolError::Overflow)
+        })
+        .expect_err("callback error");
+    assert!(matches!(error, DiscoverySpoolError::Overflow));
+    assert_eq!(calls, 1);
+    assert_eq!(reader_fingerprint(temp.path()), before);
+}

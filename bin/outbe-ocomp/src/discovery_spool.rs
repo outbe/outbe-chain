@@ -88,6 +88,191 @@ struct RetirementIntentV1 {
     reference: DiscoveryOfferRefV1,
 }
 
+/// One existing public spool record. Presence is a local lifecycle observation,
+/// not proof that a canonical job still requires this historical record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiscoverySpoolRecordV1 {
+    Offer(PendingDiscoveryV1),
+    Ack(StoredDiscoveryAckV1),
+    Pending {
+        observation: B256,
+    },
+    Quarantine {
+        observation: B256,
+        reason_hash: B256,
+    },
+    Retirement {
+        reference: DiscoveryOfferRefV1,
+        closed_through: u64,
+    },
+}
+
+/// Nonmutating inspection of an existing, stopped discovery spool.
+/// The private codec owner is never opened through its runtime constructor or
+/// exposed to callers; no locking, recovery or mutation methods are invoked.
+pub struct DiscoverySpoolReaderV1 {
+    codec: DiscoverySpoolV1,
+}
+
+impl DiscoverySpoolReaderV1 {
+    pub fn open_existing(
+        root: impl AsRef<Path>,
+        chain_id: u64,
+        genesis_hash: B256,
+        limits: SchemaLimits,
+    ) -> Result<Self, DiscoverySpoolError> {
+        if chain_id == 0 || genesis_hash.is_zero() {
+            return Err(DiscoverySpoolError::InvalidIdentity);
+        }
+        let root = root.as_ref().to_path_buf();
+        inspect_private_directory(&root)?;
+        let codec = DiscoverySpoolV1 {
+            offers: root.join("offers"),
+            acks: root.join("acks"),
+            pending: root.join("pending"),
+            quarantine: root.join("quarantine"),
+            retirements: root.join("retirements"),
+            root,
+            chain_id,
+            genesis_hash,
+            limits,
+        };
+        for directory in [
+            &codec.offers,
+            &codec.acks,
+            &codec.pending,
+            &codec.quarantine,
+            &codec.retirements,
+        ] {
+            inspect_private_directory(directory)?;
+        }
+        let reader = Self { codec };
+        reader.inspect_root()?;
+        Ok(reader)
+    }
+
+    /// Streams complete bounded native records without collecting the spool.
+    /// Directory order is unspecified. Callback failures stop the traversal;
+    /// observations are provisional until traversal succeeds. Quarantine and
+    /// retirement statuses are emitted without repairing or deleting anything.
+    pub fn visit_records(
+        &self,
+        visitor: &mut impl FnMut(DiscoverySpoolRecordV1) -> Result<(), DiscoverySpoolError>,
+    ) -> Result<(), DiscoverySpoolError> {
+        self.inspect_root()?;
+        for (directory, suffix) in [
+            (&self.codec.offers, OFFER_SUFFIX),
+            (&self.codec.acks, ACK_SUFFIX),
+            (&self.codec.pending, PENDING_SUFFIX),
+            (&self.codec.quarantine, QUARANTINE_SUFFIX),
+            (&self.codec.retirements, RETIREMENT_SUFFIX),
+        ] {
+            inspect_private_directory(directory)?;
+            let entries = fs::read_dir(directory)
+                .map_err(|source| io_error("list read-only spool records", directory, source))?;
+            for entry in entries {
+                let path = entry
+                    .map_err(|source| io_error("read spool directory entry", directory, source))?
+                    .path();
+                let observation = parse_record_name(&path, suffix).ok_or_else(|| {
+                    if path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with(TEMP_SUFFIX))
+                    {
+                        DiscoverySpoolError::AmbiguousTemporary(path.clone())
+                    } else {
+                        DiscoverySpoolError::UnexpectedEntry(path.clone())
+                    }
+                })?;
+                let record = match suffix {
+                    OFFER_SUFFIX => DiscoverySpoolRecordV1::Offer(self.read_offer(observation)?),
+                    ACK_SUFFIX => {
+                        let offer = self.read_offer(observation)?;
+                        DiscoverySpoolRecordV1::Ack(self.codec.read_ack_for_offer(&path, &offer)?)
+                    }
+                    PENDING_SUFFIX => {
+                        let bytes = read_bounded_private_file(
+                            &path,
+                            PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes(),
+                        )?;
+                        if bytes != encode_pending_marker(observation) {
+                            return Err(DiscoverySpoolError::CorruptRecord { path });
+                        }
+                        self.read_offer(observation)?;
+                        DiscoverySpoolRecordV1::Pending { observation }
+                    }
+                    QUARANTINE_SUFFIX => {
+                        let bytes =
+                            read_bounded_private_file(&path, QUARANTINE_MAGIC.len() + 2 + 32 + 32)?;
+                        if bytes.len() != QUARANTINE_MAGIC.len() + 2 + 32 + 32
+                            || bytes[..8] != QUARANTINE_MAGIC
+                            || read_u16(&bytes, 8)? != RECORD_VERSION
+                            || read_b256(&bytes, 10)? != observation
+                        {
+                            return Err(DiscoverySpoolError::CorruptRecord { path });
+                        }
+                        DiscoverySpoolRecordV1::Quarantine {
+                            observation,
+                            reason_hash: read_b256(&bytes, 42)?,
+                        }
+                    }
+                    RETIREMENT_SUFFIX => {
+                        let intent = self.codec.read_retirement_at(&path)?;
+                        if intent.reference.observation_id != observation {
+                            return Err(DiscoverySpoolError::CorruptRecord { path });
+                        }
+                        // Native retirement unlinks the offer before its tombstone.
+                        if regular_file_exists(&self.codec.offer_path(&observation))?
+                            && self.read_offer(observation)?.reference != intent.reference
+                        {
+                            return Err(DiscoverySpoolError::CorruptRecord { path });
+                        }
+                        DiscoverySpoolRecordV1::Retirement {
+                            reference: intent.reference,
+                            closed_through: intent.closed_through,
+                        }
+                    }
+                    _ => unreachable!("fixed native record categories"),
+                };
+                visitor(record)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_offer(&self, observation: B256) -> Result<PendingDiscoveryV1, DiscoverySpoolError> {
+        let path = self.codec.offer_path(&observation);
+        if !regular_file_exists(&path)? {
+            return Err(DiscoverySpoolError::MissingOffer(observation));
+        }
+        let offer = self.codec.read_offer_at(&path)?;
+        if offer.reference.observation_id != observation {
+            return Err(DiscoverySpoolError::CorruptRecord { path });
+        }
+        Ok(offer)
+    }
+
+    fn inspect_root(&self) -> Result<(), DiscoverySpoolError> {
+        inspect_private_directory(&self.codec.root)?;
+        let entries = fs::read_dir(&self.codec.root)
+            .map_err(|source| io_error("list read-only spool root", &self.codec.root, source))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|source| io_error("read spool root entry", &self.codec.root, source))?
+                .path();
+            match path.file_name().and_then(|name| name.to_str()) {
+                Some("offers" | "acks" | "pending" | "quarantine" | "retirements") => {
+                    inspect_private_directory(&path)?
+                }
+                Some(LOCK_FILE) => inspect_private_file(&path)?,
+                _ => return Err(DiscoverySpoolError::UnexpectedEntry(path)),
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct DiscoverySpoolV1 {
     root: PathBuf,
@@ -1369,8 +1554,22 @@ fn read_bounded_private_file(
     if length > max_bytes {
         return Err(DiscoverySpoolError::RecordTooLarge(path.to_path_buf()));
     }
+    read_spool_bytes(&mut file, path, length)
+}
+
+fn read_spool_bytes(
+    reader: &mut impl std::io::Read,
+    path: &Path,
+    length: usize,
+) -> Result<Vec<u8>, DiscoverySpoolError> {
+    let read_limit = length
+        .checked_add(1)
+        .and_then(|limit| u64::try_from(limit).ok())
+        .ok_or(DiscoverySpoolError::Overflow)?;
     let mut encoded = Vec::with_capacity(length);
-    file.read_to_end(&mut encoded)
+    reader
+        .take(read_limit)
+        .read_to_end(&mut encoded)
         .map_err(|source| io_error("read private spool file", path, source))?;
     if encoded.len() != length {
         return Err(DiscoverySpoolError::CorruptRecord {
@@ -1543,4 +1742,58 @@ pub enum DiscoverySpoolError {
     Control(#[from] DiscoveryControlError),
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+}
+
+#[cfg(test)]
+mod readonly_bounded_read_tests {
+    use super::*;
+
+    struct CountingReader {
+        source: std::io::Cursor<Vec<u8>>,
+        consumed: usize,
+    }
+
+    impl std::io::Read for CountingReader {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.source.read(bytes)?;
+            self.consumed += count;
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn changed_source_read_stops_after_observed_length_plus_one() {
+        let mut reader = CountingReader {
+            source: std::io::Cursor::new(vec![7; 100]),
+            consumed: 0,
+        };
+        let error = read_spool_bytes(&mut reader, Path::new("growing.offer"), 2)
+            .expect_err("growth after stat must fail");
+        assert!(matches!(error, DiscoverySpoolError::CorruptRecord { .. }));
+        assert_eq!(
+            reader.consumed, 3,
+            "never consume the remaining growing source"
+        );
+    }
+
+    #[test]
+    fn bounded_read_preserves_stable_bytes_and_rejects_shortened_source() {
+        for length in [0, 1, 42, 100] {
+            let bytes = vec![7; length];
+            let mut reader = CountingReader {
+                source: std::io::Cursor::new(bytes.clone()),
+                consumed: 0,
+            };
+            assert_eq!(
+                read_spool_bytes(&mut reader, Path::new("stable.offer"), length).unwrap(),
+                bytes
+            );
+            assert_eq!(reader.consumed, length);
+        }
+        let mut shortened = std::io::Cursor::new(vec![7; 2]);
+        assert!(matches!(
+            read_spool_bytes(&mut shortened, Path::new("short.offer"), 3),
+            Err(DiscoverySpoolError::CorruptRecord { .. })
+        ));
+    }
 }
