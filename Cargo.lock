@@ -8269,6 +8269,7 @@ dependencies = [
  "outbe-rpc",
  "outbe-snapshot",
  "outbe-tee",
+ "outbe-tribute",
  "outbe-txpool",
  "outbe-update",
  "outbe-validatorset",

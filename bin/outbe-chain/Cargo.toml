@@ -37,6 +37,7 @@ outbe-metadosis.workspace = true
 outbe-intex.workspace = true
 outbe-update.workspace = true
 outbe-nod.workspace = true
+outbe-tribute.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-operator.workspace = true
