@@ -574,7 +574,7 @@ mod admission {
             poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
             InputArtifactIdentity,
         },
-        input_ref_catalog::VerifiedInputChunkRefCatalog,
+        input_ref_catalog::{InputRefCatalogError, VerifiedInputChunkRefCatalog},
         lysis_plan_audit::{LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
         lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     };
@@ -1146,6 +1146,111 @@ mod admission {
         let before = snapshot(f._directory.path());
         assert!(audit_read_only(&f).is_err());
         assert!(!lock.exists());
+        assert_eq!(snapshot(f._directory.path()), before);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn input_ref_reader_rejects_fifo_lock_with_bounded_wait() {
+        const CHILD_ROOT: &str = "OUTBE_INPUT_REF_FIFO_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            let cas = FilesystemCasReader::open(root.join("cas"), CAS_LIMITS).unwrap();
+            assert!(matches!(
+                VerifiedInputChunkRefCatalog::reopen(
+                    root.join("input-refs"),
+                    &cas,
+                    poc_schema_limits(),
+                    poc_input_list_limits(),
+                ),
+                Err(InputRefCatalogError::InvalidEnvelope)
+            ));
+            return;
+        }
+
+        let f = fixture(0x30);
+        let lock = f.input_ref_root.join("catalog.lock");
+        fs::remove_file(&lock).unwrap();
+        let fifo_path = std::ffi::CString::new(lock.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: the NUL-terminated path remains alive for the entire call.
+        assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+        let before = snapshot(f._directory.path());
+        // A blocking open must fail this test without hanging the test runner.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "admission::input_ref_reader_rejects_fifo_lock_with_bounded_wait",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ROOT, f._directory.path())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(snapshot(f._directory.path()), before);
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "read-only input-ref open blocked on FIFO or failed to reject it"
+        );
+    }
+
+    #[test]
+    fn input_ref_reader_rejects_directory_lock_without_mutation() {
+        let f = fixture(0x30);
+        let cas = FilesystemCasReader::open(&f.cas_root, CAS_LIMITS).unwrap();
+        let lock = f.input_ref_root.join("catalog.lock");
+        fs::remove_file(&lock).unwrap();
+        fs::create_dir(&lock).unwrap();
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o500)).unwrap();
+        let before = snapshot(f._directory.path());
+        assert!(matches!(
+            VerifiedInputChunkRefCatalog::reopen(
+                &f.input_ref_root,
+                &cas,
+                f.limits,
+                poc_input_list_limits(),
+            ),
+            Err(InputRefCatalogError::InvalidEnvelope)
+        ));
+        assert_eq!(snapshot(f._directory.path()), before);
+    }
+
+    #[test]
+    fn input_ref_reader_preserves_shared_and_exclusive_lock_behavior() {
+        let f = fixture(0x30);
+        let cas = FilesystemCasReader::open(&f.cas_root, CAS_LIMITS).unwrap();
+        let lock = f.input_ref_root.join("catalog.lock");
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o400)).unwrap();
+        let before = snapshot(f._directory.path());
+        let reopen = || {
+            VerifiedInputChunkRefCatalog::reopen(
+                &f.input_ref_root,
+                &cas,
+                f.limits,
+                poc_input_list_limits(),
+            )
+        };
+        let first = reopen().unwrap();
+        let second = reopen().unwrap();
+        let exclusive = fs::File::open(&lock).unwrap();
+        assert!(exclusive.try_lock().is_err());
+        drop(first);
+        assert!(exclusive.try_lock().is_err());
+        drop(second);
+        exclusive.try_lock().unwrap();
+        assert!(matches!(reopen(), Err(InputRefCatalogError::LockHeld(path)) if path == lock));
+        exclusive.unlock().unwrap();
+        drop(reopen().unwrap());
         assert_eq!(snapshot(f._directory.path()), before);
     }
 
