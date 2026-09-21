@@ -14,6 +14,7 @@ const CONTRACTS = [
   "target/IntexAuction",
   "target/EscrowAdapter",
   "target/TargetRouter",
+  "target/VwapRegistry",
   // Origin-side (precompile interfaces live in contracts/precompiles, not here)
   "origin/OriginRouter",
   // Both chains
@@ -26,11 +27,13 @@ const INTERFACES = [
   "target/interfaces/IIntexAuction",
   "target/interfaces/IEscrowAdapter",
   "target/interfaces/ITargetRouter",
+  "target/interfaces/IVwapRegistry",
   // Origin-side (precompile interfaces live in contracts/precompiles, not here)
   "origin/interfaces/IOriginRouter",
   // Both chains
   "shared/interfaces/IIntexNFT1155",
   "shared/interfaces/IIntexNFT1155Bridge",
+  "shared/interfaces/IVwapSource",
 ];
 
 interface ArtifactJson {

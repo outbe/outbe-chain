@@ -147,6 +147,12 @@ interface IOriginRouter {
         uint64 callPriceMinor;
     }
 
+    /// @notice The Oracle's finalized VWAP of COEN in one reference currency for a UTC day (six decimals).
+    struct DailyVwap {
+        uint16 isoCode;
+        uint64 vwapMinor;
+    }
+
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     struct AuctionStageStartParams {
         uint32 worldwideDay;
