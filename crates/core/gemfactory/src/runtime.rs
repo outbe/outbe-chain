@@ -2,9 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{
-    coen_pair_index_opt, fresh_coen_rate_for, fresh_coen_rate_for_opt, get_utc_day_vwap,
-};
+use outbe_oracle::api::{coen_pair_index_opt, fresh_coen_rate_for, get_utc_day_vwap};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -630,8 +628,8 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-/// Higher of the previous UTC day's VWAP and the fresh spot of COEN in
-/// `reference_currency`; either one missing maps to `OracleUnavailable`.
+/// The previous UTC day's VWAP of COEN in `reference_currency`; a missing one maps
+/// to `OracleUnavailable`, so issuance waits rather than pricing off another source.
 fn read_market_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
@@ -642,11 +640,7 @@ fn read_market_price(
         Some(index) => get_utc_day_vwap(storage.clone(), day, index)?,
         None => None,
     };
-    let spot = fresh_coen_rate_for_opt(storage.clone(), reference_currency)?;
-    match (vwap, spot) {
-        (Some(vwap), Some(spot)) if !vwap.is_zero() => Ok(vwap.max(spot)),
-        _ => Err(GemFactoryError::OracleUnavailable.into()),
-    }
+    vwap.ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 fn compute_params(

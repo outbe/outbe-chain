@@ -395,7 +395,7 @@ fn claim_waa(
 }
 
 #[test]
-fn a_claim_prices_on_a_previous_day_vwap_above_the_spot() {
+fn a_claim_prices_on_the_previous_day_vwap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let day_vwap = U256::from(2u64) * ONE_COEN;
 
@@ -408,15 +408,15 @@ fn a_claim_prices_on_a_previous_day_vwap_above_the_spot() {
 }
 
 #[test]
-fn a_claim_prices_on_a_spot_above_the_previous_day_vwap() {
+fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
-    let spot = U256::from(3u64) * ONE_COEN;
+    let day_vwap = U256::from(2u64) * ONE_COEN;
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, spot);
-        seed_day_vwap(&storage, U256::from(2u64) * ONE_COEN);
+        seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
+        seed_day_vwap(&storage, day_vwap);
         claim_waa(&storage, contract, alice, native(500)).unwrap();
-        assert_eq!(gem_of(&storage, alice).entry_price_minor, spot);
+        assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
     });
 }
 

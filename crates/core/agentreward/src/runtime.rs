@@ -223,8 +223,9 @@ impl AgentRewardContract<'_> {
     }
 }
 
-/// The COEN price an agent reward Gem is issued at: the higher of the previous
-/// UTC day's VWAP and the fresh spot, both required.
+/// The COEN price an agent reward Gem is issued at: the previous UTC day's VWAP
+/// at claim time. The agent picks the moment it claims, so a price frozen on the
+/// day of accrual would be a look-back option.
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
     let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
     else {
@@ -232,9 +233,7 @@ fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> 
     };
     let now = storage.timestamp()?.to::<u64>();
     let day = previous_date_key(timestamp_to_date_key(now));
-    let vwap = outbe_oracle::api::get_utc_day_vwap(storage.clone(), day, index)?;
-    let spot = outbe_oracle::api::fresh_coen_rate_for_opt(storage.clone(), AGENT_GEM_CURRENCY)?;
-    Ok(vwap.zip(spot).map(|(vwap, spot)| vwap.max(spot)))
+    outbe_oracle::api::get_utc_day_vwap(storage.clone(), day, index)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.

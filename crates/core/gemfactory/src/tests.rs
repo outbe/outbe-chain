@@ -1408,11 +1408,12 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
 }
 
 #[test]
-fn issue_merchant_gem_prices_at_a_spot_above_the_previous_day_vwap() {
+fn issue_merchant_gem_ignores_a_spot_above_the_previous_day_vwap() {
     let rate = U256::from(5u64) * six_decimal_unit();
+    let vwap = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        seed_day_vwap(storage, U256::from(2u64) * six_decimal_unit());
-        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), rate);
+        seed_day_vwap(storage, vwap);
+        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
     });
 }
 
@@ -1426,44 +1427,17 @@ fn issue_merchant_gem_source_entry_dominates_the_market_price() {
     });
 }
 
-fn merchant_issue_error(storage: &StorageHandle) -> String {
-    let id = seed_and_send(
-        storage,
-        six_decimal_unit(),
-        six_decimal_unit(),
-        six_decimal_u128(),
-    );
-    err_msg(runtime::issue_merchant_gem(
-        storage,
-        ALICE,
-        id,
-        BOB,
-        six_decimal_unit(),
-    ))
-}
-
 #[test]
 fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        assert!(merchant_issue_error(storage).contains("oracle nominal unavailable"));
-    });
-}
-
-#[test]
-fn issue_merchant_gem_rejects_a_stale_spot() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        seed_day_vwap(storage, rate);
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
-        assert!(merchant_issue_error(storage).contains("oracle nominal unavailable"));
+        let id = seed_and_send(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
+        assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }
