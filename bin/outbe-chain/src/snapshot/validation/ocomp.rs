@@ -1385,6 +1385,16 @@ pub(crate) fn verify_retained_frames(
     end: outbe_snapshot::manifest::BlockIdentity,
     maximum_transactions: Option<u64>,
 ) -> eyre::Result<FrameAvailability> {
+    visit_retained_frames(view, start, end, maximum_transactions, &mut |_| Ok(()))
+}
+
+fn visit_retained_frames(
+    view: &super::super::native::RethReadOnlyView,
+    start: u64,
+    end: outbe_snapshot::manifest::BlockIdentity,
+    maximum_transactions: Option<u64>,
+    visitor: &mut impl FnMut(&outbe_primitives::OutbeReceipt) -> eyre::Result<()>,
+) -> eyre::Result<FrameAvailability> {
     use alloy_consensus::Sealable;
     use outbe_primitives::{OutbeHeader, OutbeReceipt};
     use reth_ethereum::provider::db::tables;
@@ -1451,7 +1461,8 @@ pub(crate) fn verify_retained_frames(
                         "missing replay transaction {number} at block {height}"
                     ))
                 })?;
-            view.static_files
+            let receipt = view
+                .static_files
                 .get_with_static_file_or_database(
                     StaticFileSegment::Receipts,
                     number,
@@ -1461,6 +1472,7 @@ pub(crate) fn verify_retained_frames(
                 .ok_or_else(|| {
                     Incomplete(format!("missing replay receipt {number} at block {height}"))
                 })?;
+            visitor(&receipt)?;
             result.transactions = result
                 .transactions
                 .checked_add(1)
@@ -1472,4 +1484,81 @@ pub(crate) fn verify_retained_frames(
             .ok_or_else(|| eyre::eyre!("replay block count overflow"))?;
     }
     Ok(result)
+}
+
+/// Use one retained request frame as a locator, then authenticate its intent
+/// against verified current E. No historical state or retired spool is needed.
+pub(crate) fn locate_request_job(
+    state: &CanonicalState<'_>,
+    view: &super::super::native::RethReadOnlyView,
+    request_height: u64,
+    expected_job: B256,
+    expected_day: WorldwideDay,
+    maximum_transactions: Option<u64>,
+) -> eyre::Result<OcompJobRecordV1> {
+    use alloy_consensus::{Sealable, TxReceipt};
+    use alloy_sol_types::SolEvent;
+    use outbe_metadosis::precompile::IMetadosis;
+    use outbe_primitives::addresses::METADOSIS_ADDRESS;
+
+    let header = view
+        .header(request_height)?
+        .ok_or_else(|| Incomplete(format!("missing OCOMP request header B={request_height}")))?;
+    let hash = header.hash_slow();
+    let mut request = None;
+    visit_retained_frames(
+        view,
+        request_height,
+        outbe_snapshot::manifest::BlockIdentity {
+            number: request_height,
+            hash: hex::encode(hash),
+        },
+        maximum_transactions,
+        &mut |receipt| {
+            if !receipt.status() {
+                return Ok(());
+            }
+            for log in receipt.logs() {
+                if log.address != METADOSIS_ADDRESS
+                    || log.data.topics().first()
+                        != Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
+                {
+                    continue;
+                }
+                let event = IMetadosis::OffchainJobRequested::decode_log(log)?;
+                ensure!(
+                    request.replace(event.data).is_none(),
+                    "request frame B={request_height} contains multiple OCOMP requests"
+                );
+            }
+            Ok(())
+        },
+    )?;
+    let event = request.ok_or_else(|| {
+        eyre::eyre!("complete request frame B={request_height} contains no OCOMP request")
+    })?;
+    ensure!(
+        event.wwd == expected_day.value(),
+        "request event day differs from artifact"
+    );
+    let job = state.metadosis_job(event.intentId, expected_day, Some(expected_job))?;
+    let limits = poc_schema_limits();
+    ensure!(
+        job.intent_height == request_height
+            && job.intent.logical_evaluation_height == request_height
+            && job.intent.logical_evaluation_time == header.inner.timestamp
+            && job.intent.pending_nonce == event.pendingNonce
+            && job.intent.attempt == event.attempt
+            && job
+                .intent
+                .activation_preconditions
+                .activation_preconditions_hash(&limits)?
+                == event.activationPreconditionsHash,
+        "request event or frozen block context differs from canonical job"
+    );
+    ensure!(
+        job.intent.job_id(hash, header.inner.state_root, &limits)? == expected_job,
+        "artifact JobId differs from canonical request identity"
+    );
+    Ok(job)
 }
