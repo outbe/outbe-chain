@@ -201,17 +201,17 @@ fn issue_genesis_pays_like_agents_but_born_qualified() {
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        // Genesis now pays like Wallet/Cca/Validator: cost = entry x load,
-        // floor = rate x 1.08. It only keeps the born-Qualified fast path
-        // (no maturity wait) - settle still moves cost into the Reserve.
+        // Genesis pays and is called like Wallet/Cca/Validator; it is born
+        // Qualified with a zero floor.
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
         );
         assert_eq!(item.entry_price_minor, rate);
+        assert_eq!(item.floor_price_minor, U256::ZERO);
         assert_eq!(
-            item.floor_price_minor,
-            rate * U256::from(108u64) / U256::from(100u64)
+            item.call_price_minor,
+            rate * U256::from(228u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Qualified as u8);
         assert_eq!(item.gem_type, GemTypes::Genesis as u8);

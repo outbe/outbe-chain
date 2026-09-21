@@ -658,16 +658,11 @@ fn compute_params(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let (floor_price, initial_state) = match gem_type {
-        // Genesis: validator gem during the genesis window - born Qualified
-        // (no maturity wait), but validators pay like every other agent
-        // class: cost = entry x load, floor = rate x 1.08. settleGem moves
-        // the cost into the Reserve vault just like Wallet/Cca/Sra.
+        // Genesis: validator gem during the genesis window - born Qualified with
+        // a zero floor, but paid and called like every other agent class.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (
-                derived_floor(coen_rate, terms.floor_rate)?,
-                GemState::Qualified,
-            )
+            (U256::ZERO, GemState::Qualified)
         }
         GemTypes::Sra => {
             compute_cost(coen_rate, promis_load, SRA_RATE)?;
