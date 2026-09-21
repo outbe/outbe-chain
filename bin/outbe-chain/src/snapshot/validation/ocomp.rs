@@ -926,18 +926,85 @@ fn scan_budget(label: &str, visited: u64, total: u64, maximum: Option<u64>) -> e
     Ok(())
 }
 
+/// Keep observations from successful reads even when a later relation fails.
+/// A visited count is not a passed check or a claim about an unvisited suffix.
+fn observe_inventory_bound(
+    report: Option<&mut super::report::ValidationReport>,
+    name: &str,
+    start: u64,
+    end_exclusive: u64,
+    visited: u64,
+) {
+    let Some(report) = report else {
+        return;
+    };
+    if let Some(bound) = report
+        .inventory_bounds
+        .iter_mut()
+        .find(|bound| bound.name == name)
+    {
+        bound.start = start;
+        bound.end_exclusive = end_exclusive;
+        bound.visited = visited;
+    } else {
+        report
+            .inventory_bounds
+            .push(super::report::InventoryBounds {
+                name: name.into(),
+                start,
+                end_exclusive,
+                visited,
+            });
+    }
+}
+
 impl<'a, 'b> CanonicalInventory<'a, 'b> {
+    #[cfg(test)]
     pub(crate) fn scan(
         state: &'a CanonicalState<'b>,
         scratch_parent: &Path,
         protected: &ProtectedPaths,
         maximum_records: Option<u64>,
     ) -> eyre::Result<Self> {
+        Self::scan_with_report(state, scratch_parent, protected, maximum_records, None)
+    }
+
+    fn scan_with_report(
+        state: &'a CanonicalState<'b>,
+        scratch_parent: &Path,
+        protected: &ProtectedPaths,
+        maximum_records: Option<u64>,
+        mut report: Option<&mut super::report::ValidationReport>,
+    ) -> eyre::Result<Self> {
         validate_layout(&[], protected, &[scratch_parent.to_path_buf()])?;
         // The owner bounds its native aggregate before allocation and validates
         // live scheduler/FSM/job equivalence. No local directory seeds this list.
         let active_jobs = state.live_ocomp_jobs()?;
         let active_intents = u64::try_from(active_jobs.len())?;
+        if let Some(report) = report.as_deref_mut() {
+            report.active_ocomp = active_jobs
+                .iter()
+                .map(|(intent_id, job)| super::report::ActiveOcompObservation {
+                    intent_id: hex::encode(intent_id),
+                    job_id: job.finalized.as_ref().map(|job| hex::encode(job.job_id)),
+                    request_height: job.intent_height,
+                    worldwide_day: job.intent.wwd,
+                    canonical_status: format!("{:?}", job.status),
+                    pin_stage: "NotInspected".into(),
+                    projection_before_request: None,
+                    source_verified: false,
+                    export_verified: false,
+                })
+                .collect();
+        }
+        observe_inventory_bound(
+            report.as_deref_mut(),
+            "active_intents",
+            0,
+            active_intents,
+            active_intents,
+        );
+
         if maximum_records.is_some_and(|maximum| active_intents > maximum) {
             return Err(Incomplete(format!(
                 "active intent scan requires {active_intents} records, exceeding configured budget"
@@ -955,6 +1022,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             nod_head > 0 && nod_head <= nod_tail,
             "invalid NOD FIFO bounds"
         );
+        observe_inventory_bound(report.as_deref_mut(), "nod_fifo", nod_head, nod_tail, 0);
         ensure!(
             state.nod_materialization_day(nod_tail)?.value() == 0,
             "NOD FIFO next-free tail is occupied"
@@ -1021,9 +1089,21 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 tx.put::<InventoryRows>(key, Vec::new())?;
             }
             bounds.nod_entries += 1;
+            observe_inventory_bound(
+                report.as_deref_mut(),
+                "nod_fifo",
+                nod_head,
+                nod_tail,
+                bounds.nod_entries,
+            );
         }
 
         let total_series = state.intex_total_series()?;
+        observe_inventory_bound(report.as_deref_mut(), "intex_series", 0, total_series, 0);
+        observe_inventory_bound(report.as_deref_mut(), "intex_days", 0, 0, 0);
+        observe_inventory_bound(report.as_deref_mut(), "payout_bitmap_words", 0, 0, 0);
+        let mut bitmap_expected = 0_u64;
+        let mut bitmap_visited = 0_u64;
         for index in 0..total_series {
             scan_budget("Intex series", index, total_series, maximum_records)?;
             let id = state.intex_series_id_at(index)?;
@@ -1040,12 +1120,28 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             );
             tx.put::<InventoryRows>(key, Vec::new())?;
             bounds.series += 1;
+            observe_inventory_bound(
+                report.as_deref_mut(),
+                "intex_series",
+                0,
+                total_series,
+                bounds.series,
+            );
             let day_key = inventory_key(b'w', &day.value().to_be_bytes());
             if tx.get::<InventoryRows>(day_key.clone())?.is_some() {
                 continue;
             }
             tx.put::<InventoryRows>(day_key, Vec::new())?;
             bounds.days += 1;
+            // Distinct days are discovered through the permanent series index;
+            // this records the population reached, not an unobserved final count.
+            observe_inventory_bound(
+                report.as_deref_mut(),
+                "intex_days",
+                0,
+                bounds.days,
+                bounds.days,
+            );
             let certified = state.intex_certified_contributor_generation(day)?;
             let Some(round) = state.intex_certified_payout_round(day.value())? else {
                 continue;
@@ -1060,11 +1156,34 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                     && round.paid_so_far <= round.amount,
                 "inconsistent certified payout round"
             );
+            bitmap_expected = bitmap_expected
+                .checked_add(u64::from(certified.contributor_count).div_ceil(256))
+                .ok_or_else(|| eyre::eyre!("payout bitmap expected count overflow"))?;
+            observe_inventory_bound(
+                report.as_deref_mut(),
+                "payout_bitmap_words",
+                0,
+                bitmap_expected,
+                bitmap_visited,
+            );
             let bitmap = verify_paid_bitmap(
                 certified.contributor_count,
                 round.paid_leaf_count,
                 maximum_records,
-                |word| state.intex_paid_leaves_word(day.value(), word),
+                |word| {
+                    let value = state.intex_paid_leaves_word(day.value(), word)?;
+                    bitmap_visited = bitmap_visited
+                        .checked_add(1)
+                        .ok_or_else(|| eyre::eyre!("payout bitmap visited count overflow"))?;
+                    observe_inventory_bound(
+                        report.as_deref_mut(),
+                        "payout_bitmap_words",
+                        0,
+                        bitmap_expected,
+                        bitmap_visited,
+                    );
+                    Ok(value)
+                },
             )?;
             bounds.bitmap_words = bounds
                 .bitmap_words
@@ -1863,57 +1982,13 @@ pub(crate) fn verify_canonical_obligations(
         protected.0.push(projection.root.clone());
     }
     // Independent canonical discovery precedes every local pin/job population.
-    let mut inventory =
-        CanonicalInventory::scan(state, scratch_parent, &protected, maximum_records)?;
-    if let Some(report) = report.as_deref_mut() {
-        report.active_ocomp = inventory
-            .active_jobs()
-            .iter()
-            .map(|(intent_id, job)| super::report::ActiveOcompObservation {
-                intent_id: hex::encode(intent_id),
-                job_id: job.finalized.as_ref().map(|job| hex::encode(job.job_id)),
-                request_height: job.intent_height,
-                worldwide_day: job.intent.wwd,
-                canonical_status: format!("{:?}", job.status),
-                pin_stage: "NotInspected".into(),
-                projection_before_request: None,
-                source_verified: false,
-                export_verified: false,
-            })
-            .collect();
-        let bounds = &inventory.bounds;
-        for (name, start, end_exclusive, visited) in [
-            (
-                "active_intents",
-                0,
-                bounds.active_intents,
-                bounds.active_intents,
-            ),
-            (
-                "nod_fifo",
-                bounds.nod_head,
-                bounds.nod_tail,
-                bounds.nod_entries,
-            ),
-            ("intex_series", 0, bounds.series, bounds.series),
-            ("intex_days", 0, bounds.days, bounds.days),
-            (
-                "payout_bitmap_words",
-                0,
-                bounds.bitmap_words,
-                bounds.bitmap_words,
-            ),
-        ] {
-            report
-                .inventory_bounds
-                .push(super::report::InventoryBounds {
-                    name: name.into(),
-                    start,
-                    end_exclusive,
-                    visited,
-                });
-        }
-    }
+    let mut inventory = CanonicalInventory::scan_with_report(
+        state,
+        scratch_parent,
+        &protected,
+        maximum_records,
+        report.as_deref_mut(),
+    )?;
 
     let location = layout
         .projection

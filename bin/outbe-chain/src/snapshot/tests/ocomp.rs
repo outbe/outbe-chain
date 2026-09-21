@@ -3941,6 +3941,221 @@ mod pin_authority {
         }
 
         #[test]
+        fn later_series_or_bitmap_budget_preserves_reached_bounds_and_active_identity() {
+            use crate::snapshot::validation::{
+                ocomp::verify_canonical_obligations,
+                report::{CheckName, CheckStatus, ValidationReport},
+                Incomplete,
+            };
+            for version in [1, 2] {
+                for with_round in [false, true] {
+                    super::super::with_canonical_frontiers(
+                        version,
+                        |_| {},
+                        |request| {
+                            let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
+                            prepared
+                                .owner
+                                .storage
+                                .extend(super::super::payout_owner(true, with_round).storage);
+                            prepared.owner
+                        },
+                        |state, source, layout, scratch| {
+                            let expected = state.live_ocomp_jobs().unwrap();
+                            assert_eq!(expected.len(), 1);
+                            let mut report = ValidationReport::new([CheckName::Ocomp]);
+                            let error = verify_canonical_obligations(
+                                state,
+                                source,
+                                layout,
+                                scratch,
+                                Some(1),
+                                Some(&mut report),
+                            )
+                            .err()
+                            .expect("later series or bitmap word exceeds the selected cap");
+                            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                            let expected_diagnostic = if with_round {
+                                "payout bitmap scan stopped at 1/2 words"
+                            } else {
+                                "Intex series scan stopped at 1/3"
+                            };
+                            assert!(error.to_string().contains(expected_diagnostic), "{error:#}");
+                            assert_eq!(report.active_ocomp.len(), 1);
+                            let active = &report.active_ocomp[0];
+                            assert_eq!(active.intent_id, hex::encode(expected[0].0));
+                            assert_eq!(active.job_id, None);
+                            assert_eq!(active.pin_stage, "NotInspected");
+                            assert_eq!(active.projection_before_request, None);
+                            assert!(!active.source_verified);
+                            assert!(!active.export_verified);
+                            let series = report
+                                .inventory_bounds
+                                .iter()
+                                .find(|b| b.name == "intex_series")
+                                .expect("reached permanent series interval");
+                            assert_eq!(
+                                (series.start, series.end_exclusive, series.visited),
+                                (0, 3, 1)
+                            );
+                            let fifo = report
+                                .inventory_bounds
+                                .iter()
+                                .find(|b| b.name == "nod_fifo")
+                                .expect("completed empty FIFO interval");
+                            assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 1, 0));
+                            if with_round {
+                                let bitmap = report
+                                    .inventory_bounds
+                                    .iter()
+                                    .find(|b| b.name == "payout_bitmap_words")
+                                    .expect("reached contributor bitmap interval");
+                                assert_eq!(
+                                    (bitmap.start, bitmap.end_exclusive, bitmap.visited),
+                                    (0, 2, 1)
+                                );
+                            }
+                            assert!(report.observed.p.is_none());
+                            assert!(report.observed.c_current.is_none());
+                            assert_eq!(
+                                report.check(CheckName::Ocomp).status,
+                                CheckStatus::Incomplete
+                            );
+                            assert!(!report.success());
+                        },
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn later_fifo_budget_preserves_discovered_active_identity_and_partial_scan_bounds() {
+            use crate::snapshot::validation::{
+                ocomp::verify_canonical_obligations,
+                report::{CheckName, CheckStatus, ValidationReport},
+                Incomplete,
+            };
+            for version in [1, 2] {
+                super::super::with_canonical_frontiers(
+                    version,
+                    |_| {},
+                    |request| {
+                        let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
+                        // Replace only the fixture's empty NOD inventory with two native
+                        // queued generations; Metadosis/Registry authority stays intact.
+                        prepared.owner.storage.extend(queued_owner(2).storage);
+                        prepared.owner
+                    },
+                    |state, source, layout, scratch| {
+                        let expected = state.live_ocomp_jobs().unwrap();
+                        assert_eq!(expected.len(), 1);
+                        let mut report = ValidationReport::new([CheckName::Ocomp]);
+                        let error = verify_canonical_obligations(
+                            state,
+                            source,
+                            layout,
+                            scratch,
+                            Some(1),
+                            Some(&mut report),
+                        )
+                        .err()
+                        .expect("the second FIFO entry exceeds the selected cap");
+                        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                        assert!(
+                            error.to_string().contains("NOD FIFO scan stopped at 1/2"),
+                            "{error:#}"
+                        );
+                        assert_eq!(report.active_ocomp.len(), 1, "later inventory interruption must not erase the independently discovered active intent");
+                        let active = &report.active_ocomp[0];
+                        assert_eq!(active.intent_id, hex::encode(expected[0].0));
+                        assert_eq!(active.job_id, None);
+                        assert_eq!(active.request_height, expected[0].1.intent_height);
+                        assert_eq!(active.canonical_status, "AwaitingFinality");
+                        assert_eq!(active.pin_stage, "NotInspected");
+                        assert_eq!(active.projection_before_request, None);
+                        assert!(!active.source_verified);
+                        assert!(!active.export_verified);
+                        let active_bounds = report
+                            .inventory_bounds
+                            .iter()
+                            .find(|b| b.name == "active_intents")
+                            .expect("completed active inventory bound");
+                        assert_eq!(
+                            (
+                                active_bounds.start,
+                                active_bounds.end_exclusive,
+                                active_bounds.visited
+                            ),
+                            (0, 1, 1)
+                        );
+                        let fifo = report
+                            .inventory_bounds
+                            .iter()
+                            .find(|b| b.name == "nod_fifo")
+                            .expect("interrupted FIFO bound");
+                        assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 3, 1));
+                        assert!(report.observed.p.is_none());
+                        assert!(report.observed.c_current.is_none());
+                        assert_eq!(
+                            report.check(CheckName::Ocomp).status,
+                            CheckStatus::Incomplete
+                        );
+                        assert!(!report.success());
+                    },
+                );
+            }
+        }
+
+        #[test]
+        fn missing_projection_preserves_active_identity_with_unknown_frontier_relationship() {
+            use crate::snapshot::validation::{
+                ocomp::verify_canonical_obligations,
+                report::{CheckName, CheckStatus, ValidationReport},
+                Incomplete,
+            };
+            for version in [1, 2] {
+                super::super::with_canonical_frontiers(
+                    version,
+                    |layout| {
+                        std::fs::remove_dir_all(&layout.projection.as_ref().unwrap().root).unwrap()
+                    },
+                    |request| fixture(request, Phase::AwaitingFinality, |_| {}).owner,
+                    |state, source, layout, scratch| {
+                        let mut report = ValidationReport::new([CheckName::Ocomp]);
+                        let error = verify_canonical_obligations(
+                            state,
+                            source,
+                            layout,
+                            scratch,
+                            None,
+                            Some(&mut report),
+                        )
+                        .err()
+                        .expect("selected projection inputs are absent");
+                        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                        assert!(error.to_string().contains("projection"), "{error:#}");
+                        let expected = state.live_ocomp_jobs().unwrap();
+                        assert_eq!(report.active_ocomp.len(), 1);
+                        assert_eq!(report.active_ocomp[0].intent_id, hex::encode(expected[0].0));
+                        assert_eq!(report.active_ocomp[0].pin_stage, "NotInspected");
+                        assert_eq!(report.active_ocomp[0].projection_before_request, None);
+                        assert!(!report.active_ocomp[0].source_verified);
+                        assert!(!report.active_ocomp[0].export_verified);
+                        assert!(report.observed.p.is_none());
+                        assert!(report.observed.c_current.is_none());
+                        assert_eq!(
+                            report.check(CheckName::Ocomp).status,
+                            CheckStatus::Incomplete
+                        );
+                        assert!(!report.success());
+                        let json = serde_json::to_value(&report).unwrap();
+                        assert!(json["active_ocomp"][0]["projection_before_request"].is_null());
+                    },
+                );
+            }
+        }
+
+        #[test]
         fn active_report_preserves_identity_and_distinguishes_unverified_local_capabilities() {
             use crate::snapshot::validation::{
                 ocomp::{CanonicalActiveAudit, CanonicalLocalPinStage},
