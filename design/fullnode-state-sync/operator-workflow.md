@@ -237,3 +237,55 @@ The create command and conventional file placement have process-level native-sto
 coverage, including byte preservation and opening copied stores without the donor or
 artifact sidecars. Optional semantic validation and ordinary continuation have separate
 acceptance tasks; passing creation and placement tests does not claim those have passed.
+
+## Executed acceptance (2026-09-21)
+
+The complete release scenario passed **21/21 steps** at source commit
+`7bfbaeaff84f2636f6c1345c73d0484de2133214`, with a clean checkout. It used four
+validators, a separately provisioned FullNode, real Gramine SGX with
+`sgx-no-attest`, and chain ID `54322345`. Scenario duration was 1,700,344 ms.
+This is a functional result from one local run, not a throughput or resource SLA.
+
+| Observation | Executed result |
+|---|---|
+| Signed native artifact | H=119; execution/CE/projection=120; 194 files; 13,140,174,951 bytes. Mandatory signature verified. |
+| Transfer | Archive SHA-256 `345d3e8b0fbc240f807539f5c7e72586aedfb8c6f919a8ee8155b2a193e8f8f8` preserved. |
+| Optional first validation | All seven checks Passed: files, provenance, headers, EVM, CE, bodies and OCOMP. |
+| Both placement variants | Ordinary startup from native position 120 passed with validation performed and with validation omitted. No restore command or startup receipt. |
+| Copied public work | All 257 NODs materialized; all contributor payouts and recipient balances/NOD bodies matched the canonical observations. |
+| New recipient computation | New JobIntent at 685, canonical result at 693. Recipient worker admitted and executed new work; local and canonical result digest matched. |
+| Later ordinary restart | Stopped native state K=695; replacement process resumed 695 and finalized through 699. Recipient-owned identity/configuration fingerprints remained unchanged. |
+| Optional current-K audit | Headers, EVM, CE, bodies and OCOMP Passed; files/provenance NotRequested, without original sidecars. |
+
+The exact runtime identities and release build commands are retained in
+`/tmp/snapshot-09-artifacts-v7.json`. The final rebuild changed only the harness
+and verified eight unchanged runtime/input artifact identities. The invocation was:
+
+```sh
+sudo -n env RAYON_NUM_THREADS=4 GIT_CONFIG_GLOBAL=/home/ubuntu/.gitconfig \
+  ./target/release/outbe-e2e --repo /home/ubuntu/outbe-chain \
+  --tee sgx-no-attest --sudo --all --tags @offline-snapshot \
+  --concurrency 1 --fail-fast --no-cleanup \
+  --data-dir /tmp/snapshot-09-e2e \
+  --artifact-manifest /tmp/snapshot-09-artifacts-v7.json \
+  --scenario-timeout-secs 3600
+```
+
+Retained local evidence:
+
+- `/tmp/snapshot-09-e2e8.log`: terminal success and all 21 steps.
+- `/tmp/snapshot-09-e2e/evidence/run-1789989397-3204436/scenario-001.json`: source, profile, process and Oracle evidence.
+- `/tmp/snapshot-09-e2e/run-1789989397-3204436/scenario-1/offline-snapshot-evidence.json`: native placements, identities, new worker admission/result and current-K restart.
+- The same scenario's `offline-snapshot/` directory: create/validation output, `public-effects.json`, `worker-native-evidence.json`, and `validate-current-k.stdout`.
+
+Workspace verification ran `cargo nextest run --workspace --build-jobs 2
+--test-threads 2 --no-fail-fast` and workspace doctests. The initial workspace run
+reported 6,582 passes and two CLI fixture watchdog failures. After sharing the
+existing file-backed 600-second watchdog, the affected create/files suites passed
+3/3; there were no other workspace failures. Both compile-fail API suites passed.
+Doctests passed (nine tests, one ignored). Workspace all-target Clippy and the
+final affected harness all-target Clippy passed with `-D warnings`; fmt passed.
+The final harness regression set passed 86/86. Test-first regression evidence,
+independent reviews and exact check logs are recorded in task 09 and its Beads
+dependencies. The conditional repository `native-dcap` Clippy lane also compiled;
+the acceptance runtime remained `sgx-no-attest` throughout.
