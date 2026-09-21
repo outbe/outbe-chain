@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 /// @title ICredisFactory - credis lifecycle orchestrator.
 interface ICredisFactory {
-    event CredisRequested(address indexed smartAccount, address indexed cca, uint256 amount);
+    event CredisIssued(address indexed smartAccount, address indexed cca, uint256 amount);
 
     /// @notice Open a credis position against a confidential Gratis pledge. Called by
     ///         the CCA, which presents `pledgeHandle` (the public id returned by
@@ -26,6 +26,10 @@ interface ICredisFactory {
     /// balance and never returns to the CCA - settlement and void leave it alone.
     /// The required amount is not in calldata - it was sealed into the ticket at
     /// pledge time - so read it from the pledge quote before calling.
+    ///
+    /// `reservationId` is the hold created by `IVaultRouter.reserveStables` for this
+    /// smart account. If the reservation is larger than the pledged credit, the
+    /// unused remainder is returned to the origin vault.
     /// @param referenceCurrency ISO 4217 numeric code of the threshold-evaluation
     ///        anchor, elected here and fixed for the position's life. Must be a
     ///        registered reference currency; the call price is struck from the
@@ -36,10 +40,13 @@ interface ICredisFactory {
     ///        not denominate the position.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
-    function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth, uint16 referenceCurrency)
-        external
-        payable
-        returns (uint256 positionId, uint256 amountStables);
+    function issueCredis(
+        address smartAccount,
+        bytes32 pledgeHandle,
+        bytes32 spendAuth,
+        uint16 referenceCurrency,
+        uint256 reservationId
+    ) external payable returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.

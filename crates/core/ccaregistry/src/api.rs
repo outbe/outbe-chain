@@ -2,6 +2,7 @@
 pub use crate::precompile::ICcaRegistry;
 pub use crate::runtime::{position_opened, position_voided};
 use crate::{
+    errors::CcaError,
     schema::{address_day_key, CcaContract},
     state::validate_state,
 };
@@ -16,6 +17,15 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
     match CcaContract::new(storage.clone()).records.get(cca)? {
         Some(record) => Ok(validate_state(record.state)? == ICcaRegistry::State::Active),
         None => Ok(false),
+    }
+}
+
+/// Reverts unless `cca` is recorded in `Active` standing.
+pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<()> {
+    if is_active(storage, cca)? {
+        Ok(())
+    } else {
+        Err(CcaError::CcaNotActive(cca).into())
     }
 }
 

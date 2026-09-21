@@ -49,10 +49,6 @@ contract SmartAccountFactory is ISmartAccountFactory {
     ///      0x1011 has no code and `createAccount` reverts on the empty return data.
     address public constant CCA_REGISTRY = 0x0000000000000000000000000000000000001011;
 
-    /// @notice Thrown when the CCA is not in good standing at the registry.
-    /// @param state The state actually recorded; `Unknown` means it never registered.
-    error CcaNotActive(address cca, ICcaRegistry.State state);
-
     constructor(
         address kernelFactory_,
         address sudoPolicy_,
@@ -129,7 +125,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
         // Standing is checked only on the deploying path; `getAccountAddress` stays a pure CREATE2
         // prediction so a client can always compute the address it is about to ask for.
         ICcaRegistry.State ccaState = ICcaRegistry(CCA_REGISTRY).getCcaState(cca);
-        require(ccaState == ICcaRegistry.State.Active, CcaNotActive(cca, ccaState));
+        require(ccaState == ICcaRegistry.State.Active, ICcaRegistry.CcaNotActive(cca, ccaState));
         Install[] memory packages = _packages(owner, cca, bundleTokens, bundleSenders);
         account = _KERNEL_FACTORY.deploy(packages, salt);
     }

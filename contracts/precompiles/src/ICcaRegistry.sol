@@ -19,6 +19,9 @@ interface ICcaRegistry {
         uint256 rewardAmount;
     }
 
+    /// @notice Thrown when a CCA is not in Active standing.
+    error CcaNotActive(address cca, State state);
+
     event Bonded(address indexed cca, uint256 amount, State state);
     event UnbondRequested(address indexed cca, uint256 amount, uint64 unbondUnlocksAfter);
     event UnbondClaimed(address indexed cca, uint256 amount);

@@ -234,5 +234,21 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CcaNotActive",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "enum ICcaRegistry.State"
+      }
+    ]
   }
 ]

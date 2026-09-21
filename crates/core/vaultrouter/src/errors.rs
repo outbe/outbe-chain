@@ -80,8 +80,20 @@ pub enum VaultRouterError {
     RebalanceInputExceedsMax { required: U256, max_amount_to: U256 },
     #[error("unsupported asset decimals: {0}")]
     UnsupportedAssetDecimals(u8),
-    #[error("cca not active: {0}")]
-    CcaNotActive(Address),
+    #[error("invalid reservation amount")]
+    InvalidReservationAmount,
+    #[error("reservation exists: {0}")]
+    ReservationExists(U256),
+    #[error("reservation not found: {0}")]
+    ReservationNotFound(U256),
+    #[error("reservation expired: {0}")]
+    ReservationExpired(U256),
+    #[error("reservation account mismatch")]
+    ReservationAccountMismatch,
+    #[error("reservation amount exceeds hold: available={available}, required={required}")]
+    ReservationInsufficient { available: U256, required: U256 },
+    #[error("block timestamp does not fit unix seconds")]
+    TimestampOverflow,
 }
 
 impl From<VaultRouterError> for PrecompileError {

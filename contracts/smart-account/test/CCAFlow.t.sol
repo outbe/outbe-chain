@@ -444,9 +444,7 @@ contract CCAFlow is BaseAATest {
         ccaRegistry.setState(cca.addr, ICcaRegistry.State.Deregistering);
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                SmartAccountFactory.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistering
-            )
+            abi.encodeWithSelector(ICcaRegistry.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistering)
         );
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 8);
     }
@@ -456,7 +454,7 @@ contract CCAFlow is BaseAATest {
         ccaRegistry.setState(cca.addr, ICcaRegistry.State.Deregistered);
 
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistered)
+            abi.encodeWithSelector(ICcaRegistry.CcaNotActive.selector, cca.addr, ICcaRegistry.State.Deregistered)
         );
         factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 9);
     }
@@ -477,7 +475,7 @@ contract CCAFlow is BaseAATest {
         vm.prank(bondingCca);
         ccaRegistry.bond{value: 1}("Test CCA");
         vm.expectRevert(
-            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, bondingCca, ICcaRegistry.State.Bonding)
+            abi.encodeWithSelector(ICcaRegistry.CcaNotActive.selector, bondingCca, ICcaRegistry.State.Bonding)
         );
         factory.createAccount(user.addr, bondingCca, bundleTokens, bundleSenders, 10);
     }

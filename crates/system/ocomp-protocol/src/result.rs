@@ -248,6 +248,24 @@ pub fn lysis_v1_empty_semantic_event_root() -> Result<B256, ProtocolError> {
     )
 }
 
+/// Sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
+/// nominal. Pass Desis Allocation once the auction has frozen it. Before then
+/// pass the Desis Limit, the maximum later issuance may allocate, so a Limit
+/// that could breach the ceiling fails before economic writes.
+pub fn wwd_allocation_ceiling(
+    lysis_allocation_minor: U256,
+    desis_minor: U256,
+    tribute_nominal_total: U256,
+) -> Result<(), ProtocolError> {
+    let allocated =
+        lysis_allocation_minor
+            .checked_add(desis_minor)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "WWD allocation ceiling",
+            })?;
+    require(allocated <= tribute_nominal_total, "WWD allocation ceiling")
+}
+
 fn validate_lysis_v1_event_commitment(
     counts: &ExactCountsV1,
     event_summary_hash: B256,
@@ -441,24 +459,6 @@ fn validate_nod_membership_proof(
             && proof_bytes <= limits.max_proof_bytes,
         "Nod membership proof shape",
     )
-}
-
-/// Sealed WWD Lysis + Desis amounts cannot exceed that day's Tribute
-/// nominal. Pass Desis Allocation once the auction has frozen it. Before then
-/// pass the Desis Limit, the maximum later issuance may allocate, so a Limit
-/// that could breach the ceiling fails before economic writes.
-pub fn wwd_allocation_ceiling(
-    lysis_allocation_minor: U256,
-    desis_minor: U256,
-    tribute_nominal_total: U256,
-) -> Result<(), ProtocolError> {
-    let allocated =
-        lysis_allocation_minor
-            .checked_add(desis_minor)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "WWD allocation ceiling",
-            })?;
-    require(allocated <= tribute_nominal_total, "WWD allocation ceiling")
 }
 
 impl LysisResultV1 {

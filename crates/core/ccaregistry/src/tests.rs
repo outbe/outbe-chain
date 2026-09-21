@@ -104,15 +104,18 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert!(api::cca_state(&storage, ALICE).is_err());
         assert!(api::get_cca(&storage, ALICE).is_err());
         assert!(!api::is_active(&storage, ALICE).unwrap());
+        assert!(api::require_active_cca(&storage, ALICE).is_err());
         let first = BOND_REQUIREMENT - U256::ONE;
         bond(&storage, ALICE, first);
         assert_eq!(
             api::cca_state(&storage, ALICE).unwrap(),
             ICcaRegistry::State::Bonding
         );
+        assert!(api::require_active_cca(&storage, ALICE).is_err());
         assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
         bond(&storage, ALICE, U256::ONE);
         assert!(api::is_active(&storage, ALICE).unwrap());
+        api::require_active_cca(&storage, ALICE).unwrap();
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         bond(&storage, ALICE, U256::from(7));
         runtime::position_opened(&storage, ALICE, DAY, U256::from(100)).unwrap();

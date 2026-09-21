@@ -44,6 +44,52 @@ pub fn reference_currency_assets(
         .map_err(|_| PrecompileError::Revert("referenceCurrencyAssets undecodable".into()))
 }
 
+/// Direct storage read of a reservation. Same-process precompiles use this
+/// rather than a staticcall so tests sharing the provider can seed and inspect
+/// holds without routing through the EVM stub.
+pub fn reservation_of(
+    storage: &StorageHandle<'_>,
+    id: U256,
+) -> Result<crate::schema::LiquidityReservation> {
+    crate::runtime::reservation_of(storage, id)
+}
+
+/// `releaseReservation`: deliver `amount` of the hold under `id` into `receiver`
+/// via an EVM sub-call, returning any unused remainder to the origin vault.
+pub fn release_reservation(
+    storage: &StorageHandle<'_>,
+    id: U256,
+    receiver: Address,
+    amount: U256,
+) -> Result<U256> {
+    let ret = storage.call(
+        VAULT_ROUTER_ADDRESS,
+        U256::ZERO,
+        IVaultRouter::releaseReservationCall {
+            id,
+            receiver,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    IVaultRouter::releaseReservationCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("releaseReservation undecodable".into()))
+}
+
+/// `returnReservation`: deposit the assets held under `id` back into their vault.
+pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256> {
+    let ret = storage.call(
+        VAULT_ROUTER_ADDRESS,
+        U256::ZERO,
+        IVaultRouter::returnReservationCall { id }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::returnReservationCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("returnReservation undecodable".into()))
+}
+
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and top
 /// it up into `receiver` via an EVM sub-call to the vault router, returning the
 /// burned shares.

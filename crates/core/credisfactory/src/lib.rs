@@ -1,7 +1,7 @@
 //! Credis factory precompile (`0x1009`). Orchestrates the credis lifecycle on
 //! top of the confidential Gratis token:
 //!
-//! - `requestCredis` consumes a confidential Gratis pledge-lock ticket (pledge
+//! - `issueCredis` consumes a confidential Gratis pledge-lock ticket (pledge
 //!   handle + spend authorization) via [`outbe_gratis`], opens an [`outbe_credis`]
 //!   position bound to the smart account (storing the pledger EOA), crediting the
 //!   collateral into the pledger's own pledged ledger, and delivers the stablecoin

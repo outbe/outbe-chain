@@ -44,4 +44,5 @@ pub use list::{
     ordered_list_root, verify_ordered_list_membership, OrderedListLimits, StreamingOrderedListRoot,
 };
 pub use registry::{HashDomain, ListKind, ObjectKind};
+pub use result::wwd_allocation_ceiling;
 pub use schema::SchemaLimits;
