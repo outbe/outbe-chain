@@ -4,7 +4,6 @@ use clap::Parser;
 
 mod create;
 
-#[cfg(test)]
 mod validate;
 
 #[derive(Parser)]
@@ -18,6 +17,8 @@ pub(crate) struct SnapshotCli {
 pub(crate) enum SnapshotCommand {
     /// Package native files while outbe-chain, OCOMP and CE writers are stopped.
     Create(create::CreateArgs),
+    /// Independently audit selected native data without starting the node.
+    Validate(validate::ValidateArgs),
 }
 
 pub(crate) fn run(args: &[String]) -> eyre::Result<()> {
@@ -26,5 +27,6 @@ pub(crate) fn run(args: &[String]) -> eyre::Result<()> {
     );
     match cli.command {
         SnapshotCommand::Create(args) => create::run(args),
+        SnapshotCommand::Validate(args) => validate::run(args),
     }
 }

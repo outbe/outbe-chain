@@ -898,3 +898,538 @@ mod native_files {
         assert_eq!(super::super::headers::fingerprint(external.path()), before);
     }
 }
+
+mod orchestration {
+    use super::{CheckName, CheckStatus, ValidationReport};
+    use crate::snapshot::{
+        tests::{evm::state_fixture, headers::fingerprint},
+        validation::run::{validate_snapshot, ValidationInputs},
+    };
+    use crate::OutbeHeader;
+    use alloy_consensus::Sealable;
+    use alloy_primitives::{keccak256, Address, B256, U256};
+    use reth_ethereum::{
+        provider::db::{
+            database::Database,
+            init_db,
+            mdbx::DatabaseArguments,
+            table::Table,
+            tables,
+            transaction::{DbTx, DbTxMut},
+        },
+        trie::root::{state_root_unhashed, storage_root_unhashed},
+    };
+    use reth_primitives_traits::Account;
+    use std::{ffi::OsString, fs, path::Path};
+
+    type StageCheckpoint = <tables::StageCheckpoints as Table>::Value;
+
+    fn arguments(root: &Path) -> Vec<OsString> {
+        // native_arguments writes genesis/configuration during fixture setup.
+        // Reconstruct only argv here, after setup and before the fingerprint.
+        vec![
+            "--chain".into(),
+            root.join("genesis.json").into_os_string(),
+            "--datadir".into(),
+            root.join("chain").into_os_string(),
+            "--projection.storage-config".into(),
+            root.join("configuration/offchain.toml").into_os_string(),
+        ]
+    }
+
+    fn inputs(checks: &str) -> ValidationInputs {
+        ValidationInputs {
+            checks: checks.into(),
+            ..Default::default()
+        }
+    }
+
+    fn run(root: &Path, inputs: &ValidationInputs) -> ValidationReport {
+        let argv = arguments(root);
+        let before = fingerprint(root);
+        let scratch = tempfile::tempdir().unwrap();
+        let scratch_before = fingerprint(scratch.path());
+        let result = validate_snapshot(inputs, argv, scratch.path());
+        assert_eq!(fingerprint(root), before, "validation changed source files");
+        assert_eq!(
+            fingerprint(scratch.path()),
+            scratch_before,
+            "validation leaked scratch"
+        );
+        result.expect("source validation outcomes must be represented in the report")
+    }
+
+    fn native_status(report: &ValidationReport, evm: CheckStatus) {
+        assert_eq!(report.check(CheckName::Headers).status, CheckStatus::Passed);
+        assert_eq!(report.check(CheckName::Evm).status, evm);
+        for check in [
+            CheckName::Files,
+            CheckName::Provenance,
+            CheckName::Ce,
+            CheckName::Bodies,
+            CheckName::Ocomp,
+        ] {
+            assert_eq!(
+                report.check(check).status,
+                CheckStatus::NotRequested,
+                "{check:?}"
+            );
+            assert!(report.check(check).diagnostic.is_none());
+        }
+        assert_eq!(report.success(), evm == CheckStatus::Passed);
+    }
+
+    #[test]
+    fn evm_selection_verifies_both_native_storage_versions_and_sparse_headers() {
+        for version in [1, 2] {
+            let (root, layout, _) = state_fixture(version);
+            let report = run(root.path(), &inputs("evm"));
+            native_status(&report, CheckStatus::Passed);
+            assert_eq!(report.observed.e.as_ref().unwrap().number, 101);
+            assert_eq!(report.observed.h.as_ref().unwrap().number, 100);
+            assert!(report.observed.q.is_none());
+            assert!(report.observed.p.is_none());
+            let ranges = report
+                .retained_ranges
+                .iter()
+                .filter(|r| r.domain == "headers")
+                .map(|r| (r.start, r.end_inclusive))
+                .collect::<Vec<_>>();
+            assert_eq!(ranges, vec![(0, 0), (100, 101)]);
+            assert!(report.required_missing.is_empty());
+            assert!(!layout.ocomp_root.exists());
+            assert!(!layout.offchain_root.exists());
+            assert!(!root.path().join("secondary").exists());
+        }
+    }
+
+    #[test]
+    fn corrupt_unselected_ocomp_artifacts_do_not_poison_evm_validation() {
+        let (root, layout, _) = state_fixture(2);
+        for relative in [
+            "exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1",
+            "node-v1/fatal-evidence/sticky-fatal-v1",
+            "cas-v1/objects/11/invalid-object",
+        ] {
+            let path = layout.ocomp_root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"deliberately invalid unselected OCOMP data").unwrap();
+        }
+        let report = run(root.path(), &inputs("evm"));
+        native_status(&report, CheckStatus::Passed);
+        assert!(!layout.offchain_root.exists());
+    }
+
+    #[test]
+    fn wrong_or_missing_complete_authoritative_state_fails_evm_but_not_headers() {
+        for version in [1, 2] {
+            for remove in [false, true] {
+                let (root, layout, _) = state_fixture(version);
+                let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx_mut().unwrap();
+                if remove {
+                    // Empty authoritative state is a definite root mismatch:
+                    // missing an account is not automatically an unavailable scan.
+                    if version == 1 {
+                        tx.clear::<tables::PlainAccountState>().unwrap();
+                        tx.clear::<tables::PlainStorageState>().unwrap();
+                    } else {
+                        tx.clear::<tables::HashedAccounts>().unwrap();
+                        tx.clear::<tables::HashedStorages>().unwrap();
+                    }
+                } else {
+                    let account = Account {
+                        nonce: 7,
+                        balance: U256::from(901),
+                        bytecode_hash: None,
+                    };
+                    let address = Address::repeat_byte(0x11);
+                    if version == 1 {
+                        tx.put::<tables::PlainAccountState>(address, account)
+                            .unwrap();
+                    } else {
+                        tx.put::<tables::HashedAccounts>(keccak256(address), account)
+                            .unwrap();
+                    }
+                }
+                tx.commit().unwrap();
+                drop(db);
+                let report = run(root.path(), &inputs("evm"));
+                native_status(&report, CheckStatus::Failed);
+                assert!(report.check(CheckName::Evm).diagnostic.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_lagging_finish_and_persisted_partial_unwind_are_incomplete() {
+        for version in [1, 2] {
+            for variant in [0, 1, 2] {
+                let (root, layout, _) = state_fixture(version);
+                let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx_mut().unwrap();
+                match variant {
+                    0 => {
+                        tx.delete::<tables::StageCheckpoints>("Finish".into(), None)
+                            .unwrap();
+                    }
+                    1 => {
+                        tx.put::<tables::StageCheckpoints>(
+                            "Finish".into(),
+                            StageCheckpoint::new(100),
+                        )
+                        .unwrap();
+                    }
+                    _ => {
+                        // Pinned Reth does not serialize FinishCheckpoint itself;
+                        // this native persisted marker survives the orchestrator reopen.
+                        tx.put::<tables::Metadata>(
+                            "partial_state_trie_unwind".into(),
+                            br#"{"finish_block_number":101,"partial_state_trie":100}"#.to_vec(),
+                        )
+                        .unwrap();
+                    }
+                }
+                tx.commit().unwrap();
+                drop(db);
+                let report = run(root.path(), &inputs("evm"));
+                native_status(&report, CheckStatus::Incomplete);
+                assert!(report.check(CheckName::Evm).diagnostic.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn missing_referenced_bytecode_cannot_pass_even_when_account_root_matches() {
+        for version in [1, 2] {
+            let (root, layout, _) = state_fixture(version);
+            let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+            let tx = db.tx_mut().unwrap();
+            let address = Address::repeat_byte(0x11);
+            let account = Account {
+                nonce: 7,
+                balance: U256::from(900),
+                bytecode_hash: Some(keccak256([0x60, 0x01, 0x00])),
+            };
+            if version == 1 {
+                tx.put::<tables::PlainAccountState>(address, account)
+                    .unwrap();
+            } else {
+                tx.put::<tables::HashedAccounts>(keccak256(address), account)
+                    .unwrap();
+            }
+            let expected = state_root_unhashed([(
+                address,
+                account.into_trie_account(storage_root_unhashed([(
+                    B256::repeat_byte(0x22),
+                    U256::from(123),
+                )])),
+            )]);
+            let mut header = tx
+                .get::<tables::Headers<OutbeHeader>>(101)
+                .unwrap()
+                .unwrap();
+            header.inner.state_root = expected;
+            tx.put::<tables::CanonicalHeaders>(101, header.hash_slow())
+                .unwrap();
+            tx.put::<tables::Headers<OutbeHeader>>(101, header).unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            native_status(&run(root.path(), &inputs("evm")), CheckStatus::Failed);
+        }
+    }
+
+    #[test]
+    fn missing_selected_native_directories_are_reported_without_initializing_them() {
+        for remove_database in [false, true] {
+            let (root, layout, _) = state_fixture(2);
+            let missing = if remove_database {
+                layout.chain_root.join("db")
+            } else {
+                layout.static_files_root.clone()
+            };
+            fs::remove_dir_all(&missing).unwrap();
+            let report = run(root.path(), &inputs("evm"));
+            assert!(!report.success());
+            for check in [CheckName::Headers, CheckName::Evm] {
+                assert!(matches!(
+                    report.check(check).status,
+                    CheckStatus::Incomplete | CheckStatus::Failed
+                ));
+            }
+            assert_eq!(
+                report.check(CheckName::Ocomp).status,
+                CheckStatus::NotRequested
+            );
+            assert!(!missing.exists());
+            assert!(!layout.offchain_root.exists());
+            assert!(!layout.ocomp_root.exists());
+        }
+    }
+
+    #[test]
+    fn explicit_artifact_checks_without_inputs_never_report_success() {
+        for selection in ["provenance", "files"] {
+            for named_missing in [false, true] {
+                let (root, _, _) = state_fixture(2);
+                let mut request = inputs(selection);
+                if named_missing {
+                    request.manifest = Some(root.path().join("missing-manifest.json"));
+                    request.signature = Some(root.path().join("missing-signature.json"));
+                    request.archive = Some(root.path().join("missing-snapshot.tar"));
+                }
+                let report = run(root.path(), &request);
+                assert!(!report.success());
+                assert!(matches!(
+                    report.check(CheckName::Provenance).status,
+                    CheckStatus::Incomplete | CheckStatus::Failed
+                ));
+                if selection == "files" {
+                    assert!(matches!(
+                        report.check(CheckName::Files).status,
+                        CheckStatus::Incomplete | CheckStatus::Failed
+                    ));
+                } else {
+                    assert_eq!(
+                        report.check(CheckName::Files).status,
+                        CheckStatus::NotRequested
+                    );
+                }
+                assert_ne!(report.provenance.signature_valid, Some(true));
+                assert_ne!(report.provenance.expected_signer_match, Some(true));
+                for check in [
+                    CheckName::Headers,
+                    CheckName::Evm,
+                    CheckName::Ce,
+                    CheckName::Bodies,
+                    CheckName::Ocomp,
+                ] {
+                    assert_eq!(report.check(check).status, CheckStatus::NotRequested);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn expected_signer_requires_provenance_without_hiding_native_results() {
+        let (root, _, _) = state_fixture(2);
+        let mut request = inputs("evm");
+        request.expected_signer = Some(
+            hex::decode("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        let report = run(root.path(), &request);
+        assert!(!report.success());
+        assert_eq!(report.check(CheckName::Headers).status, CheckStatus::Passed);
+        assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Passed);
+        assert!(matches!(
+            report.check(CheckName::Provenance).status,
+            CheckStatus::Incomplete | CheckStatus::Failed
+        ));
+        assert_ne!(report.provenance.expected_signer_match, Some(true));
+        for check in [
+            CheckName::Files,
+            CheckName::Ce,
+            CheckName::Bodies,
+            CheckName::Ocomp,
+        ] {
+            assert_eq!(report.check(check).status, CheckStatus::NotRequested);
+        }
+    }
+    #[test]
+    fn exact_files_precedes_native_mdbx_readers_for_files_and_evm_selection() {
+        use crate::snapshot::inventory::enumerate_native_files;
+        use outbe_snapshot::manifest::{DomainInventory, EntryKind, FileEntry, SnapshotManifestV1};
+
+        for version in [1, 2] {
+            let (root, layout, _) = state_fixture(version);
+            // Only execution is semantically selected. Other required file
+            // populations are structural and must never be opened as databases.
+            for path in [
+                layout.chain_root.join("compressed_entities/smt/mdbx.dat"),
+                layout.offchain_root.join("CURRENT"),
+                layout
+                    .ocomp_root
+                    .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
+            ] {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, b"unselected native population").unwrap();
+            }
+            let inventory = enumerate_native_files(&layout).unwrap();
+            let mut manifest =
+                SnapshotManifestV1::from_bytes(&super::artifact::manifest()).unwrap();
+            manifest.chain_id = layout.chain.chain().id();
+            manifest.genesis_hash = hex::encode(layout.chain.genesis_hash());
+            manifest.domains = inventory
+                .domains
+                .iter()
+                .enumerate()
+                .map(|(n, domain)| DomainInventory {
+                    id: format!("native-{n}"),
+                    kind: domain.kind,
+                    native_root: domain.native_root,
+                    native_path: String::new(),
+                    mode: 0o700,
+                    entries: domain
+                        .members
+                        .iter()
+                        .map(|path| FileEntry {
+                            path: path.to_str().unwrap().into(),
+                            kind: EntryKind::File,
+                            size: 0,
+                            sha256: None,
+                            mode: 0,
+                        })
+                        .collect(),
+                })
+                .collect();
+            let roots = inventory
+                .domains
+                .iter()
+                .map(|d| d.root.clone())
+                .collect::<Vec<_>>();
+            let artifact = tempfile::tempdir().unwrap();
+            let archive = artifact.path().join("snapshot.tar");
+            // state_fixture has closed all MDBX handles before the writer hashes.
+            let signed = outbe_snapshot::create::create_snapshot(
+                &archive,
+                manifest,
+                &roots,
+                |raw| Ok(super::artifact::sign(raw, 7)),
+                || Ok(()),
+            )
+            .unwrap();
+            let lock = signed
+                .domains
+                .iter()
+                .flat_map(|d| &d.entries)
+                .find(|entry| entry.path == "db/mdbx.lck")
+                .expect("the signed native inventory must include the real MDBX lock file");
+            // MDBX may truncate its lock file after the last handle closes.
+            assert_eq!(
+                lock.size,
+                fs::metadata(layout.chain_root.join("db/mdbx.lck"))
+                    .unwrap()
+                    .len()
+            );
+            assert!(lock.sha256.is_some());
+            let mut request = inputs("files,evm");
+            request.archive = Some(archive);
+            let artifact_before = fingerprint(artifact.path());
+            let report = run(root.path(), &request);
+            assert_eq!(fingerprint(artifact.path()), artifact_before);
+            for check in [
+                CheckName::Files,
+                CheckName::Provenance,
+                CheckName::Headers,
+                CheckName::Evm,
+            ] {
+                assert_eq!(
+                    report.check(check).status,
+                    CheckStatus::Passed,
+                    "{check:?}: {report:?}"
+                );
+            }
+            for check in [CheckName::Ce, CheckName::Bodies, CheckName::Ocomp] {
+                assert_eq!(report.check(check).status, CheckStatus::NotRequested);
+            }
+            assert_eq!(report.provenance.signature_valid, Some(true));
+            assert!(report.observed.q.is_none());
+            assert!(report.observed.p.is_none());
+            assert!(report.success());
+            // Do not require portable lock-byte mutation. The real reader may
+            // update reader slots; Files must have completed before it opens.
+        }
+    }
+
+    #[test]
+    fn protected_source_cannot_be_used_as_validation_scratch() {
+        let (root, layout, _) = state_fixture(2);
+        let before = fingerprint(root.path());
+        let report =
+            validate_snapshot(&inputs("evm"), arguments(root.path()), &layout.chain_root).unwrap();
+        assert_eq!(fingerprint(root.path()), before);
+        assert!(!report.success());
+        assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Failed);
+        assert!(report.check(CheckName::Evm).diagnostic.is_some());
+        assert_eq!(report.check(CheckName::Headers).status, CheckStatus::Passed);
+    }
+
+    #[test]
+    fn missing_files_signature_still_protects_selected_native_report_paths() {
+        let (root, layout, _) = state_fixture(2);
+        let before = fingerprint(root.path());
+        let report = run(root.path(), &inputs("files"));
+        assert!(!report.success());
+        assert_eq!(
+            report.check(CheckName::Provenance).status,
+            CheckStatus::Incomplete
+        );
+        assert_eq!(
+            report.check(CheckName::Headers).status,
+            CheckStatus::NotRequested
+        );
+        assert!(report.protected_paths.0.contains(&layout.chain_root));
+        assert!(outbe_snapshot::layout::validate_layout(
+            &[],
+            &report.protected_paths,
+            &[layout.chain_root.join("audit.json")]
+        )
+        .is_err());
+        assert_eq!(fingerprint(root.path()), before);
+    }
+
+    #[test]
+    fn provenance_only_does_not_parse_or_open_native_inputs() {
+        let artifacts = tempfile::tempdir().unwrap();
+        let manifest = super::artifact::manifest();
+        let signature = super::artifact::sign(&manifest, 7);
+        let mut request = inputs("provenance");
+        let manifest_path = artifacts.path().join("manifest.json");
+        let signature_path = artifacts.path().join("signature.json");
+        fs::write(&manifest_path, manifest).unwrap();
+        fs::write(&signature_path, serde_json::to_vec(&signature).unwrap()).unwrap();
+        request.manifest = Some(manifest_path);
+        request.signature = Some(signature_path);
+        let before = fingerprint(artifacts.path());
+        let scratch = artifacts.path().join("must-not-be-created");
+        let report =
+            validate_snapshot(&request, vec!["--invalid-node-argument".into()], &scratch).unwrap();
+        assert_eq!(fingerprint(artifacts.path()), before);
+        assert!(!scratch.exists());
+        assert_eq!(
+            report.check(CheckName::Provenance).status,
+            CheckStatus::Passed
+        );
+        assert!(report.success());
+        for check in [
+            CheckName::Files,
+            CheckName::Headers,
+            CheckName::Evm,
+            CheckName::Ce,
+            CheckName::Bodies,
+            CheckName::Ocomp,
+        ] {
+            assert_eq!(report.check(check).status, CheckStatus::NotRequested);
+        }
+    }
+
+    #[test]
+    fn failed_projection_configuration_keeps_known_native_paths_for_report_output() {
+        let (root, layout, _) = state_fixture(2);
+        let configuration = root.path().join("configuration/offchain.toml");
+        fs::write(&configuration, b"not valid TOML [").unwrap();
+        let report = run(root.path(), &inputs("ocomp"));
+        assert!(!report.success());
+        assert_eq!(report.check(CheckName::Ocomp).status, CheckStatus::Failed);
+        assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Passed);
+        assert!(report.protected_paths.0.contains(&layout.chain_root));
+        assert!(report.protected_paths.0.contains(&layout.consensus_root));
+        assert!(report.protected_paths.0.contains(&configuration));
+        assert!(report.observed.p.is_none());
+        let json = serde_json::to_value(&report).unwrap();
+        assert!(json.get("protected_paths").is_none());
+    }
+}

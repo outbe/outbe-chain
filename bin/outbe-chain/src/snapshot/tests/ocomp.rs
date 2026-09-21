@@ -3401,6 +3401,1209 @@ mod pin_authority {
     // Every constructed aggregate must pass the real public native getter.
     mod active_canonical {
         mod exported_composition {
+            mod all_native {
+                use super::*;
+                use crate::snapshot::{
+                    config::{
+                        parse_node_inputs, resolve_layout, resolve_requested_layout, NativeLayout,
+                        NativeReadSelection, RequestedLayout,
+                    },
+                    native::ce_identity,
+                    tests::{evm::state_fixture, headers::fingerprint},
+                    validation::{
+                        report::{CheckName, CheckStatus, ValidationReport},
+                        run::{validate_snapshot, ValidationInputs},
+                    },
+                };
+                use alloy_consensus::Header;
+                use alloy_primitives::Address;
+                use outbe_compressed_entities::{
+                    body_commitment, sealed_root, AuthenticatedParentTree, CeMdbx, EntityRef,
+                    ExactParentIdentity, FinalLeafMutation, FinalizedMarker, MdbxAuthenticatedTree,
+                    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+                };
+                use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
+                use outbe_offchain_data::{
+                    ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION,
+                };
+                use outbe_offchain_storage::{
+                    Key, Namespace, RocksDbStorage, StorageWriter, Value,
+                };
+                use outbe_primitives::reshare_artifact::{
+                    encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
+                    OutbeBlockArtifacts,
+                };
+                use reth_ethereum::provider::db::{
+                    cursor::DbCursorRO,
+                    database::Database,
+                    init_db,
+                    mdbx::DatabaseArguments,
+                    models::StoredBlockBodyIndices,
+                    table::Table,
+                    tables::{self, ChainStateKey},
+                    transaction::{DbTx, DbTxMut},
+                    DatabaseEnv, DatabaseEnvKind,
+                };
+                use reth_ethereum::trie::root::{state_root_unhashed, storage_root_unhashed};
+                use reth_primitives_traits::{Account, StorageEntry};
+                use std::{collections::BTreeMap, ffi::OsString, sync::Arc};
+
+                type StageCheckpoint = <tables::StageCheckpoints as Table>::Value;
+                const ACCOUNT: Address = Address::repeat_byte(0xf7);
+
+                struct AllFixture {
+                    source: tempfile::TempDir,
+                    layout: NativeLayout,
+                    job: B256,
+                }
+
+                fn arguments(root: &Path) -> Vec<OsString> {
+                    vec![
+                        "--chain".into(),
+                        root.join("genesis.json").into_os_string(),
+                        "--datadir".into(),
+                        root.join("chain").into_os_string(),
+                        "--projection.storage-config".into(),
+                        root.join("configuration/offchain.toml").into_os_string(),
+                    ]
+                }
+
+                impl AllFixture {
+                    fn new(version: u32) -> Self {
+                        use std::os::unix::fs::PermissionsExt;
+                        let (source, _, _) = state_fixture(version);
+                        let config = source.path().join("configuration/offchain.toml");
+                        fs::write(
+                            &config,
+                            fs::read_to_string(&config)
+                                .unwrap()
+                                .replace("start_block = 17", "start_block = 0"),
+                        )
+                        .unwrap();
+                        let inputs = parse_node_inputs(arguments(source.path())).unwrap();
+                        let layout = resolve_layout(&inputs).unwrap();
+                        let requested = resolve_requested_layout(
+                            &inputs,
+                            NativeReadSelection { projection: true },
+                        )
+                        .unwrap();
+                        write_source(&requested);
+                        let request = seal_source(&layout);
+                        // The root is read from the real committed CE marker, not a fixture constant.
+                        let marker = outbe_compressed_entities::CeMdbxReadOnly::open(
+                            &layout.chain_root,
+                            ce_identity(&layout),
+                        )
+                        .unwrap()
+                        .marker()
+                        .unwrap();
+                        let prepared = fixture_for_identity(
+                            &request,
+                            Phase::VotingOpen,
+                            layout.chain.chain().id(),
+                            layout.chain.genesis_hash(),
+                            |intent| {
+                                bind_source(intent);
+                                intent.ce_sealed_root = marker.new_root;
+                            },
+                        );
+                        let export = write_export(&layout.ocomp_root, &prepared);
+                        write_exported_pin(
+                            &layout.consensus_root.join("ocomp_retention"),
+                            &request,
+                            &prepared.job,
+                            export,
+                        );
+                        let job = prepared.job.finalized.as_ref().unwrap().job_id;
+                        seed_execution(&layout, version, &request, prepared.owner);
+                        write_frontiers(&requested, &request);
+                        fs::write(
+                            source.path().join("snapshot-signing-key.hex"),
+                            hex::encode([1u8; 32]),
+                        )
+                        .unwrap();
+                        fs::set_permissions(
+                            source.path().join("snapshot-signing-key.hex"),
+                            fs::Permissions::from_mode(0o600),
+                        )
+                        .unwrap();
+                        // state_fixture already installs a protected recipient key and config.
+                        // Every writer and native read handle is closed before returning.
+                        Self {
+                            source,
+                            layout,
+                            job,
+                        }
+                    }
+
+                    fn validate(&self, inputs: &ValidationInputs) -> ValidationReport {
+                        let before = fingerprint(self.source.path());
+                        let scratch = tempfile::tempdir().unwrap();
+                        let scratch_before = fingerprint(scratch.path());
+                        let report = validate_snapshot(
+                            inputs,
+                            arguments(self.source.path()),
+                            scratch.path(),
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            fingerprint(self.source.path()),
+                            before,
+                            "native source was changed"
+                        );
+                        assert_eq!(
+                            fingerprint(scratch.path()),
+                            scratch_before,
+                            "scratch leaked"
+                        );
+                        report
+                    }
+
+                    fn signed(&self, artifact: &Path) -> ValidationInputs {
+                        let before = fingerprint(self.source.path());
+                        let archive = artifact.join("snapshot.tar");
+                        // This production create path observes current native progress, closes readers,
+                        // enumerates and hashes the actual damaged files, then signs NEW manifest bytes.
+                        let (_, signer) = crate::snapshot::create::create(
+                            &archive,
+                            &self.source.path().join("snapshot-signing-key.hex"),
+                            Some("all-native fixture".into()),
+                            None,
+                            arguments(self.source.path()),
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            fingerprint(self.source.path()),
+                            before,
+                            "create changed native source"
+                        );
+                        ValidationInputs {
+                            archive: Some(archive),
+                            expected_signer: Some(signer),
+                            ..Default::default()
+                        }
+                    }
+                }
+
+                fn seal_source(layout: &NativeLayout) -> OutbeHeader {
+                    // Use the same supported test precreation as tests/bodies.rs; do not alter owners.
+                    drop(
+                        reth_ethereum::provider::db::create_db(
+                            layout.chain_root.join("compressed_entities/smt"),
+                            DatabaseArguments::test(),
+                        )
+                        .unwrap(),
+                    );
+                    let genesis = FinalizedMarker {
+                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                        height: 0,
+                        block_hash: layout.chain.genesis_hash(),
+                        parent_block_hash: B256::ZERO,
+                        parent_root: B256::ZERO,
+                        new_root: sealed_root(B256::ZERO).unwrap(),
+                    };
+                    let db = Arc::new(
+                        CeMdbx::open(&layout.chain_root, ce_identity(layout), genesis).unwrap(),
+                    );
+                    let parent = MdbxAuthenticatedTree::open(
+                        db.clone(),
+                        ExactParentIdentity {
+                            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                            block_number: 0,
+                            block_hash: genesis.block_hash,
+                            root: genesis.new_root,
+                        },
+                    )
+                    .unwrap();
+                    let body = source_body();
+                    let bytes = encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap();
+                    let leaf = body_commitment(
+                        ACTIVE_COMMITMENT_SCHEME,
+                        BODY_SCHEMA_V1,
+                        body.tribute_id,
+                        &bytes,
+                    )
+                    .unwrap();
+                    let seal = parent
+                        .prepare_seal(
+                            1,
+                            &[FinalLeafMutation {
+                                entity: EntityRef::Tribute(body.tribute_id),
+                                final_leaf: Some(leaf),
+                            }],
+                            &[],
+                        )
+                        .unwrap();
+                    let request = OutbeHeader::new(Header {
+                        number: 1,
+                        parent_hash: genesis.block_hash,
+                        timestamp: 1_000,
+                        extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+                            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
+                                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                                r_sealed: seal.new_root(),
+                            }),
+                            ..Default::default()
+                        })
+                        .unwrap(),
+                        ..Default::default()
+                    });
+                    db.apply_finalized(&seal.freeze(request.hash_slow()))
+                        .unwrap();
+                    request
+                }
+
+                fn seed_execution(
+                    layout: &NativeLayout,
+                    version: u32,
+                    request: &OutbeHeader,
+                    owner: HashMapStorageProvider,
+                ) {
+                    let mut accounts: BTreeMap<Address, (Account, Vec<(B256, U256)>)> =
+                        BTreeMap::new();
+                    accounts.insert(
+                        ACCOUNT,
+                        (
+                            Account {
+                                nonce: 7,
+                                balance: U256::from(900),
+                                bytecode_hash: None,
+                            },
+                            vec![],
+                        ),
+                    );
+                    for ((address, slot), value) in owner.storage {
+                        if !value.is_zero() {
+                            accounts
+                                .entry(address)
+                                .or_default()
+                                .1
+                                .push((B256::from(slot.to_be_bytes::<32>()), value));
+                        }
+                    }
+                    let state_root =
+                        state_root_unhashed(accounts.iter().map(|(address, (account, words))| {
+                            (
+                                *address,
+                                (*account).into_trie_account(storage_root_unhashed(
+                                    words.iter().copied(),
+                                )),
+                            )
+                        }));
+                    let db =
+                        init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+                    let tx = db.tx_mut().unwrap();
+                    tx.clear::<tables::PlainAccountState>().unwrap();
+                    tx.clear::<tables::PlainStorageState>().unwrap();
+                    tx.clear::<tables::HashedAccounts>().unwrap();
+                    tx.clear::<tables::HashedStorages>().unwrap();
+                    tx.clear::<tables::Headers<OutbeHeader>>().unwrap();
+                    tx.clear::<tables::CanonicalHeaders>().unwrap();
+                    for (address, (account, words)) in accounts {
+                        if version == 1 {
+                            tx.put::<tables::PlainAccountState>(address, account)
+                                .unwrap();
+                            for (key, value) in words {
+                                tx.put::<tables::PlainStorageState>(
+                                    address,
+                                    StorageEntry { key, value },
+                                )
+                                .unwrap();
+                            }
+                        } else {
+                            tx.put::<tables::HashedAccounts>(keccak256(address), account)
+                                .unwrap();
+                            for (key, value) in words {
+                                tx.put::<tables::HashedStorages>(
+                                    keccak256(address),
+                                    StorageEntry {
+                                        key: keccak256(key),
+                                        value,
+                                    },
+                                )
+                                .unwrap();
+                            }
+                        }
+                    }
+                    let execution = OutbeHeader::new(Header {
+                        number: 400,
+                        parent_hash: request.hash_slow(),
+                        timestamp: 1_010,
+                        state_root,
+                        ..Default::default()
+                    });
+                    for header in [
+                        layout.chain.genesis_header().clone(),
+                        request.clone(),
+                        execution,
+                    ] {
+                        tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())
+                            .unwrap();
+                        tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header)
+                            .unwrap();
+                    }
+                    tx.put::<tables::ChainState>(ChainStateKey::LastFinalizedBlock, 1)
+                        .unwrap();
+                    for stage in ["Execution", "Finish"] {
+                        tx.put::<tables::StageCheckpoints>(stage.into(), StageCheckpoint::new(400))
+                            .unwrap();
+                    }
+                    tx.put::<tables::BlockBodyIndices>(
+                        1,
+                        StoredBlockBodyIndices {
+                            first_tx_num: 0,
+                            tx_count: 0,
+                        },
+                    )
+                    .unwrap();
+                    tx.clear::<tables::AccountChangeSets>().unwrap();
+                    tx.clear::<tables::StorageChangeSets>().unwrap();
+                    tx.commit().unwrap();
+                }
+
+                fn write_frontiers(layout: &RequestedLayout, request: &OutbeHeader) {
+                    let point = ProjectionCheckpoint {
+                        block_number: 1,
+                        block_hash: request.hash_slow(),
+                    };
+                    let location = layout.projection.as_ref().unwrap();
+                    let projection = RocksDbStorage::open(&location.root).unwrap();
+                    let state = ProjectionState {
+                        chain_id: layout.chain.chain().id(),
+                        genesis_hash: layout.chain.genesis_hash(),
+                        storage_schema_version: STORAGE_SCHEMA_VERSION,
+                        start_block: location.start_block,
+                        checkpoint: Some(point),
+                    };
+                    projection
+                        .put(
+                            Namespace::new("projection_state").unwrap(),
+                            &Key::new(b"offchain_data".to_vec()).unwrap(),
+                            &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
+                        )
+                        .unwrap();
+                    drop(projection);
+                    let baseline = ProjectionCheckpoint {
+                        block_number: 0,
+                        block_hash: layout.chain.genesis_hash(),
+                    };
+                    let closure = ContiguousCheckpointStoreV1::open(
+                        layout
+                            .ocomp_root
+                            .join("exporter-v1/discovery/closure-checkpoint-v1"),
+                        baseline,
+                    )
+                    .unwrap();
+                    closure.compare_and_advance_to(baseline, point).unwrap();
+                }
+
+                fn assert_native_success(report: &ValidationReport) {
+                    for check in [
+                        CheckName::Headers,
+                        CheckName::Evm,
+                        CheckName::Ce,
+                        CheckName::Bodies,
+                        CheckName::Ocomp,
+                    ] {
+                        assert_eq!(
+                            report.check(check).status,
+                            CheckStatus::Passed,
+                            "{check:?}: {report:?}"
+                        );
+                    }
+                    assert_eq!(report.observed.h.as_ref().unwrap().number, 1);
+                    assert_eq!(report.observed.e.as_ref().unwrap().number, 400);
+                    assert_eq!(report.observed.q.as_ref().unwrap().number, 1);
+                    assert_eq!(report.observed.p.as_ref().unwrap().number, 1);
+                    assert_eq!(report.observed.c_current.as_ref().unwrap().number, 1);
+                    assert!(report.required_missing.is_empty());
+                    assert_eq!(report.active_ocomp.len(), 1);
+                    assert!(report.active_ocomp[0].export_verified);
+                    for name in [
+                        "ce_leaves",
+                        "live_projection_bodies",
+                        "verified_source_leases",
+                        "verified_complete_exports",
+                    ] {
+                        assert!(
+                            report
+                                .inventory_bounds
+                                .iter()
+                                .any(|bound| bound.name == name && bound.visited > 0),
+                            "{name}: {report:?}"
+                        );
+                    }
+                    assert!(report.success(), "{report:?}");
+                }
+
+                #[test]
+                fn all_native_checks_real_nonzero_ce_body_and_active_export_at_independent_frontiers(
+                ) {
+                    for version in [1, 2] {
+                        let fixture = AllFixture::new(version);
+                        let report = fixture.validate(&ValidationInputs::default());
+                        assert_native_success(&report);
+                        for check in [CheckName::Files, CheckName::Provenance] {
+                            assert_eq!(report.check(check).status, CheckStatus::NotRequested);
+                        }
+                    }
+                }
+
+                #[derive(Clone, Copy, Debug)]
+                enum Damage {
+                    None,
+                    Evm,
+                    Ce,
+                    Body,
+                    Receipt,
+                    MissingCatalog,
+                }
+
+                fn damage(fixture: &AllFixture, damage: Damage) {
+                    match damage {
+                        Damage::None => {}
+                        Damage::Evm => {
+                            let db = init_db(
+                                fixture.layout.chain_root.join("db"),
+                                DatabaseArguments::test(),
+                            )
+                            .unwrap();
+                            let tx = db.tx_mut().unwrap();
+                            let mut account = tx
+                                .get::<tables::HashedAccounts>(keccak256(ACCOUNT))
+                                .unwrap()
+                                .unwrap();
+                            account.balance += U256::ONE;
+                            tx.put::<tables::HashedAccounts>(keccak256(ACCOUNT), account)
+                                .unwrap();
+                            tx.commit().unwrap();
+                        }
+                        Damage::Ce => {
+                            #[derive(Debug)]
+                            struct TestCeLeaves;
+                            impl Table for TestCeLeaves {
+                                const NAME: &'static str = "OutbeCompressedEntitiesLeavesV3";
+                                const DUPSORT: bool = false;
+                                type Key = Vec<u8>;
+                                type Value = Vec<u8>;
+                            }
+                            let db = DatabaseEnv::open(
+                                &fixture.layout.chain_root.join("compressed_entities/smt"),
+                                DatabaseEnvKind::RW,
+                                DatabaseArguments::test(),
+                            )
+                            .unwrap();
+                            let tx = db.tx_mut().unwrap();
+                            let (key, previous) = tx
+                                .cursor_read::<TestCeLeaves>()
+                                .unwrap()
+                                .seek(vec![1])
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(key[0], 1);
+                            let wrong = B256::with_last_byte(42).to_vec();
+                            assert_ne!(previous, wrong);
+                            tx.put::<TestCeLeaves>(key, wrong).unwrap();
+                            tx.commit().unwrap();
+                        }
+                        Damage::Body => {
+                            let storage = Arc::new(
+                                RocksDbStorage::open(&fixture.layout.offchain_root).unwrap(),
+                            );
+                            let mut body = source_body();
+                            body.nominal_amount_minor += U256::ONE;
+                            outbe_tribute::TributeRepositoryWriter::new(storage.clone(), storage)
+                                .put(&body)
+                                .unwrap();
+                        }
+                        Damage::Receipt => {
+                            let file = fixture
+                                .layout
+                                .ocomp_root
+                                .join("exporter-v1/receipts")
+                                .join(hex::encode(fixture.job))
+                                .join("receipt.ref");
+                            assert!(file.is_file());
+                            fs::write(file, b"malformed native receipt reference").unwrap();
+                        }
+                        Damage::MissingCatalog => {
+                            fs::remove_dir_all(
+                                fixture
+                                    .layout
+                                    .ocomp_root
+                                    .join("exporter-v1/input-refs")
+                                    .join(hex::encode(fixture.job)),
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+
+                #[test]
+                fn freshly_signed_all_distinguishes_native_semantic_damage_from_files_and_provenance(
+                ) {
+                    for fault in [
+                        Damage::None,
+                        Damage::Evm,
+                        Damage::Ce,
+                        Damage::Body,
+                        Damage::Receipt,
+                        Damage::MissingCatalog,
+                    ] {
+                        let fixture = AllFixture::new(2);
+                        damage(&fixture, fault);
+                        let artifact = tempfile::tempdir().unwrap();
+                        let inputs = fixture.signed(artifact.path());
+                        let before = fingerprint(artifact.path());
+                        let report = fixture.validate(&inputs);
+                        assert_eq!(fingerprint(artifact.path()), before);
+                        for check in [CheckName::Files, CheckName::Provenance, CheckName::Headers] {
+                            assert_eq!(
+                                report.check(check).status,
+                                CheckStatus::Passed,
+                                "{fault:?}, {check:?}: {report:?}"
+                            );
+                        }
+                        assert_eq!(report.provenance.signature_valid, Some(true));
+                        assert_eq!(report.provenance.expected_signer_match, Some(true));
+                        let expected = match fault {
+                            Damage::None => {
+                                assert_native_success(&report);
+                                continue;
+                            }
+                            Damage::Evm => (CheckName::Evm, CheckStatus::Failed),
+                            Damage::Ce => (CheckName::Ce, CheckStatus::Failed),
+                            Damage::Body => (CheckName::Bodies, CheckStatus::Failed),
+                            Damage::Receipt => (CheckName::Ocomp, CheckStatus::Failed),
+                            Damage::MissingCatalog => (CheckName::Ocomp, CheckStatus::Incomplete),
+                        };
+                        assert_eq!(
+                            report.check(expected.0).status,
+                            expected.1,
+                            "{fault:?}: {report:?}"
+                        );
+                        assert!(report.check(expected.0).diagnostic.is_some());
+                        assert!(!report.success());
+                    }
+                }
+            }
+
+            mod final_join {
+                fn install_active_result_request_frame(
+                    layout: &crate::snapshot::config::RequestedLayout,
+                ) -> OutbeHeader {
+                    use alloy_consensus::{SignableTransaction, TxLegacy};
+                    use alloy_primitives::{Log, Signature};
+                    use alloy_sol_types::SolEvent;
+                    use outbe_metadosis::precompile::IMetadosis;
+                    use outbe_offchain_data::{ProjectionState, STORAGE_SCHEMA_VERSION};
+                    use outbe_offchain_storage::{
+                        Key, Namespace, RocksDbStorage, StorageWriter, Value,
+                    };
+                    use outbe_primitives::{
+                        addresses::METADOSIS_ADDRESS, projection::ProjectionCheckpoint,
+                        OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
+                    };
+                    use reth_ethereum::provider::db::{
+                        models::StoredBlockBodyIndices, transaction::DbTxMut,
+                    };
+                    use reth_provider::{
+                        providers::StaticFileProviderBuilder, StaticFileSegment, StaticFileWriter,
+                    };
+                    let db =
+                        init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+                    let tx = db.tx_mut().unwrap();
+                    let mut header = tx
+                        .get::<tables::Headers<OutbeHeader>>(100)
+                        .unwrap()
+                        .unwrap();
+                    // The native planner requires a nonzero frozen logical time.
+                    // Set the request header before deriving the event and canonical owner.
+                    header.inner.timestamp = 1_000;
+                    let prepared = fixture_for_identity(
+                        &header,
+                        Phase::VotingOpen,
+                        layout.chain.chain().id(),
+                        layout.chain.genesis_hash(),
+                        bind_source,
+                    );
+                    let intent = &prepared.job.intent;
+                    let event = IMetadosis::OffchainJobRequested {
+                        intentId: intent.intent_id(&poc_schema_limits()).unwrap(),
+                        wwd: intent.wwd,
+                        pendingNonce: intent.pending_nonce,
+                        attempt: intent.attempt,
+                        activationPreconditionsHash: intent
+                            .activation_preconditions
+                            .activation_preconditions_hash(&poc_schema_limits())
+                            .unwrap(),
+                    };
+                    let receipts = vec![OutbeReceipt {
+                        success: true,
+                        cumulative_gas_used: 21_000,
+                        logs: vec![Log {
+                            address: METADOSIS_ADDRESS,
+                            data: event.encode_log_data(),
+                        }],
+                        ..Default::default()
+                    }];
+                    let transactions: Vec<OutbeTxEnvelope> = vec![TxLegacy {
+                        gas_limit: 21_000,
+                        ..Default::default()
+                    }
+                    .into_signed(Signature::new(U256::ONE, U256::ONE, false))
+                    .into()];
+                    header.inner.gas_limit = 30_000_000;
+                    header.inner.gas_used = 21_000;
+                    header.inner.transactions_root =
+                        alloy_consensus::proofs::calculate_transaction_root(&transactions);
+                    header.inner.receipts_root =
+                        reth_ethereum::calculate_receipt_root_no_memo(&receipts);
+                    let hash = header.hash_slow();
+                    tx.put::<tables::Headers<OutbeHeader>>(100, header.clone())
+                        .unwrap();
+                    tx.put::<tables::CanonicalHeaders>(100, hash).unwrap();
+                    let mut next = tx
+                        .get::<tables::Headers<OutbeHeader>>(101)
+                        .unwrap()
+                        .unwrap();
+                    next.inner.parent_hash = hash;
+                    next.inner.timestamp = 1_001;
+                    tx.put::<tables::CanonicalHeaders>(101, next.hash_slow())
+                        .unwrap();
+                    tx.put::<tables::Headers<OutbeHeader>>(101, next).unwrap();
+                    tx.put::<tables::BlockBodyIndices>(
+                        100,
+                        StoredBlockBodyIndices {
+                            first_tx_num: 0,
+                            tx_count: 1,
+                        },
+                    )
+                    .unwrap();
+                    tx.put::<tables::Receipts<OutbeReceipt>>(0, receipts[0].clone())
+                        .unwrap();
+                    tx.commit().unwrap();
+                    drop(db);
+                    let files = StaticFileProviderBuilder::read_write(&layout.static_files_root)
+                        .with_blocks_per_file(1_000)
+                        .build::<OutbePrimitives>()
+                        .unwrap();
+                    {
+                        let mut writer = files
+                            .get_writer(0, StaticFileSegment::Transactions)
+                            .unwrap();
+                        for height in 0..=100 {
+                            writer.increment_block(height).unwrap();
+                        }
+                        writer.append_transaction(0, &transactions[0]).unwrap();
+                    }
+                    files.commit().unwrap();
+                    drop(files);
+                    // Keep native setup frontiers attached to the now-complete request header.
+                    let location = layout.projection.as_ref().unwrap();
+                    let projection = RocksDbStorage::open(&location.root).unwrap();
+                    let point = ProjectionCheckpoint {
+                        block_number: 100,
+                        block_hash: hash,
+                    };
+                    let state = ProjectionState {
+                        chain_id: layout.chain.chain().id(),
+                        genesis_hash: layout.chain.genesis_hash(),
+                        storage_schema_version: STORAGE_SCHEMA_VERSION,
+                        start_block: location.start_block,
+                        checkpoint: Some(point),
+                    };
+                    projection
+                        .put(
+                            Namespace::new("projection_state").unwrap(),
+                            &Key::new(b"offchain_data".to_vec()).unwrap(),
+                            &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
+                        )
+                        .unwrap();
+                    drop(projection);
+                    let closure_root = layout
+                        .ocomp_root
+                        .join("exporter-v1/discovery/closure-checkpoint-v1");
+                    fs::remove_dir_all(&closure_root).unwrap();
+                    let baseline = ProjectionCheckpoint {
+                        block_number: 0,
+                        block_hash: layout.chain.genesis_hash(),
+                    };
+                    let closure = outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1::open(
+                        &closure_root,
+                        baseline,
+                    )
+                    .unwrap();
+                    closure.compare_and_advance_to(baseline, point).unwrap();
+                    drop(closure);
+                    header
+                }
+
+                fn write_empty_native_plan(root: &Path, prepared: &ActiveFixture) -> (B256, B256) {
+                    use outbe_lysis::program_v1::planner::{
+                        LysisPlannerBindingsV1, LysisPlannerV1,
+                    };
+                    use outbe_ocomp::{
+                        admission_catalog::VerifiedAdmissionCatalog,
+                        export_receipt::ExportReceiptReader,
+                    };
+                    let limits = poc_schema_limits();
+                    let job = &prepared.job;
+                    let id = job.finalized.as_ref().unwrap().job_id;
+                    let cas = FilesystemCas::open(
+                        root.join("cas-v1"),
+                        CasWriterRole::Supervisor,
+                        CAS_LIMITS,
+                    )
+                    .unwrap();
+                    let reader =
+                        FilesystemCasReader::open(root.join("cas-v1"), CAS_LIMITS).unwrap();
+                    let receipt =
+                        ExportReceiptReader::open(root.join("exporter-v1/receipts"), id, limits)
+                            .unwrap()
+                            .load_exact(&reader)
+                            .unwrap();
+                    let manifest = receipt.manifest();
+                    let manifest_ref = receipt.manifest_ref();
+                    let inputs = VerifiedInputChunkRefCatalog::reopen(
+                        root.join("exporter-v1/input-refs").join(hex::encode(id)),
+                        &reader,
+                        limits,
+                        OrderedListLimits::new(16, 4096, 4096),
+                    )
+                    .unwrap();
+                    let refs = inputs
+                        .exact_cursor()
+                        .unwrap()
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap();
+                    let bundle = &prepared.bundle;
+                    let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
+                        protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                        job_id: id,
+                        attempt: job.intent.attempt,
+                        input_manifest_hash: receipt.manifest_hash(),
+                        input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
+                        fidelity_opening_root: manifest.fidelity_opening_root,
+                        oracle_opening_root: manifest.oracle_opening_root,
+                        wwd: job.intent.wwd,
+                        lysis_limit_minor: job.intent.frozen_metadosis_values.lysis_limit_minor,
+                        logical_evaluation_time: job.intent.logical_evaluation_time,
+                        tribute_count: manifest.tribute_count,
+                        lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+                        planner_spec_version: bundle.planner_spec_version,
+                        reducer_spec_version: bundle.reducer_spec_version,
+                    })
+                    .unwrap();
+                    let plan = planner.commit_primary_catalog(refs, &limits).unwrap();
+                    let plan_ref = cas
+                        .publish_bytes(&plan.encode_canonical_record(&limits).unwrap())
+                        .unwrap();
+                    let admission_root = root
+                        .join("supervisor-v1/jobs")
+                        .join(hex::encode(id))
+                        .join("admissions");
+                    drop(
+                        VerifiedAdmissionCatalog::open(
+                            &admission_root,
+                            &cas,
+                            &plan_ref,
+                            &manifest_ref,
+                            limits,
+                        )
+                        .unwrap(),
+                    );
+                    (receipt.manifest_hash(), plan.plan_hash(&limits).unwrap())
+                }
+
+                #[test]
+                fn present_local_result_matches_surviving_manifest_and_plan_without_requiring_retired_plan(
+                ) {
+                    use crate::snapshot::tests::ocomp::pin_authority::local_result::{
+                        refresh_arithmetic, result_for, write_result,
+                    };
+                    for version in [1, 2] {
+                        for damage in ["none", "manifest", "plan", "plan_absent"] {
+                            let identity = std::cell::Cell::new(None);
+                            crate::snapshot::tests::ocomp::with_canonical_frontiers(
+                                version,
+                                |layout| {
+                                    identity.set(Some((
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                    )));
+                                    write_source(layout);
+                                    let request = install_active_result_request_frame(layout);
+                                    let prepared = fixture_for_identity(
+                                        &request,
+                                        Phase::VotingOpen,
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                        bind_source,
+                                    );
+                                    let export = write_export(&layout.ocomp_root, &prepared);
+                                    write_exported_pin(
+                                        &layout.consensus_root.join("ocomp_retention"),
+                                        &request,
+                                        &prepared.job,
+                                        export,
+                                    );
+                                    let (manifest_hash, plan_hash) =
+                                        write_empty_native_plan(&layout.ocomp_root, &prepared);
+                                    let mut result = result_for(&prepared.job);
+                                    result.input_manifest_hash = manifest_hash;
+                                    result.plan_hash = plan_hash;
+                                    match damage {
+                                        "manifest" => {
+                                            result.input_manifest_hash = B256::repeat_byte(0xf1)
+                                        }
+                                        "plan" | "plan_absent" => {
+                                            result.plan_hash = B256::repeat_byte(0xf2)
+                                        }
+                                        _ => {}
+                                    }
+                                    refresh_arithmetic(&mut result);
+                                    write_result(&layout.ocomp_root, &result);
+                                    if damage == "plan_absent" {
+                                        fs::remove_dir_all(
+                                            layout
+                                                .ocomp_root
+                                                .join("supervisor-v1/jobs")
+                                                .join(hex::encode(result.job_id)),
+                                        )
+                                        .unwrap();
+                                    }
+                                },
+                                |request| {
+                                    let (chain_id, genesis_hash) = identity.get().unwrap();
+                                    fixture_for_identity(
+                                        request,
+                                        Phase::VotingOpen,
+                                        chain_id,
+                                        genesis_hash,
+                                        bind_source,
+                                    )
+                                    .owner
+                                },
+                                |state, source, layout, scratch| {
+                                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                                    let result = verify_ocomp_relations(
+                                        state,
+                                        source,
+                                        layout,
+                                        scratch,
+                                        &mut report,
+                                    );
+                                    if matches!(damage, "none" | "plan_absent") {
+                                        result.unwrap();
+                                    } else {
+                                        let error = result
+                            .expect_err("surviving result/manifest/plan disagreement cannot pass");
+                                        assert!(
+                                            error.downcast_ref::<Incomplete>().is_none(),
+                                            "{damage}: {error:#}"
+                                        );
+                                        assert!(
+                                            format!("{error:#}").contains("surviving local result"),
+                                            "{damage}: {error:#}"
+                                        );
+                                    }
+                                },
+                            );
+                        }
+                    }
+                }
+
+                #[test]
+                fn retained_discovery_ack_must_match_surviving_export_but_retired_records_stay_optional(
+                ) {
+                    use outbe_ocomp::{
+                        discovery_spool::{
+                            DiscoverySpoolReaderV1, DiscoverySpoolRecordV1, DiscoverySpoolV1,
+                        },
+                        export_receipt::ExportReceiptReader,
+                    };
+                    for version in [1, 2] {
+                        for damage in [
+                            "none",
+                            "lease",
+                            "manifest",
+                            "record",
+                            "receipt_digest",
+                            "retired",
+                        ] {
+                            let identity = std::cell::Cell::new(None);
+                            crate::snapshot::tests::ocomp::with_canonical_frontiers(
+                                version,
+                                |layout| {
+                                    identity.set(Some((
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                    )));
+                                    write_source(layout);
+                                    let db = init_db(
+                                        layout.chain_root.join("db"),
+                                        DatabaseArguments::test(),
+                                    )
+                                    .unwrap();
+                                    let tx = db.tx().unwrap();
+                                    let request = tx
+                                        .get::<tables::Headers<OutbeHeader>>(100)
+                                        .unwrap()
+                                        .unwrap();
+                                    drop(tx);
+                                    drop(db);
+                                    let prepared = fixture_for_identity(
+                                        &request,
+                                        Phase::VotingOpen,
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                        bind_source,
+                                    );
+                                    let export = write_export(&layout.ocomp_root, &prepared);
+                                    write_exported_pin(
+                                        &layout.consensus_root.join("ocomp_retention"),
+                                        &request,
+                                        &prepared.job,
+                                        export,
+                                    );
+                                    let job = &prepared.job;
+                                    let finalized = job.finalized.as_ref().unwrap();
+                                    let limits = poc_schema_limits();
+                                    let spec = FinalizedJobSpecV1 {
+                                        summary: FinalizedJobSummaryV1 {
+                                            cursor: job.intent_height,
+                                            job_id: finalized.job_id,
+                                            intent_id: job.intent.intent_id(&limits).unwrap(),
+                                            finalized_block_hash: finalized
+                                                .finalized_request_block_hash,
+                                            finalized_state_root: finalized
+                                                .finalized_request_state_root,
+                                            protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                                            open_height: finalized.open_height,
+                                            deadline_height: finalized.deadline_height,
+                                        },
+                                        canonical_job_intent: BoundedBytes(
+                                            job.intent.encode_canonical(&limits).unwrap(),
+                                        ),
+                                    };
+                                    let spool_root = layout
+                                        .ocomp_root
+                                        .join("exporter-v1/discovery")
+                                        .join(hex::encode(job.intent.protocol_bundle_hash));
+                                    let spool = DiscoverySpoolV1::open(
+                                        &spool_root,
+                                        job.intent.chain_id,
+                                        job.intent.genesis_hash,
+                                        limits,
+                                    )
+                                    .unwrap();
+                                    let (offer, _) =
+                                        spool.put_offer(export.source_generation, &spec).unwrap();
+                                    let cas = FilesystemCasReader::open(
+                                        layout.ocomp_root.join("cas-v1"),
+                                        CAS_LIMITS,
+                                    )
+                                    .unwrap();
+                                    let receipt = ExportReceiptReader::open(
+                                        layout.ocomp_root.join("exporter-v1/receipts"),
+                                        finalized.job_id,
+                                        limits,
+                                    )
+                                    .unwrap()
+                                    .load_exact(&cas)
+                                    .unwrap();
+                                    spool.put_ack(&offer, &receipt, &prepared.bundle).unwrap();
+                                    if damage == "retired" {
+                                        spool.prepare_retirement(&offer, 100).unwrap();
+                                        assert_eq!(
+                                            spool
+                                                .complete_retirements_through(100)
+                                                .unwrap()
+                                                .completed,
+                                            1
+                                        );
+                                        assert!(spool
+                                            .ack(&offer.observation_id)
+                                            .unwrap()
+                                            .is_none());
+                                    } else if damage != "none" {
+                                        let mut ack =
+                                            spool.ack(&offer.observation_id).unwrap().unwrap();
+                                        match damage {
+                                            "lease" => ack.lease_generation += 1,
+                                            "manifest" => {
+                                                ack.manifest_hash = B256::repeat_byte(0xe1)
+                                            }
+                                            "record" => {
+                                                ack.committed.record_hash = B256::repeat_byte(0xe2)
+                                            }
+                                            "receipt_digest" => {
+                                                ack.reference.export_receipt_digest =
+                                                    B256::repeat_byte(0xe3)
+                                            }
+                                            _ => unreachable!(),
+                                        }
+                                        // Exact native ACK envelope in test setup only. Recompute its
+                                        // checksum so the existing native decoder accepts the fixture;
+                                        // the failure must come from the missing cross-record relation.
+                                        let canonical = ack.committed.encode_body(&limits).unwrap();
+                                        let mut bytes = b"OUTBDSA2".to_vec();
+                                        bytes.extend_from_slice(&ack.reference.encode_fixed());
+                                        bytes
+                                            .extend_from_slice(&ack.lease_generation.to_be_bytes());
+                                        bytes.extend_from_slice(ack.manifest_hash.as_slice());
+                                        bytes.extend_from_slice(
+                                            &u64::try_from(canonical.len()).unwrap().to_be_bytes(),
+                                        );
+                                        bytes.extend_from_slice(&canonical);
+                                        bytes.extend_from_slice(keccak256(&bytes).as_slice());
+                                        fs::write(
+                                            spool_root.join("acks").join(format!(
+                                                "{}.ack",
+                                                hex::encode(offer.observation_id)
+                                            )),
+                                            bytes,
+                                        )
+                                        .unwrap();
+                                    }
+                                    drop(spool);
+                                    let reader = DiscoverySpoolReaderV1::open_existing(
+                                        &spool_root,
+                                        job.intent.chain_id,
+                                        job.intent.genesis_hash,
+                                        limits,
+                                    )
+                                    .unwrap();
+                                    let mut acknowledgements = 0;
+                                    reader
+                                        .visit_records(&mut |record| {
+                                            if matches!(record, DiscoverySpoolRecordV1::Ack(_)) {
+                                                acknowledgements += 1;
+                                            }
+                                            Ok(())
+                                        })
+                                        .unwrap();
+                                    assert_eq!(acknowledgements, usize::from(damage != "retired"));
+                                },
+                                |request| {
+                                    let (chain_id, genesis_hash) = identity.get().unwrap();
+                                    fixture_for_identity(
+                                        request,
+                                        Phase::VotingOpen,
+                                        chain_id,
+                                        genesis_hash,
+                                        bind_source,
+                                    )
+                                    .owner
+                                },
+                                |state, source, layout, scratch| {
+                                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                                    let result = verify_ocomp_relations(
+                                        state,
+                                        source,
+                                        layout,
+                                        scratch,
+                                        &mut report,
+                                    );
+                                    if matches!(damage, "none" | "retired") {
+                                        result.unwrap();
+                                    } else {
+                                        let error = result
+                            .expect_err("native-valid ACK disagreement cannot pass the final join");
+                                        assert!(
+                                            error.downcast_ref::<Incomplete>().is_none(),
+                                            "{damage}: {error:#}"
+                                        );
+                                        assert!(
+                                            format!("{error:#}").contains("ACK"),
+                                            "{damage}: {error:#}"
+                                        );
+                                    }
+                                },
+                            );
+                        }
+                    }
+                }
+
+                use super::*;
+                use crate::snapshot::validation::{
+                    ocomp::verify_ocomp_relations,
+                    report::{CheckName, ValidationReport},
+                };
+                use reth_ethereum::provider::db::{
+                    database::Database, init_db, mdbx::DatabaseArguments, tables, transaction::DbTx,
+                };
+
+                #[test]
+                fn final_join_accepts_real_exported_active_job_and_detects_deleted_required_catalog(
+                ) {
+                    for deleted in [false, true] {
+                        crate::snapshot::tests::ocomp::with_canonical_frontiers(
+                            2,
+                            |layout| {
+                                write_source(layout);
+                                let db = init_db(
+                                    layout.chain_root.join("db"),
+                                    DatabaseArguments::test(),
+                                )
+                                .unwrap();
+                                let tx = db.tx().unwrap();
+                                let request = tx
+                                    .get::<tables::Headers<OutbeHeader>>(100)
+                                    .unwrap()
+                                    .unwrap();
+                                drop(tx);
+                                drop(db);
+                                let prepared = fixture(&request, Phase::VotingOpen, bind_source);
+                                let export = write_export(&layout.ocomp_root, &prepared);
+                                write_exported_pin(
+                                    &layout.consensus_root.join("ocomp_retention"),
+                                    &request,
+                                    &prepared.job,
+                                    export,
+                                );
+                                if deleted {
+                                    fs::remove_dir_all(
+                                        layout.ocomp_root.join("exporter-v1/input-refs").join(
+                                            hex::encode(
+                                                prepared.job.finalized.as_ref().unwrap().job_id,
+                                            ),
+                                        ),
+                                    )
+                                    .unwrap();
+                                }
+                            },
+                            |request| fixture(request, Phase::VotingOpen, bind_source).owner,
+                            |state, source, layout, scratch| {
+                                let mut report = ValidationReport::new([CheckName::Ocomp]);
+                                let result = verify_ocomp_relations(
+                                    state,
+                                    source,
+                                    layout,
+                                    scratch,
+                                    &mut report,
+                                );
+                                if deleted {
+                                    assert!(result
+                                        .unwrap_err()
+                                        .downcast_ref::<Incomplete>()
+                                        .is_some());
+                                } else {
+                                    result.unwrap();
+                                    assert_eq!(report.active_ocomp.len(), 1);
+                                    assert!(report.active_ocomp[0].export_verified);
+                                    assert!(report
+                                        .inventory_bounds
+                                        .iter()
+                                        .any(|bound| bound.name == "present_receipts"
+                                            && bound.visited == 1));
+                                }
+                            },
+                        );
+                    }
+                }
+            }
             use super::*;
             use crate::snapshot::validation::{
                 ocomp::{verify_canonical_obligations, CanonicalLocalPinStage},
@@ -4326,8 +5529,27 @@ mod pin_authority {
             phase: Phase,
             configure_input: impl FnOnce(&mut JobIntentV1),
         ) -> ActiveFixture {
+            fixture_for_identity(
+                request,
+                phase,
+                1,
+                alloy_primitives::B256::repeat_byte(11),
+                configure_input,
+            )
+        }
+
+        // Test-only variant binding the native integration fixture to its real chain.
+        fn fixture_for_identity(
+            request: &OutbeHeader,
+            phase: Phase,
+            chain_id: u64,
+            genesis_hash: alloy_primitives::B256,
+            configure_input: impl FnOnce(&mut JobIntentV1),
+        ) -> ActiveFixture {
             let limits = poc_schema_limits();
             let mut job = canonical_job(request, false);
+            job.intent.chain_id = chain_id;
+            job.intent.genesis_hash = genesis_hash;
             let install = ForkInstallScenario::final_at(
                 outbe_ocompregistry::OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
                 job.intent.chain_id,
@@ -7647,5 +8869,184 @@ mod present_cas {
             assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
             assert_eq!(fingerprint(root.path()), before);
         }
+    }
+}
+
+mod present_join {
+    use super::*;
+    use crate::snapshot::validation::{
+        ocomp::verify_ocomp_relations,
+        report::{CheckName, ValidationReport},
+    };
+    use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
+    use std::fs;
+
+    const LIMITS: CasLimits = CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: u64::MAX,
+    };
+
+    #[test]
+    fn empty_native_join_preserves_independent_frontiers_and_creates_no_job_stores() {
+        for version in [1, 2] {
+            with_canonical_frontiers(
+                version,
+                |_| {},
+                |_| queued_owner(0),
+                |state, source, layout, scratch| {
+                    let before = crate::snapshot::tests::headers::fingerprint(&layout.ocomp_root);
+                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                    verify_ocomp_relations(state, source, layout, scratch, &mut report).unwrap();
+                    assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
+                    assert_eq!(report.observed.c_current.as_ref().unwrap().number, 100);
+                    assert!(report.required_missing.is_empty());
+                    assert!(report.active_ocomp.is_empty());
+                    assert_eq!(
+                        crate::snapshot::tests::headers::fingerprint(&layout.ocomp_root),
+                        before
+                    );
+                    for absent in [
+                        "cas-v1",
+                        "supervisor-v1/jobs",
+                        "exporter-v1/receipts",
+                        "exporter-v1/input-refs",
+                        "supervisor-v1/export-bindings",
+                    ] {
+                        assert!(!layout.ocomp_root.join(absent).exists());
+                    }
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn every_present_population_is_enumerated_even_without_live_canonical_jobs() {
+        for prefix in [
+            "exporter-v1/receipts",
+            "supervisor-v1/export-bindings",
+            "exporter-v1/input-refs",
+            "supervisor-v1/jobs",
+            "supervisor-v1/materialization-references",
+        ] {
+            with_canonical_frontiers(
+                2,
+                |layout| {
+                    fs::create_dir_all(layout.ocomp_root.join(prefix).join("not-a-native-job"))
+                        .unwrap();
+                },
+                |_| queued_owner(0),
+                |state, source, layout, scratch| {
+                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                    let error = verify_ocomp_relations(state, source, layout, scratch, &mut report)
+                        .unwrap_err();
+                    assert!(
+                        error.downcast_ref::<Incomplete>().is_none(),
+                        "{prefix}: {error:#}"
+                    );
+                    assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn empty_historical_job_and_nested_reference_directories_do_not_require_old_evidence() {
+        with_canonical_frontiers(
+            2,
+            |layout| {
+                let job = hex::encode(B256::repeat_byte(71));
+                for prefix in [
+                    "exporter-v1/receipts",
+                    "supervisor-v1/export-bindings",
+                    "exporter-v1/input-refs",
+                    "supervisor-v1/jobs",
+                ] {
+                    fs::create_dir_all(layout.ocomp_root.join(prefix).join(&job)).unwrap();
+                }
+                fs::create_dir_all(
+                    layout
+                        .ocomp_root
+                        .join("supervisor-v1/materialization-references")
+                        .join(&job)
+                        .join("0"),
+                )
+                .unwrap();
+            },
+            |_| queued_owner(0),
+            |state, source, layout, scratch| {
+                let mut report = ValidationReport::new([CheckName::Ocomp]);
+                verify_ocomp_relations(state, source, layout, scratch, &mut report).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn full_join_runs_orphan_cas_check_after_canonical_success() {
+        with_canonical_frontiers(
+            2,
+            |layout| {
+                let cas = FilesystemCas::open(
+                    layout.ocomp_root.join("cas-v1"),
+                    CasWriterRole::Supervisor,
+                    LIMITS,
+                )
+                .unwrap();
+                let reference = cas.publish_bytes(b"native orphan bytes").unwrap();
+                drop(cas);
+                let digest = hex::encode(reference.transport_digest);
+                fs::write(
+                    layout
+                        .ocomp_root
+                        .join("cas-v1/objects")
+                        .join(&digest[..2])
+                        .join(&digest[2..]),
+                    b"native broken bytes",
+                )
+                .unwrap();
+            },
+            |_| queued_owner(0),
+            |state, source, layout, scratch| {
+                let mut report = ValidationReport::new([CheckName::Ocomp]);
+                let error = verify_ocomp_relations(state, source, layout, scratch, &mut report)
+                    .unwrap_err();
+                assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                assert_eq!(report.observed.c_current.as_ref().unwrap().number, 100);
+            },
+        );
+    }
+
+    #[test]
+    fn nested_materialization_reference_with_unavailable_job_evidence_is_incomplete() {
+        use outbe_ocomp::nod_materialization::MaterializationReferenceStoreV1;
+        with_canonical_frontiers(
+            2,
+            |layout| {
+                let cas = FilesystemCas::open(
+                    layout.ocomp_root.join("cas-v1"),
+                    CasWriterRole::Supervisor,
+                    LIMITS,
+                )
+                .unwrap();
+                let reference = cas.publish_bytes(b"retained dependency").unwrap();
+                let job = B256::repeat_byte(72);
+                let path = layout
+                    .ocomp_root
+                    .join("supervisor-v1/materialization-references")
+                    .join(hex::encode(job))
+                    .join("9");
+                MaterializationReferenceStoreV1::open(path)
+                    .unwrap()
+                    .pin_exact(job, &[reference])
+                    .unwrap();
+            },
+            |_| queued_owner(0),
+            |state, source, layout, scratch| {
+                let mut report = ValidationReport::new([CheckName::Ocomp]);
+                let error = verify_ocomp_relations(state, source, layout, scratch, &mut report)
+                    .unwrap_err();
+                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                assert!(format!("{error:#}").contains("job"));
+            },
+        );
     }
 }

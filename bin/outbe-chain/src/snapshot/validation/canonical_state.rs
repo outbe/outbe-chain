@@ -8,10 +8,11 @@ use outbe_intex::schema::{
     SeriesRecord,
 };
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
+#[cfg(test)]
+use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
 use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1,
     profile::poc_schema_limits,
-    receipts::AggregateActivationReceiptV1,
     state::{ActiveGenerationV1, OcompJobRecordV1},
 };
 use outbe_primitives::{
@@ -154,6 +155,7 @@ impl<'a> CanonicalState<'a> {
         Ok(record)
     }
 
+    #[cfg(test)]
     pub(crate) fn metadosis_terminal_receipt(
         &self,
         intent_id: B256,

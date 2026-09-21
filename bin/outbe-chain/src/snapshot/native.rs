@@ -131,9 +131,7 @@ fn read_progress(
     Ok(result)
 }
 
-// The offline validation delivery registers these readers with its standalone CLI.
-// Until then they are exercised by native fixtures, independently of node startup.
-#[cfg(test)]
+// Native readers used by the standalone offline validator.
 pub(crate) struct RethReadOnlyView {
     pub db: DatabaseEnv,
     pub static_files: StaticFileProvider<OutbePrimitives>,
@@ -142,7 +140,6 @@ pub(crate) struct RethReadOnlyView {
     pub protected: outbe_snapshot::layout::ProtectedPaths,
 }
 
-#[cfg(test)]
 impl RethReadOnlyView {
     /// A stopped offline scan may take hours; the live-node reader timeout must
     /// not discard its immutable database snapshot partway through that scan.
@@ -152,6 +149,7 @@ impl RethReadOnlyView {
         Ok(tx)
     }
 
+    #[cfg(test)]
     pub fn open(layout: &NativeLayout) -> eyre::Result<Self> {
         let mut protected = layout.protected.clone();
         protected.0.extend([

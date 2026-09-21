@@ -24,7 +24,9 @@ fn create_cli_requires_signing_key_and_forwards_native_arguments() {
         "chain",
     ])
     .unwrap();
-    let SnapshotCommand::Create(args) = parsed.command;
+    let SnapshotCommand::Create(args) = parsed.command else {
+        panic!("expected create command");
+    };
     assert_eq!(
         args.node_args,
         ["--chain", "genesis.json", "--datadir", "chain"].map(std::ffi::OsString::from)

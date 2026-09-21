@@ -45,7 +45,9 @@ pub(crate) struct NodInputsAudit {
 
 #[derive(Debug)]
 pub(crate) struct ExportInputsAudit {
+    #[cfg(test)]
     pub receipt: outbe_ocomp::export_receipt::VerifiedExportReceipt,
+    #[cfg(test)]
     pub binding: outbe_ocomp::export_binding::VerifiedExportedManifestBinding,
     pub input_chunks: u64,
 }
@@ -212,6 +214,7 @@ pub(crate) fn verify_present_admissions(
 
 /// Observe an optional local result for an authenticated finalized job. Network
 /// completion does not imply that this node produced a local result.
+#[cfg(test)]
 pub(crate) fn verify_local_result(
     ocomp_root: &Path,
     job: &OcompJobRecordV1,
@@ -417,7 +420,9 @@ pub(crate) fn verify_export_inputs(
         // load_exact already consumes the native exact verified input cursor.
         let input_chunks = u64::from(binding.manifest().input_chunk_count);
         Ok(ExportInputsAudit {
+            #[cfg(test)]
             receipt,
+            #[cfg(test)]
             binding,
             input_chunks,
         })
@@ -2457,4 +2462,1226 @@ pub(crate) fn verify_present_receipt(
             error.wrap_err("present OCOMP receipt")
         }
     })
+}
+
+const PRESENT_RECEIPT: u8 = 1;
+const PRESENT_BINDING: u8 = 2;
+const PRESENT_INPUTS: u8 = 4;
+const PRESENT_ADMISSIONS: u8 = 8;
+const PRESENT_REFERENCES: u8 = 16;
+const PRESENT_ACK: u8 = 32;
+
+/// Scratch-only population union. Native file paths never seed canonical inventory.
+struct PresentJobUnion {
+    db: DatabaseEnv,
+    _directory: tempfile::TempDir,
+}
+
+impl PresentJobUnion {
+    fn create(parent: &Path, protected: &ProtectedPaths) -> eyre::Result<Self> {
+        validate_layout(&[], protected, &[parent.to_path_buf()])?;
+        let directory = tempfile::Builder::new()
+            .prefix("ocomp-present-")
+            .tempdir_in(parent)?;
+        let mut db = create_db(directory.path(), DatabaseArguments::default())?;
+        db.create_and_track_tables_for::<InventoryRows>()?;
+        Ok(Self {
+            db,
+            _directory: directory,
+        })
+    }
+
+    fn key(prefix: u8, job: B256) -> Vec<u8> {
+        let mut key = vec![prefix];
+        key.extend_from_slice(job.as_slice());
+        key
+    }
+
+    fn add(&self, job: B256, flag: u8) -> eyre::Result<()> {
+        let key = Self::key(b'u', job);
+        let tx = self.db.tx_mut()?;
+        let previous = tx.get::<InventoryRows>(key.clone())?.map_or(0, |v| v[0]);
+        tx.put::<InventoryRows>(key, vec![previous | flag])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    // d/l are provisional authorities emitted by discovery/local-result walkers.
+    // Publish to a only when their enclosing native walk has succeeded.
+    fn save_job(&self, prefix: u8, job: &OcompJobRecordV1) -> eyre::Result<()> {
+        let Some(finalized) = &job.finalized else {
+            return Ok(());
+        };
+        let key = Self::key(prefix, finalized.job_id);
+        let encoded = job.encode_canonical(&poc_schema_limits())?;
+        let tx = self.db.tx_mut()?;
+        if let Some(previous) = tx.get::<InventoryRows>(key.clone())? {
+            ensure!(
+                previous == encoded,
+                "conflicting canonical authority for present job"
+            );
+        }
+        tx.put::<InventoryRows>(key, encoded)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn visit_prefix(
+        &self,
+        prefix: &[u8],
+        visitor: &mut impl FnMut(Vec<u8>, Vec<u8>) -> eyre::Result<()>,
+    ) -> eyre::Result<()> {
+        let mut next = prefix.to_vec();
+        loop {
+            // Release the read transaction before callback-side scratch writes.
+            let row = {
+                let tx = self.db.tx()?;
+                let mut cursor = tx.cursor_read::<InventoryRows>()?;
+                cursor.seek(next.clone())?
+            };
+            let Some((key, value)) = row else { break };
+            if !key.starts_with(prefix) {
+                break;
+            }
+            next = key.clone();
+            next.push(0);
+            visitor(key, value)?;
+        }
+        Ok(())
+    }
+
+    fn publish_jobs(&self, prefix: u8) -> eyre::Result<()> {
+        self.visit_prefix(&[prefix], &mut |_, bytes| {
+            let job = OcompJobRecordV1::decode_canonical(&bytes, &poc_schema_limits())?;
+            self.save_job(b'a', &job)
+        })
+    }
+
+    fn job(&self, id: B256) -> eyre::Result<Option<OcompJobRecordV1>> {
+        self.db
+            .tx()?
+            .get::<InventoryRows>(Self::key(b'a', id))?
+            .map(|bytes| {
+                OcompJobRecordV1::decode_canonical(&bytes, &poc_schema_limits()).map_err(Into::into)
+            })
+            .transpose()
+    }
+
+    fn save_evidence(&self, prefix: u8, job: B256, bytes: Vec<u8>) -> eyre::Result<()> {
+        let key = Self::key(prefix, job);
+        let tx = self.db.tx_mut()?;
+        if let Some(previous) = tx.get::<InventoryRows>(key.clone())? {
+            ensure!(
+                previous == bytes,
+                "conflicting surviving evidence for same job"
+            );
+        }
+        tx.put::<InventoryRows>(key, bytes)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn publish_evidence(&self, from: u8, to: u8, flag: u8) -> eyre::Result<()> {
+        self.visit_prefix(&[from], &mut |key, bytes| {
+            ensure!(key.len() == 33, "invalid scratch evidence key");
+            let job = B256::from_slice(&key[1..]);
+            self.save_evidence(to, job, bytes)?;
+            if flag != 0 {
+                self.add(job, flag)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn save_ack(
+        &self,
+        ack: &outbe_ocomp::discovery_spool::StoredDiscoveryAckV1,
+    ) -> eyre::Result<()> {
+        let mut bytes = ack.reference.encode_fixed();
+        bytes.extend_from_slice(&ack.lease_generation.to_be_bytes());
+        bytes.extend_from_slice(ack.manifest_hash.as_slice());
+        bytes.extend_from_slice(&ack.committed.encode_body(&poc_schema_limits())?);
+        self.save_evidence(b'k', ack.committed.job_id, bytes)
+    }
+
+    fn ack(
+        &self,
+        job: B256,
+    ) -> eyre::Result<Option<outbe_ocomp::discovery_spool::StoredDiscoveryAckV1>> {
+        use outbe_ocomp::{
+            discovery_control::DiscoveryAckRefV1, discovery_spool::StoredDiscoveryAckV1,
+        };
+        let fixed = DiscoveryAckRefV1::FIXED_BYTES;
+        self.db
+            .tx()?
+            .get::<InventoryRows>(Self::key(b'c', job))?
+            .map(|bytes| {
+                ensure!(bytes.len() > fixed + 40, "invalid scratch discovery ACK");
+                Ok(StoredDiscoveryAckV1 {
+                    reference: DiscoveryAckRefV1::decode_fixed(&bytes[..fixed])?,
+                    lease_generation: u64::from_be_bytes(bytes[fixed..fixed + 8].try_into()?),
+                    manifest_hash: B256::from_slice(&bytes[fixed + 8..fixed + 40]),
+                    committed: outbe_ocomp_protocol::SnapshotExportCommittedV1::decode_body(
+                        &bytes[fixed + 40..],
+                        &poc_schema_limits(),
+                    )?,
+                })
+            })
+            .transpose()
+    }
+
+    fn save_result_binding(
+        &self,
+        job: B256,
+        result: &outbe_ocomp_protocol::result::LysisResultV1,
+    ) -> eyre::Result<()> {
+        let mut bytes = result.input_manifest_hash.as_slice().to_vec();
+        bytes.extend_from_slice(result.plan_hash.as_slice());
+        self.save_evidence(b'm', job, bytes)
+    }
+
+    fn result_binding(&self, job: B256) -> eyre::Result<Option<(B256, B256)>> {
+        self.db
+            .tx()?
+            .get::<InventoryRows>(Self::key(b'v', job))?
+            .map(|bytes| {
+                ensure!(bytes.len() == 64, "invalid scratch local-result binding");
+                Ok((
+                    B256::from_slice(&bytes[..32]),
+                    B256::from_slice(&bytes[32..]),
+                ))
+            })
+            .transpose()
+    }
+
+    fn save_export(
+        &self,
+        job: B256,
+        export: outbe_node::ocomp::retention::ExportAuthorityV1,
+    ) -> eyre::Result<()> {
+        let mut bytes = export.source_generation.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&export.lease_generation.to_be_bytes());
+        bytes.extend_from_slice(export.manifest_hash.as_slice());
+        let tx = self.db.tx_mut()?;
+        tx.put::<InventoryRows>(Self::key(b'e', job), bytes)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn export(
+        &self,
+        job: B256,
+    ) -> eyre::Result<Option<outbe_node::ocomp::retention::ExportAuthorityV1>> {
+        self.db
+            .tx()?
+            .get::<InventoryRows>(Self::key(b'e', job))?
+            .map(|bytes| {
+                ensure!(bytes.len() == 48, "invalid scratch export authority");
+                Ok(outbe_node::ocomp::retention::ExportAuthorityV1 {
+                    source_generation: u64::from_be_bytes(bytes[..8].try_into()?),
+                    lease_generation: u64::from_be_bytes(bytes[8..16].try_into()?),
+                    manifest_hash: B256::from_slice(&bytes[16..]),
+                })
+            })
+            .transpose()
+    }
+
+    fn save_refs(
+        &self,
+        job: B256,
+        ordinal: u32,
+        refs: &[outbe_ocomp_protocol::CasObjectRefV1],
+    ) -> eyre::Result<()> {
+        self.add(job, PRESENT_REFERENCES)?;
+        let tx = self.db.tx_mut()?;
+        for (index, reference) in refs.iter().enumerate() {
+            let mut key = Self::key(b'r', job);
+            key.extend_from_slice(&ordinal.to_be_bytes());
+            key.extend_from_slice(&u32::try_from(index)?.to_be_bytes());
+            let mut bytes = reference.transport_digest.as_slice().to_vec();
+            bytes.extend_from_slice(&reference.encoded_bytes.to_be_bytes());
+            match reference.expected_ocb1_kind {
+                None => bytes.push(0),
+                Some(kind) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&kind.to_be_bytes());
+                }
+            }
+            tx.put::<InventoryRows>(key, bytes)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn visit_refs(
+        &self,
+        job: B256,
+        visitor: &mut impl FnMut(outbe_ocomp_protocol::CasObjectRefV1) -> eyre::Result<()>,
+    ) -> eyre::Result<()> {
+        self.visit_prefix(&Self::key(b'r', job), &mut |_, bytes| {
+            ensure!(
+                bytes.len() == 41 || bytes.len() == 43,
+                "invalid scratch reference"
+            );
+            let expected_ocb1_kind = match bytes[40] {
+                0 if bytes.len() == 41 => None,
+                1 if bytes.len() == 43 => Some(u16::from_be_bytes(bytes[41..].try_into()?)),
+                _ => eyre::bail!("invalid scratch reference kind"),
+            };
+            visitor(outbe_ocomp_protocol::CasObjectRefV1 {
+                transport_digest: B256::from_slice(&bytes[..32]),
+                encoded_bytes: u64::from_be_bytes(bytes[32..40].try_into()?),
+                expected_ocb1_kind,
+            })
+        })
+    }
+}
+
+#[derive(Default)]
+struct PresentJoinErrors {
+    first: Option<eyre::Report>,
+    failed: bool,
+}
+impl PresentJoinErrors {
+    fn observe<T>(&mut self, result: eyre::Result<T>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                let error = present_join_error(error);
+                let failed = error.downcast_ref::<Incomplete>().is_none();
+                if self.first.is_none() || (failed && !self.failed) {
+                    self.first = Some(error);
+                }
+                self.failed |= failed;
+                None
+            }
+        }
+    }
+    fn finish(self) -> eyre::Result<()> {
+        self.first.map_or(Ok(()), Err)
+    }
+}
+fn present_join_error(error: eyre::Report) -> eyre::Report {
+    if error.downcast_ref::<Incomplete>().is_some() {
+        error
+    } else if missing_native_input(error.as_ref()) {
+        error.wrap_err(Incomplete(
+            "missing evidence for present OCOMP relation".into(),
+        ))
+    } else {
+        error
+    }
+}
+fn present_count(report: &mut super::report::ValidationReport, name: &str, count: u64) {
+    report
+        .inventory_bounds
+        .push(super::report::InventoryBounds {
+            name: name.into(),
+            start: 0,
+            end_exclusive: count,
+            visited: count,
+        });
+}
+fn existing_directory(path: &Path) -> eyre::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_dir(),
+                "not a native directory: {}",
+                path.display()
+            );
+            Ok(true)
+        }
+    }
+}
+fn existing_file(path: &Path) -> eyre::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+        Ok(metadata) => {
+            ensure!(metadata.is_file(), "not a native file: {}", path.display());
+            Ok(true)
+        }
+    }
+}
+fn directory_has_entries(path: &Path) -> eyre::Result<bool> {
+    if !existing_directory(path)? {
+        return Ok(false);
+    }
+    Ok(std::fs::read_dir(path)?.next().transpose()?.is_some())
+}
+
+fn scan_present_jobs(root: &Path, flag: u8, work: &PresentJobUnion) -> eyre::Result<u64> {
+    if !existing_directory(root)? {
+        return Ok(0);
+    }
+    let mut count = 0_u64;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        ensure!(
+            entry.file_type()?.is_dir(),
+            "present job locator is not a directory"
+        );
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("invalid present job locator"))?;
+        let mut bytes = [0; 32];
+        hex::decode_to_slice(name, &mut bytes)?;
+        let job = B256::from(bytes);
+        ensure!(
+            !job.is_zero() && name == hex::encode(job),
+            "noncanonical present job locator"
+        );
+        let path = if flag == PRESENT_ADMISSIONS {
+            entry.path().join("admissions")
+        } else {
+            entry.path()
+        };
+        // Empty directories do not fabricate a complete local stage.
+        if directory_has_entries(&path)? {
+            work.add(job, flag)?;
+        }
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("present job count overflow"))?;
+    }
+    Ok(count)
+}
+
+/// Final selected OCOMP composition. Caller records the Ocomp status.
+pub(crate) fn verify_ocomp_relations(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    layout: &crate::snapshot::config::RequestedLayout,
+    scratch_parent: &Path,
+    report: &mut super::report::ValidationReport,
+) -> eyre::Result<()> {
+    let limits = CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: u64::MAX,
+    };
+    let mut errors = PresentJoinErrors::default();
+    // Exactly one canonical inventory/obligation scan, before local populations.
+    let canonical = errors.observe(verify_canonical_obligations(
+        state,
+        view,
+        layout,
+        scratch_parent,
+        None,
+        Some(report),
+    ));
+    let mut protected = layout.protected.clone();
+    protected.0.extend([
+        layout.chain_root.clone(),
+        layout.consensus_root.clone(),
+        layout.ocomp_root.clone(),
+        layout.static_files_root.clone(),
+        layout.execution_rocksdb_root.clone(),
+    ]);
+    protected
+        .0
+        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
+    let work = PresentJobUnion::create(scratch_parent, &protected)?;
+    if let Some(canonical) = &canonical {
+        report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
+            number: canonical.projection.block_number,
+            hash: hex::encode(canonical.projection.block_hash),
+        });
+        for (name, count) in [
+            ("verified_active_intents", canonical.bounds.active_intents),
+            ("verified_closure_frames", canonical.closure.replay.blocks),
+            ("verified_source_leases", canonical.source_leases),
+            ("verified_complete_exports", canonical.complete_exports),
+            ("verified_export_input_chunks", canonical.input_chunks),
+            ("verified_pending_nod_jobs", canonical.nod.jobs),
+            ("verified_pending_nod_batches", canonical.nod.batches),
+            ("verified_pending_nod_actions", canonical.nod.actions),
+            ("verified_pending_payout_days", canonical.payout_days),
+        ] {
+            present_count(report, name, count);
+        }
+        for active in &canonical.active {
+            work.save_job(b'a', &active.job)?;
+        }
+        for pin in &canonical.pins {
+            work.save_job(b'a', &pin.authority.job)?;
+            if let (Some(finalized), Some(export)) =
+                (&pin.authority.job.finalized, pin.authority.export)
+            {
+                work.save_export(finalized.job_id, export)?;
+            }
+        }
+    }
+    if let Some(audit) = errors.observe(verify_present_discovery(
+        state,
+        view,
+        &layout.ocomp_root,
+        None,
+        &mut |record, job| {
+            if let outbe_ocomp::discovery_spool::DiscoverySpoolRecordV1::Ack(ack) = record {
+                work.save_ack(&ack)?;
+            }
+            if let Some(job) = job {
+                work.save_job(b'd', &job)?;
+            }
+            Ok(())
+        },
+    )) {
+        work.publish_jobs(b'd')?;
+        work.publish_evidence(b'k', b'c', PRESENT_ACK)?;
+        present_count(report, "present_discovery_records", audit.records);
+    }
+    if let Some(audit) = errors.observe(verify_present_local_results(
+        state,
+        view,
+        &layout.ocomp_root,
+        None,
+        &mut |job, result| {
+            work.save_job(b'l', job)?;
+            work.save_result_binding(result.result.job_id, &result.result)
+        },
+    )) {
+        work.publish_jobs(b'l')?;
+        work.publish_evidence(b'm', b'v', 0)?;
+        present_count(report, "present_local_results", audit.results);
+        present_count(report, "present_terminal_digests", audit.terminal_digests);
+    }
+    if let Some(audit) = errors.observe(verify_present_cas(&layout.ocomp_root, limits, None)) {
+        present_count(report, "present_cas_objects", audit.objects);
+        present_count(report, "present_cas_bytes", audit.bytes);
+    }
+    for (prefix, flag, name) in [
+        (
+            "exporter-v1/receipts",
+            PRESENT_RECEIPT,
+            "receipt_job_directories",
+        ),
+        (
+            "supervisor-v1/export-bindings",
+            PRESENT_BINDING,
+            "binding_job_directories",
+        ),
+        (
+            "exporter-v1/input-refs",
+            PRESENT_INPUTS,
+            "input_job_directories",
+        ),
+        (
+            "supervisor-v1/jobs",
+            PRESENT_ADMISSIONS,
+            "public_job_directories",
+        ),
+    ] {
+        if let Some(count) = errors.observe(scan_present_jobs(
+            &layout.ocomp_root.join(prefix),
+            flag,
+            &work,
+        )) {
+            present_count(report, name, count);
+        }
+    }
+    if let Some(count) = errors.observe(collect_present_references(&layout.ocomp_root, &work)) {
+        present_count(report, "present_reference_records", count);
+    }
+    let mut counts = PresentArtifactCounts::default();
+    let mut jobs = 0_u64;
+    let context = PresentJobContext {
+        state,
+        view,
+        layout,
+        scratch: scratch_parent,
+        protected: &protected,
+        work: &work,
+        cas_limits: limits,
+    };
+    // Each job callback runs after the union read transaction is released.
+    work.visit_prefix(b"u", &mut |key, value| {
+        ensure!(
+            key.len() == 33 && value.len() == 1,
+            "invalid scratch job union"
+        );
+        let job = B256::from_slice(&key[1..]);
+        if canonical.is_some() {
+            errors.observe(verify_present_job(&context, job, value[0], &mut counts));
+        }
+        jobs = jobs
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("present job union overflow"))?;
+        Ok(())
+    })?;
+    present_count(report, "present_job_union", jobs);
+    for (name, count) in [
+        ("present_receipts", counts.receipts),
+        ("present_bindings", counts.bindings),
+        ("present_input_chunks", counts.inputs),
+        ("present_admissions", counts.admissions),
+        ("present_result_chunks", counts.results),
+        ("verified_materialization_references", counts.references),
+    ] {
+        present_count(report, name, count);
+    }
+    if let Some((live, retained)) =
+        errors.observe(verify_present_projection_structure(layout, scratch_parent))
+    {
+        present_count(report, "ocomp_live_body_records", live);
+        present_count(report, "ocomp_retained_body_records", retained);
+    }
+    errors.finish()
+}
+
+fn collect_present_references(root: &Path, work: &PresentJobUnion) -> eyre::Result<u64> {
+    use outbe_ocomp::nod_materialization::{
+        MaterializationReferenceErrorV1, MaterializationReferenceReaderV1,
+    };
+    let path = root.join("supervisor-v1/materialization-references");
+    if !existing_directory(&path)? {
+        return Ok(0);
+    }
+    let reader = MaterializationReferenceReaderV1::open_existing(path)?;
+    let mut callback_error = None;
+    let mut count = 0_u64;
+    let result = reader.visit_references(&mut |job, ordinal, refs| {
+        let result = (|| -> eyre::Result<()> {
+            work.save_refs(job, ordinal, &refs)?;
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| eyre::eyre!("reference record count overflow"))?;
+            Ok(())
+        })();
+        result.map_err(|error| {
+            callback_error = Some(error);
+            MaterializationReferenceErrorV1::InvalidRecord
+        })
+    });
+    if let Some(error) = callback_error {
+        return Err(error);
+    }
+    result?;
+    Ok(count)
+}
+
+#[derive(Default)]
+struct PresentArtifactCounts {
+    receipts: u64,
+    bindings: u64,
+    inputs: u64,
+    admissions: u64,
+    results: u64,
+    references: u64,
+}
+fn increment_present(count: &mut u64, add: u64) -> eyre::Result<()> {
+    *count = count
+        .checked_add(add)
+        .ok_or_else(|| eyre::eyre!("present artifact count overflow"))?;
+    Ok(())
+}
+
+fn validate_present_manifest(
+    manifest: &outbe_ocomp_protocol::input::InputManifestV1,
+    job: &OcompJobRecordV1,
+    bundle: &PinnedProtocolBundle,
+) -> eyre::Result<()> {
+    let finalized = job
+        .finalized
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("present manifest has no canonical finalized job"))?;
+    ensure!(
+        manifest.job_id == finalized.job_id
+            && manifest.protocol_bundle_hash == job.intent.protocol_bundle_hash
+            && manifest.attempt == job.intent.attempt
+            && manifest.wwd == job.intent.wwd
+            && manifest.sealed_tribute_collection_key == job.intent.sealed_tribute_collection_key
+            && manifest.sealed_tribute_collection_root == job.intent.sealed_tribute_collection_root
+            && manifest.tribute_count == job.intent.authenticated_day_count
+            && manifest.tribute_nominal_total == job.intent.authenticated_day_nominal,
+        "present manifest differs from canonical frozen job authority"
+    );
+    let checkpoint = &manifest.checkpoint;
+    ensure!(
+        checkpoint.finalized_block_number == job.intent_height
+            && checkpoint.finalized_block_hash == finalized.finalized_request_block_hash
+            && checkpoint.finalized_state_root == finalized.finalized_request_state_root
+            && checkpoint.finalized_ce_root == job.intent.ce_sealed_root
+            && checkpoint.ce_schema_version
+                == u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
+        "present manifest differs from canonical checkpoint"
+    );
+    manifest.validate_against_bundle(bundle.bundle(), &poc_schema_limits())?;
+    Ok(())
+}
+
+struct PresentJobContext<'a, 'state> {
+    state: &'a CanonicalState<'state>,
+    view: &'a crate::snapshot::native::RethReadOnlyView,
+    layout: &'a crate::snapshot::config::RequestedLayout,
+    scratch: &'a Path,
+    protected: &'a ProtectedPaths,
+    work: &'a PresentJobUnion,
+    cas_limits: CasLimits,
+}
+
+fn compare_surviving_ack_export(
+    ack: &outbe_ocomp::discovery_spool::StoredDiscoveryAckV1,
+    export: outbe_node::ocomp::retention::ExportAuthorityV1,
+) -> eyre::Result<()> {
+    ensure!(
+        ack.reference.generation == export.source_generation
+            && ack.lease_generation == export.lease_generation
+            && ack.manifest_hash == export.manifest_hash,
+        "surviving discovery ACK differs from export authority"
+    );
+    Ok(())
+}
+
+fn compare_surviving_result_binding(
+    result: (B256, B256),
+    manifest: &outbe_ocomp_protocol::input::InputManifestV1,
+    plan_hash: Option<B256>,
+) -> eyre::Result<()> {
+    ensure!(
+        result.0 == manifest.manifest_hash(&poc_schema_limits())?,
+        "surviving local result differs from input manifest"
+    );
+    if let Some(plan_hash) = plan_hash {
+        ensure!(
+            result.1 == plan_hash,
+            "surviving local result differs from plan"
+        );
+    }
+    Ok(())
+}
+
+fn verify_present_job(
+    context: &PresentJobContext<'_, '_>,
+    id: B256,
+    flags: u8,
+    counts: &mut PresentArtifactCounts,
+) -> eyre::Result<()> {
+    let PresentJobContext {
+        state,
+        view,
+        layout,
+        scratch,
+        protected,
+        work,
+        cas_limits,
+    } = *context;
+    use outbe_ocomp::{
+        export_binding::ExportedManifestBindingReader, export_receipt::ExportReceiptReader,
+    };
+    let root = &layout.ocomp_root;
+    let name = hex::encode(id);
+    let receipt_path = root.join("exporter-v1/receipts").join(&name);
+    let binding_path = root.join("supervisor-v1/export-bindings").join(&name);
+    let input_path = root.join("exporter-v1/input-refs").join(&name);
+    let admission_path = root
+        .join("supervisor-v1/jobs")
+        .join(&name)
+        .join("admissions");
+    let schema = poc_schema_limits();
+    let mut errors = PresentJoinErrors::default();
+    let mut job = work.job(id)?;
+    let ack = work.ack(id)?;
+    if let (Some(ack), Some(export)) = (&ack, work.export(id)?) {
+        errors.observe(compare_surviving_ack_export(ack, export));
+    }
+    let result_binding = work.result_binding(id)?;
+    let mut manifest = None;
+    let receipt_reader = if flags & PRESENT_RECEIPT != 0 {
+        errors.observe(
+            ExportReceiptReader::open(root.join("exporter-v1/receipts"), id, schema)
+                .map_err(Into::into),
+        )
+    } else {
+        None
+    };
+    let binding_reader = if flags & PRESENT_BINDING != 0 {
+        errors.observe(
+            ExportedManifestBindingReader::open_existing(&binding_path, schema).map_err(Into::into),
+        )
+    } else {
+        None
+    };
+    let receipt_present =
+        flags & PRESENT_RECEIPT != 0 && existing_file(&receipt_path.join("receipt.ref"))?;
+    let binding_present =
+        flags & PRESENT_BINDING != 0 && existing_file(&binding_path.join("binding.ref"))?;
+    let input_present =
+        flags & PRESENT_INPUTS != 0 && existing_file(&input_path.join("catalog.header"))?;
+    if flags & PRESENT_RECEIPT != 0
+        && !receipt_present
+        && existing_file(&receipt_path.join("prepared.ref"))?
+    {
+        errors.observe::<()>(Err(Incomplete(format!(
+            "job {id}: prepared receipt observed; complete receipt comparison unavailable"
+        ))
+        .into()));
+    }
+    if flags & PRESENT_INPUTS != 0 && !input_present {
+        errors.observe::<()>(Err(Incomplete(format!(
+            "job {id}: input catalog has no sealed header; exact comparison unavailable"
+        ))
+        .into()));
+    }
+    let needs_cas = receipt_present
+        || binding_present
+        || input_present
+        || flags & (PRESENT_ADMISSIONS | PRESENT_REFERENCES) != 0;
+    if !needs_cas {
+        return errors.finish();
+    }
+    let cas = FilesystemCasReader::open(root.join("cas-v1"), cas_limits)?;
+    if receipt_present {
+        if let Some(reader) = &receipt_reader {
+            if let Some(receipt) = errors.observe(reader.load_exact(&cas).map_err(Into::into)) {
+                if job.is_none() {
+                    job = errors.observe(locate_request_job(
+                        state,
+                        view,
+                        receipt.checkpoint().finalized_block_number,
+                        id,
+                        WorldwideDay::new(receipt.manifest().wwd),
+                        None,
+                    ));
+                }
+                if let Some(authority) = &job {
+                    if let Some(receipt) = errors.observe(verify_present_receipt(
+                        root,
+                        authority,
+                        work.export(id)?,
+                        cas_limits,
+                    )) {
+                        if let Some(ack) = &ack {
+                            errors.observe((|| -> eyre::Result<()> {
+                                compare_surviving_ack_export(
+                                    ack,
+                                    outbe_node::ocomp::retention::ExportAuthorityV1 {
+                                        source_generation: receipt.source_pin_generation(),
+                                        lease_generation: receipt.lease_generation(),
+                                        manifest_hash: receipt.manifest_hash(),
+                                    },
+                                )?;
+                                ensure!(
+                                    ack.reference.export_receipt_digest
+                                        == receipt.receipt_ref().transport_digest
+                                        && ack.committed == receipt.committed(),
+                                    "surviving discovery ACK differs from receipt commitment"
+                                );
+                                Ok(())
+                            })());
+                        }
+                        manifest = Some(receipt.manifest().clone());
+                        increment_present(&mut counts.receipts, 1)?;
+                    }
+                }
+            }
+        }
+    }
+    // Reopen/close the independent sealed input catalog even without job authority.
+    let inputs = if input_present {
+        errors.observe(
+            VerifiedInputChunkRefCatalog::reopen(
+                &input_path,
+                &cas,
+                schema,
+                poc_input_list_limits(),
+            )
+            .map_err(Into::into),
+        )
+    } else {
+        None
+    };
+    if let Some(inputs) = &inputs {
+        errors.observe((|| -> eyre::Result<()> {
+            for reference in inputs.exact_cursor()? {
+                reference?;
+            }
+            Ok(())
+        })());
+    }
+    let Some(job) = job else {
+        // A bare JobId does not justify historical state scans or invented B/day.
+        errors.observe::<()>(Err(Incomplete(format!(
+            "job {id}: canonical comparison lacks retained job locator evidence"
+        ))
+        .into()));
+        return errors.finish();
+    };
+    let bundle = read_pinned_bundle(root, job.intent.protocol_bundle_hash)?;
+    if binding_present {
+        match (&binding_reader, &inputs) {
+            (Some(reader), Some(inputs)) => {
+                let loaded = (|| -> eyre::Result<_> {
+                    let binding = reader.load_exact(
+                        &cas,
+                        &canonical_job_spec(&job)?,
+                        bundle.bundle(),
+                        inputs,
+                    )?;
+                    validate_present_manifest(binding.manifest(), &job, &bundle)?;
+                    if let Some(ack) = &ack {
+                        let request = binding.commit_replay_request();
+                        compare_surviving_ack_export(
+                            ack,
+                            outbe_node::ocomp::retention::ExportAuthorityV1 {
+                                source_generation: request.pin_generation,
+                                lease_generation: request.lease_generation,
+                                manifest_hash: request.manifest_hash,
+                            },
+                        )?;
+                        binding.require_exact_node_replay(&ack.committed)?;
+                    }
+                    if let Some(receipt_manifest) = &manifest {
+                        ensure!(
+                            binding.manifest() == receipt_manifest,
+                            "present receipt/binding manifest mismatch"
+                        );
+                    }
+                    if let Some(reader) = &receipt_reader {
+                        if receipt_present {
+                            let receipt = reader.load_exact(&cas)?;
+                            ensure!(
+                                binding.commit_replay_request() == receipt.commit_replay_request(),
+                                "present receipt/binding export authority mismatch"
+                            );
+                            binding.require_exact_node_replay(&receipt.committed())?;
+                        }
+                    }
+                    if let Some(expected) = work.export(id)? {
+                        let request = binding.commit_replay_request();
+                        ensure!(
+                            request.pin_generation == expected.source_generation
+                                && request.lease_generation == expected.lease_generation
+                                && request.manifest_hash == expected.manifest_hash,
+                            "present binding differs from saved pin export"
+                        );
+                    }
+                    Ok(binding)
+                })();
+                if let Some(binding) = errors.observe(loaded) {
+                    manifest = Some(binding.manifest().clone());
+                    increment_present(&mut counts.bindings, 1)?;
+                }
+            }
+            _ => {
+                errors.observe::<()>(Err(Incomplete(format!(
+                    "job {id}: present binding comparison lacks complete input catalog"
+                ))
+                .into()));
+            }
+        }
+    }
+    // Per-job membership is discarded if the enclosing admission audit fails.
+    let membership = ReferenceMembership::create(scratch, protected)?;
+    let mut membership_valid = false;
+    let mut membership_complete = false;
+    if flags & PRESENT_ADMISSIONS != 0 {
+        let audit_admissions = (|| -> eyre::Result<()> {
+            let inputs = inputs.as_ref().ok_or_else(|| {
+                Incomplete(format!(
+                    "job {id}: admissions comparison lacks input catalog"
+                ))
+            })?;
+            let admissions = AdmissionCatalogReader::open_existing(&admission_path, &cas, schema)?;
+            let audit =
+                LocalLysisPlanAuditV1::open_read_only(&admissions, inputs, &cas, &bundle, &schema)?;
+            validate_present_manifest(audit.manifest(), &job, &bundle)?;
+            if let Some(result) = result_binding {
+                compare_surviving_result_binding(
+                    result,
+                    audit.manifest(),
+                    Some(audit.plan().plan_hash(&schema)?),
+                )?;
+            }
+            if let Some(expected) = &manifest {
+                ensure!(
+                    audit.manifest() == expected,
+                    "present admission/receipt manifest mismatch"
+                );
+            }
+            manifest = Some(audit.manifest().clone());
+            let present = verify_present_admissions(
+                root,
+                audit.manifest(),
+                job.intent.frozen_metadosis_values.lysis_limit_minor,
+                job.intent.logical_evaluation_time,
+                cas_limits,
+                None,
+                &mut |reference| membership.insert(id, reference),
+            )?;
+            increment_present(&mut counts.admissions, u64::from(present.present))?;
+            membership_valid = true;
+            if present.present == present.expected {
+                let chunks = verify_complete_present_results(
+                    context,
+                    &job,
+                    &bundle,
+                    &audit,
+                    &membership,
+                    flags & PRESENT_REFERENCES != 0,
+                )?;
+                increment_present(&mut counts.results, chunks)?;
+                membership_complete = true;
+            }
+            Ok(())
+        })();
+        if errors.observe(audit_admissions).is_none() {
+            membership_valid = false;
+        }
+    }
+    if let (Some(result), Some(manifest)) = (result_binding, manifest.as_ref()) {
+        errors.observe(compare_surviving_result_binding(result, manifest, None));
+    }
+    if let Some(inputs) = &inputs {
+        let verify = (|| -> eyre::Result<u64> {
+            let mut cursor = inputs.exact_verified_cursor(&cas, bundle.bundle())?;
+            let expected_count = u32::try_from(cursor.len())?;
+            let mut ordered = outbe_ocomp_protocol::StreamingOrderedListRoot::new(
+                outbe_ocomp_protocol::ListKind::InputChunkReferences,
+                expected_count,
+            )?;
+            let (mut bytes, mut records, mut tribute) = (0_u64, 0_u64, 0_u64);
+            for entry in &mut cursor {
+                let entry = entry?;
+                ensure!(
+                    entry.chunk.job_id == id
+                        && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
+                    "present input chunk differs from canonical job"
+                );
+                ordered.push(
+                    &entry.reference.encode_canonical_record(&schema)?,
+                    schema.max_bounded_bytes,
+                )?;
+                increment_present(&mut bytes, entry.reference.encoded_bytes)?;
+                increment_present(&mut records, u64::from(entry.reference.record_count))?;
+                if entry.reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute {
+                    increment_present(&mut tribute, u64::from(entry.reference.record_count))?;
+                }
+            }
+            let list_root = ordered.finish()?;
+            let expected = manifest.as_ref().ok_or_else(|| Incomplete(format!("job {id}: sealed catalog internally valid; full manifest authority comparison unavailable")))?;
+            validate_present_manifest(expected, &job, &bundle)?;
+            ensure!(
+                expected.input_chunk_count == expected_count
+                    && expected.input_chunk_list_root == list_root
+                    && expected.exact_encoded_bytes == bytes
+                    && u64::from(expected.exact_record_count) == records
+                    && u64::from(expected.tribute_count) == tribute,
+                "present input catalog differs from authenticated manifest"
+            );
+            Ok(u64::from(expected_count))
+        })();
+        if let Some(chunks) = errors.observe(verify) {
+            increment_present(&mut counts.inputs, chunks)?;
+        }
+    }
+    if flags & PRESENT_REFERENCES != 0 {
+        // Each full ref is checked against same-job native plan/result evidence.
+        // A successful partial catalog proves positive membership only.
+        let verified = (|| -> eyre::Result<()> {
+            let mut count = 0_u64;
+            work.visit_refs(id, &mut |reference| {
+                if !membership_valid {
+                    cas.read_verified(&reference)?;
+                    return Err(Incomplete(format!("job {id}: materialization reference lacks available plan membership evidence")).into());
+                }
+                membership.verify(id, &reference, &cas, membership_complete)?;
+                increment_present(&mut count, 1)
+            })?;
+            increment_present(&mut counts.references, count)?;
+            if !membership_complete {
+                return Err(Incomplete(format!(
+                    "job {id}: retained reference membership is partial; certified output-root comparison unavailable"
+                )).into());
+            }
+            Ok(())
+        })();
+        errors.observe(verified);
+    }
+    errors.finish()
+}
+
+fn verify_complete_present_results<'a>(
+    context: &PresentJobContext<'_, '_>,
+    job: &OcompJobRecordV1,
+    bundle: &PinnedProtocolBundle,
+    audit: &'a LocalLysisPlanAuditV1<'a>,
+    membership: &ReferenceMembership,
+    require_certified: bool,
+) -> eyre::Result<u64> {
+    let state = context.state;
+    let scratch = context.scratch;
+    let protected = context.protected;
+    use outbe_ocomp::lysis_result_catalog::{
+        ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1,
+    };
+    use outbe_ocomp_protocol::{
+        shuffle::ShuffleBucketRecordV1, ListKind, StreamingOrderedListRoot,
+    };
+    let limits = poc_schema_limits();
+    let id = job
+        .finalized
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("result catalog without finalized job"))?
+        .job_id;
+    let certified = state.nod_certified_generation(WorldwideDay::new(job.intent.wwd))?;
+    if require_certified {
+        let expected = certified.as_ref().ok_or_else(|| Incomplete(format!("job {id}: retained materialization reference lacks certified generation comparison")))?;
+        ensure!(
+            expected.job_id == id,
+            "materialization reference job differs from canonical certified generation"
+        );
+    }
+    let sorted = PresentJobUnion::create(scratch, protected)?;
+    let mut nod = StreamingOrderedListRoot::new(ListKind::NodActions, audit.plan().tribute_count)?;
+    let mut output = StreamingOrderedListRoot::new(
+        ListKind::CompleteOutputManifest,
+        audit.plan().primary_work_unit_count,
+    )?;
+    let mut chunks = 0_u64;
+    let (mut allocation, mut cost) = (U256::ZERO, U256::ZERO);
+    let mut complete = false;
+    for step in ExactLysisResultCatalogCursorV1::open(audit)? {
+        match step? {
+            LysisResultCatalogStepV1::Chunk(chunk) => {
+                membership.insert(id, chunk.producer_artifact_ref())?;
+                membership.insert(id, &chunk.output_manifest_entry().result_chunk_ref)?;
+                output.push(
+                    &chunk
+                        .output_manifest_entry()
+                        .encode_canonical_record(&limits)?,
+                    limits.max_bounded_bytes,
+                )?;
+                let tx = sorted.db.tx_mut()?;
+                for action in &chunk.chunk().ordered_nod_actions {
+                    nod.push(
+                        &action.encode_canonical_record(&limits)?,
+                        limits.max_bounded_bytes,
+                    )?;
+                    // Same native record projection as Lysis finalizer::stream_result_chunks.
+                    // Scratch sorting replaces its external globally ordered record input.
+                    let record = ShuffleBucketRecordV1 {
+                        bucket_key: action.bucket_key,
+                        raw_ordinal: action.raw_ordinal,
+                        tribute_id: action.tribute_id,
+                        nod_id: action.nod_id,
+                    };
+                    let mut key = vec![b'b'];
+                    key.extend_from_slice(record.bucket_key.as_slice());
+                    key.extend_from_slice(&record.raw_ordinal.to_be_bytes());
+                    ensure!(
+                        tx.get::<InventoryRows>(key.clone())?.is_none(),
+                        "duplicate native bucket record sort key"
+                    );
+                    tx.put::<InventoryRows>(key, record.encode_canonical_record(&limits)?)?;
+                    allocation = allocation
+                        .checked_add(action.gratis_load_minor)
+                        .ok_or_else(|| eyre::eyre!("result allocation overflow"))?;
+                    cost = cost
+                        .checked_add(action.settlement_cost_minor)
+                        .ok_or_else(|| eyre::eyre!("result NOD cost overflow"))?;
+                }
+                tx.commit()?;
+                increment_present(&mut chunks, 1)?;
+            }
+            LysisResultCatalogStepV1::Complete => complete = true,
+            _ => {}
+        }
+    }
+    ensure!(complete, "native result catalog did not reach Complete");
+    let mut bucket =
+        StreamingOrderedListRoot::new(ListKind::BucketRecords, audit.plan().tribute_count)?;
+    sorted.visit_prefix(b"b", &mut |_, record| {
+        bucket.push(&record, limits.max_bounded_bytes)?;
+        Ok(())
+    })?;
+    let (nod_root, bucket_root, output_root) = (nod.finish()?, bucket.finish()?, output.finish()?);
+    if let Some(expected) = certified.filter(|expected| expected.job_id == id) {
+        ensure!(
+            expected.protocol_bundle_hash == job.intent.protocol_bundle_hash
+                && expected.program_semantics_hash == bundle.bundle().lysis_program_semantics_hash
+                && expected.tribute_count == audit.plan().tribute_count
+                && expected.nod_count == audit.plan().tribute_count
+                && expected.bucket_count == audit.plan().tribute_count
+                && expected.nod_root == nod_root
+                && expected.bucket_root == bucket_root
+                && expected.output_manifest_root == output_root
+                && expected.lysis_allocation_minor == allocation
+                && expected.nod_amount_total == cost,
+            "complete present result catalog differs from canonical certified outputs"
+        );
+    }
+    Ok(chunks)
+}
+
+struct PresentRetainedCount(u64);
+impl outbe_tribute::RetainedTributeAuditVisitor for PresentRetainedCount {
+    fn visit_retained(
+        &mut self,
+        _: outbe_tribute::RetainedTributeAuditEntry,
+    ) -> Result<(), outbe_compressed_entities::CeAuditError> {
+        self.0 = self.0.checked_add(1).ok_or_else(|| {
+            outbe_compressed_entities::CeAuditError::Invalid("retained body count overflow".into())
+        })?;
+        Ok(())
+    }
+}
+
+fn verify_present_projection_structure(
+    layout: &crate::snapshot::config::RequestedLayout,
+    scratch: &Path,
+) -> eyre::Result<(u64, u64)> {
+    use outbe_compressed_entities::{
+        CeAuditLimits, CeAuditWork, CeDomain, IdPageRequest, MAX_ID_PAGE_LIMIT,
+    };
+    use outbe_nod::NodRepositoryReader;
+    use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
+    use outbe_tribute::{RetainedTributeReader, TributeRepositoryReader};
+    let location = layout
+        .projection
+        .as_ref()
+        .ok_or_else(|| Incomplete("missing selected OCOMP projection configuration".into()))?;
+    if !existing_file(&location.root.join("CURRENT"))? {
+        return Err(Incomplete("missing selected OCOMP projection CURRENT".into()).into());
+    }
+    let secondary = tempfile::Builder::new()
+        .prefix("ocomp-present-bodies-")
+        .tempdir_in(scratch)?;
+    let reader: StorageReaderHandle =
+        std::sync::Arc::new(RocksDbReader::open(&location.root, secondary.path())?);
+    let work = CeAuditWork::create(
+        secondary.path().join("audit-work"),
+        CeAuditLimits::default(),
+    )?;
+    let tribute = TributeRepositoryReader::new(reader.clone());
+    let nod = NodRepositoryReader::new(reader.clone());
+    tribute.audit_indexes(&work)?;
+    nod.audit_indexes(&work)?;
+    let mut live = 0_u64;
+    for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+        let mut after = None;
+        loop {
+            let request = IdPageRequest {
+                after,
+                limit: MAX_ID_PAGE_LIMIT,
+            };
+            let page = match domain {
+                CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
+                CeDomain::NodItem => nod.scan_stored_items(request)?,
+                CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
+            };
+            increment_present(&mut live, u64::try_from(page.entries.len())?)?;
+            after = page.next_after;
+            if after.is_none() {
+                break;
+            }
+        }
+    }
+    let mut retained = PresentRetainedCount(0);
+    RetainedTributeReader::new(reader.clone()).audit_retained(&work, &mut retained)?;
+    // Reader-owned repositories and scratch work drop before secondary cleanup.
+    Ok((live, retained.0))
 }

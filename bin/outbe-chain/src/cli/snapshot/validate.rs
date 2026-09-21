@@ -1,4 +1,7 @@
-use crate::snapshot::validation::report::ValidationReport;
+use crate::snapshot::validation::{
+    report::ValidationReport,
+    run::{validate_snapshot, ValidationInputs},
+};
 use std::{
     ffi::OsString,
     io::Write,
@@ -44,6 +47,36 @@ fn write_report(path: &Path, report: &ValidationReport) -> eyre::Result<()> {
     output
         .publish()
         .wrap_err_with(|| format!("publish validation report {}", path.display()))?;
+    Ok(())
+}
+
+pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
+    let inputs = ValidationInputs {
+        checks: args.checks,
+        manifest: args.manifest,
+        signature: args.signature,
+        archive: args.archive,
+        expected_signer: args.expected_signer,
+    };
+    // The validation engine creates its own bounded work under this external
+    // disposable directory. No scratch is placed in the copied native stores.
+    let scratch = tempfile::tempdir()?;
+    let report = validate_snapshot(&inputs, args.node_args, scratch.path())?;
+    scratch.close()?;
+    let console_result = (|| -> eyre::Result<()> {
+        let mut stdout = std::io::stdout().lock();
+        serde_json::to_writer_pretty(&mut stdout, &report)?;
+        writeln!(stdout)?;
+        Ok(())
+    })();
+    if let Some(path) = args.report {
+        write_report(&path, &report)?;
+    }
+    console_result?;
+    eyre::ensure!(
+        report.success(),
+        "snapshot validation contains failed or incomplete checks"
+    );
     Ok(())
 }
 
