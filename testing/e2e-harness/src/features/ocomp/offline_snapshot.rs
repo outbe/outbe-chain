@@ -1430,6 +1430,23 @@ mod tests {
         assert!(assert_snapshot_workflow(&e).is_ok());
     }
     #[test]
+    fn pending_cut_accepts_lysis_at_execution_after_finalized_height() {
+        let mut progress = fixture().placement.unwrap().native.progress;
+        progress.finalized.number = 105;
+        progress.execution.number = 106;
+        let mut queried = Vec::new();
+        let observed = snapshot_pending_cut(&progress, |at| {
+            queried.push(at.number);
+            ensure!(at.number == 106, "Lysis has not activated at H=105");
+            Ok(serde_json::json!({"block_number":106,"queue_sequence":1}))
+        })
+        .expect("copied E contains the completed Lysis even when H precedes it");
+        assert_eq!(queried, vec![106]);
+        assert_eq!(observed["execution"]["block_number"], 106);
+        assert_eq!(observed["finalized_block"]["number"], 105);
+        assert!(snapshot_pending_cut(&progress, |_| Err(eyre!("no pending work at E"))).is_err());
+    }
+    #[test]
     fn local_result_requires_exact_job_filename_and_canonical_bytes() {
         let mut e = fixture();
         e.new_job.as_mut().unwrap().local_after.path = "/fixture/new-job/unrelated.ocb1".into();
@@ -1944,15 +1961,12 @@ fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Resu
         .ocomp_certified_generation
         .as_ref()
         .ok_or_else(|| eyre!("missing actual certified generation before stopped cut"))?;
-    let pending_h =
-        snapshot_pending_materialization_at(world, &native.progress.finalized, generation)?;
-    let pending_e =
-        snapshot_pending_materialization_at(world, &native.progress.execution, generation)?;
+    let pending = snapshot_pending_cut(&native.progress, |at| {
+        snapshot_pending_materialization_at(world, at, generation)
+    })?;
     std::fs::write(
         evidence_dir.join("pending-native-cut.json"),
-        serde_json::to_vec_pretty(
-            &serde_json::json!({"finalized":pending_h,"execution":pending_e}),
-        )?,
+        serde_json::to_vec_pretty(&pending)?,
     )?;
     let cut = canonical_snapshot_block(world, native.progress.finalized.number)?;
     ensure!(
@@ -2582,11 +2596,8 @@ fn fingerprint_snapshot_tree(
     Ok(result)
 }
 
-// Place beside canonical_snapshot_block in the existing offline_snapshot module.
-// Call immediately after the stopped native read, with native.progress.execution
-// to establish pending work in the copied execution state. The same helper reads
-// native.progress.finalized if the scenario also records pending-at-H. No polling,
-// new job request, clock advance, or draining is performed here.
+// Read pending work at the copied execution frontier E. Finalized H may precede
+// the Lysis activation and is recorded independently, without a pending-head gate.
 fn snapshot_pending_materialization_at(
     world: &crate::world::World,
     at: &crate::world::state::SnapshotBlock,
@@ -4081,4 +4092,12 @@ fn snapshot_rejects_damaged_artifact(
     );
     std::fs::remove_file(partial)?;
     Ok(())
+}
+
+fn snapshot_pending_cut(
+    progress: &SnapshotNativeProgress,
+    mut read: impl FnMut(&SnapshotBlock) -> eyre::Result<serde_json::Value>,
+) -> eyre::Result<serde_json::Value> {
+    let execution = read(&progress.execution)?;
+    Ok(serde_json::json!({"finalized_block":progress.finalized,"execution":execution}))
 }
