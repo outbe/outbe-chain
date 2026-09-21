@@ -10,6 +10,9 @@ use super::Incomplete;
 use super::canonical_state::CanonicalState;
 use outbe_intex::schema::CertifiedContributorGenerationProjection;
 use outbe_nod::schema::NodCertifiedGenerationProjection;
+use outbe_ocomp::payout_artifact::{
+    verify_contributor_payout_artifact, PayoutArtifactError, CONTRIBUTOR_PAYOUT_ARTIFACT_FILE,
+};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_ocomp_protocol::state::OcompJobRecordV1;
 use outbe_snapshot::layout::{validate_layout, ProtectedPaths};
@@ -249,6 +252,61 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         &self.active_jobs
     }
 
+    /// Check the public handoff for every unpaid canonical day. Intermediate
+    /// plans, CE bodies and signing journals are not authority for this file.
+    pub(crate) fn verify_payout_files(&self, ocomp_root: &Path) -> eyre::Result<u64> {
+        let mut verified = 0_u64;
+        self.visit_payouts(&mut |day, certified| {
+            let active = self
+                .state
+                .metadosis_active_lysis_generation(day)?
+                .ok_or_else(|| {
+                    Incomplete(format!(
+                        "missing active Lysis generation for unpaid day {}",
+                        day.value()
+                    ))
+                })?;
+            ensure!(
+                !active.job_id.is_zero()
+                    && active.contributor_root == certified.contributor_root
+                    && active.exact_counts.contributor_count == certified.contributor_count,
+                "active Lysis generation differs from certified contributors for day {}",
+                day.value()
+            );
+            let path = ocomp_root
+                .join("supervisor-v1")
+                .join("jobs")
+                .join(hex::encode(active.job_id))
+                .join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE);
+            match verify_contributor_payout_artifact(&path, &certified) {
+                Ok(_) => {}
+                Err(PayoutArtifactError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Err(Incomplete(format!(
+                        "missing payout file for day {}, job {}: {}",
+                        day.value(),
+                        active.job_id,
+                        path.display()
+                    ))
+                    .into());
+                }
+                Err(error) => {
+                    return Err(eyre::Report::new(error).wrap_err(format!(
+                        "payout file for day {}, job {}",
+                        day.value(),
+                        active.job_id
+                    )))
+                }
+            }
+            verified = verified
+                .checked_add(1)
+                .ok_or_else(|| eyre::eyre!("verified payout count overflow"))?;
+            Ok(())
+        })?;
+        Ok(verified)
+    }
+
     pub(crate) fn visit_nod(
         &self,
         visitor: &mut impl FnMut(u64, NodCertifiedGenerationProjection) -> eyre::Result<()>,
@@ -271,7 +329,10 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             CertifiedContributorGenerationProjection,
         ) -> eyre::Result<()>,
     ) -> eyre::Result<()> {
-        let tx = self.db.tx()?;
+        let mut tx = self.db.tx()?;
+        // A callback may stream a large payout file. This immutable scratch
+        // snapshot has no writer whose growth would need the live-node timeout.
+        tx.disable_long_read_transaction_safety();
         let mut cursor = tx.cursor_read::<InventoryRows>()?;
         for row in cursor.walk(Some(vec![b'p']))? {
             let (key, _) = row?;
