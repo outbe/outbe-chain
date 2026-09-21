@@ -100,9 +100,8 @@ fn run_outbe_pre_execution_hooks_inner(
     // already published the rate that transaction observes.
     let _ = readers;
 
-    // GEM: carry on the daily qualify and call sweeps the Cycle trigger opened,
-    // both pinned to a closed UTC day. Reads the same Oracle surface, so it must
-    // run after Oracle.
+    // GEM: carry on the daily call sweep the Cycle trigger opened, pinned to a
+    // closed UTC day. Reads the same Oracle surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // INTEX: carry on the call sweep for series, plus the payout and expiry drains.

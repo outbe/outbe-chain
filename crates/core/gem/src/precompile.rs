@@ -91,6 +91,10 @@ pub fn dispatch(
                 let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
                 Ok(to_abi_data(&item))
             }),
+            isQualified(c) => view(c, |c| {
+                let item = gem.get_gem(c.gemId)?.ok_or(GemError::GemNotFound)?;
+                crate::api::is_qualified(&storage, &item)
+            }),
 
             transferFrom(_) | safeTransferFrom(_) | approve(_) | setApprovalForAll(_) => {
                 Err(GemError::NonTransferable.into())

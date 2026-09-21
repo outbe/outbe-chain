@@ -89,9 +89,9 @@ pub struct GemData {
     #[attribute(order = 14, default = 0)]
     pub call_threshold_seconds: u32,
 
-    /// Block timestamp when the gem became Qualified; `0` until Qualified.
+    /// Retired with the qualify sweep: never read or written, kept so the record decodes.
     #[attribute(order = 15, default = 0)]
-    pub qualified_at: u64,
+    pub retired_qualified_at: u64,
 
     /// Block timestamp when the gem was Settled; `0` until Settled.
     #[attribute(order = 16, default = 0)]
@@ -119,29 +119,21 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Unqualified-gem bin index (PancakeSwap LB-style 3-level radix-256 trie) ---
-    //
-    // A floor price is only comparable to the COEN rate of its own reference
-    // currency, so every column here is namespaced by ISO code and each currency
-    // walks an independent trie. See `state::CurrencyBins`.
+    // Retired with the qualify sweep, like every `retired_*` field below: never read,
+    // declared only so the fields after it keep their slots. Not to be reused.
     #[attribute(order = 6)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-
-    // Keyed by `state::scoped(iso, trie key)`.
+    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 7)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-
+    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 8)]
-    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-
+    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 9)]
-    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-
+    pub retired_unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     #[attribute(order = 10)]
-    pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub retired_unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Qualified-gem bin index, by call_price_minor: the price pass enters
-    // only the bins a breach could have reached.
+    // --- Call-price bin index the daily Called scan walks; a gem enters it at issuance.
+    // Every column is namespaced by ISO code, so each currency walks its own trie.
     #[attribute(order = 11)]
     pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
@@ -163,15 +155,10 @@ pub struct GemContract {
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Next bin the qualify scan visits, per reference currency. Non-zero only
-    /// while a sweep was cut short by the per-block budget.
     #[attribute(order = 18)]
-    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
-
-    /// Where the next qualify scan starts, so a heavy currency cannot starve the
-    /// ones behind it when the per-block budget runs out.
+    pub retired_qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 19)]
-    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub retired_qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // --- Called gems, bucketed by the hour their notice period closes in. Calling is
     // driven by price and expiry only by time, so the two stages stay separate.
@@ -222,9 +209,9 @@ pub struct GemContract {
     #[attribute(order = 34)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 35)]
-    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub retired_qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 36)]
-    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub retired_qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

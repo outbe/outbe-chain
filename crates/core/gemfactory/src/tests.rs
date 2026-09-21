@@ -221,6 +221,21 @@ fn issue_genesis_pays_like_agents_but_born_qualified() {
     });
 }
 
+/// Born Qualified, a Genesis gem settles before any day has closed above its floor.
+#[test]
+fn a_genesis_gem_settles_with_no_closed_day() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage_paying(Some(rate), STABLE, ALICE, |storage, proof| {
+        let load = U256::from(10u64) * six_decimal_unit();
+        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof).unwrap();
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
+    });
+}
+
 #[test]
 fn issue_validator_post_genesis_behaves_like_wallet() {
     let rate = U256::from(2u64) * six_decimal_unit();
@@ -405,7 +420,7 @@ fn settle_wallet_settles_with_a_registered_asset() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
 
         // STABLE reports 840, which is the gem's reference currency, so it
         // settles on the reference rail. Real vault interaction is covered by
@@ -433,7 +448,7 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         gem_id
     });
@@ -463,7 +478,7 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
 
         let call = crate::precompile::IGemFactory::settleGemCall {
             gemId: gem_id,
@@ -473,7 +488,7 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
         assert!(err_msg(res).contains("unexpected amount"));
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
-            GemState::Qualified as u8
+            GemState::Issued as u8
         );
     });
 }
@@ -491,13 +506,13 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
 
         let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
         assert!(err_msg(res).contains("does not match"));
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
-            GemState::Qualified as u8
+            GemState::Issued as u8
         );
     });
 }
@@ -536,6 +551,26 @@ fn settled_event(provider: &HashMapStorageProvider) -> crate::precompile::IGemFa
         .data
 }
 
+/// Close the gem's first full day above its floor, which qualifies it.
+fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
+    let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+    let oracle = OracleContract::new(storage.clone());
+    let pair = oracle
+        .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(
+            item.reference_currency,
+        ))
+        .unwrap();
+    let day = outbe_primitives::time::first_full_day(item.issued_at);
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&pair, item.floor_price_minor + U256::ONE)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
+}
+
 /// Registers and prices `COEN/<iso>` and adds `iso` to the reference registry.
 fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
@@ -565,7 +600,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // Paying with the EUR asset picks the issuance rail.
@@ -587,7 +622,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
         register_currency(&storage, 978, U256::from(2_500_000u64));
         let gem_id =
             issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         assert_eq!(
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
             U256::from(3u64)
@@ -607,7 +642,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     StorageHandle::enter(&mut provider, |storage| {
         let gem_id =
             issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         assert_eq!(
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
             U256::ONE
@@ -636,12 +671,12 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
         let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof);
         assert!(err_msg(res).contains("not registered"));
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
-            GemState::Qualified as u8
+            GemState::Issued as u8
         );
     });
 }
@@ -662,7 +697,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
@@ -695,7 +730,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         let res = runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof);
         assert!(err_msg(res).contains("no registered vault"));
     });
@@ -716,7 +751,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // An eighteen-decimal asset was a hard revert before; now it scales.
@@ -746,7 +781,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         let cost =
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
@@ -820,7 +855,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
 
         // Both rails quote, and neither quote moves anything.
         let (ref_iso, ref_amount) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
@@ -897,7 +932,7 @@ fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
             978,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,
@@ -913,7 +948,7 @@ fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
         assert!(error.to_string().contains("stale"), "{error}");
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
-            GemState::Qualified as u8
+            GemState::Issued as u8
         );
     });
 }
@@ -931,7 +966,7 @@ fn settle_rejects_wrong_settlement_currency() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(storage, gem_id);
         // Paying a USD gem with a EUR (978) stablecoin matches neither of its
         // currencies, so it reverts before any vault interaction.
         let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof);
@@ -954,7 +989,7 @@ fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
             840,
         )
         .unwrap();
-        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        seed_qualifying_day(&storage, gem_id);
         runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &proof).unwrap();
         let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
         assert_eq!(item.state, GemState::Settled as u8);
@@ -988,7 +1023,7 @@ fn settle_rejects_non_qualified_state() {
             840,
         )
         .unwrap();
-        // WALLET is born Issued - settle should reject (must be Qualified).
+        // WALLET is born Issued and no closed day has cleared its floor yet.
         let res = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, &[]);
         assert!(err_msg(res).contains("invalid state"));
     });

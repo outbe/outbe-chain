@@ -198,7 +198,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "gem_daily",
             period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to qualify and force-call gems;
+            // Reads finalized oracle VWAP history to force-call gems;
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot

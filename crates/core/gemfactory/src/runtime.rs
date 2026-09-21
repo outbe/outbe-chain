@@ -114,7 +114,7 @@ pub fn issue_gem_position(
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
 
-    // A currency no qualification scan walks would leave every gem stuck in Issued.
+    // A currency the daily call scan does not walk would leave every gem uncallable.
     outbe_oracle::api::check_reference_currency_with_storage(
         storage.clone(),
         series.reference_currency,
@@ -335,10 +335,9 @@ fn settle(
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
-    // Settlement is allowed from Qualified (voluntary) or Called (forced). A
-    // Called gem must settle before its notice period lapses.
+    // Settlement is allowed once called (forced, until the notice period lapses) or
+    // once qualified (voluntary). The qualification walk goes last.
     match item.state {
-        s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
             let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
@@ -346,6 +345,8 @@ fn settle(
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
         }
+        s if (s == GemState::Issued as u8 || s == GemState::Qualified as u8)
+            && gem_api::is_qualified(storage, &item)? => {}
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 

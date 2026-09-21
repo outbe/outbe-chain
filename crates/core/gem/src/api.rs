@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::first_full_day;
 
 use crate::errors::GemError;
 use crate::schema::{GemAddParams, GemContract, GemData, GemState};
@@ -18,12 +19,10 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         storage.block_number()?,
     );
 
-    // A gem born past Issued reached those states at issuance, so backfill the
-    // lifecycle timestamps from `issued_at` (the scan stamps them otherwise).
-    let (qualified_at, settled_at) = match params.initial_state {
-        GemState::Issued => (0u64, 0u64),
-        GemState::Qualified | GemState::Called => (params.issued_at, 0),
-        GemState::Settled => (params.issued_at, params.issued_at),
+    // A gem born Settled reached it at issuance, so backfill its timestamp.
+    let settled_at = match params.initial_state {
+        GemState::Settled => params.issued_at,
+        _ => 0,
     };
 
     let item = GemData {
@@ -43,7 +42,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         issued_at: params.issued_at,
         called_at: 0,
         call_notice_period_seconds: params_profile.call_notice_period_seconds,
-        qualified_at,
+        retired_qualified_at: 0,
         settled_at,
     };
     gem.add_gem(&item)?;
@@ -64,6 +63,20 @@ pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
 pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     gem.set_state(gem_id, new_state)
+}
+
+/// Whether the gem has qualified: born Qualified (Genesis), or a finalized daily VWAP in
+/// its reference currency closed above its floor on its first full day or later.
+pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
+    if item.state == GemState::Qualified as u8 {
+        return Ok(true);
+    }
+    outbe_oracle::api::crossed_floor(
+        storage.clone(),
+        item.reference_currency,
+        item.floor_price_minor,
+        first_full_day(item.issued_at),
+    )
 }
 
 pub fn get_gem(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemData>> {
