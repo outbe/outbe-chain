@@ -21,6 +21,19 @@
     },
     {
       "type": "function",
+      "name": "setVwapRegistry",
+      "inputs": [
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "sweepNative",
       "inputs": [
         {
@@ -268,6 +281,31 @@
           "type": "uint16",
           "indexed": false,
           "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DailyVwapReceived",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "utcDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "rows",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -601,6 +639,19 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "VwapRegistrySet",
+      "inputs": [
+        {
+          "name": "registry",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
         }
       ],
       "anonymous": false

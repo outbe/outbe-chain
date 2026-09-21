@@ -13,6 +13,7 @@ import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
+import {IVwapRegistry} from "./interfaces/IVwapRegistry.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
@@ -103,6 +104,11 @@ contract TargetRouter is
         return _ts().originRouter;
     }
 
+    /// @notice Registry the daily VWAPs from Outbe are recorded in.
+    function vwapRegistry() external view returns (IVwapRegistry) {
+        return _ts().vwapRegistry;
+    }
+
     /// @notice Parked proceeds route by enqueue index.
     function parkedProceeds(uint256 idx)
         external
@@ -189,6 +195,13 @@ contract TargetRouter is
         _setRemoteMessenger(chainId, interop);
     }
 
+    /// @inheritdoc ITargetRouter
+    function setVwapRegistry(address registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (registry == address(0)) revert ZeroAddress("vwapRegistry");
+        _ts().vwapRegistry = IVwapRegistry(registry);
+        emit VwapRegistrySet(registry);
+    }
+
     /// @notice Set the composed-transfer token bridge and the OriginRouter recipient for proceeds routing.
     function setProceedsRoute(address _tokenBridge, address _originRouter) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_tokenBridge == address(0)) revert ZeroAddress("tokenBridge");
@@ -232,6 +245,8 @@ contract TargetRouter is
             TargetInbound.handleMarkCalled(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             TargetInbound.handleMarkQualified(_ts(), srcChainId, message);
+        } else if (msgType == BridgeMsgCodec.MSG_DAILY_VWAP) {
+            TargetInbound.handleDailyVwap(_ts(), srcChainId, message);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }

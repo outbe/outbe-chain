@@ -87,6 +87,12 @@ interface IOriginRouter {
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
+    /// @notice Emitted when a finalized day's VWAPs are sent to a target chain.
+    /// @param sendId Bridge send identifier (0 when the leg parked).
+    /// @param dstChainId Destination chainId.
+    /// @param utcDay Finalized UTC day (yyyymmdd).
+    event DailyVwapSent(bytes32 indexed sendId, uint32 indexed dstChainId, uint32 indexed utcDay);
+
     /// @notice Emitted when a mark-qualified message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
@@ -317,6 +323,13 @@ interface IOriginRouter {
     /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
     ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.
     function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
+
+    /// @notice Broadcast one finalized UTC day's VWAPs to every registered target but this chain, whose NFT
+    ///         reads the Oracle directly. With no other target it sends nothing. Restricted to
+    ///         `INTEX_FACTORY_ROLE`.
+    /// @param utcDay Finalized UTC day (yyyymmdd).
+    /// @param rows One VWAP per priced reference currency.
+    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
     function resendParkedMessage(uint256 idx) external;

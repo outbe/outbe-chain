@@ -5,6 +5,7 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
+import {IVwapRegistry} from "./interfaces/IVwapRegistry.sol";
 
 /// @notice How far a day's bids relay has got: the span the first round froze, the next chunk to send and
 ///         whether the completeness marker has left. Five bytes, so one slot.
@@ -96,6 +97,8 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
+    /// @dev Registry the daily VWAPs from Outbe are recorded in; unset, a day is acknowledged without effect.
+    IVwapRegistry vwapRegistry;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried

@@ -68,6 +68,15 @@ interface ITargetRouter {
     /// @param seriesId Series identifier.
     event MarkCalledReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
+    /// @notice Emitted when a finalized day's VWAPs from Outbe are recorded in the VWAP registry.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param utcDay Finalized UTC day (yyyymmdd).
+    /// @param rows Number of currencies recorded.
+    event DailyVwapReceived(uint32 indexed srcChainId, uint32 indexed utcDay, uint256 rows);
+
+    /// @notice Emitted when the VWAP registry the daily VWAPs are recorded in is set.
+    event VwapRegistrySet(address registry);
+
     /// @notice Emitted when a mark-qualified message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param seriesId Series identifier.
@@ -164,6 +173,10 @@ interface ITargetRouter {
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+
+    /// @notice Set the registry the daily VWAPs from Outbe are recorded in.
+    /// @param registry VwapRegistry contract address.
+    function setVwapRegistry(address registry) external;
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).

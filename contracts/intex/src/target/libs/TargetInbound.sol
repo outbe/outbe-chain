@@ -5,6 +5,7 @@ import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
+import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
@@ -457,6 +458,18 @@ library TargetInbound {
         for (uint256 i = 0; i < seriesIds.length; ++i) {
             _applyMark($, srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED, calledAt);
         }
+    }
+
+    /// @notice Decode DAILY_VWAP and record the day in the VWAP registry. Without a registry wired there is
+    ///         nowhere to record it, and the day is acknowledged without effect.
+    function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
+        (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
+        if (address($.vwapRegistry) == address(0)) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_DAILY_VWAP, bytes32(uint256(utcDay)), InboundReason.OBSOLETE);
+            return;
+        }
+        $.vwapRegistry.record(utcDay, rows);
+        emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
     /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the rest.

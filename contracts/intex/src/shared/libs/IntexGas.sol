@@ -46,6 +46,10 @@ library IntexGas {
     ///      leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
+    /// @dev Recording a day into the VWAP registry: 145k at one currency, 356k at six.
+    uint256 internal constant DAILY_VWAP_BASE = 155_000;
+    uint256 internal constant DAILY_VWAP_PER_ROW = 64_000;
+
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
@@ -96,6 +100,10 @@ library IntexGas {
 
     function markQualified(uint256 seriesCount) internal pure returns (uint256) {
         return MARK_QUALIFIED_BASE + seriesCount * MARK_QUALIFIED_PER_SERIES;
+    }
+
+    function dailyVwap(uint256 rowCount) internal pure returns (uint256) {
+        return DAILY_VWAP_BASE + rowCount * DAILY_VWAP_PER_ROW;
     }
 
     function refund(uint256 bidderCount) internal pure returns (uint256) {

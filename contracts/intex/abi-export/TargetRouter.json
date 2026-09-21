@@ -719,6 +719,19 @@
     },
     {
       "type": "function",
+      "name": "setVwapRegistry",
+      "inputs": [
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "supportsInterface",
       "inputs": [
         {
@@ -784,6 +797,19 @@
       ],
       "outputs": [],
       "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "vwapRegistry",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IVwapRegistry"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1016,6 +1042,31 @@
           "type": "uint16",
           "indexed": false,
           "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DailyVwapReceived",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "utcDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "rows",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -1468,6 +1519,19 @@
           "name": "implementation",
           "type": "address",
           "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "VwapRegistrySet",
+      "inputs": [
+        {
+          "name": "registry",
+          "type": "address",
+          "indexed": false,
           "internalType": "address"
         }
       ],

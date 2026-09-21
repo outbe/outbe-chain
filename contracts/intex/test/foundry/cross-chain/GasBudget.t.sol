@@ -58,6 +58,27 @@ contract GasBudgetTest is CrossChainTest {
         spent = before - gasleft();
     }
 
+    function test_TheQuoteCoversADailyVwapAtItsWidest() public {
+        router.setVwapRegistry(address(DeployProxy.vwapRegistry(admin, address(router))));
+        for (
+            uint256 rows = 1;
+            rows <= BridgeMsgCodec.MAX_REFERENCE_PRICES;
+            rows += BridgeMsgCodec.MAX_REFERENCE_PRICES - 1
+        ) {
+            IOriginRouter.DailyVwap[] memory day = new IOriginRouter.DailyVwap[](rows);
+            for (uint256 i = 0; i < rows; ++i) {
+                day[i] = IOriginRouter.DailyVwap({isoCode: uint16(840 + i), vwapMinor: uint64(1_000_000 + i)});
+            }
+            bytes memory packet = BridgeMsgCodec.encodeDailyVwap(uint32(WORLDWIDE_DAY + rows), day);
+            uint256 before = gasleft();
+            _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+            uint256 spent = before - gasleft();
+
+            emit log_named_uint(rows == 1 ? "daily_vwap_1row" : "daily_vwap_6rows", spent);
+            assertLt(spent, IntexGas.dailyVwap(rows), "a daily VWAP must fit the quote");
+        }
+    }
+
     function _seed(bytes14[] memory batch) internal {
         for (uint256 i = 0; i < batch.length; ++i) {
             IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0);
