@@ -76,6 +76,11 @@ contract IntexNFT1155MetadataTest is Test {
         );
     }
 
+    function test_nameAndSymbol_NameTheCollection() public view {
+        assertEq(token.name(), "Intex");
+        assertEq(token.symbol(), "INTEX");
+    }
+
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
