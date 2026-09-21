@@ -170,10 +170,13 @@ fn require_terminal_guardrail(log: &str, expected: &str) -> Result<()> {
         errors.len()
     );
     let index = errors[0].0;
+    let direct =
+        lines[index] == format!("Error: {expected}") && !lines[index + 1..].contains(&"Caused by:");
+    let wrapped = lines[index] == "Error: execution node failed"
+        && lines.get(index + 1) == Some(&"Caused by:")
+        && lines.get(index + 2) == Some(&expected);
     ensure!(
-        lines[index] == "Error: execution node failed"
-            && lines.get(index + 1) == Some(&"Caused by:")
-            && lines.get(index + 2) == Some(&expected),
+        direct || wrapped,
         "negative startup did not terminate on exact guardrail {expected:?}:\n{log}"
     );
     Ok(())
@@ -187,6 +190,34 @@ mod tests {
 
     const GUARD: &str =
         "mandatory GramineDirectDev ChainSpec requires --tee-enclave-socket before node startup";
+
+    #[test]
+    fn terminal_guardrail_accepts_exact_direct_and_wrapped_reports() {
+        for (log, accepted) in [
+            (
+                format!("Error: {GUARD}\n\nLocation:\n    bin/outbe-chain/src/main.rs:1888:13\n"),
+                true,
+            ),
+            (
+                format!("Error: execution node failed\nCaused by:\n{GUARD}\n"),
+                true,
+            ),
+            (format!("INFO {GUARD}\nError: unrelated failure\n"), false),
+            (format!("Error: prefix {GUARD}\n"), false),
+            (format!("Error: {GUARD} suffix\n"), false),
+            (format!("Error: {GUARD}\nError: unrelated failure\n"), false),
+            (
+                format!("Error: {GUARD}\nCaused by:\nunrelated failure\n"),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                require_terminal_guardrail(&log, GUARD).is_ok(),
+                accepted,
+                "{log}"
+            );
+        }
+    }
 
     fn unused_address() -> SocketAddr {
         TcpListener::bind("127.0.0.1:0")

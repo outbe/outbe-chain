@@ -974,15 +974,13 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         }
         let mut leaves = Vec::with_capacity(certified.contributor_count as usize);
         let mut total = U256::ZERO;
-        for record in bytes.chunks_exact(CONTRIBUTOR_LEAF_BYTES) {
-            let mut leaf = [0u8; CONTRIBUTOR_LEAF_BYTES];
-            leaf.copy_from_slice(record);
-            let Some(next) = total.checked_add(decode_contributor_leaf(&leaf).nominal) else {
+        for leaf in bytes.as_chunks::<CONTRIBUTOR_LEAF_BYTES>().0 {
+            let Some(next) = total.checked_add(decode_contributor_leaf(leaf).nominal) else {
                 self.log_skip(worldwide_day, "records overflow the nominal total");
                 return Ok(None);
             };
             total = next;
-            leaves.push(leaf);
+            leaves.push(*leaf);
         }
         let root = contributor_list_root(certified.contributor_count, leaves.iter())
             .map_err(state_error)?;

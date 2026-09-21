@@ -10,8 +10,10 @@ interface INodFactory {
         uint256 floorPriceMinor,
         uint256 gratisLoadMinor,
         uint256 entryPriceMinor,
-        uint256 costAmountMinor
+        uint256 settlementCostMinor
     );
+
+    event NodExercised(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
     event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
@@ -27,9 +29,8 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
-    /// Names the spent nullifier instead of a payer address: the note is what
-    /// pays, and it is deliberately not linkable to a payer.
+    /// @notice Emitted when a Nod is paid. ERC20 payments use a zero nullifier;
+    /// PayNote payments identify the spent note by its nullifier.
     event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
@@ -46,33 +47,38 @@ interface INodFactory {
         bytes32 bucketRoot,
         bytes32 outputManifestRoot,
         uint256 nodAmountTotal,
-        uint256 nodGratisConsumed,
+        uint256 lysisAllocationMinor,
         uint64 issuedAt,
         bytes32 stateEventDigest
     );
 
-    /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
-    ///
-    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
-    /// and so can always supply the mint authorization.
-    ///
-    /// The Nod's cost is discharged here, by spending a PayNote.
-    /// The underlying value already reached the reserve vault when the note
-    /// was deposited, so this call moves no tokens: it books the note's nullifier,
-    /// appends any change note to the pool, and logs `NodPaid` event.
-    ///
-    /// @param nodId        Identifier of a Nod owned by the caller.
-    /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
-    /// MUST have the protocol's required leading zero bytes.
-    /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
-    /// under the caller's Gratis modify key.
-    /// @param opNonce MUST equal the caller's current on-chain gratis op-nonce;
-    /// binds `mac` to exactly this mint.
-    /// @param payNoteProof `outbe.paynote` spend proof.
-    /// @return Gratis minor units minted to the caller.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
+    /// @notice Pay a qualified Nod in ERC20 base units of `asset`.
+    /// The asset must have a reserve vault and report the Nod's reference or
+    /// issuance ISO 4217 code. Issuance-currency payment converts the
+    /// reference-currency entry cost at the current COEN cross rate.
+    function settleNod(uint256 nodId, address asset) external;
+
+    /// @notice Pay a qualified Nod at or before its settlement deadline.
+    /// The PayNote proof must name the caller as its owner and carry an asset
+    /// the Nod accepts on either currency rail.
+    function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
+
+    /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
+    /// two currencies that asset settles on. Reverts for an asset the Nod
+    /// does not accept.
+    /// @return settlementCurrency ISO 4217 code the payment is denominated in.
+    /// @return payableUnits Amount to pay, in `asset`'s own minor units.
+    function quoteSettlement(uint256 nodId, address asset)
         external
-        returns (uint256);
+        view
+        returns (uint16 settlementCurrency, uint256 payableUnits);
+
+    /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
+    /// @param nonce PoW over `sha256(nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
+    /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
+    /// @param mac Gratis mint authorization under the owner's modify key.
+    /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     /// proof-backed OCOMP batch.

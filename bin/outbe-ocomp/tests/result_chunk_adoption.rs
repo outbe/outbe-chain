@@ -106,7 +106,7 @@ fn chunk(spec: &UnitSpecV1, chunk_ordinal: u32) -> ResultChunkV1 {
             floor_price_minor: U256::from(2),
             gratis_load_minor: U256::from(3),
             entry_price_minor: U256::from(4),
-            cost_amount_minor: U256::from(5),
+            settlement_cost_minor: U256::from(5),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 2_026_072_500,
@@ -187,7 +187,7 @@ fn root_leaf_artifact_with_count(
         contributor_count: tribute_count,
         tribute_nominal_total: U256::from(tribute_count) * U256::from(6),
         eligible_nominal_total: U256::from(tribute_count) * U256::from(6),
-        nod_gratis_consumed: U256::from(tribute_count) * U256::from(3),
+        lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
         nod_cost_total: U256::from(tribute_count) * U256::from(5),
         first_error_ordinal: None,
     };

@@ -37,10 +37,10 @@ impl IntexState {
 /// Forced-call trigger parameters for a series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
-    pub call_window: u32,
-    pub call_threshold: u32,
+    pub call_window_seconds: u32,
+    pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 }
 
 /// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
@@ -185,7 +185,7 @@ impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     /// PROMIS-units per Intex unit (1e6); bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
@@ -217,7 +217,7 @@ pub struct SeriesRecord {
     pub reference_currency: u16,
 
     #[attribute(order = 2)]
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
 
     #[attribute(order = 3)]
     pub promis_load_minor: U256,
@@ -234,13 +234,13 @@ pub struct SeriesRecord {
     // call_trigger group - stored flat (the storage DSL has no nested-struct codec),
     // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
-    pub call_window: u32,
+    pub call_window_seconds: u32,
 
     #[attribute(order = 8)]
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
 
     #[attribute(order = 9)]
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 
     #[attribute(order = 10)]
     pub issued_at: u32,
@@ -258,15 +258,27 @@ pub struct SeriesRecord {
 }
 
 impl SeriesRecord {
+    /// The stored state. This node never writes `Expired`: ask `effective_state` whether one expired.
     pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
         IntexState::from_u8(self.state)
     }
 
+    /// The state as of `now`: derived, because no transaction arrives at the
+    /// deadline to write it.
+    pub fn effective_state(&self, now: u64) -> Result<IntexState, IntexError> {
+        let stored = self.lifecycle_state()?;
+        let deadline = u64::from(self.called_at) + u64::from(self.call_notice_period_seconds);
+        match stored == IntexState::Called && now > deadline {
+            true => Ok(IntexState::Expired),
+            false => Ok(stored),
+        }
+    }
+
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
-            call_window: self.call_window,
-            call_threshold: self.call_threshold,
-            call_notice_period: self.call_notice_period,
+            call_window_seconds: self.call_window_seconds,
+            call_threshold_seconds: self.call_threshold_seconds,
+            call_notice_period_seconds: self.call_notice_period_seconds,
         }
     }
 }
@@ -463,20 +475,43 @@ pub struct IntexContract {
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Cumulative: a series forfeits `issued_intex_count - settled - parked` at its
-    // deadline. Not on `SeriesRecord` because a record write rewrites every field.
-    /// series_id -> units settled so far.
+    // Disjoint classes: a series forfeits `issued_units - settled - exercised -
+    // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
+    // rewrites every field.
+    /// series_id -> units paid for and not yet exercised.
     #[attribute(order = 27)]
     pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
-    /// series_id -> units parked into Gem positions.
+    /// series_id -> units sent to the Gem Factory.
     #[attribute(order = 28)]
-    pub parked_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub gem_factory_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    /// series_id -> settled units burned into Promis so far.
+    #[attribute(order = 29)]
+    pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    // Per-owner history. The two current classes are the owner's Issued- and
+    // Settled-class token balances, so only what the token no longer holds is kept.
+    /// `owner_units_key` -> units this owner exercised in the series.
+    #[attribute(order = 30)]
+    pub owner_exercised_units: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// `owner_units_key` -> units this owner sent to the Gem Factory.
+    #[attribute(order = 31)]
+    pub owner_gem_factory_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {
     /// Composite key for per-day contributor index lists:
     /// `keccak256(worldwide_day_be32 ++ index_be32)`.
+    /// Composite key for the per-owner ledgers: `keccak256(series_id ++ owner)`.
+    pub fn owner_units_key(series_id: SeriesId, owner: Address) -> B256 {
+        let mut buf = [0u8; SERIES_ID_LEN + 20];
+        buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
+        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
+        keccak256(buf)
+    }
+
     pub fn contributor_index_key(worldwide_day: WorldwideDay, index: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());

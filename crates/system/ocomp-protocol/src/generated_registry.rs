@@ -24,7 +24,7 @@ pub enum ObjectKind {
     NodBatchReceiptV1 = 0x0015,
     ContributorReceiptV1 = 0x0016,
     TributeReceiptV1 = 0x0017,
-    RequestBudgetSplitReceiptV1 = 0x0018,
+    RequestLimitSplitReceiptV1 = 0x0018,
     CarryOverReceiptV1 = 0x0019,
     SignOnceRecordV1 = 0x001b,
     ActivationCallCoreV1 = 0x001c,
@@ -64,7 +64,7 @@ impl ObjectKind {
         Self::NodBatchReceiptV1,
         Self::ContributorReceiptV1,
         Self::TributeReceiptV1,
-        Self::RequestBudgetSplitReceiptV1,
+        Self::RequestLimitSplitReceiptV1,
         Self::CarryOverReceiptV1,
         Self::SignOnceRecordV1,
         Self::ActivationCallCoreV1,
@@ -110,7 +110,7 @@ impl ObjectKind {
             Self::NodBatchReceiptV1 => "NodBatchReceiptV1",
             Self::ContributorReceiptV1 => "ContributorReceiptV1",
             Self::TributeReceiptV1 => "TributeReceiptV1",
-            Self::RequestBudgetSplitReceiptV1 => "RequestBudgetSplitReceiptV1",
+            Self::RequestLimitSplitReceiptV1 => "RequestLimitSplitReceiptV1",
             Self::CarryOverReceiptV1 => "CarryOverReceiptV1",
             Self::SignOnceRecordV1 => "SignOnceRecordV1",
             Self::ActivationCallCoreV1 => "ActivationCallCoreV1",
@@ -155,7 +155,7 @@ impl TryFrom<u16> for ObjectKind {
             0x0015 => Ok(Self::NodBatchReceiptV1),
             0x0016 => Ok(Self::ContributorReceiptV1),
             0x0017 => Ok(Self::TributeReceiptV1),
-            0x0018 => Ok(Self::RequestBudgetSplitReceiptV1),
+            0x0018 => Ok(Self::RequestLimitSplitReceiptV1),
             0x0019 => Ok(Self::CarryOverReceiptV1),
             0x001b => Ok(Self::SignOnceRecordV1),
             0x001c => Ok(Self::ActivationCallCoreV1),
@@ -215,7 +215,7 @@ pub enum HashDomain {
     ContributorReceipt,
     TributeReceipt,
     DesisRequestBrief,
-    BudgetSplitReceipt,
+    LimitSplitReceipt,
     CarryOverReceipt,
     ActiveGeneration,
     JobRecord,
@@ -269,7 +269,7 @@ impl HashDomain {
         Self::ContributorReceipt,
         Self::TributeReceipt,
         Self::DesisRequestBrief,
-        Self::BudgetSplitReceipt,
+        Self::LimitSplitReceipt,
         Self::CarryOverReceipt,
         Self::ActiveGeneration,
         Self::JobRecord,
@@ -324,7 +324,7 @@ impl HashDomain {
             Self::ContributorReceipt => "OUTBE_OCOMP_CONTRIBUTOR_RECEIPT_V1",
             Self::TributeReceipt => "OUTBE_OCOMP_TRIBUTE_RECEIPT_V1",
             Self::DesisRequestBrief => "OUTBE_OCOMP_DESIS_REQUEST_BRIEF_V1",
-            Self::BudgetSplitReceipt => "OUTBE_OCOMP_BUDGET_SPLIT_RECEIPT_V1",
+            Self::LimitSplitReceipt => "OUTBE_OCOMP_BUDGET_SPLIT_RECEIPT_V1",
             Self::CarryOverReceipt => "OUTBE_OCOMP_CARRY_OVER_RECEIPT_V1",
             Self::ActiveGeneration => "OUTBE_OCOMP_ACTIVE_GENERATION_V1",
             Self::JobRecord => "OUTBE_OCOMP_JOB_RECORD_V1",
@@ -429,7 +429,7 @@ pub const TRIBUTE_BODY_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256
 pub const FIDELITY_OPENING_CODEC_DESCRIPTOR: &str = "role=FIDELITY_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=1,subject,value,codec_id,opening);subject=u32_be(owner_count)||address20*;owner_count=1..256;owners=strict-ascending-unique;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=fidelity_slot_plan_v1(qualified_start_base=0,active_count_base=1,active_cohorts_base=2,sold_count_base=4,sold_cohorts_base=5,first_qualified_start=8,mapping=keccak256(key||slot32),active_count<=64,sold_count<=64);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
 pub const FIDELITY_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([61, 58, 197, 129, 143, 184, 46, 81, 195, 4, 30, 36, 233, 255, 54, 204, 95, 220, 232, 219, 219, 116, 218, 31, 191, 57, 120, 255, 14, 25, 222, 26]);
 
-pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-and-contains-840-and-subset-of-reference-currencies;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=oracle_slot_plan_v1(pair_index=10,scurve_count=34,scurve_pair=35,scurve_peak_day=36,scurve_peak_price=37,scurve_oldest=38,wwd_vwap_exists=47,wwd_vwap_pair_count=50,wwd_vwap_pair=51,wwd_vwap_value=52,reference_currencies=55,mapping=keccak256(key||slot32),vec=keccak256(slot32)+index,pair_key=sorted_concat(address20(coen=0x00*20),address20(iso=0x000cc||bcd3(iso))),pair_value=address20(base)@slot||address20(quote)@slot+1,wwd_pairs<=256,active_scurve<=256,reference_currencies<=256,isos<=256);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
-pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([66, 239, 224, 201, 72, 42, 112, 165, 100, 211, 70, 148, 50, 133, 181, 245, 72, 234, 33, 100, 69, 10, 159, 118, 93, 219, 114, 224, 46, 189, 169, 209]);
+pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=2;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-nonzero-and-contains-840;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;contract=NOD_ADDRESS;slots=nod_entry_price_slots_v1(frozen=39,price=42,mapping=keccak256(key||slot32),price_key=(wwd,iso),isos<=256);price=max(rolling-four-hour-vwap,current-coen-iso-price)-frozen-at-request;missing-or-zero-input=unpriced;opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,frozen-flag-is-one,strict-decode-reencode";
+pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([99, 201, 223, 63, 222, 229, 43, 161, 241, 150, 237, 67, 46, 163, 150, 154, 17, 48, 144, 195, 158, 99, 128, 115, 231, 161, 128, 54, 36, 71, 79, 58]);
 
-pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([147, 21, 214, 144, 198, 222, 62, 99, 102, 34, 220, 199, 17, 28, 181, 118, 110, 54, 185, 177, 77, 87, 168, 111, 15, 209, 30, 55, 78, 81, 84, 169]);
+pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([105, 21, 56, 183, 150, 201, 243, 56, 176, 238, 97, 210, 151, 148, 118, 250, 96, 132, 176, 10, 6, 135, 228, 65, 231, 58, 40, 166, 29, 43, 188, 92]);

@@ -13,22 +13,42 @@ Byte-for-byte port of `outbe-cli tribute offer`:
   4. ABI-encode + sign (legacy EIP-155) + send `offerTribute` to the
      TributeFactory (0x1100). The enclave decrypts it inside execution.
 
+ZK verification is mandatory: the offer must carry the combined Tribute proof,
+the L2 Merkle root it commits to and the network's BLS signature over that root,
+plus the circuit chain id/version the proof verifies under. The proof is produced
+on the L2 - this script never generates one. `tribute_draft_id`, `su_hash`(es),
+`--amount` and `--amount-micro` must be the values that proof and the caller's L2
+attestation bind: the enclave folds them into the `nft_hash` the node checks
+against the proof's public input (and against the registered L2 chain).
+
 Deps:  pip install web3 cryptography
 
 Examples:
   # auto-pick the OFFERING day, default amount 100 / currency 840 (USD)
   python3 scripts/tribute_offer.py \
       --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY>
+      --private-key 0x<KEY> \
+      --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
+      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+      --tribute-draft-id 0x<32-byte draft id> --su-hash 0x<32-byte su hash>
 
   # explicit day
   python3 scripts/tribute_offer.py --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY> --day 20260601 --amount 100 --currency 840
+      --private-key 0x<KEY> --day 20260601 --amount 100 --currency 840 \
+      --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
+      --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+      --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
+
+  # deliberate negative offer (the node rejects it): empty proof/root/signature
+  python3 scripts/tribute_offer.py ... --zk-proof 0x --zk-merkle-root 0x \
+      --signature 0x --chain-id 57005 --version 1.1.0 \
+      --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -88,7 +108,8 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"uint16","name":"referenceCurrency"},
          {"type":"bool","name":"excludeFromIntexIssuance"},
          {"type":"bytes","name":"zkProof"},
-         {"type":"bytes","name":"zkVerificationKey"},
+         {"type":"uint32","name":"chainId"},
+         {"type":"string","name":"version"},
          {"type":"bytes","name":"zkPublicKey"},
          {"type":"bytes","name":"zkMerkleRoot"},
          {"type":"bytes","name":"signature"}
@@ -143,6 +164,41 @@ def canonical_amount_base(value: str) -> str:
     return value
 
 
+def canonical_amount_micro(value: str) -> str:
+    if not value or not value.isascii() or not value.isdigit():
+        raise argparse.ArgumentTypeError("amount_micro must be a canonical unsigned u64 below 1000000")
+    parsed = int(value)
+    if str(parsed) != value or parsed >= 1_000_000:
+        raise argparse.ArgumentTypeError("amount_micro must be a canonical unsigned u64 below 1000000")
+    return value
+
+
+_HEX = re.compile(r"\A(?:[0-9a-fA-F]{2})*\Z")
+
+
+def hex_bytes_arg(value: str) -> bytes:
+    """`0x`-hex flag value -> bytes. `0x` alone is empty and left to the node."""
+    raw = value.removeprefix("0x")
+    if not _HEX.match(raw):
+        raise argparse.ArgumentTypeError("must be 0x-prefixed hex")
+    return bytes.fromhex(raw)
+
+
+def hex32_arg(value: str) -> bytes:
+    """`0x`-hex of exactly 32 bytes - the enclave parses these as B256."""
+    data = hex_bytes_arg(value)
+    if len(data) != 32:
+        raise argparse.ArgumentTypeError("must be exactly 32 bytes of 0x-hex")
+    return data
+
+
+def uint32_arg(value: str) -> int:
+    parsed = int(value)
+    if not 0 <= parsed <= 0xFFFF_FFFF:
+        raise argparse.ArgumentTypeError("must fit uint32")
+    return parsed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Submit an encrypted Tribute offer")
     ap.add_argument("--rpc", required=True, help="JSON-RPC endpoint URL")
@@ -152,15 +208,40 @@ def main() -> None:
     ap.add_argument(
         "--amount",
         default="100",
-        help="canonical unsigned amount_base in whole units",
+        help="canonical unsigned amount_base in whole units; must match the proof's draft",
+    )
+    ap.add_argument(
+        "--amount-micro",
+        default="0",
+        help="six-decimal remainder in [0,999999]; must match the proof's draft",
     )
     ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
     ap.add_argument("--exclude-from-intex-issuance", action="store_true",
                     help="set the excludeFromIntexIssuance flag")
+    ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
+                    help="combined FullProof bytes (0x-hex): 4-byte public-input word "
+                         "count, public inputs, proof; 0x is a deliberate negative "
+                         "offer the node rejects")
+    ap.add_argument("--zk-merkle-root", required=True, type=hex_bytes_arg,
+                    help="L2 Merkle root the proof's public input commits to (0x-hex)")
+    ap.add_argument("--signature", required=True, type=hex_bytes_arg,
+                    help="BLS MinSig signature over --zk-merkle-root by the network "
+                         "key registered in the L2Registry (0x-hex)")
+    ap.add_argument("--chain-id", required=True, type=uint32_arg,
+                    help="L2 chain id the proof verifies under; must be the caller's "
+                         "registered L2")
+    ap.add_argument("--version", required=True,
+                    help="exact circuit version enabled for that chain, e.g. 1.1.0")
+    ap.add_argument("--tribute-draft-id", required=True, type=hex32_arg,
+                    help="32-byte TributeDraft id the proof and the caller's L2 "
+                         "attestation bind (0x-hex)")
+    ap.add_argument("--su-hash", required=True, action="append", type=hex32_arg,
+                    help="32-byte SpendingUnit hash bound by the proof (0x-hex, repeatable)")
     ap.add_argument("--gas", type=int, default=8_000_000, help="explicit gas limit")
     ap.add_argument("--wait", action="store_true", help="wait for the receipt")
     args = ap.parse_args()
     amount_base = canonical_amount_base(args.amount)
+    amount_micro = canonical_amount_micro(args.amount_micro)
 
     w3 = Web3(Web3.HTTPProvider(args.rpc))
     acct = Account.from_key(args.private_key)
@@ -179,14 +260,15 @@ def main() -> None:
     day = args.day if args.day is not None else pick_offering_day(w3)
     print(f"worldwide_day: {day}")
 
-    # 3. plaintext payload - draft id + su hash must be unique per offer.
+    # 3. plaintext payload - draft id + su hashes must be the proof-bound values,
+    #    since the enclave folds them into the nft_hash checked against the proof.
     #    worldwide_day + currency travel as cleartext ABI args, not in here.
     payload = {
         "creator": creator,
-        "tribute_draft_id": "0x" + os.urandom(32).hex(),
+        "tribute_draft_id": "0x" + args.tribute_draft_id.hex(),
         "amount_base": amount_base,
-        "amount_atto": "0",
-        "su_hashes": ["0x" + os.urandom(32).hex()],
+        "amount_micro": amount_micro,
+        "su_hashes": ["0x" + su_hash.hex() for su_hash in args.su_hash],
         "wallet_addresses": [],
         "sra_addresses": [],
     }
@@ -195,7 +277,9 @@ def main() -> None:
     # 4. encrypt to the offer key
     cipher_text, nonce, eph_pub = encrypt_offer(offer_pub, plaintext)
 
-    # 5. build + sign + send offerTribute (msg.value MUST be 0; zk fields are stubs)
+    # 5. build + sign + send offerTribute (msg.value MUST be 0). The ZK gate
+    #    (proof, root, BLS signature, circuit selector) is the node's call: the
+    #    values go through verbatim, including empty ones for negative offers.
     factory = w3.eth.contract(address=TRIBUTE_FACTORY_ADDR, abi=TRIBUTE_FACTORY_ABI)
     tx = factory.functions.offerTribute(
         cipher_text,
@@ -205,7 +289,12 @@ def main() -> None:
         int(args.currency),
         int(args.currency),
         args.exclude_from_intex_issuance,
-        b"", b"", b"", b"", b"",
+        args.zk_proof,
+        args.chain_id,
+        args.version,
+        b"",  # zkPublicKey: the combined proof carries its own
+        args.zk_merkle_root,
+        args.signature,
     ).build_transaction(
         {
             "from": creator,
@@ -221,6 +310,8 @@ def main() -> None:
     print(f"offerTribute tx: {tx_hash.hex()}")
     print(f"  creator={creator} worldwide_day={day} "
           f"currency={args.currency} amount_base={amount_base}")
+    print(f"  l2_chain_id={args.chain_id} circuit_version={args.version} "
+          f"tribute_draft_id=0x{args.tribute_draft_id.hex()}")
 
     if not args.wait:
         print(f"verify once mined: getTributesByOwner({creator}) on {TRIBUTE_ADDR}")

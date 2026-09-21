@@ -5,6 +5,9 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_canonical::{
     emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
     full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
@@ -287,11 +290,10 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 /// changed, binding the combined wire to the frozen circuit identity.
 #[test]
 fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
-    use ark_ff::PrimeField as _;
-    use outbe_protocol::primitive::hash::FieldHasher;
     use outbe_protocol::protocol::zk::ProofGenerator;
-    use outbe_protocol::{OutbeV1, Suite};
+    use outbe_protocol::OutbeV1;
     use outbe_zk_backend::barretenberg::Barretenberg;
+    use outbe_zk_canonical::emit_mint::{hash::*, Field};
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
     use outbe_zk_canonical::CircuitId as _;
 
@@ -306,78 +308,35 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     );
 
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
-    type Field = <OutbeV1 as Suite>::Field;
 
-    let h2 = |left: Field, right: Field| -> Field {
-        <<OutbeV1 as Suite>::Hash as FieldHasher<Field>>::hash(&[left, right]).unwrap()
-    };
-    let h3 = |a: Field, b: Field, c: Field| -> Field {
-        <<OutbeV1 as Suite>::Hash as FieldHasher<Field>>::hash(&[a, b, c]).unwrap()
-    };
-    let ascii = |text: &str| Field::from_be_bytes_mod_order(text.as_bytes());
-    // Mirror of the circuit's `hash_multi(tag, values)` seeded with the
-    // domain-folded purpose tag: `tag = h2(EMIT_DOMAIN, base)`.
-    let emit_tag = |base: &str| h2(ascii("OUTBE_EMIT"), ascii(base));
-    let emit_hash = |base: &str, values: &[Field]| -> Field {
-        let mut state = h2(emit_tag(base), Field::from(values.len() as u64));
-        for value in values {
-            state = h2(state, *value);
-        }
-        state
-    };
     let owner = [0x22u8; 20];
     let chain_id = 31_337u64;
-    let note_value = (U256::from(1) << 200) + U256::from(100);
-    let mint_value = (U256::from(1) << 199) + U256::from(40);
-    let note_amount = outbe_zk_canonical::u256::to_limbs(note_value);
-    let mint_units = outbe_zk_canonical::u256::to_limbs(mint_value);
+    let note_value = (U256::from(1) << 200usize) + U256::from(100);
+    let mint_value = (U256::from(1) << 199usize) + U256::from(40);
+    let note_amount = u256_limbs_be(&note_value.to_be_bytes::<32>());
+    let mint_units = u256_limbs_be(&mint_value.to_be_bytes::<32>());
     let spend_key = Field::from(17u64);
-    let serial = emit_hash(
-        "NOTE_SN",
-        &[Field::from_be_bytes_mod_order(&owner), spend_key],
-    );
-    let commitment = emit_hash(
-        "COMMITMENT",
-        &[
-            Field::from(chain_id),
-            serial,
-            Field::from(note_amount[0]),
-            Field::from(note_amount[1]),
-            Field::from(note_amount[2]),
-        ],
-    );
-    let mut path = [Field::from(0u64); 32];
-    path[0] = emit_hash("EMPTY", &[Field::from(chain_id)]);
-    let domain = ascii("OUTBE_EMIT");
-    for level in 1..32 {
-        path[level] = h3(domain, path[level - 1], path[level - 1]);
-    }
-    let mut root = commitment;
-    for sibling in path {
-        root = h3(domain, root, sibling);
-    }
-    let nullifier = emit_hash("NULLIFIER", &[commitment, spend_key]);
-    let next_key = emit_hash("CHANGE_KEY", &[spend_key, nullifier]);
-    let change_amount = outbe_zk_canonical::u256::to_limbs(note_value - mint_value);
-    let change = emit_hash(
-        "COMMITMENT",
-        &[
-            Field::from(chain_id),
-            emit_hash(
-                "NOTE_SN",
-                &[Field::from_be_bytes_mod_order(&owner), next_key],
-            ),
-            Field::from(change_amount[0]),
-            Field::from(change_amount[1]),
-            Field::from(change_amount[2]),
-        ],
-    );
+    let serial = note_sn(owner.into(), spend_key).unwrap();
+    let commitment = note_commitment(chain_id, serial, note_value).unwrap();
+    let mut tree =
+        outbe_emit::EmitTree::new(emit_domain(), empty_leaf(chain_id).unwrap(), 32).unwrap();
+    tree.append(commitment).unwrap();
+    let root = tree.root();
+    let path: [Field; 32] = tree.inclusion_path(0).unwrap().siblings.try_into().unwrap();
+    let nullifier = nullifier(commitment, spend_key).unwrap();
+    let next_key = change_key(spend_key, nullifier).unwrap();
+    let change = note_commitment(
+        chain_id,
+        note_sn(owner.into(), next_key).unwrap(),
+        note_value - mint_value,
+    )
+    .unwrap();
 
     let public = PublicInputs {
         chain_id,
         root,
         nullifier,
-        note_owner: Field::from_be_bytes_mod_order(&owner),
+        note_owner: alloy_primitives::Address::from(owner).to_field().unwrap(),
         mint_units,
         change_commitment: change,
     };
@@ -391,18 +350,12 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
         .expect("emit mint proof generation");
 
-    let field_word = |field: &Field| -> [u8; 32] {
-        let mut word = [0u8; 32];
-        let bytes = field.into_bigint().to_bytes_be();
-        word[32 - bytes.len()..].copy_from_slice(&bytes);
-        word
-    };
     assert_eq!(proof.proof.len(), EMIT_MINT_PROOF_WORDS);
     let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
     combined.extend_from_slice(&8u32.to_be_bytes());
     for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
     {
-        combined.extend_from_slice(&field_word(&word));
+        combined.extend_from_slice(OutbeV1::field_to_b256(&word).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

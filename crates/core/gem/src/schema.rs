@@ -68,10 +68,10 @@ pub struct GemData {
     pub called_at: u64,
 
     /// Call Notice Period in seconds: after a Called gem passes
-    /// `called_at + call_notice_period` it is forfeit-burned. Snapshot of the
+    /// `called_at + call_notice_period_seconds` it is forfeit-burned. Snapshot of the
     /// protocol constant at issuance.
     #[attribute(order = 11, default = 0)]
-    pub call_notice_period: u32,
+    pub call_notice_period_seconds: u32,
 
     /// Call-price markup percent (snapshot of `CALL_RATE` at issuance);
     /// `call_price_minor = entry_price_minor * (100 + call_rate) / 100`
@@ -82,12 +82,12 @@ pub struct GemData {
     /// Call-trigger evaluation window in seconds (snapshot of `CALL_WINDOW` at
     /// issuance); the trailing span scanned for Call Price breaches.
     #[attribute(order = 13, default = 0)]
-    pub call_window: u32,
+    pub call_window_seconds: u32,
 
     /// Breach threshold in seconds (snapshot of `CALL_THRESHOLD` at issuance);
     /// divided by 86400 to get the required breach-day count.
     #[attribute(order = 14, default = 0)]
-    pub call_threshold: u32,
+    pub call_threshold_seconds: u32,
 
     /// Block timestamp when the gem became Qualified; `0` until Qualified.
     #[attribute(order = 15, default = 0)]
@@ -200,7 +200,7 @@ pub struct GemContract {
     /// Widest window ever issued in a currency; it only grows, so the span the scan
     /// collects always covers a gem whose record outruns the live profile.
     #[attribute(order = 27)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 28)]
@@ -219,6 +219,12 @@ pub struct GemContract {
     /// slices skip it instead of re-reading a window they cannot use.
     #[attribute(order = 33)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+    #[attribute(order = 34)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 35)]
+    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 36)]
+    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

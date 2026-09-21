@@ -93,17 +93,14 @@ pub fn dispatch(
                     }
                     terminal_outcome::METADOSIS_FAILURE => {
                         let expected_value_routed = metadosis
-                            .request_budget_receipt(
-                                wwd,
-                                &crate::ocomp::schema::poc_schema_limits(),
-                            )?
+                            .request_limit_receipt(wwd, &crate::ocomp::schema::poc_schema_limits())?
                             .map_or(
                                 metadosis
                                     .worldwide_days
                                     .entry(wwd)
                                     .metadosis_limit_amount()
                                     .read()?,
-                                |receipt| receipt.lysis_budget,
+                                |receipt| receipt.lysis_limit_minor,
                             );
                         metadosis.read_metadosis_failure_receipt(wwd, expected_value_routed)?;
                     }

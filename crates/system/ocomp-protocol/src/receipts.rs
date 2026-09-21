@@ -25,7 +25,7 @@ wire_enum_u8! {
 }
 
 wire_enum_u8! {
-    pub enum BudgetSplitDestination {
+    pub enum LimitSplitDestination {
         DesisAuction = 1,
         CarryOver = 2,
     }
@@ -57,7 +57,7 @@ wire_struct! {
         pub nod_count: u32,
         pub nod_root: B256,
         pub nod_amount_total: U256,
-        pub nod_gratis_consumed: U256,
+        pub lysis_allocation_minor: U256,
         pub issued_at: u64,
         pub state_event_digest: B256,
     }
@@ -90,30 +90,30 @@ wire_struct! {
 impl_top_level_codec!(TributeReceiptV1, TributeReceiptV1);
 
 wire_struct! {
-    pub struct RequestBudgetSplitReceiptV1 {
+    pub struct RequestLimitSplitReceiptV1 {
         pub protocol_bundle_hash: B256,
         pub wwd: u32,
         pub pending_nonce: u64,
         pub day_type: DayType,
         pub day_limit: U256,
-        pub lysis_budget: U256,
-        pub auction_base: U256,
-        pub destination: BudgetSplitDestination,
+        pub lysis_limit_minor: U256,
+        pub desis_limit_minor: U256,
+        pub destination: LimitSplitDestination,
         pub desis_brief_hash: Option<B256>,
         pub carry_over_credit: U256,
         pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub logical_anchor: u64,
     }
-    validate = validate_request_budget_split_receipt;
+    validate = validate_request_limit_split_receipt;
 }
-impl_top_level_codec!(RequestBudgetSplitReceiptV1, RequestBudgetSplitReceiptV1);
+impl_top_level_codec!(RequestLimitSplitReceiptV1, RequestLimitSplitReceiptV1);
 
 wire_struct! {
     pub struct CarryOverReceiptV1 {
         pub binding: EffectBindingV1,
         pub source_wwd: u32,
         pub before_value: U256,
-        pub credited_unused_lysis: U256,
+        pub credited_unused_lysis_limit_minor: U256,
         pub after_value: U256,
         pub state_event_digest: B256,
     }
@@ -129,7 +129,7 @@ wire_struct! {
         pub nod_count: u32,
         pub nod_root: B256,
         pub nod_amount_total: U256,
-        pub nod_gratis_consumed: U256,
+        pub lysis_allocation_minor: U256,
         pub issued_at: u64,
     }
 }
@@ -160,7 +160,7 @@ wire_struct! {
     pub struct CarryOverStateEventProjectionV1 {
         pub source_wwd: u32,
         pub before_value: U256,
-        pub credited_unused_lysis: U256,
+        pub credited_unused_lysis_limit_minor: U256,
         pub after_value: U256,
     }
 }
@@ -173,7 +173,7 @@ wire_struct! {
         pub contributor_receipt_hash: Option<B256>,
         pub tribute_receipt_hash: Option<B256>,
         pub carry_over_receipt_hash: Option<B256>,
-        pub request_budget_split_receipt_hash: B256,
+        pub request_limit_split_receipt_hash: B256,
         pub active_generation_hash: Option<B256>,
         pub effect_commitment: B256,
         pub event_summary_hash: B256,
@@ -267,11 +267,7 @@ macro_rules! receipt_hash {
 receipt_hash!(NodBatchReceiptV1, receipt_hash, NodReceipt);
 receipt_hash!(ContributorReceiptV1, receipt_hash, ContributorReceipt);
 receipt_hash!(TributeReceiptV1, receipt_hash, TributeReceipt);
-receipt_hash!(
-    RequestBudgetSplitReceiptV1,
-    receipt_hash,
-    BudgetSplitReceipt
-);
+receipt_hash!(RequestLimitSplitReceiptV1, receipt_hash, LimitSplitReceipt);
 receipt_hash!(CarryOverReceiptV1, receipt_hash, CarryOverReceipt);
 
 macro_rules! validate_projection_digest {
@@ -395,14 +391,14 @@ pub fn empty_apply_event_summary_hash() -> Result<B256, ProtocolError> {
 pub fn desis_request_brief_hash(
     protocol_bundle_hash: B256,
     wwd: u32,
-    auction_base: U256,
+    desis_limit_minor: U256,
     auction_entry_prices: &[ReferenceEntryPriceV1],
     logical_anchor: u64,
 ) -> Result<B256, ProtocolError> {
     let mut payload = Vec::with_capacity(84 + auction_entry_prices.len() * 39);
     payload.extend_from_slice(protocol_bundle_hash.as_slice());
     payload.extend_from_slice(&wwd.to_be_bytes());
-    payload.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    payload.extend_from_slice(&desis_limit_minor.to_be_bytes::<32>());
     payload.extend_from_slice(&(auction_entry_prices.len() as u16).to_be_bytes());
     for row in auction_entry_prices {
         payload.extend_from_slice(&row.reference_currency.to_be_bytes());
@@ -414,38 +410,43 @@ pub fn desis_request_brief_hash(
     hash_framed(HashDomain::DesisRequestBrief, &payload)
 }
 
-impl RequestBudgetSplitReceiptV1 {
+impl RequestLimitSplitReceiptV1 {
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         let green = self.day_type == DayType::Green
-            && self.destination == BudgetSplitDestination::DesisAuction
+            && self.destination == LimitSplitDestination::DesisAuction
             && self.desis_brief_hash.is_some();
         let red = self.day_type == DayType::Red
-            && self.destination == BudgetSplitDestination::CarryOver
+            && self.destination == LimitSplitDestination::CarryOver
             && self.desis_brief_hash.is_some();
-        require(green || red, "request budget split destination")?;
-        // The base a red day never opens is still a share of its limit.
-        let split_total = self.lysis_budget.checked_add(self.auction_base).ok_or(
-            ProtocolError::IntegerOverflow {
-                what: "request budget split",
-            },
-        )?;
-        require(split_total <= self.day_limit, "request budget split")?;
+        require(green || red, "request limit split destination")?;
+        // The Desis Limit a red day never opens is still a share of the day limit.
+        let split_total = self
+            .lysis_limit_minor
+            .checked_add(self.desis_limit_minor)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "request limit split",
+            })?;
+        require(split_total <= self.day_limit, "request limit split")?;
         // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
-        // the warehouse; a red day briefs nothing, so its base returns with the headroom.
-        let briefed = if green { self.auction_base } else { U256::ZERO };
+        // the warehouse; a red day briefs nothing, so its limit returns with the headroom.
+        let briefed = if green {
+            self.desis_limit_minor
+        } else {
+            U256::ZERO
+        };
         let accounted = self
-            .lysis_budget
+            .lysis_limit_minor
             .checked_add(briefed)
             .and_then(|sum| sum.checked_add(self.carry_over_credit))
             .ok_or(ProtocolError::IntegerOverflow {
-                what: "request budget split",
+                what: "request limit split",
             })?;
-        require(accounted == self.day_limit, "request budget split")
+        require(accounted == self.day_limit, "request limit split")
     }
 }
 
-fn validate_request_budget_split_receipt(
-    receipt: &RequestBudgetSplitReceiptV1,
+fn validate_request_limit_split_receipt(
+    receipt: &RequestLimitSplitReceiptV1,
     _limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     receipt.validate_semantics()
@@ -457,7 +458,7 @@ fn validate_carry_over_receipt(
 ) -> Result<(), ProtocolError> {
     let expected = receipt
         .before_value
-        .checked_add(receipt.credited_unused_lysis)
+        .checked_add(receipt.credited_unused_lysis_limit_minor)
         .ok_or(ProtocolError::IntegerOverflow {
             what: "carry-over receipt",
         })?;

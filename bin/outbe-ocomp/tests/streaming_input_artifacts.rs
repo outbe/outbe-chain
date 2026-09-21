@@ -54,6 +54,7 @@ fn input_reference_commitment_streams_past_the_old_4096_list_limit() {
 }
 
 #[test]
+#[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
     const COUNT: u32 = 1_000_000;
     const RECORDS_PER_CHUNK: u32 = 256;
@@ -65,7 +66,7 @@ fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
     let finalized_block_hash = B256::repeat_byte(0x22);
     let finalized_state_root = B256::repeat_byte(0x23);
     let day = WorldwideDay::new(20_260_901);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 512 * 1_048_576,
@@ -269,7 +270,7 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
         }
     }
     let oracle_opening = oracle_opening.unwrap();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 16 * 1_048_576,
@@ -427,7 +428,7 @@ fn durable_publisher_replays_10000_tributes_without_population_sized_results() {
     let finalized_block_hash = B256::repeat_byte(0x42);
     let finalized_state_root = B256::repeat_byte(0x43);
     let day = WorldwideDay::new(20_260_901);
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas_limits = CasLimits {
         max_object_bytes: 1_048_576,
         max_total_bytes: 64 * 1_048_576,
@@ -627,7 +628,7 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
         }
     }
 
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::tempdir().unwrap();
     let cas = FilesystemCas::open(
         directory.path().join("cas"),
         CasWriterRole::SnapshotExporter,

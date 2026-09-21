@@ -14,16 +14,17 @@ use outbe_nod::{
     NodItemState, NodRepositoryReader,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
-    block::{BlockContext, BlockRuntimeContext},
+    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
 fn item(owner: Address, day: WorldwideDay) -> NodItemState {
     let nod_id = NodContract::generate_nod_id(owner, day).unwrap();
     NodItemState {
+        is_settled: false,
         nod_id,
         owner,
         gratis_load_minor: U256::from(11),
@@ -107,21 +108,46 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
     let body = item(Address::repeat_byte(0x31), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
         let context = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
-        let inspected = hooks::qualify_buckets_with_rate(
-            &context,
-            &scope,
-            &parent,
-            body.reference_currency,
-            body.floor_price_minor + U256::from(1),
-            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
-        )
-        .unwrap();
-        assert_eq!(inspected, 1);
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(body.reference_currency);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        oracle
+            .reference_currencies
+            .push(body.reference_currency)
+            .unwrap();
+        oracle.config_is_initialized.write(true).unwrap();
+        // The completed day's weighted price is (12*1 + 15*2)/3 = 14.
+        // The new day's low sample is outside the half-open daily window.
+        for (timestamp, rate, volume) in [
+            (midnight - 200, 12, 1),
+            (midnight - 100, 15, 2),
+            (midnight, 1, 1),
+        ] {
+            oracle
+                .write_snapshot(timestamp, &[(pair, U256::from(rate), U256::from(volume))])
+                .unwrap();
+        }
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
+        hooks::run_daily(&context, &scope, &parent).unwrap();
+        assert!(
+            !api::get_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap()
+                .is_qualified
+        );
+        outbe_oracle::lifecycle::OracleLifecycle::begin_block(&context).unwrap();
+        assert_eq!(
+            oracle
+                .get_utc_day_vwap_for_pair(20260715, oracle.pair_index_of(pair).unwrap())
+                .unwrap(),
+            Some(U256::from(14))
+        );
+        hooks::run_daily(&context, &scope, &parent).unwrap();
         assert!(
             api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
@@ -138,6 +164,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 &parent,
                 840,
                 body.floor_price_minor + U256::from(1),
+                first_full_day(body.issued_at),
                 MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
             )
             .unwrap(),
@@ -192,6 +219,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             &parent,
             840,
             U256::from(1299),
+            first_full_day(1_752_534_000),
             MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
@@ -253,4 +281,46 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
             .unwrap()
             .is_none());
     });
+}
+
+#[test]
+fn idle_daily_scans_do_not_write_storage() {
+    let (mut provider, scope, parent) = active_world();
+    let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
+    StorageHandle::enter(&mut provider, |storage| {
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
+        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&20260715)
+            .write(&index, U256::from(13))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
+        for (owner, floor) in [(0x51, 12), (0x52, 13)] {
+            let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
+            body.floor_price_minor = U256::from(floor);
+            body.bucket_key =
+                NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, 978);
+            api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        }
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, midnight, 1),
+            storage.clone(),
+        );
+        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+        assert_eq!(NodContract::new(storage).callable_buckets.len().unwrap(), 1);
+    });
+    // One bucket is at the qualification floor; the other is qualified but
+    // below its call price. An idle CycleTick only continues in-flight sweeps,
+    // so neither unchanged scan should issue an SSTORE.
+    provider.enable_production_storage_gas_metering();
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
+        hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
+    });
+    let (reads, writes) = provider.metered_storage_operations();
+    assert!(reads > 0);
+    assert_eq!(writes, 0);
 }

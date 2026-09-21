@@ -49,6 +49,9 @@ pub enum EmitError {
     CommitmentExists,
     #[error("Emit payout balance overflow")]
     PayoutOverflow,
+    /// Fatal: the field hasher failed.
+    #[error("Emit Poseidon2 hashing failed")]
+    Hash,
     /// Fatal: revm credits `msg.value` before dispatch, so the Emit balance
     /// can never be smaller than the burn unless accounting is corrupted.
     #[error("Emit balance is smaller than the credited burn ({balance} < {credited})")]
@@ -63,9 +66,9 @@ pub enum EmitError {
 impl From<EmitError> for PrecompileError {
     fn from(error: EmitError) -> Self {
         match error {
-            EmitError::UnderfundedBurn { .. } | EmitError::VerifierUnavailable(_) => {
-                PrecompileError::Fatal(error.to_string())
-            }
+            EmitError::Hash
+            | EmitError::UnderfundedBurn { .. }
+            | EmitError::VerifierUnavailable(_) => PrecompileError::Fatal(error.to_string()),
             _ => PrecompileError::Revert(error.to_string()),
         }
     }

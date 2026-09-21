@@ -128,7 +128,7 @@ pub struct BidData {
 /// Auction clearing result.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClearingResult {
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     pub clearing_rate: u32,
     pub winners: Vec<Address>,
     pub winner_quantities: Vec<U256>,
@@ -186,7 +186,7 @@ pub struct DesisContract {
     /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
     #[attribute(order = 8)]
     pub last_cleared_worldwide_day: outbe_primitives::storage::dsl::Value<WorldwideDay>,
-    /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
+    /// issuedUnits from the most recent clearing (for minBidQty 4% derivation).
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
@@ -257,9 +257,9 @@ pub struct DesisContract {
     pub gate_active_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // --- Auction brief ---
-    /// worldwide_day -> auction supply in raw PROMIS minor units.
+    /// worldwide_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
-    pub pending_supply_promis: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
     /// worldwide_day -> 1 for a green day.
     #[attribute(order = 31)]
     pub brief_green: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,

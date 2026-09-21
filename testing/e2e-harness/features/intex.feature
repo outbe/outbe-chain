@@ -2,7 +2,7 @@
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
-  # it exists - qualifying, being settled by its holder, and burning into Promis.
+  # it exists - qualifying, being settled by its owner, and burning into Promis.
 
   # Applying the day's OCOMP result hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
@@ -59,14 +59,18 @@ Feature: Intex from auction to Promis
   # module's own unit tests do. The sweep still walks its index, checks the
   # finalized watermark and counts the breach days itself.
   #
-  # The rate, by contrast, is published through the real feeder: qualification
-  # reads it with a freshness check that a seeded value would fail.
+  # Qualification reads a closed day's VWAP as well, so that day is seeded the
+  # same way; the sweep still walks its index and compares the floor itself.
+  #
+  # Two more series are left to run out instead of being settled whole: one is settled
+  # in part and one is never touched at all, so the sweep has to return the load of the
+  # unrealized units alone from one and the whole tirage from the other.
   #
   # The two hops home also take the bridge's two routes: one series at a time
-  # first, then both together, which is how a holder of several actually moves
+  # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle
-  Scenario: Two Intex series qualify as one group, settle from both states, and burn into Promis
+  Scenario: Four Intex series qualify as one group, settle from both states, and burn or expire
     Given a fresh four-validator OCOMP public capacity localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
@@ -75,20 +79,24 @@ Feature: Intex from auction to Promis
     Then the committee chain hosts the intex engine
     When a relay carries messages between the two chains
     And the settlement currency is registered on the committee chain
-    Then holders may settle in that currency
-    When two test Intex series sharing a reference currency are issued to a funded holder
-    Then the holder holds issued units of both series on each chain
+    Then owners may settle in that currency
+    When four test Intex series sharing a reference currency are issued to a funded owner
+    Then the owner holds issued units of every series on each chain
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
-    Then both series qualify in one group decision
-    When the holder brings part of the target-chain units home
-    And the holder settles part of their units
+    Then every series qualifies in one group decision
+    When the owner brings part of the target-chain units home
+    And the owner settles part of their units
     Then those units move from issued to settled
     And the settlement payment lands in the reserve vault
     When the call trigger holds above the call price across the call window
-    Then both series become Called
-    When the holder brings the remaining units home to their own address in one batch
-    And the holder settles the remaining units inside the notice period
-    Then no issued units remain and every unit is settled
-    When the holder mines Promis against their settled units
+    Then every series becomes Called
+    When the owner brings the remaining units home to their own address in one batch
+    And the owner settles the remaining units inside the notice period
+    Then no issued units remain of the pair being settled whole
+    When the owner mines Promis against their settled units
     Then the settled units are burned and Promis is mined
+    When the owner settles part of one series they let run out
+    And the call notice runs out on both of them
+    Then both series read Expired on both chains
+    And only their unrealized load returns to the unallocated pool

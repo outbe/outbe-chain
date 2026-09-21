@@ -95,7 +95,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
-        assertEq(mocked.pendingMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
@@ -105,7 +105,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256 spent = _measure(batch);
 
         for (uint256 i = 0; i < batch.length; ++i) {
-            assertEq(router.pendingMark(batch[i]), BridgeMsgCodec.MSG_MARK_CALLED, "every series waits in its slot");
+            assertEq(router.parkedMark(batch[i]), BridgeMsgCodec.MSG_MARK_CALLED, "every series waits in its slot");
         }
         emit log_named_uint("park_batch8", spent);
         assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
@@ -179,7 +179,7 @@ contract GasBudgetTest is CrossChainTest {
                     seriesId: SERIES_PREFIX,
                     worldwideDay: WORLDWIDE_DAY,
                     issuedAt: uint32(block.timestamp),
-                    issuedIntexCount: 10_000,
+                    issuedUnits: 10_000,
                     promisLoadMinor: 1e6,
                     entryPriceMinor: 100e6,
                     floorPriceMinor: 40e6,
@@ -223,7 +223,7 @@ contract GasBudgetTest is CrossChainTest {
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 worldwideDay: WORLDWIDE_DAY,
                 issuedAt: uint32(block.timestamp),
-                issuedIntexCount: 10_000,
+                issuedUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
                 floorPriceMinor: 40e6,
@@ -357,8 +357,8 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
-        assertEq(mocked.pendingMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
-        assertEq(mocked.pendingMark(SERIES_PREFIX), 0, "its batch mate has no slot");
+        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(SERIES_PREFIX), 0, "its batch mate has no slot");
         assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
     }
 }
@@ -412,7 +412,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20250101;
-    uint32 internal constant ISSUED_INTEX_COUNT = 10_000;
+    uint32 internal constant ISSUED_UNITS = 10_000;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
     TargetRouter internal router;
@@ -528,14 +528,17 @@ contract AuctionGasBudgetTest is CrossChainTest {
         vm.prank(address(router));
         auction.startClearingStage(WORLDWIDE_DAY);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, ENTRY_PRICE, 0));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_UNITS, ENTRY_PRICE, 0));
 
         emit log_named_uint("auction_result", spent);
         assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");
     }
 }
 
-/// @dev CLEARING's budget is dominated by the bids relay it fires: the day's revealed bids leave as
+/// @dev These readings go through the mock, which stores the message body and so inflates a chunk about
+///      twelvefold; the budgets are sized on `ClearingRelayMailboxGas.t.sol` instead. What is pinned here
+///      is the behaviour: a day within a round finishes, a day beyond one stops and resumes.
+///      CLEARING's cost is dominated by the bids relay it fires: the day's revealed bids leave as
 ///      chunks of `MAX_PAYLOAD_ARRAY_LEN`, and every chunk is an outbound send paid from this same
 ///      delivery. A stub auction supplies the bids so the slope is measurable without the reveal flow.
 contract ClearingRelayGasTest is CrossChainTest {
@@ -556,6 +559,19 @@ contract ClearingRelayGasTest is CrossChainTest {
         vm.deal(address(router), 100 ether);
     }
 
+    /// @dev Deliver with exactly the budget's gas, as the transport does, so the relay stops where it
+    ///      would stop in production rather than running on the test frame's whole allowance.
+    function _clearingWithin(uint256 bids, uint256 gasCap) internal returns (bool delivered) {
+        stub.setBidCount(bids);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
+        (delivered,) = address(bridge).call{gas: gasCap}(
+            abi.encodeCall(
+                bridge.deliverAs,
+                (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(router)), packet)
+            )
+        );
+    }
+
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
         stub.setBidCount(bids);
         uint256 before = gasleft();
@@ -563,30 +579,38 @@ contract ClearingRelayGasTest is CrossChainTest {
         spent = before - gasleft();
     }
 
-    function test_TheQuoteCoversClearingWithAFullChunkOfBids() public {
-        uint256 spent = _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    function test_OneChunkOfBidsRelaysInOneRound() public {
+        emit log_named_uint("clearing_one_chunk", _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        emit log_named_uint("clearing_one_chunk", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "one full chunk must fit the quote");
+        (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(done, "the day relayed whole");
     }
 
-    function test_TheQuoteCoversClearingWithFourChunksOfBids() public {
-        uint256 spent = _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    function test_FourChunksOfBidsRelayInOneRound() public {
+        emit log_named_uint("clearing_four_chunks", _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        emit log_named_uint("clearing_four_chunks", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "four chunks must fit the quote");
+        (,, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(done, "the day relayed whole");
     }
 
-    /// @dev Past the relay's ceiling the stage still transitions and the relay parks, so the day is
-    ///      recoverable by a flush rather than stuck in redelivery.
-    function test_ADayTooHeavyToRelayParksInsteadOfFailing() public {
-        uint256 spent = _clearingCost(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+    /// @dev A day too heavy for one delivery keeps the stage flip and stops mid-relay, so the next round
+    ///      carries on from the chunk it left rather than starting the day over.
+    function test_ADayTooHeavyToRelayStopsPartWayThrough() public {
+        // Through the mock a chunk costs about 2.4M - it stores the whole body - so a round of this size
+        // buys a couple of chunks. The real cost lives in `ClearingRelayMailboxGas.t.sol`.
+        assertTrue(_clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 6_000_000), "the delivery must survive");
 
-        emit log_named_uint("clearing_1024bids", spent);
-        assertEq(router.nextPendingBidsRelayIdx(), 1, "the relay parked");
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "the capped delivery still fits the quote");
+        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        emit log_named_uint("clearing_1024bids_batches_sent", nextBatch);
+        assertFalse(done, "the day is not finished");
+        assertEq(totalBatches, 16, "the span is frozen by the first round");
+        assertGt(nextBatch, 0, "the round sent what it could afford");
+        assertLt(nextBatch, totalBatches, "and left the rest");
+
+        // The next round picks the day up where this one stopped.
+        router.relayBids(WORLDWIDE_DAY);
+        (uint16 after_,, bool doneAfter) = router.bidsRelay(WORLDWIDE_DAY);
+        assertTrue(after_ > nextBatch || doneAfter, "the second round carried on");
     }
 }
 
@@ -616,6 +640,36 @@ contract BidStub {
                 referenceCurrency: 840
             });
         }
+    }
+
+    function revealedBidsCount(uint32) external view returns (uint256) {
+        return bidCount;
+    }
+
+    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        uint256 length = bidCount;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = IIntexAuction.SubmittedBidData({
+                bidderAddress: address(uint160(0xCAFE + offset + i)),
+                intexQuantity: 1,
+                intexBidRate: 100e6,
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
+            });
+        }
+    }
+
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Issuance;
     }
 }
 
@@ -682,6 +736,15 @@ contract OriginInboundGasTest is CrossChainTest {
 
         emit log_named_uint("bids_done", spent);
         assertLt(spent, IntexGas.BIDS_DONE, "bids done must fit the quote");
+    }
+
+    /// @dev The dearest of the inbound bids messages: its handler answers with an outbound CLEARING, so the
+    ///      budget has to cover a dispatch as well as the decode.
+    function test_TheQuoteCoversBidsRemaining() public {
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsRemaining(WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 3));
+
+        emit log_named_uint("bids_remaining", spent);
+        assertLt(spent, IntexGas.BIDS_REMAINING, "the remainder report must fit the quote");
     }
 }
 

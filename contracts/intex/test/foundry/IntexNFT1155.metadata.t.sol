@@ -149,7 +149,7 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markQualified(SERIES_ID);
         vm.prank(bridger);
-        token.settle(SERIES_ID, user, user2, 3);
+        token.settleIntex(SERIES_ID, user, user2, 3);
 
         bytes memory json = _json(sTok);
         _assertContains(

@@ -10,20 +10,29 @@ pragma solidity ^0.8.30;
 ///         settlement bookkeeping and the autonomous qualification index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexHolder`. Caller must be the holder or its authorized
-    ///         settler. Allowed in Qualified (voluntary) and Called (forced).
-    /// @dev The cost is paid by spending a PayNote, so this call moves no
-    ///      tokens: the underlying assets reached the reserve vault when the
-    ///      note was deposited.
+    ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
+    ///         settled units stay with the owner. Allowed in Qualified (voluntary)
+    ///         and Called (forced).
+    /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
+    ///      Payment is deposited into the reserve vault through VaultRouter.
+    /// @param asset Token registered with the vault router under either of the
+    ///        series' currencies. The issuance currency converts through COEN and
+    ///        needs fresh rates.
+    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset) external;
+
+    /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
+    /// @dev Moves no tokens: the underlying assets reached the reserve vault when
+    ///      the note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        spender, carry a token registered with the vault router under either of
+    ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and cover the settlement cost. The issuance
     ///        currency converts through COEN and needs fresh rates.
-    function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;
+    function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
+        external;
 
     /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
     ///         and which of the series' two currencies that token settles on. Priced
-    ///         exactly as `settle` charges it. Reverts for a token the series does
+    ///         exactly as `settleIntex` charges it. Reverts for a token the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
@@ -33,18 +42,16 @@ interface IIntexFactory {
         returns (uint16 settlementCurrency, uint256 payableUnits);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
-    ///         off-chain proof of work. Caller is the holder. Authorized by the
-    ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
-    ///         where `opNonce` MUST equal the holder's current on-chain promis
+    ///         off-chain proof of work. Any caller may submit; the units burn from
+    ///         `owner` and the Promis is minted to them. Authorized by the
+    ///         owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the owner's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
-    function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, address owner, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
-
-    /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
-    function setAuthorizedSettler(bytes14 seriesId, address settler) external;
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -97,24 +104,57 @@ interface IIntexFactory {
     ///         is leaf `256 * w + b`.
     function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
+    /// @notice The classes an issued unit can be in. Disjoint: they sum to
+    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
+    ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
+    ///         `settledUnits` is what is paid and not yet exercised, the same
+    ///         measure `IIntex.seriesData` reports.
+    struct UnitCounts {
+        uint32 issuedUnits;
+        uint32 activeUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 forfeitedUnits;
+    }
+
+    /// @notice Read the disjoint unit counts of `seriesId`.
+    function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
+
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
+    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
+    event Settled(bytes14 indexed seriesId, address indexed intexOwner, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
+    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
 
     /// @notice The series qualified (Issued -> Qualified).
     event SeriesQualified(bytes14 indexed seriesId);
 
+    /// @notice A reference currency was left out of one day's qualification because its
+    ///         day price could not be indexed. The next day's pass tries it again.
+    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
     /// @notice The series was force-called (Qualified -> Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
+
+    /// @notice A reference currency was left out of one day's Call scan because its
+    ///         window price could not be indexed. The next day's pass tries it again.
+    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
+    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
     /// @notice The series' settlement window closed. Both are zero when every unit
     ///         was realized in time.
     event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
+
+    /// @notice The expiry sweep left members of a called group unretired and
+    ///         parked it for another pass at `retryAt`.
+    event ExpiryDeferred(uint16 indexed referenceCurrency, uint32 indexed worldwideDay, uint64 retryAt);
 
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain

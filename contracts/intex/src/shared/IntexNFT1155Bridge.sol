@@ -306,7 +306,7 @@ contract IntexNFT1155Bridge is
         emit CrosschainMintRetried(receiveId, idx);
     }
 
-    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints the holder
+    /// @notice Permissionless reclaim of a batch item the destination gate rejects terminally: re-mints the owner
     ///         on the origin chain via a reverse one-item transfer, the only exit that does not re-hit the
     ///         destination lifecycle gate. Caller-funded; consumes the entry once (CEI delete first).
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.

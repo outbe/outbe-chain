@@ -12,6 +12,7 @@ use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, 
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
+use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
@@ -52,10 +53,9 @@ use outbe_ocomp_protocol::{
     FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
     UnitFinishedV1,
 };
-use outbe_oracle::oracle_opening_slot_plan_v1;
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
-use tempfile::tempdir;
+use support::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";
@@ -272,7 +272,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: manifest.wwd,
-        lysis_budget: intent.frozen_metadosis_values.lysis_budget,
+        lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
         logical_evaluation_time: intent.logical_evaluation_time,
         tribute_count: manifest.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -597,9 +597,9 @@ fn tributes(day: WorldwideDay) -> Vec<TributeBodyV1> {
                     .expect("deterministic Tribute identity"),
                 owner,
                 worldwide_day: day,
-                issuance_amount_minor: U256::from(1),
+                issuance_amount_minor: U256::from(10_000),
                 issuance_currency: 840,
-                nominal_amount_minor: U256::from(1),
+                nominal_amount_minor: U256::from(10_000),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
                 exclude_from_intex_issuance: index % 5 == 0,
@@ -637,29 +637,19 @@ fn raw_fidelity_opening(
 }
 
 fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
-    let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
-        .expect("deterministic Oracle slot plan");
+    let plan = entry_price_slots(day, &[840, 978]).expect("deterministic Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
-        U256::from(2),   // reference_currencies length
-        U256::from(840), // reference_currencies[0]
-        U256::from(978), // reference_currencies[1]
-        U256::from(1),   // pair_index[COEN/840]
-        U256::from(2),   // pair_index[COEN/978]
-        U256::from(1),   // wwd_vwap_exists
-        // One value word per subject pair, at its registry index.
-        coen840_price,                       // wwd_vwap_value[1]
-        generic_price_scale * U256::from(2), // wwd_vwap_value[2]
-        U256::ZERO,                          // scurve_count
-        U256::ZERO,                          // scurve_oldest
+        U256::from(1),
+        coen840_price,
+        generic_price_scale * U256::from(2),
     ];
-    assert_eq!(plan.slots.len(), values.len());
+    assert_eq!(plan.len(), values.len());
     RawContractOpeningProofV1 {
-        contract_address: ORACLE_ADDRESS,
+        contract_address: NOD_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: plan
-            .slots
             .into_iter()
             .zip(values)
             .map(|(slot, value)| RawStorageSlotV1 { slot, value })
@@ -693,16 +683,16 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
-            gratis_supply: U256::from(20),
-            lysis_budget: U256::from(1_000_000),
-            auction_base: U256::from(700),
+            day_gratis_limit_minor: U256::from(20),
+            lysis_limit_minor: U256::from(1_000_000),
+            desis_limit_minor: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: B256::repeat_byte(0x55),
+            request_limit_split_receipt_hash: B256::repeat_byte(0x55),
         },
         logical_evaluation_height: 1,
         logical_evaluation_time: 1_784_765_900,

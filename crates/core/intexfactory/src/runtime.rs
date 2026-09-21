@@ -19,8 +19,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
-    SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -38,7 +37,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// broadcast (including a loopback leg on the origin), so there is no in-process
 /// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
-    if params.issued_intex_count == 0 {
+    if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
         // must not touch the state its siblings armed.
         return Ok(Vec::new());
@@ -61,15 +60,15 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         worldwide_day: params.worldwide_day,
-        issued_intex_count: params.issued_intex_count,
+        issued_units: params.issued_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
         floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
-            call_window: cfg.call_window,
-            call_threshold: cfg.call_threshold,
-            call_notice_period: cfg.call_notice_period,
+            call_window_seconds: cfg.call_window_seconds,
+            call_threshold_seconds: cfg.call_threshold_seconds,
+            call_notice_period_seconds: cfg.call_notice_period_seconds,
         },
         issued_at,
         issuance_currency: params.issuance_currency,
@@ -78,8 +77,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     outbe_intex::api::create_series(storage, record)?;
     factory.widen_call_terms(
         params.reference_currency,
-        cfg.call_window,
-        cfg.call_threshold,
+        cfg.call_window_seconds,
+        cfg.call_threshold_seconds,
     )?;
 
     // Not sent here: only the caller sees the whole day, and a chain's share of it
@@ -92,15 +91,15 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
                 issuedAt: issued_at,
-                issuedIntexCount: params.issued_intex_count,
+                issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
                 floorPriceMinor: floor_price_minor_u64,
-                callNoticePeriod: cfg.call_notice_period,
+                callNoticePeriod: cfg.call_notice_period_seconds,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
-                callWindow: cfg.call_window,
-                callThreshold: cfg.call_threshold,
+                callWindow: cfg.call_window_seconds,
+                callThreshold: cfg.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
                 recipients,
                 quantities,
@@ -108,7 +107,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         })
         .collect();
 
-    // Enroll into the unqualified floor-bin index for begin_block qualify.
+    // Enroll into the unqualified floor-bin index the daily qualify sweep walks.
     factory.insert_unqualified(
         params.series_id,
         params.reference_currency,
@@ -132,7 +131,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         storage,
         crate::precompile::IIntexFactory::SeriesIssued {
             seriesId: params.series_id.into(),
-            issuedIntexCount: params.issued_intex_count,
+            issuedUnits: params.issued_units,
             entryPrice: params.entry_price_minor,
         },
     )?;
@@ -303,21 +302,6 @@ pub(crate) fn settlement_units(
     };
     floor_to_asset_units(numerator, denominator, PRODUCT_DECIMALS, payment_decimals)
         .map_err(|e| IntexFactoryError::from(e).into())
-}
-
-/// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
-/// `holder` is the caller (the precompile passes its caller).
-pub fn set_authorized_settler(
-    storage: &StorageHandle<'_>,
-    holder: Address,
-    series_id: SeriesId,
-    settler: Address,
-) -> Result<()> {
-    if holder.is_zero() || settler.is_zero() {
-        return Err(IntexFactoryError::ZeroAddress.into());
-    }
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    factory.write_authorized_settler(holder, series_id, settler)
 }
 
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
@@ -578,6 +562,22 @@ fn burn_late_proceeds(storage: &StorageHandle<'_>, worldwide_day: u32, amount: U
     )
 }
 
+/// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
+pub(crate) fn series_unit_counts(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+) -> Result<crate::precompile::IIntexFactory::UnitCounts> {
+    let counts = outbe_intex::api::unit_counts(storage, series_id)?;
+    Ok(crate::precompile::IIntexFactory::UnitCounts {
+        issuedUnits: counts.issued,
+        activeUnits: counts.active,
+        settledUnits: counts.settled,
+        exercisedUnits: counts.exercised,
+        gemFactoryUnits: counts.gem_factory,
+        forfeitedUnits: counts.forfeited,
+    })
+}
+
 /// Progress of one day's payout round; all-zero when no round is open.
 pub(crate) fn contributor_payout_round(
     storage: &StorageHandle<'_>,
@@ -747,17 +747,46 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settle: `settler` is the caller. The cost is discharged by spending a PayNote,
-/// so no tokens move here; the NFT move goes via storage.call.
-pub fn settle(
+/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer.
+pub fn settle_intex(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    intex_holder: Address,
+    intex_owner: Address,
+    settler: Address,
+    amount: U256,
+    asset: Address,
+) -> Result<()> {
+    settle(storage, series_id, intex_owner, settler, amount, |series| {
+        let currency = accept_payment_token(storage, asset, series)?;
+        let cost = cost_in_token(storage, series, asset, currency, amount)?;
+        deposit_payment(storage, settler, asset, cost)
+    })
+}
+
+/// Settle paying the cost by spending a PayNote owned by `settler`.
+pub fn settle_intex_with_paynote(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    intex_owner: Address,
     settler: Address,
     amount: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    if intex_holder.is_zero() || settler.is_zero() {
+    settle(storage, series_id, intex_owner, settler, amount, |series| {
+        discharge_cost(storage, series, amount, settler, paynote_proof)
+    })
+}
+
+/// `settler` is the caller; the settled units stay with `intex_owner`.
+fn settle(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    intex_owner: Address,
+    settler: Address,
+    amount: U256,
+    pay: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<()>,
+) -> Result<()> {
+    if intex_owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -773,15 +802,13 @@ pub fn settle(
     // The deadline only constrains forced settlement (Called).
     if state == IntexState::Called {
         let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period);
+        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
         if now > deadline {
             return Err(IntexFactoryError::DeadlineExpired.into());
         }
     }
 
-    // Issued balance (NFT). Issued token id = uint256(seriesId).
-    let issued_token_id = U256::from_be_slice(series_id.as_bytes());
-    let balance = nft_balance_of(storage, intex_holder, issued_token_id)?;
+    let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
@@ -789,44 +816,101 @@ pub fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
-    // Dual-wallet authorization: only the holder or its authorized settler.
-    let factory = IntexFactoryContract::new(storage.clone());
-    if intex_holder != settler
-        && factory.read_authorized_settler(intex_holder, series_id)? != settler
-    {
-        return Err(IntexFactoryError::NotAuthorized.into());
+    storage.clone().with_checkpoint(|| {
+        // The units move before payment so a token callback cannot settle them
+        // twice; a failed payment rolls the move back.
+        storage.call(
+            INTEX_NFT1155_ADDRESS,
+            U256::ZERO,
+            IIntexNFT1155::settleIntexCall {
+                seriesId: series_id.into(),
+                from: intex_owner,
+                to: intex_owner,
+                amount,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+
+        let settled_units = u32::try_from(amount)
+            .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+        outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
+
+        pay(&series)?;
+
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::Settled {
+                seriesId: series_id.into(),
+                intexOwner: intex_owner,
+                amount,
+            },
+        )
+    })
+}
+
+/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
+/// vault through the router, leaving the factory's own balance untouched.
+fn deposit_payment(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    asset: Address,
+    cost: U256,
+) -> Result<()> {
+    if cost.is_zero() {
+        return Ok(());
     }
+    let before = token_balance(storage, asset)?;
+    checked_token_call(
+        storage,
+        asset,
+        IERC20::transferFromCall {
+            from: payer,
+            to: INTEX_FACTORY_ADDRESS,
+            amount: cost,
+        },
+    )?;
+    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
+        return Err(IntexFactoryError::SettlementAmountMismatch.into());
+    }
+    checked_token_call(
+        storage,
+        asset,
+        IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount: cost,
+        },
+    )?;
+    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
+    if token_balance(storage, asset)? != before {
+        return Err(IntexFactoryError::SettlementAmountMismatch.into());
+    }
+    Ok(())
+}
 
-    // Last, so a doomed settle never pays for proof verification.
-    discharge_cost(storage, &series, amount, settler, paynote_proof)?;
+fn checked_token_call(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    call: impl SolCall,
+) -> Result<()> {
+    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(IntexFactoryError::TokenOperationFailed.into());
+    }
+    Ok(())
+}
 
-    // Burn Issued from holder, issue Settled to the settler.
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::settleCall {
-            seriesId: series_id.into(),
-            from: intex_holder,
-            to: settler,
-            amount,
+fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        asset,
+        IERC20::balanceOfCall {
+            account: INTEX_FACTORY_ADDRESS,
         }
         .abi_encode()
         .into(),
     )?;
-
-    let settled_units = u32::try_from(amount)
-        .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
-    outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
-
-    emit_event(
-        storage,
-        crate::precompile::IIntexFactory::Settled {
-            seriesId: series_id.into(),
-            intexHolder: intex_holder,
-            settler,
-            amount,
-        },
-    )
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| IntexFactoryError::TokenOperationFailed.into())
 }
 
 /// Discharges the settlement cost by spending one PayNote.
@@ -839,11 +923,11 @@ fn discharge_cost(
 ) -> Result<()> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // Notes are bearer: anyone can relay a proof, so bind its spender to the settler.
-    if claim.spender != settler {
-        return Err(IntexFactoryError::PayNoteSpenderMismatch {
+    // Notes are bearer: anyone can relay a proof, so bind its owner to the settler.
+    if claim.owner != settler {
+        return Err(IntexFactoryError::PayNoteOwnerMismatch {
             expected: settler,
-            actual: claim.spender,
+            actual: claim.owner,
         }
         .into());
     }
@@ -873,7 +957,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 
 /// What settling `amount` units of `series_id` with `payment_token` costs, and
 /// which of the series' two currencies that token settles on. Priced exactly as
-/// `settle` charges it. Rejects a token the series does not accept.
+/// `settleIntex` charges it. Rejects a token the series does not accept.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -973,17 +1057,17 @@ fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
         .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
 }
 
-/// minePromis: PoW-gated burn of Settled then mint of Promis. `holder` is the
+/// minePromis: PoW-gated burn of Settled then mint of Promis. `owner` is the
 /// caller.
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    holder: Address,
+    owner: Address,
     amount: U256,
     nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    if holder.is_zero() {
+    if owner.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -991,7 +1075,7 @@ pub fn mine_promis(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let settled = nft_balance_of(storage, holder, settled_token_id(series_id))?;
+    let settled = nft_balance_of(storage, owner, settled_token_id(series_id))?;
     if settled < amount {
         return Err(IntexFactoryError::InsufficientSettled.into());
     }
@@ -1001,18 +1085,21 @@ pub fn mine_promis(
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("promis amount overflow".into()))?;
 
-    // PoW over the per-(series, holder) sequence; bump it on success.
+    // PoW over the per-(series, owner) sequence; bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
-    let seq = factory.read_mine_seq(series_id, holder)?;
-    validate_pow(holder, promis_amount, series_id, seq, nonce)?;
-    factory.write_mine_seq(series_id, holder, seq + 1)?;
+    let seq = factory.read_mine_seq(series_id, owner)?;
+    validate_pow(owner, promis_amount, series_id, seq, nonce)?;
+    let next_seq = seq
+        .checked_add(1)
+        .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
+    factory.write_mine_seq(series_id, owner, next_seq)?;
 
-    // Burn Settled from holder on the NFT.
+    // Burn Settled from owner on the NFT.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::burnSettledCall {
-            holder,
+            owner,
             seriesId: series_id.into(),
             amount,
         }
@@ -1020,15 +1107,19 @@ pub fn mine_promis(
         .into(),
     )?;
 
+    let exercised = u32::try_from(amount)
+        .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
+    outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
+
     // Promis is confidential: the mint runs inside the enclave, authorized by the
-    // holder's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
-    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount, auth)?;
+    // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
+    outbe_promisfactory::api::mint(storage.clone(), owner, promis_amount, auth)?;
 
     emit_event(
         storage,
         crate::precompile::IIntexFactory::PromisMined {
             seriesId: series_id.into(),
-            holder,
+            owner,
             amount,
             promisAmount: promis_amount,
         },
@@ -1036,23 +1127,32 @@ pub fn mine_promis(
     Ok(promis_amount)
 }
 
+/// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
+pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
+    U256::from_be_slice(series_id.as_bytes())
+}
+
 /// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
 /// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
 /// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    U256::from_be_slice(series_id.as_bytes()) | SETTLED_TAG
+    issued_token_id(series_id) | SETTLED_TAG
 }
 
-/// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
+/// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
+///
+/// `owner` and `seq` earn their place here, unlike in the shared scheme: the
+/// owner arrives as a call argument, and the sequence rises with every
+/// successful partial mining, so one solved nonce cannot serve the next.
 pub(crate) fn compute_pow_hash(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
     nonce: u64,
 ) -> [u8; 32] {
     let mut data = Vec::with_capacity(20 + 32 + SERIES_ID_LEN + 4 + 8);
-    data.extend_from_slice(holder.as_slice());
+    data.extend_from_slice(owner.as_slice());
     data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
     data.extend_from_slice(series_id.as_bytes());
     data.extend_from_slice(&seq.to_be_bytes());
@@ -1064,19 +1164,14 @@ pub(crate) fn compute_pow_hash(
     out
 }
 
-/// The PoW hash must have `POW_DIFFICULTY` leading zero bytes.
+/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
-    holder: Address,
+    owner: Address,
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
     nonce: u64,
 ) -> Result<()> {
-    let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce);
-    for b in &hash[..POW_DIFFICULTY] {
-        if *b != 0 {
-            return Err(IntexFactoryError::InsufficientProofOfWork.into());
-        }
-    }
-    Ok(())
+    let hash = compute_pow_hash(owner, promis_amount, series_id, seq, nonce);
+    outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

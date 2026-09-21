@@ -49,17 +49,25 @@ pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
+    asset: Address,
+) -> Result<()> {
+    runtime::settle_gem(storage, caller, gem_id, asset)
+}
+
+pub fn settle_gem_with_paynote(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    gem_id: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    runtime::settle_gem(storage, caller, gem_id, paynote_proof)
+    runtime::settle_gem_with_paynote(storage, caller, gem_id, paynote_proof)
 }
 
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
-    caller: Address,
     gem_id: U256,
     nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    runtime::mine_promis(storage, caller, gem_id, nonce, auth)
+    runtime::mine_promis(storage, gem_id, nonce, auth)
 }

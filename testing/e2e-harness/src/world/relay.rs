@@ -62,9 +62,13 @@ impl Relay {
                 // acknowledge and drop but which would hide a real duplicate.
                 let mut carried_a = 0usize;
                 let mut carried_b = 0usize;
+                // What each direction last failed with, so a retry loop reports the
+                // reason once instead of either burying it or hiding it completely.
+                let mut failure_a = None;
+                let mut failure_b = None;
                 while !flag.load(Ordering::Relaxed) {
-                    carried_a += carry(&a, &b, &sender_key, carried_a);
-                    carried_b += carry(&b, &a, &sender_key, carried_b);
+                    carried_a += carry(&a, &b, &sender_key, carried_a, &mut failure_a);
+                    carried_b += carry(&b, &a, &sender_key, carried_b, &mut failure_b);
                     sleep(POLL_INTERVAL);
                 }
             })
@@ -87,20 +91,52 @@ impl Drop for Relay {
 
 /// Deliver every dispatch on `from` past `already` that is addressed to `to`.
 /// Returns how many were carried this round.
-fn carry(from: &RelayEnd, to: &RelayEnd, sender_key: &str, already: usize) -> usize {
-    let Ok(dispatches) = read_dispatches(from, to.domain) else {
-        return 0;
+fn carry(
+    from: &RelayEnd,
+    to: &RelayEnd,
+    sender_key: &str,
+    already: usize,
+    failure: &mut Option<String>,
+) -> usize {
+    let dispatches = match read_dispatches(from, to.domain) {
+        Ok(dispatches) => dispatches,
+        Err(error) => {
+            report(
+                failure,
+                format!("cannot read dispatches on {}: {error}", from.url),
+            );
+            return 0;
+        }
     };
     let mut carried = 0;
     for dispatch in dispatches.into_iter().skip(already) {
-        if deliver(to, from.domain, &dispatch, sender_key).is_err() {
+        if let Err(error) = deliver(to, from.domain, &dispatch, sender_key) {
             // Stop at the first failure so the cursor never runs ahead of what
             // actually landed; the next round retries from the same message.
+            report(
+                failure,
+                format!(
+                    "cannot deliver to {} from domain {}: {error}",
+                    to.url, from.domain
+                ),
+            );
             break;
         }
         carried += 1;
+        *failure = None;
     }
     carried
+}
+
+/// Report a relay failure once rather than once per round: the pump retries twice a
+/// second, and a repeated line would bury the run log it exists to explain. A step
+/// that waits on a message it never receives now has the reason next to it.
+fn report(last: &mut Option<String>, message: String) {
+    if last.as_deref() == Some(message.as_str()) {
+        return;
+    }
+    eprintln!("outbe-e2e relay: {message}");
+    *last = Some(message);
 }
 
 struct Dispatch {

@@ -1,14 +1,14 @@
 //! End-to-end: one deposited PayNote pays two Nods, the second from its change.
 //!
-//! A Nod's cost is no longer settled by a transfer — the value reaches the
-//! reserve vault when a note is deposited, and `mineGratis` only has to be shown
+//! With PayNote settlement, the value reaches the reserve vault when a note
+//! is deposited, and `settleNodWithPayNote` only has to be shown
 //! a spend proof. This test drives that whole chain through the real EVM:
 //! `IPayNote.deposit` routes an ERC20 into the vault via VaultRouter and appends
-//! a leaf, then two `INodFactory.mineGratis` calls spend against that leaf.
+//! a leaf, then two `INodFactory.settleNodWithPayNote` calls spend against that leaf.
 //!
 //! What it pins that the module tests cannot:
 //!   * a note deposited by the real `deposit` path — commitment derived by the
-//!     runtime, not handed to it — is spendable by `mineGratis`;
+//!     runtime, not handed to it — is spendable by `settleNodWithPayNote`;
 //!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
 //!     spends it. Spend authority is knowledge of the note spend key, and
 //!     nothing on chain ties the depositor to the Nods the note pays for;
@@ -20,6 +20,8 @@
 //! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
 //! NodFactory, Nod, GratisFactory and Gratis all run for real.
 
+use outbe_paynote::PayNoteSuit;
+use outbe_protocol::Codec as _;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -32,9 +34,10 @@ use outbe_nod::{NodContract, NodIssueParams, NodRepositoryReader};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
-use outbe_paynote::hash::field_to_be_bytes;
+use outbe_paynote::client::new_tree;
+
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{change_note, note, spend_proof, Note, ReferenceTree};
+use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
 };
@@ -55,7 +58,7 @@ use revm::{
     Context,
 };
 
-/// Owns both Nods, holds the note spend key, and calls `mineGratis`.
+/// Owns both Nods, holds the note spend key, and calls settlement and mining.
 const ALICE1: Address = Address::new([0x11; 20]);
 /// Funds the pool. Never appears again: the note it deposits is spent by
 /// `ALICE1`, and the chain never learns the two are related.
@@ -76,8 +79,8 @@ const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
-/// have to share an owner: the note names its spender, and `mineGratis` demands
-/// the spender be the Nod's owner. That spender is `ALICE1`, not the depositor.
+/// share `ALICE1` as their owner: each proof names that address as its owner,
+/// matching the Nod owner as `settleNodWithPayNote` requires. The depositor can be different.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -105,17 +108,24 @@ fn always_returns(word: B256) -> AccountInfo {
     }
 }
 
-/// Returns six for `decimals()` and true for `transferFrom` and `approve`.
+/// Returns six for `decimals()`, the reference currency for `isoCode()`,
+/// and true for `transferFrom` and `approve`.
 fn settlement_asset() -> AccountInfo {
-    let code = alloy_primitives::hex!(
-        // Load the selector, compare with decimals(), and jump to offset 25.
-        "60003560e01c63313ce56714601957"
+    let mut code = alloy_primitives::hex!(
+        // Dispatch decimals() to offset 40 and isoCode() to offset 51.
+        "60003560e01c63313ce56714602857"
+        "60003560e01c63dfa3b54114603357"
         // Return true for ERC20 transfers and approvals.
         "600160005260206000f3"
         // JUMPDEST; return six decimals, matching COST's reference minor units.
         "5b600660005260206000f3"
-    );
-    let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&code));
+        // JUMPDEST; PUSH2 <reference currency>.
+        "5b61"
+    )
+    .to_vec();
+    code.extend_from_slice(&REFERENCE_CURRENCY.to_be_bytes());
+    code.extend_from_slice(&alloy_primitives::hex!("60005260206000f3"));
+    let bytecode = Bytecode::new_raw(Bytes::from(code));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -245,7 +255,7 @@ fn call(
             target,
             value: U256::ZERO,
             calldata,
-            // `mineGratis` charges `ZK_VERIFY_GAS` (3M) before it reads a byte
+            // `settleNodWithPayNote` charges `ZK_VERIFY_GAS` (300k) before it reads a byte
             // of storage, so the limit has to clear that with room to spare.
             gas_limit: 20_000_000,
             is_static,
@@ -290,19 +300,37 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
     )
 }
 
-fn word(field: outbe_paynote::hash::Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+fn word(field: outbe_paynote::Field) -> B256 {
+    PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
-/// Calls `mineGratis` for `nod_id`, authorizing the gratis mint against the
+/// Settles `nod_id`, then mines it with gratis mint authorization against the
 /// account's live op-nonce.
-fn mine_gratis(
+fn settle_and_mine(
     ctx: &mut EvmCtx,
     scope: &Arc<ExecutionScope>,
     readers: &RuntimeBodyReaders,
     nod_id: WwdEntityId,
     proof: &[u8],
 ) -> outbe_primitives::storage::SubCallOutput {
+    let settled = call(
+        ctx,
+        scope.clone(),
+        Some(readers.clone()),
+        ALICE1,
+        NOD_FACTORY_ADDRESS,
+        Bytes::from(
+            INodFactory::settleNodWithPayNoteCall {
+                nodId: nod_id.to_u256(),
+                payNoteProof: proof.to_vec().into(),
+            }
+            .abi_encode(),
+        ),
+        false,
+    );
+    if !matches!(settled.status, SubCallStatus::Success) {
+        return settled;
+    }
     let op_nonce = view(
         ctx,
         scope,
@@ -319,7 +347,9 @@ fn mine_gratis(
         B256::from(U256::from(CHAIN_ID)),
     );
     let nonce = (0_u64..1_000_000)
-        .find(|candidate| outbe_nodfactory::runtime::validate_pow(nod_id, *candidate).is_ok())
+        .find(|candidate| {
+            outbe_nodfactory::runtime::validate_pow(nod_id, ALICE1, *candidate).is_ok()
+        })
         .expect("every nod id has a PoW nonce in the bounded search");
     call(
         ctx,
@@ -333,7 +363,6 @@ fn mine_gratis(
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
-                payNoteProof: proof.to_vec().into(),
             }
             .abi_encode(),
         ),
@@ -389,13 +418,13 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
-    let mut tree = ReferenceTree::new(CHAIN_ID);
-    let leaf = tree.append(funding.commitment);
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
 
     // First Nod: spend half the note.
     let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
     let minted = assert_mined(
-        &mine_gratis(&mut ctx, &scope, &readers, nods[0], &first_proof),
+        &settle_and_mine(&mut ctx, &scope, &readers, nods[0], &first_proof),
         "mine the first Nod with the deposited note",
     );
     assert_eq!(minted, U256::from(GRATIS_LOAD));
@@ -404,7 +433,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         "paying a Nod must burn the note it was paid with"
     );
 
-    // The unspent half came back as a change leaf, derivable by the spender
+    // The unspent half came back as a change leaf, derivable by the owner
     // alone from the key and nullifier they already hold.
     let change =
         change_note(CHAIN_ID, &funding, U256::from(COST)).expect("a half-spent note leaves change");
@@ -422,12 +451,12 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
                 commitment: word(change.commitment)
             }
         ),
-        "the appended leaf must be the change commitment the spender can derive"
+        "the appended leaf must be the change commitment the owner can derive"
     );
-    let change_leaf = tree.append(change.commitment);
+    let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
 
     // One note is one payment: the first proof cannot pay the second Nod.
-    let replay = mine_gratis(&mut ctx, &scope, &readers, nods[1], &first_proof);
+    let replay = settle_and_mine(&mut ctx, &scope, &readers, nods[1], &first_proof);
     let SubCallStatus::Revert(reason) = replay.status else {
         panic!(
             "a spent note must not pay a second Nod, got {:?}",
@@ -450,7 +479,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         U256::from(COST),
     );
     let minted = assert_mined(
-        &mine_gratis(&mut ctx, &scope, &readers, nods[1], &change_proof),
+        &settle_and_mine(&mut ctx, &scope, &readers, nods[1], &change_proof),
         "mine the second Nod with the change note",
     );
     assert_eq!(minted, U256::from(GRATIS_LOAD));
@@ -463,4 +492,114 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         2,
         "a full spend leaves no change, so the pool must not grow"
     );
+}
+
+/// Measure the complete paid transaction, including intrinsic calldata gas,
+/// the calldata floor and storage work, without an extra verifier tariff.
+/// This is not a ZeroFee bypass:
+/// sponsorship policy is deliberately outside this execution-level test.
+#[test]
+fn measure_settle_gem_gas_with_real_paynote() {
+    use alloy_evm::{Evm as _, EvmFactory as _};
+    use alloy_sol_types::SolEvent as _;
+    use outbe_gem::{GemAddParams, GemState};
+    use outbe_gemfactory::precompile::IGemFactory;
+    use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+    use reth_ethereum::evm::primitives::EvmEnv;
+    use revm::context::{BlockEnv, CfgEnv, TxEnv};
+    use revm::primitives::TxKind;
+
+    let (mut ctx, scope, _, _) = fixture();
+    let funding = note(CHAIN_ID, NOTE_KEY, ASSET, U256::from(COST));
+    deposit(&mut ctx, &scope, ALICE2, &funding);
+    // Sub-calls retain writes in the journal; materialize the completed deposit
+    // before constructing an independent transaction executor from this DB.
+    use revm::DatabaseCommit as _;
+    let deposited_state = ctx.journaled_state.inner.state.clone();
+    ctx.journaled_state.database.commit(deposited_state);
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
+    let proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
+
+    let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
+    let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        outbe_gem::api::add_gem(
+            &storage,
+            GemAddParams {
+                owner: ALICE1,
+                gem_type: outbe_gemfactory::schema::GemTypes::Validator as u8,
+                promis_load_minor: U256::from(COST),
+                entry_price_minor: U256::from(1_000_000),
+                floor_price_minor: U256::from(1_080_000),
+                call_price_minor: U256::from(2_280_000),
+                call_rate: 128,
+                issuance_currency: REFERENCE_CURRENCY,
+                reference_currency: REFERENCE_CURRENCY,
+                initial_state: GemState::Qualified,
+                issued_at: BLOCK_TIMESTAMP,
+            },
+        )
+        .unwrap()
+    });
+    provider.flush().unwrap();
+    drop(provider);
+    let calldata = Bytes::from(
+        IGemFactory::settleGemWithPayNoteCall {
+            gemId: gem_id,
+            payNoteProof: proof.into(),
+        }
+        .abi_encode(),
+    );
+    let env = EvmEnv {
+        cfg_env: CfgEnv::new()
+            .with_chain_id(CHAIN_ID)
+            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
+        block_env: BlockEnv {
+            gas_limit: 30_000_000,
+            timestamp: U256::from(BLOCK_TIMESTAMP),
+            ..Default::default()
+        },
+    };
+    for sample in 0..5 {
+        let mut evm = outbe_evm::OutbeEvmFactory::new()
+            .create_evm(ctx.journaled_state.database.clone(), env.clone());
+        let mut tx = TxEnv::builder()
+            .caller(ALICE1)
+            .nonce(0)
+            .kind(TxKind::Call(GEM_FACTORY_ADDRESS))
+            .gas_price(0)
+            .data(calldata.clone())
+            // The real proof's Prague calldata floor alone exceeds 300k.
+            // The 350k total budget includes calldata and execution.
+            .gas_limit(350_000)
+            .build()
+            .unwrap();
+        tx.chain_id = Some(CHAIN_ID);
+        let started = std::time::Instant::now();
+        let outcome = evm.transact_raw(tx).unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            outcome.result.is_success(),
+            "settleGem failed: {:?}",
+            outcome.result
+        );
+        assert!(
+            outcome.result.logs().iter().any(|log| {
+                log.address == GEM_FACTORY_ADDRESS
+                    && log.data.topics().first() == Some(&IGemFactory::GemSettled::SIGNATURE_HASH)
+            }),
+            "successful execution must emit GemSettled"
+        );
+        let used = outcome.result.tx_gas_used();
+        assert!(used <= 350_000);
+        if let revm::context::result::ExecutionResult::Success { gas, .. } = &outcome.result {
+            eprintln!("SETTLE_GEM_METER sample={sample} {gas:?}");
+        }
+        eprintln!(
+            "SETTLE_GEM_GAS sample={sample} total={used} calldata_bytes={} elapsed_us={}",
+            calldata.len(),
+            elapsed.as_micros()
+        );
+    }
 }

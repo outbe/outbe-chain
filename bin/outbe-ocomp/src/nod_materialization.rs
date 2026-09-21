@@ -148,7 +148,7 @@ pub fn build_nod_materialization_batch_with_references(
         let previous = levels[usize::from(level - 1)].clone();
         let mut parents = Vec::with_capacity(previous.len() / 2);
         let global_start = page_start >> level;
-        for (index, pair) in previous.chunks_exact(2).enumerate() {
+        for (index, pair) in previous.as_chunks::<2>().0.iter().enumerate() {
             let global_index = global_start
                 .checked_add(
                     u32::try_from(index).map_err(|_| ProtocolError::IntegerOverflow {

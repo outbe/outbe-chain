@@ -22,8 +22,6 @@ pub enum IntexFactoryError {
     ZeroBalance,
     #[error("amount exceeds balance")]
     AmountExceedsBalance,
-    #[error("caller not authorized to settle for holder")]
-    NotAuthorized,
     #[error("insufficient settled balance")]
     InsufficientSettled,
     #[error("insufficient proof of work")]
@@ -67,8 +65,14 @@ pub enum IntexFactoryError {
         worldwide_day: outbe_primitives::time::WorldwideDay,
     },
 
-    #[error("PayNote proof names spender {actual}, expected {expected}")]
-    PayNoteSpenderMismatch {
+    #[error("settlement token call failed")]
+    TokenOperationFailed,
+
+    #[error("settlement token moved an unexpected amount")]
+    SettlementAmountMismatch,
+
+    #[error("PayNote proof names owner {actual}, expected {expected}")]
+    PayNoteOwnerMismatch {
         expected: alloy_primitives::Address,
         actual: alloy_primitives::Address,
     },
@@ -78,6 +82,14 @@ pub enum IntexFactoryError {
         covered: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },
+}
+
+impl From<outbe_common::pow::PowError> for IntexFactoryError {
+    fn from(value: outbe_common::pow::PowError) -> Self {
+        match value {
+            outbe_common::pow::PowError::InsufficientProofOfWork => Self::InsufficientProofOfWork,
+        }
+    }
 }
 
 impl From<IntexFactoryError> for PrecompileError {

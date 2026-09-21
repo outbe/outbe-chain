@@ -42,6 +42,7 @@ fn verifier(
     scratch: &std::path::Path,
     day: WorldwideDay,
     leaves: &[(outbe_compressed_entities::WwdEntityId, Commitment)],
+    expected_collection_root: alloy_primitives::B256,
     records_per_run: usize,
     merge_fan_in: usize,
 ) -> BoundedTributePartitionVerifier {
@@ -50,7 +51,7 @@ fn verifier(
         TributePartitionExpectationV1 {
             day,
             exact_leaf_count: u32::try_from(leaves.len()).unwrap(),
-            expected_collection_root: expected_root(day, leaves),
+            expected_collection_root,
             commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         },
         TributePartitionWorkConfig {
@@ -100,7 +101,8 @@ fn multipass_reconstruction_reports_progress_without_changing_its_result() {
     let day = WorldwideDay::new(20_260_901);
     let leaves = leaves(day, 17);
     let directory = tempfile::tempdir().unwrap();
-    let mut verifier = verifier(&directory.path().join("observed"), day, &leaves, 2, 2);
+    let root = expected_root(day, &leaves);
+    let mut verifier = verifier(&directory.path().join("observed"), day, &leaves, root, 2, 2);
     for (entity_id, commitment) in &leaves {
         verifier.push(*entity_id, *commitment).unwrap();
     }
@@ -110,15 +112,17 @@ fn multipass_reconstruction_reports_progress_without_changing_its_result() {
         .finish_observing(|| progress.set(progress.get() + 1))
         .unwrap();
 
-    assert_eq!(verified.collection_root, expected_root(day, &leaves));
+    assert_eq!(verified.collection_root, root);
     assert!(progress.get() > u64::try_from(leaves.len()).unwrap());
 }
 
 #[test]
+#[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn boundary_populations_match_the_existing_eager_reconstruction() {
     let day = WorldwideDay::new(20_260_901);
     for count in [0_u64, 1, 15, 16, 17, 255, 256, 257, 4_097] {
         let leaves = leaves(day, count);
+        let root = expected_root(day, &leaves);
         let mut shuffled = leaves.clone();
         let len = shuffled.len();
         if len > 1 {
@@ -132,6 +136,7 @@ fn boundary_populations_match_the_existing_eager_reconstruction() {
             &directory.path().join(format!("count-{count}")),
             day,
             &leaves,
+            root,
             31,
             3,
         );
@@ -140,7 +145,7 @@ fn boundary_populations_match_the_existing_eager_reconstruction() {
         }
         assert_eq!(
             verifier.finish().unwrap().collection_root,
-            expected_root(day, &leaves),
+            root,
             "count={count}"
         );
     }
@@ -151,7 +156,14 @@ fn duplicate_across_runs_and_invalid_expectations_fail_closed() {
     let day = WorldwideDay::new(20_260_901);
     let leaves = leaves(day, 2);
     let directory = tempfile::tempdir().unwrap();
-    let mut duplicate = verifier(&directory.path().join("duplicate"), day, &leaves, 1, 2);
+    let mut duplicate = verifier(
+        &directory.path().join("duplicate"),
+        day,
+        &leaves,
+        expected_root(day, &leaves),
+        1,
+        2,
+    );
     duplicate.push(leaves[0].0, leaves[0].1).unwrap();
     duplicate.push(leaves[0].0, leaves[0].1).unwrap();
     assert!(matches!(
@@ -195,8 +207,10 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
     let day = WorldwideDay::new(20_260_901);
     let leaves = leaves(day, 2);
     let directory = tempfile::tempdir().unwrap();
+    let root = expected_root(day, &leaves);
+    let single_root = expected_root(day, &leaves[..1]);
 
-    let mut short = verifier(&directory.path().join("short"), day, &leaves, 2, 2);
+    let mut short = verifier(&directory.path().join("short"), day, &leaves, root, 2, 2);
     short.push(leaves[0].0, leaves[0].1).unwrap();
     assert!(matches!(
         short.finish(),
@@ -211,7 +225,7 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
         TributePartitionExpectationV1 {
             day,
             exact_leaf_count: 1,
-            expected_collection_root: expected_root(day, &leaves[..1]),
+            expected_collection_root: single_root,
             commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         },
         TributePartitionWorkConfig::default(),
@@ -227,7 +241,7 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
     ));
 
     let wrong_day = WorldwideDay::new(day.value() + 1);
-    let mut day_bound = verifier(&directory.path().join("day"), day, &leaves, 2, 2);
+    let mut day_bound = verifier(&directory.path().join("day"), day, &leaves, root, 2, 2);
     assert!(matches!(
         day_bound.push(
             derive_poseidon_entity_id(Address::repeat_byte(9), wrong_day).unwrap(),
@@ -254,7 +268,7 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
     ));
 
     let corrupt_root = directory.path().join("corrupt");
-    let mut corrupt = verifier(&corrupt_root, day, &leaves[..1], 1, 2);
+    let mut corrupt = verifier(&corrupt_root, day, &leaves[..1], single_root, 1, 2);
     corrupt.push(leaves[0].0, leaves[0].1).unwrap();
     std::fs::OpenOptions::new()
         .append(true)

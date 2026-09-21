@@ -9,9 +9,6 @@ pub enum GemFactoryError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("not gem owner")]
-    NotGemOwner,
-
     #[error("invalid state for action")]
     InvalidState,
 
@@ -72,8 +69,14 @@ pub enum GemFactoryError {
     #[error("promis load must be positive")]
     ZeroPromisLoad,
 
-    #[error("PayNote proof names spender {actual}, expected {expected}")]
-    PayNoteSpenderMismatch {
+    #[error("settlement token call failed")]
+    TokenOperationFailed,
+
+    #[error("settlement token moved an unexpected amount")]
+    SettlementAmountMismatch,
+
+    #[error("PayNote proof names owner {actual}, expected {expected}")]
+    PayNoteOwnerMismatch {
         expected: alloy_primitives::Address,
         actual: alloy_primitives::Address,
     },

@@ -102,7 +102,18 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         T_NOW,
     )
     .map_err(|error| error.to_string())?;
-    OracleContract::new(storage)
+    let mut oracle = OracleContract::new(storage);
+    oracle
+        .config_lookback_duration
+        .write(86_400)
+        .map_err(|error| error.to_string())?;
+    oracle
+        .write_snapshot(
+            T_NOW - 60,
+            &[(outbe_oracle::api::DAY_TYPE_PAIR, rate, six_decimal_unit())],
+        )
+        .map_err(|error| error.to_string())?;
+    oracle
         .reference_currencies
         .push(840_u16)
         .map_err(|error| error.to_string())
@@ -114,7 +125,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
         outbe_intex::CreateSeriesParams {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
-            issued_intex_count: PARK_UNITS as u32,
+            issued_units: PARK_UNITS as u32,
             promis_load_minor: SIX_DECIMAL_UNIT as u128,
             entry_price_minor: six_decimal_unit(),
             floor_price_minor: six_decimal_unit(),

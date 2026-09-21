@@ -101,7 +101,7 @@ fn certified_action(index: usize) -> NodActionV1 {
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor: U256::from(510),
-        cost_amount_minor: U256::ZERO,
+        settlement_cost_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
@@ -205,7 +205,7 @@ fn seed_certified_world(
         nod_count: fixture.actions.len() as u32,
         bucket_count: 1,
         nod_amount_total: U256::from(10_000),
-        nod_gratis_consumed: U256::from(10_000),
+        lysis_allocation_minor: U256::from(10_000),
         issued_at: 1_600_000_000,
         next_nod_ordinal: 0,
         last_progress_height: 1,
@@ -229,8 +229,8 @@ fn seed_certified_world(
     nod.ocomp_nod_amount_total
         .write(&TARGET_WWD, projection.nod_amount_total)
         .map_err(|error| error.to_string())?;
-    nod.ocomp_nod_gratis_consumed
-        .write(&TARGET_WWD, projection.nod_gratis_consumed)
+    nod.ocomp_lysis_allocation_minor
+        .write(&TARGET_WWD, projection.lysis_allocation_minor)
         .map_err(|error| error.to_string())?;
     nod.ocomp_materialization_job_id
         .write(&TARGET_WWD, projection.job_id)

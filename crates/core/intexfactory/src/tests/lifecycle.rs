@@ -288,15 +288,15 @@ fn try_call_excludes_pre_issuance_days() {
             outbe_intex::CreateSeriesParams {
                 series_id: sid(8),
                 worldwide_day: 8.into(),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: 30 * DAY as u32,
-                    call_threshold: 27 * DAY as u32,
-                    call_notice_period: CALL_NOTICE_PERIOD,
+                    call_window_seconds: 30 * DAY as u32,
+                    call_threshold_seconds: 27 * DAY as u32,
+                    call_notice_period_seconds: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -352,6 +352,7 @@ mod call_sweep {
     use crate::called;
     use crate::constants::{MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK};
     use crate::schema::IntexFactoryContract;
+    use crate::tests::owner;
 
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
@@ -436,15 +437,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -612,7 +613,7 @@ mod call_sweep {
             let series_id =
                 SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
             outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
-            outbe_intex::api::record_parked_units(&s, series_id, 25).unwrap();
+            outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
             sweep_at(&s, due(deadline));
@@ -632,53 +633,100 @@ mod call_sweep {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
-
-            let day = WorldwideDay::new(20260101);
-            let trigger = U256::from(TRIGGER);
-            let mut members = Vec::new();
-            for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
-                let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
-                let params = outbe_intex::CreateSeriesParams {
-                    series_id,
-                    worldwide_day: day,
-                    issued_intex_count: count,
-                    promis_load_minor: 1_000_000_000_000_000_000,
-                    entry_price_minor: trigger,
-                    floor_price_minor: trigger,
-                    call_price_minor: trigger,
-                    call_trigger: outbe_intex::IntexCallTrigger {
-                        call_window: WINDOW_DAYS * DAY as u32,
-                        call_threshold: 21 * DAY as u32,
-                        call_notice_period: 7 * DAY as u32,
-                    },
-                    issued_at: ISSUED_AT,
-                    issuance_currency: issuance,
-                    reference_currency: REFERENCE_ISO,
-                };
-                outbe_intex::api::create_series(&s, params).unwrap();
-                outbe_intex::api::mark_qualified(&s, series_id).unwrap();
-                members.push(series_id);
-            }
-            IntexFactoryContract::new(s.clone())
-                .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
-                .unwrap();
-
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let (_, deadline) = called_two_member_group(&s, scan_ts);
             sweep_at(&s, due(deadline));
 
-            assert_eq!(
-                unallocated(&s),
-                U256::from(140u64) * U256::from(1_000_000_000_000_000_000u128)
+            assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
+        });
+    }
+
+    const LOAD: u128 = 1_000_000_000_000_000_000;
+
+    /// A called day group of two series against USD: 100 units issued in USD, 40 in EUR.
+    fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
+        let day = WorldwideDay::new(20260101);
+        let trigger = U256::from(TRIGGER);
+        let mut members = Vec::new();
+        for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
+            let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+            let params = outbe_intex::CreateSeriesParams {
+                series_id,
+                worldwide_day: day,
+                issued_units: count,
+                promis_load_minor: LOAD,
+                entry_price_minor: trigger,
+                floor_price_minor: trigger,
+                call_price_minor: trigger,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: issuance,
+                reference_currency: REFERENCE_ISO,
+            };
+            outbe_intex::api::create_series(s, params).unwrap();
+            outbe_intex::api::mark_qualified(s, series_id).unwrap();
+            members.push(series_id);
+        }
+        IntexFactoryContract::new(s.clone())
+            .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
+            .unwrap();
+        let deadline = call_and_deadline(s, 20260101, scan_ts);
+        (members, deadline)
+    }
+
+    fn group_len(s: &StorageHandle<'_>) -> u32 {
+        IntexFactoryContract::new(s.clone())
+            .called_group_count
+            .read(&IntexFactoryContract::scoped(REFERENCE_ISO, 20260101))
+            .unwrap()
+    }
+
+    /// Nothing marks a series as done any more, so a group walked again after a failure
+    /// must no longer hold the members whose load already went back.
+    #[test]
+    fn a_group_walked_again_credits_only_the_member_left_behind() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let (members, deadline) = called_two_member_group(&s, scan_ts);
+            let registry = outbe_intex::IntexContract::new(s.clone());
+            // More settled than issued: the EUR series fails its accounting.
+            registry.settled_units.write(&members[1], 1_000).unwrap();
+
+            sweep_at(&s, due(deadline));
+            assert_eq!(unallocated(&s), U256::from(100u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 1);
+
+            registry.settled_units.write(&members[1], 0).unwrap();
+            let retry = IntexFactoryContract::bucket_end(
+                IntexFactoryContract::deadline_bucket(due(deadline)) + 1,
             );
-            for series_id in members {
-                assert_eq!(
-                    outbe_intex::api::read_series(&s, series_id)
-                        .unwrap()
-                        .lifecycle_state()
-                        .unwrap(),
-                    outbe_intex::IntexState::Expired
-                );
-            }
+            sweep_at(&s, retry);
+            assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
+        });
+    }
+
+    /// A group deferred across the upgrade may hold a series the old sweep already
+    /// credited and stored as Expired; its load must not go back a second time.
+    #[test]
+    fn a_member_an_older_node_retired_is_not_credited_again() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let (members, deadline) = called_two_member_group(&s, scan_ts);
+            let registry = outbe_intex::IntexContract::new(s.clone());
+            let mut record = registry.series.get(members[0]).unwrap().unwrap();
+            record.state = outbe_intex::IntexState::Expired as u8;
+            registry.series.update(&record).unwrap();
+
+            sweep_at(&s, due(deadline));
+            assert_eq!(unallocated(&s), U256::from(40u64) * U256::from(LOAD));
+            assert_eq!(group_len(&s), 0);
         });
     }
 
@@ -927,15 +975,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -1112,15 +1160,15 @@ mod call_sweep {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(worldwide_day),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW_DAYS * DAY as u32,
-                    call_threshold: 21 * DAY as u32,
-                    call_notice_period: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -1171,6 +1219,178 @@ mod call_sweep {
                 "the cursor points at the currency that did not finish"
             );
         });
+    }
+
+    /// A trigger that finds the sweep unfinished queues its day rather than restarting
+    /// the walk, so the day in flight still reaches every bin against its own prices.
+    #[test]
+    fn a_trigger_during_a_running_sweep_queues_its_day() {
+        with_factory(|s| {
+            let oracle = OracleContract::new(s.clone());
+            let pair = setup_pair(&oracle);
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            let day = previous_date_key(timestamp_to_date_key(scan_ts));
+            fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
+            let groups = MAX_SERIES_ACTIONS_PER_BLOCK + MAX_SERIES_ACTIONS_PER_BLOCK / 2;
+            let days = 20260101..20260101 + groups;
+            for d in days.clone() {
+                seed_called_candidate(&s, d);
+            }
+            let factory = IntexFactoryContract::new(s.clone());
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            called::scan_and_call(&ctx).unwrap();
+            let cursor = factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap();
+            assert_ne!(cursor, 0, "the first slice gave out inside the range");
+
+            let next_ts = scan_ts + DAY;
+            let next_day = previous_date_key(timestamp_to_date_key(next_ts));
+            fill_window(&oracle, next_day, pair, U256::from(TRIGGER + 1));
+            let next = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
+                s.clone(),
+            );
+            assert_eq!(called::scan_and_call(&next).unwrap(), 0);
+            assert_eq!(factory.call_sweep_day.read().unwrap(), day);
+            assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
+            assert_eq!(
+                factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap(),
+                cursor,
+                "the walk in flight was not restarted"
+            );
+
+            // The next slice finishes the old day and hands the sweep to the queued one.
+            called::run_call_slice(&next).unwrap();
+            assert_eq!(called_count(&s, days), groups);
+            assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
+            assert_eq!(factory.call_pending_day.read().unwrap(), 0);
+        });
+    }
+
+    /// With a day already waiting, a newer one takes its place, and the day that will
+    /// never be walked is named.
+    #[test]
+    fn a_newer_day_pushes_out_the_waiting_one_and_names_it() {
+        use alloy_sol_types::SolEvent;
+        use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.set_timestamp(U256::from(ISSUED_AT as u64));
+        let (in_flight, skipped) = StorageHandle::enter(&mut storage, |s| {
+            crate::tests::select_prod_profile(&s);
+            let oracle = OracleContract::new(s.clone());
+            let pair = setup_pair(&oracle);
+            for d in 20260101..20260101 + MAX_SERIES_ACTIONS_PER_BLOCK + 1 {
+                seed_called_candidate(&s, d);
+            }
+            let mut closed = Vec::new();
+            for offset in 0..3 {
+                let ts = ISSUED_AT as u64 + (60 + offset) * DAY;
+                let day = previous_date_key(timestamp_to_date_key(ts));
+                fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
+                let ctx = BlockRuntimeContext::new(
+                    BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID),
+                    s.clone(),
+                );
+                called::scan_and_call(&ctx).unwrap();
+                closed.push(day);
+            }
+            let factory = IntexFactoryContract::new(s.clone());
+            assert_eq!(factory.call_sweep_day.read().unwrap(), closed[0]);
+            assert_eq!(factory.call_pending_day.read().unwrap(), closed[2]);
+            (closed[0], closed[1])
+        });
+
+        let events: Vec<_> = storage
+            .get_events(INTEX_FACTORY_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                crate::precompile::IIntexFactory::SweepDaySkipped::decode_log_data(log).ok()
+            })
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sweep, crate::constants::CALL_SWEEP);
+        assert_eq!(events[0].skippedDay, skipped);
+        assert_eq!(events[0].inFlightDay, in_flight);
+    }
+
+    /// Each currency is walked once a sweep. Were the ones closed behind the cursor
+    /// walked again, two currencies each holding more undecided groups than a slice
+    /// may decide would keep the sweep open for good.
+    #[test]
+    fn a_sweep_over_several_currencies_always_ends() {
+        with_factory(|s| {
+            let oracle = OracleContract::new(s.clone());
+            let first = setup_pair(&oracle);
+            let second = setup_second_pair(&oracle);
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            let day = previous_date_key(timestamp_to_date_key(scan_ts));
+            fill_window(&oracle, day, first, U256::from(TRIGGER + 1));
+            fill_window(&oracle, day, second, U256::from(TRIGGER + 1));
+
+            // Issued five days ago: every group is decided and left where it is.
+            let young_at = (scan_ts - 5 * DAY) as u32;
+            for d in 20260101..20260101 + MAX_GROUP_DECISIONS_PER_BLOCK + 1 {
+                seed_young_candidate_for(&s, REFERENCE_ISO, d, young_at);
+                seed_young_candidate_for(&s, SECOND_ISO, d, young_at);
+            }
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            called::scan_and_call(&ctx).unwrap();
+            for _ in 0..3 {
+                called::run_call_slice(&ctx).unwrap();
+            }
+            assert_eq!(
+                IntexFactoryContract::new(s.clone())
+                    .call_sweep_day
+                    .read()
+                    .unwrap(),
+                0,
+                "the sweep closed"
+            );
+        });
+    }
+
+    /// A Qualified group of `iso` issued at `issued_at`, its trigger under the window.
+    fn seed_young_candidate_for(
+        s: &StorageHandle<'_>,
+        iso: u16,
+        worldwide_day: u32,
+        issued_at: u32,
+    ) {
+        let series_id = SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, iso).unwrap();
+        let trigger = U256::from(TRIGGER);
+        outbe_intex::api::create_series(
+            s,
+            outbe_intex::CreateSeriesParams {
+                series_id,
+                worldwide_day: WorldwideDay::new(worldwide_day),
+                issued_units: 100,
+                promis_load_minor: 1_000_000_000_000_000_000,
+                entry_price_minor: trigger,
+                floor_price_minor: trigger,
+                call_price_minor: trigger,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
+                },
+                issued_at,
+                issuance_currency: 840,
+                reference_currency: iso,
+            },
+        )
+        .unwrap();
+        outbe_intex::api::mark_qualified(s, series_id).unwrap();
+        IntexFactoryContract::new(s.clone())
+            .insert_qualified_group(iso, WorldwideDay::new(worldwide_day), trigger, &[series_id])
+            .unwrap();
     }
 }
 
@@ -1415,15 +1635,15 @@ mod called_pstar {
             outbe_intex::CreateSeriesParams {
                 series_id,
                 worldwide_day: WorldwideDay::new(LAST_DAY),
-                issued_intex_count: 100,
+                issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: WINDOW * DAY_SECS as u32,
-                    call_threshold: THRESHOLD * DAY_SECS as u32,
-                    call_notice_period: 7 * DAY_SECS as u32,
+                    call_window_seconds: WINDOW * DAY_SECS as u32,
+                    call_threshold_seconds: THRESHOLD * DAY_SECS as u32,
+                    call_notice_period_seconds: 7 * DAY_SECS as u32,
                 },
                 issued_at,
                 issuance_currency: 840,

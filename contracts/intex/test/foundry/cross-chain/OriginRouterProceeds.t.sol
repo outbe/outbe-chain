@@ -77,7 +77,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         _seedDaySnapshot(WORLDWIDE_DAY);
     }
 
-    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so `seriesTargets[day]` is populated.
+    /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE owner) so `seriesTargets[day]` is populated.
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
@@ -128,8 +128,8 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
         factory.setShouldRevert(false);
         vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.ProceedsRetried(0, WORLDWIDE_DAY, AMOUNT);
-        origin.retryProceeds(0);
+        emit IOriginRouter.ParkedProceedsDistributed(0, WORLDWIDE_DAY, AMOUNT);
+        origin.distributeParkedProceeds(0);
 
         assertEq(factory.calls(), 1);
         assertEq(factory.lastValue(), AMOUNT);
@@ -141,15 +141,15 @@ contract OriginRouterProceedsTest is CrossChainTest {
         factory.setShouldRevert(true);
         _receive(BNB_CHAIN_ID, AMOUNT, WORLDWIDE_DAY);
         factory.setShouldRevert(false);
-        origin.retryProceeds(0);
+        origin.distributeParkedProceeds(0);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedProceeds.selector, uint256(0)));
-        origin.retryProceeds(0);
+        origin.distributeParkedProceeds(0);
     }
 
     function test_RevertWhen_RetryUnknownIdx() public {
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedProceeds.selector, uint256(99)));
-        origin.retryProceeds(99);
+        origin.distributeParkedProceeds(99);
     }
 
     function test_RevertWhen_CallerNotTokenBridge() public {

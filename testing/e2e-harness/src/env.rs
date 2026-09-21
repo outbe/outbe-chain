@@ -1100,7 +1100,15 @@ mod tests {
         assert_eq!(intex.scenarios.len(), 2);
         for scenario in &intex.scenarios {
             assert_eq!(decide(&intex, scenario, &no_attest_env), Decision::Run);
-            assert_registered_steps(&intex, scenario);
+            if cfg!(feature = "ocomp-integration") {
+                assert_registered_steps(&intex, scenario);
+            } else {
+                // --all selects the scenario, but the before hook must report
+                // that its @ocomp capability is absent from this build.
+                assert!(unmet(&intex, scenario, &no_attest_env)
+                    .expect("missing OCOMP build capability")
+                    .contains("built without --features ocomp-integration"));
+            }
         }
         assert!(matches!(
             decide(&direct_feature, direct, &no_attest_env),

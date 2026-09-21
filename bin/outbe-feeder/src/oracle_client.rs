@@ -3,9 +3,9 @@
 //! Uses alloy's `ProviderBuilder` with a local ECDSA wallet for
 //! production-like transaction signing and submission.
 
-use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, BlockId, BlockNumberOrTag};
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
@@ -42,15 +42,24 @@ pub fn create_wallet(account: &AccountConfig) -> Result<EthereumWallet> {
     Ok(EthereumWallet::from(signer))
 }
 
-/// Fetches the current block number.
-pub async fn get_block_number(rpc_endpoint: &str) -> Result<u64> {
+/// One canonical state anchor for both scheduling and every preflight read.
+pub struct VoteHead {
+    pub height: u64,
+    pub block: BlockId,
+}
+
+pub async fn get_vote_head(rpc_endpoint: &str) -> Result<VoteHead> {
     let provider = ProviderBuilder::new()
         .connect_http(rpc_endpoint.parse().with_context(|| "invalid RPC URL")?);
-    let number = provider
-        .get_block_number()
+    let head = provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
         .await
-        .with_context(|| "eth_blockNumber failed")?;
-    Ok(number)
+        .with_context(|| "latest block read failed")?
+        .ok_or_else(|| eyre::eyre!("latest block missing"))?;
+    Ok(VoteHead {
+        height: head.header.number,
+        block: BlockId::hash_canonical(head.header.hash),
+    })
 }
 
 /// Submits an oracle vote as a signed EIP-1559 transaction.
@@ -63,7 +72,7 @@ pub async fn submit_vote(
     chain_id: u64,
     calldata: &[u8],
     gasless_oracle_vote: bool,
-) -> Result<String> {
+) -> Result<B256> {
     // Build provider with signer
     let provider = ProviderBuilder::new()
         .wallet(wallet.clone())
@@ -95,19 +104,38 @@ pub async fn submit_vote(
         .await
         .map_err(|e| eyre::eyre!("oracle vote tx failed: {e:#}"))?;
 
-    let tx_hash = *pending.tx_hash();
+    // Retain this identity in the caller until inclusion or pool removal;
+    // a receipt timeout must not turn an accepted vote into another send.
+    Ok(*pending.tx_hash())
+}
 
-    // Wait for inclusion to avoid txpool accumulation.
-    let receipt = tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
-        .await
-        .map_err(|_| eyre::eyre!("oracle vote tx timed out waiting for receipt: {tx_hash:#x}"))?
-        .map_err(|e| eyre::eyre!("oracle vote receipt failed: {e:#}"))?;
+#[derive(Debug, PartialEq, Eq)]
+pub enum VoteStatus {
+    Pending,
+    Included { height: u64, success: bool },
+    Missing,
+}
 
-    if !receipt.status() {
-        return Err(eyre::eyre!("oracle vote tx reverted: {tx_hash:#x}"));
+pub async fn vote_status(rpc_endpoint: &str, hash: B256) -> Result<VoteStatus> {
+    let provider = ProviderBuilder::new().connect_http(rpc_endpoint.parse()?);
+    if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+        if let (Some(height), Some(hash)) = (receipt.block_number, receipt.block_hash) {
+            if let Some(block) = provider.get_block_by_number(height.into()).await? {
+                if block.header.hash == hash {
+                    return Ok(VoteStatus::Included {
+                        height,
+                        success: receipt.status(),
+                    });
+                }
+            }
+        }
     }
-
-    Ok(format!("{tx_hash:#x}"))
+    // Null receipt alone is not a dropped transaction. Check the pool too.
+    Ok(if provider.get_transaction_by_hash(hash).await?.is_some() {
+        VoteStatus::Pending
+    } else {
+        VoteStatus::Missing
+    })
 }
 
 fn zero_fee_max_fee_cap(observed_gas_price: Option<u128>) -> u128 {
@@ -121,7 +149,7 @@ fn zero_fee_max_fee_cap(observed_gas_price: Option<u128>) -> u128 {
 pub enum PreflightResult {
     /// Safe to submit vote.
     Ok,
-    /// Should skip this period with reason.
+    /// Do not send on this observation; retry after the normal poll interval.
     Skip(String),
 }
 
@@ -130,6 +158,7 @@ pub async fn preflight_check(
     rpc_endpoint: &str,
     expected_vote_period: u64,
     validator_address: &str,
+    block: BlockId,
 ) -> PreflightResult {
     let url = match rpc_endpoint.parse() {
         Ok(u) => u,
@@ -141,23 +170,23 @@ pub async fn preflight_check(
     };
     let provider = ProviderBuilder::new().connect_http(url);
 
-    let params = match read_oracle_params(&provider).await {
+    let params = match read_oracle_params(&provider, block).await {
         Ok(params) => params,
         Err(e) => return PreflightResult::Skip(format!("preflight getParams failed: {e}")),
     };
-    match check_vote_penalty_counter(&provider, validator).await {
+    match check_vote_penalty_counter(&provider, validator, block).await {
         Ok(()) => {}
         Err(e) => {
             return PreflightResult::Skip(format!("preflight getVotePenaltyCounter failed: {e}"))
         }
     };
-    match check_validator_status(&provider, validator).await {
+    match check_validator_status(&provider, validator, block).await {
         Ok(()) => {}
         Err(e) => {
             return PreflightResult::Skip(format!("preflight validatorByAddress failed: {e}"))
         }
     };
-    let aggregate_vote = match read_aggregate_vote(&provider, validator).await {
+    let aggregate_vote = match read_aggregate_vote(&provider, validator, block).await {
         Ok(vote) => vote,
         Err(e) => return PreflightResult::Skip(format!("preflight getAggregateVote failed: {e}")),
     };
@@ -165,11 +194,12 @@ pub async fn preflight_check(
     evaluate_preflight(expected_vote_period, params, aggregate_vote)
 }
 
-async fn read_oracle_params<P: Provider>(provider: &P) -> Result<OracleParams> {
+async fn read_oracle_params<P: Provider>(provider: &P, block: BlockId) -> Result<OracleParams> {
     let output = eth_call(
         provider,
         ORACLE_ADDRESS,
         IOracle::getParamsCall {}.abi_encode(),
+        block,
     )
     .await
     .with_context(|| "oracle getParams eth_call failed")?;
@@ -182,11 +212,16 @@ async fn read_oracle_params<P: Provider>(provider: &P) -> Result<OracleParams> {
     })
 }
 
-async fn check_vote_penalty_counter<P: Provider>(provider: &P, validator: Address) -> Result<()> {
+async fn check_vote_penalty_counter<P: Provider>(
+    provider: &P,
+    validator: Address,
+    block: BlockId,
+) -> Result<()> {
     let output = eth_call(
         provider,
         ORACLE_ADDRESS,
         IOracle::getVotePenaltyCounterCall { validator }.abi_encode(),
+        block,
     )
     .await
     .with_context(|| "oracle getVotePenaltyCounter eth_call failed")?;
@@ -198,11 +233,13 @@ async fn check_vote_penalty_counter<P: Provider>(provider: &P, validator: Addres
 async fn read_aggregate_vote<P: Provider>(
     provider: &P,
     validator: Address,
+    block: BlockId,
 ) -> Result<AggregateVoteState> {
     let output = eth_call(
         provider,
         ORACLE_ADDRESS,
         IOracle::getAggregateVoteCall { validator }.abi_encode(),
+        block,
     )
     .await
     .with_context(|| "oracle getAggregateVote eth_call failed")?;
@@ -214,11 +251,16 @@ async fn read_aggregate_vote<P: Provider>(
     })
 }
 
-async fn check_validator_status<P: Provider>(provider: &P, validator: Address) -> Result<()> {
+async fn check_validator_status<P: Provider>(
+    provider: &P,
+    validator: Address,
+    block: BlockId,
+) -> Result<()> {
     let output = eth_call(
         provider,
         VALIDATOR_SET_ADDRESS,
         IValidatorSet::validatorByAddressCall { addr: validator }.abi_encode(),
+        block,
     )
     .await
     .with_context(|| "validatorByAddress eth_call failed")?;
@@ -228,11 +270,20 @@ async fn check_validator_status<P: Provider>(provider: &P, validator: Address) -
     Ok(())
 }
 
-async fn eth_call<P: Provider>(provider: &P, to: Address, calldata: Vec<u8>) -> Result<Bytes> {
+async fn eth_call<P: Provider>(
+    provider: &P,
+    to: Address,
+    calldata: Vec<u8>,
+    block: BlockId,
+) -> Result<Bytes> {
     let tx = TransactionRequest::default()
         .to(to)
         .input(Bytes::copy_from_slice(&calldata).into());
-    provider.call(tx).await.with_context(|| "eth_call failed")
+    provider
+        .call(tx)
+        .block(block)
+        .await
+        .with_context(|| "eth_call failed")
 }
 
 fn evaluate_preflight(
@@ -259,6 +310,124 @@ fn evaluate_preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Exercise the RPC boundary, including EIP-1898 parameters, rather than
+    // just testing the pure preflight predicate.
+    #[tokio::test]
+    async fn preflight_pins_boundary_reads_and_recovers_after_rpc_failure() {
+        use alloy_primitives::U256;
+        use alloy_sol_types::SolValue;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let old = BlockId::hash_canonical(B256::repeat_byte(87));
+        let boundary = BlockId::hash_canonical(B256::repeat_byte(88));
+        let next = BlockId::hash_canonical(B256::repeat_byte(89));
+        let params = (
+            8_u64,
+            U256::ZERO,
+            0_u64,
+            U256::ZERO,
+            U256::ZERO,
+            0_u64,
+            true,
+        )
+            .abi_encode_params();
+        let penalty = (0_u64, 0_u64, 0_u64).abi_encode_params();
+        let validator = IValidatorSet::validatorByAddressCall::abi_encode_returns(
+            &IValidatorSet::validatorByAddressReturn {
+                validatorAddress: Address::ZERO,
+                consensusPubkey: Bytes::new(),
+                stake: U256::ZERO,
+                status: 1,
+                slashCount: 0,
+                missedBlocks: 0,
+                missedVotes: 0,
+                blocksProposed: 0,
+                joinedAtHeight: 0,
+                deactivatedAtHeight: 0,
+                unbondingEnd: 0,
+                hasBLSShare: false,
+            },
+        );
+        let aggregate = |exists| {
+            (
+                exists,
+                Vec::<Address>::new(),
+                Vec::<Address>::new(),
+                Vec::<U256>::new(),
+                Vec::<U256>::new(),
+            )
+                .abi_encode_params()
+        };
+        let mut replies = Vec::new();
+        for (block, exists) in [(old, true), (next, false)] {
+            for bytes in [
+                params.clone(),
+                penalty.clone(),
+                validator.clone(),
+                aggregate(exists),
+            ] {
+                replies.push((block, Some(bytes)));
+            }
+        }
+        replies.insert(4, (boundary, None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (block, reply) in replies {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let body = loop {
+                    let mut chunk = [0_u8; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&chunk[..read]);
+                    assert!(request.len() < 65_536);
+                    if let Some(split) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = std::str::from_utf8(&request[..split]).unwrap();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if request.len() >= split + 4 + length {
+                            break serde_json::from_slice::<serde_json::Value>(
+                                &request[split + 4..split + 4 + length],
+                            )
+                            .unwrap();
+                        }
+                    }
+                };
+                assert_eq!(body["method"], "eth_call");
+                assert_eq!(body["params"][1], serde_json::to_value(block).unwrap());
+                let response = match reply {
+                    Some(bytes) => serde_json::json!({"jsonrpc":"2.0", "id":body["id"], "result":Bytes::from(bytes)}),
+                    None => serde_json::json!({"jsonrpc":"2.0", "id":body["id"], "error":{"code":-32000,"message":"temporary state unavailable"}}),
+                }.to_string();
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response);
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let validator = format!("{:#x}", Address::ZERO);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            assert!(matches!(preflight_check(&url, 8, &validator, old).await,
+                PreflightResult::Skip(reason) if reason.contains("already voted")));
+            assert!(
+                matches!(preflight_check(&url, 8, &validator, boundary).await,
+                PreflightResult::Skip(reason) if reason.contains("getParams failed"))
+            );
+            assert_eq!(
+                preflight_check(&url, 8, &validator, next).await,
+                PreflightResult::Ok
+            );
+            server.await.unwrap();
+        })
+        .await;
+        result.expect("pinned preflight sequence must finish");
+    }
 
     fn ok_params() -> OracleParams {
         OracleParams {

@@ -597,6 +597,7 @@ fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<WwdEntityId> 
 /// Converts one runtime Nod item into its normative v1 payload model.
 pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
     NodItemBodyV1 {
+        is_settled: body.is_settled,
         nod_id: body.nod_id,
         owner: body.owner,
         gratis_load_minor: body.gratis_load_minor,
@@ -613,11 +614,11 @@ pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
 /// Converts one runtime Nod bucket into its normative v1 payload model.
 pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
     NodBucketBodyV1 {
+        settled_nods: body.settled_nods,
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
         floor_price_minor: body.floor_price_minor,
         is_qualified: body.is_qualified,
-        total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }
@@ -631,6 +632,7 @@ pub fn canonical_bucket_id(body: &NodBucketState) -> WwdEntityId {
 /// Converts a validated normative v1 payload into the runtime item type.
 pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
     NodItemState {
+        is_settled: body.is_settled,
         nod_id: body.nod_id,
         owner: body.owner,
         gratis_load_minor: body.gratis_load_minor,
@@ -647,11 +649,11 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
 /// Converts a validated normative v1 payload into the runtime bucket type.
 pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
     NodBucketState {
+        settled_nods: body.settled_nods,
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
         floor_price_minor: body.floor_price_minor,
         is_qualified: body.is_qualified,
-        total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }

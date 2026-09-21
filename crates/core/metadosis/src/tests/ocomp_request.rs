@@ -86,6 +86,26 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(840).unwrap();
+        oracle.config_lookback_duration.write(86_400).unwrap();
+        let usd_index = oracle
+            .pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        oracle
+            .exchange_rate
+            .write(&usd_index, U256::from(320_000))
+            .unwrap();
+        oracle
+            .write_snapshot(
+                block_time - 1,
+                &[(
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(250_000),
+                    U256::from(1_000_000),
+                )],
+            )
+            .unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -151,6 +171,18 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             storage.clone(),
         );
         run_terminal_request(&ctx, &scope).unwrap();
+        assert!(NodContract::new(storage.clone())
+            .entry_prices_frozen
+            .read(&wwd)
+            .unwrap());
+        assert_eq!(
+            NodContract::new(storage.clone())
+                .entry_price_value
+                .get_nested(&wwd)
+                .read(&840)
+                .unwrap(),
+            U256::from(320_000)
+        );
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
@@ -262,11 +294,11 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
 
         let receipt_before = metadosis
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        let desis_supply_before = DesisContract::new(storage.clone())
-            .pending_supply_promis
+        let desis_limit_before = DesisContract::new(storage.clone())
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap();
         let finality_recorded_height = block_number + 2;
@@ -316,16 +348,16 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         assert!(metadosis.ocomp_scheduler.is_empty().unwrap());
         assert_eq!(
             metadosis
-                .request_budget_receipt(wwd, &poc_schema_limits())
+                .request_limit_receipt(wwd, &poc_schema_limits())
                 .unwrap(),
             Some(receipt_before.clone())
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         let terminal = metadosis
             .ocomp_job_record(intent_id, &poc_schema_limits())
@@ -338,16 +370,16 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(
             metadosis
-                .request_budget_receipt(wwd, &poc_schema_limits())
+                .request_limit_receipt(wwd, &poc_schema_limits())
                 .unwrap(),
             Some(receipt_before)
         );
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
-            desis_supply_before
+            desis_limit_before
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(
@@ -960,15 +992,15 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             outbe_intex::CreateSeriesParams {
                 series_id: outbe_intex::SeriesId::pack(fixture.wwd, *b"USD", b'U').unwrap(),
                 worldwide_day: fixture.wwd,
-                issued_intex_count: 1,
+                issued_units: 1,
                 promis_load_minor: 1,
                 entry_price_minor: U256::from(1),
                 floor_price_minor: U256::from(1),
                 call_price_minor: U256::from(1),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window: 24 * 60 * 60,
-                    call_threshold: 24 * 60 * 60,
-                    call_notice_period: 1,
+                    call_window_seconds: 24 * 60 * 60,
+                    call_threshold_seconds: 24 * 60 * 60,
+                    call_notice_period_seconds: 1,
                 },
                 issued_at: 1,
                 issuance_currency: 840,
@@ -1042,7 +1074,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             expected_contributors.expected_series_version
         );
         assert!(metadosis
-            .request_budget_receipt(fixture.wwd, &poc_schema_limits())
+            .request_limit_receipt(fixture.wwd, &poc_schema_limits())
             .unwrap()
             .is_some());
         assert_eq!(nod.total_supply().unwrap(), before_nod_supply);
@@ -1376,10 +1408,11 @@ fn prepare_ready_days_fixture(
 #[derive(Debug, PartialEq)]
 struct RequestObservables {
     fsm: crate::ocomp::state::JobFsmProjection,
-    receipt: Option<outbe_ocomp_protocol::receipts::RequestBudgetSplitReceiptV1>,
+    receipt: Option<outbe_ocomp_protocol::receipts::RequestLimitSplitReceiptV1>,
     desis_stage: u8,
     desis_supply: U256,
     nod_supply: u64,
+    nod_prices_frozen: bool,
     tribute_supply: u64,
     tribute_pre_admission: outbe_tribute::TributePreAdmissionProjection,
 }
@@ -1394,17 +1427,21 @@ fn request_observables(
             .unwrap()
             .projection(),
         receipt: MetadosisContract::new(storage.clone())
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap(),
         desis_stage: DesisContract::new(storage.clone())
             .auction_stage
             .read(&wwd)
             .unwrap(),
         desis_supply: DesisContract::new(storage.clone())
-            .pending_supply_promis
+            .pending_desis_limit_minor
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
+        nod_prices_frozen: NodContract::new(storage.clone())
+            .entry_prices_frozen
+            .read(&wwd)
+            .unwrap(),
         tribute_supply: TributeContract::new(storage.clone())
             .total_supply()
             .unwrap(),
@@ -1504,17 +1541,17 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         run_terminal_request(&ctx, &scope).unwrap();
 
         let receipt = MetadosisContract::new(storage.clone())
-            .request_budget_receipt(wwd, &poc_schema_limits())
+            .request_limit_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
         assert_eq!(receipt.day_limit, day_limit + U256::from(68));
-        assert_eq!(receipt.lysis_budget, U256::from(32));
-        assert_eq!(receipt.auction_base, U256::from(68));
+        assert_eq!(receipt.lysis_limit_minor, U256::from(32));
+        assert_eq!(receipt.desis_limit_minor, U256::from(68));
         assert_eq!(receipt.carry_over_credit, U256::from(968));
 
         assert_eq!(
             DesisContract::new(storage.clone())
-                .pending_supply_promis
+                .pending_desis_limit_minor
                 .read(&wwd)
                 .unwrap(),
             U256::ZERO,

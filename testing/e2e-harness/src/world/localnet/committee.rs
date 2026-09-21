@@ -498,31 +498,119 @@ impl Localnet {
     /// state; the node keeps running. Its enclave session must reconnect (with
     /// identity re-validation) on the next request - a node restart is not
     /// required and this verb is the first that proves it.
-    pub fn restart_enclave_only(&mut self, i: usize) -> Result<()> {
-        self.enclaves.remove(&i);
+    pub(crate) fn restart_enclave_only(
+        &mut self,
+        i: usize,
+    ) -> Result<crate::internal::launch_log::LaunchLog> {
+        let log = self.stop_enclave_for_observation(i)?;
         let chain_id_hex = self.chain_id_hex()?;
         let seed = self.default_dkg_seed(i);
-        self.start_enclave_with_seed(i, &chain_id_hex, seed)
+        self.start_enclave_with_seed(i, &chain_id_hex, seed)?;
+        Ok(log)
     }
 
-    /// Restart validator `i`'s enclave with a FRESH identity: wipe the sealed
-    /// TEE state and (in deterministic-seed lanes) switch the DKG seed. The
-    /// node's pinned enclave session must refuse the impostor (fail-closed
-    /// revocation), never silently adopt it.
-    pub fn restart_enclave_with_fresh_identity(&mut self, i: usize) -> Result<()> {
-        self.enclaves.remove(&i);
-        let tee_dir = self.cfg.validator_dir(i).join("tee");
-        if tee_dir.exists() {
-            fs::remove_dir_all(&tee_dir)
-                .wrap_err_with(|| format!("wipe sealed TEE state {}", tee_dir.display()))?;
-        }
+    /// Replace only the enclave, retaining its original seal for recovery. The
+    /// replacement uses a separate, publicly initialized NodeHost fixture; the
+    /// running node's persistent manifest and authorization are never changed.
+    pub(crate) fn restart_enclave_with_fresh_identity(
+        &mut self,
+        i: usize,
+    ) -> Result<crate::internal::launch_log::LaunchLog> {
+        use alloy_signer::SignerSync as _;
+        use alloy_signer_local::PrivateKeySigner;
+
+        ensure!(
+            self.cfg.tee_mode.passes_sgx_devices(),
+            "identity substitution requires the production SGX NodeHost session"
+        );
+        let directory = self.cfg.validator_dir(i);
+        let original = outbe_tee::load_committed_enclave_manifest_v1(&directory.join("data"))?;
+        let backup = directory.join("tee-observability-original");
+        let replacement_host = directory.join("tee-observability-replacement-host");
+        ensure!(
+            !backup.try_exists()? && !replacement_host.try_exists()?,
+            "identity fault already armed"
+        );
+        let log = self.stop_enclave_for_observation(i)?;
+        fs::rename(directory.join("tee"), &backup).wrap_err("preserve original enclave seal")?;
         let chain_id_hex = self.chain_id_hex()?;
-        let seed = self
-            .cfg
-            .tee_mode
-            .uses_deterministic_dkg_seed()
-            .then(|| format!("{:064x}", i + 101));
-        self.start_enclave_with_seed(i, &chain_id_hex, seed)
+        self.start_enclave_with_seed(i, &chain_id_hex, None)?;
+        fs::create_dir(&replacement_host)?;
+        let signer: PrivateKeySigner = fs::read_to_string(directory.join("reth-p2p-secret.hex"))?
+            .trim()
+            .parse()
+            .map_err(|_| eyre::eyre!("invalid fixture P2P signer"))?;
+        let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(i));
+        let mut client = outbe_tee::connect_or_initialize_node_host_enclave(
+            &endpoint,
+            &replacement_host,
+            outbe_tee::NodeHostIdentityV1 {
+                network_binding: original.network_binding(),
+                reth_p2p_public: original.node_id.reth_p2p_public,
+            },
+            |hash| {
+                let signature = signer
+                    .sign_hash_sync(&hash)
+                    .map_err(|error| error.to_string())?;
+                let mut bytes = [0_u8; 65];
+                bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+                bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+                bytes[64] = u8::from(signature.v());
+                Ok(bytes)
+            },
+        )?;
+        let replacement = outbe_tee::load_committed_enclave_manifest_v1(&replacement_host)?;
+        ensure!(
+            replacement.noise_responder_x25519 != original.noise_responder_x25519
+                && replacement.attestation_ed25519 != original.attestation_ed25519
+                && replacement.recipient_x25519 != original.recipient_x25519,
+            "replacement enclave did not obtain a fresh public identity"
+        );
+        verify_pre_dkg_public_identity(
+            client.request(&outbe_tee::protocol::EnclaveRequest::GetPublicKeys)?,
+            &replacement,
+        )?;
+        Ok(log)
+    }
+
+    /// Restore the exact original sealed identity without restarting the node.
+    pub(crate) fn restore_enclave_identity(
+        &mut self,
+        i: usize,
+    ) -> Result<crate::internal::launch_log::LaunchLog> {
+        let directory = self.cfg.validator_dir(i);
+        ensure!(
+            directory.join("tee-observability-original").is_dir(),
+            "missing original enclave seal"
+        );
+        let log = self.stop_enclave_for_observation(i)?;
+        fs::rename(
+            directory.join("tee"),
+            directory.join("tee-observability-rejected"),
+        )?;
+        fs::rename(
+            directory.join("tee-observability-original"),
+            directory.join("tee"),
+        )?;
+        let chain_id_hex = self.chain_id_hex()?;
+        self.start_enclave_with_seed(i, &chain_id_hex, None)?;
+        Ok(log)
+    }
+
+    /// Reap the exact owner before arming a log cursor for its replacement.
+    fn stop_enclave_for_observation(
+        &mut self,
+        i: usize,
+    ) -> Result<crate::internal::launch_log::LaunchLog> {
+        self.live_validator_and_enclave_pids(i)?;
+        self.enclaves
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("missing enclave owner"))?
+            .stop_and_reap()?;
+        self.enclaves.remove(&i);
+        crate::internal::launch_log::LaunchLog::checkpoint(
+            &self.cfg.validator_dir(i).join("enclave.log"),
+        )
     }
 
     /// Whether committee validator `i`'s node process is still running (its
@@ -556,11 +644,13 @@ impl Localnet {
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
-        // Dropping the owned guard sends SIGKILL and synchronously reaps the node.
+        // Preserve graceful restart semantics and reap only this run's child.
+        // Process-name matching can also kill the same slot in another network.
+        self.validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} has no owned stop target"))?
+            .stop_and_reap()?;
         self.validators.remove(&i);
-        // Backstop in case the owned handle was ever lost.
-        let pat = format!("outbe-chain node.*validator-{i}/data");
-        self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
     }
 
@@ -1183,6 +1273,62 @@ mod owned_committee_tests {
         localnet.validators.insert(0, node);
         localnet.enclaves.insert(0, enclave);
         (directory, localnet, pids)
+    }
+
+    #[test]
+    fn kill_validator_preserves_another_runs_same_slot_and_the_enclave() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        let mut command = Command::new("bash");
+        command.args([
+            "-c",
+            "exec -a \"$1\" sleep 60",
+            "fixture",
+            "outbe-chain node --datadir /another-run/validator-0/data",
+        ]);
+        let mut survivor = ChildGuard::spawn("other-run-validator-0", command).unwrap();
+        // Let bash replace itself so the child has the formerly matched argv.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let observed = Command::new("ps")
+                .args(["-p", &survivor.pid().to_string(), "-o", "args="])
+                .output()
+                .unwrap();
+            assert!(
+                observed.status.success(),
+                "owned fixture must still be alive"
+            );
+            let argv = String::from_utf8(observed.stdout).unwrap();
+            if argv
+                .trim_start()
+                .starts_with("outbe-chain node --datadir /another-run/validator-0/data ")
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            sleep(Duration::from_millis(10));
+        }
+        localnet.kill_validator(0).unwrap();
+        let stopped = Command::new("ps")
+            .args(["-p", &pids.0.to_string(), "-o", "pid="])
+            .output()
+            .unwrap();
+        assert!(!stopped.status.success() && stopped.stdout.is_empty());
+        assert!(!localnet.validators.contains_key(&0));
+        assert_eq!(localnet.enclaves.get(&0).unwrap().pid(), pids.1);
+        assert!(localnet
+            .enclaves
+            .get_mut(&0)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
+        assert!(survivor.exit_status().unwrap().is_none());
+        assert!(localnet
+            .kill_validator(0)
+            .unwrap_err()
+            .to_string()
+            .contains("no owned stop target"));
+        assert!(survivor.exit_status().unwrap().is_none());
     }
 
     #[test]

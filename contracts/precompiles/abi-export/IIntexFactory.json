@@ -92,6 +92,11 @@
         "internalType": "bytes14"
       },
       {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
@@ -202,7 +207,58 @@
   },
   {
     "type": "function",
-    "name": "setAuthorizedSettler",
+    "name": "seriesUnitCounts",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexFactory.UnitCounts",
+        "components": [
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "activeUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "exercisedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gemFactoryUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "forfeitedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "settleIntex",
     "inputs": [
       {
         "name": "seriesId",
@@ -210,7 +266,17 @@
         "internalType": "bytes14"
       },
       {
-        "name": "settler",
+        "name": "intexOwner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
         "type": "address",
         "internalType": "address"
       }
@@ -220,7 +286,7 @@
   },
   {
     "type": "function",
-    "name": "settle",
+    "name": "settleIntexWithPayNote",
     "inputs": [
       {
         "name": "seriesId",
@@ -228,7 +294,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
+        "name": "intexOwner",
         "type": "address",
         "internalType": "address"
       },
@@ -245,6 +311,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "CallScanSkipped",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -323,6 +408,31 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExpiryDeferred",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "retryAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -426,7 +536,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -442,6 +552,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QualifyScanSkipped",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -501,7 +630,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "issuedIntexCount",
+        "name": "issuedUnits",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
@@ -539,13 +668,7 @@
         "internalType": "bytes14"
       },
       {
-        "name": "intexHolder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "settler",
+        "name": "intexOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -555,6 +678,31 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SweepDaySkipped",
+    "inputs": [
+      {
+        "name": "sweep",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "skippedDay",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "inFlightDay",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

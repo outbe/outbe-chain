@@ -402,6 +402,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    pub(crate) tee_observability: Option<crate::features::tee_observability::TeeObservation>,
     pub tee_lease: TeeLeaseEvidenceV1,
     /// Public restart measurements saved before process teardown.
     pub restart_observations: Vec<serde_json::Value>,
@@ -589,12 +590,11 @@ pub struct FixtureState {
     pub metadosis_inactive_lysis_reject_code: Option<u64>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
-    /// Encoded BLS MinPk private key the harness registered as the L2 network key.
-    pub l2_bls_private_hex: Option<String>,
-    /// L2 chain id registered for the operator under test.
-    pub l2_chain_id: Option<u64>,
     /// Hash of an offer expected to be rejected by the zk signature gate.
     pub l2_rejected_offer_tx_hash: Option<String>,
+    /// First use the declared L2 57005 binding; allocate additional ids only
+    /// when a scenario registers more operators.
+    pub l2_next_governed_chain_id: u64,
 
     // ---- ZeroFee live scenario ----
     pub zerofee_key: Option<String>,
@@ -654,16 +654,20 @@ pub struct FixtureState {
     pub forfeited_gem: Option<alloy_primitives::U256>,
     /// Promis held before mining, so the mined load shows as a delta.
     pub promis_before_mining: Option<alloy_primitives::U256>,
-    /// Unallocated PROMIS before each return, for the same reason.
-    pub unallocated_before_forfeit: Option<alloy_primitives::U256>,
-    pub unallocated_before_position_expiry: Option<alloy_primitives::U256>,
+    /// Finalized height and unallocated PROMIS before either expiry return.
+    pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
-    /// Issued alongside them and never settled, so the call notice runs out on it.
+    /// Issued alongside them and only partly settled, so the call notice runs out on
+    /// the rest of it.
     pub expiring_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// Issued alongside them and never touched at all, so its whole tirage is forfeited.
+    pub untouched_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// The worldwide day the lifecycle series were issued into; the called group's key.
+    pub lifecycle_day: Option<u32>,
     /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
     pub unallocated_before_expiry: Option<alloy_primitives::U256>,
-    /// The stablecoin holders settle Intex in, and its reserve vault.
+    /// The stablecoin owners settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
@@ -694,6 +698,7 @@ impl Default for FixtureState {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
+            tee_observability: None,
             restart_observations: Vec::new(),
             lifecycle_before: None,
             lifecycle_incarnations: std::collections::BTreeMap::new(),
@@ -707,10 +712,11 @@ impl Default for FixtureState {
             mined_gem: None,
             forfeited_gem: None,
             promis_before_mining: None,
-            unallocated_before_forfeit: None,
-            unallocated_before_position_expiry: None,
+            gem_expiry_baseline: None,
             lifecycle_series: Vec::new(),
             expiring_series: None,
+            untouched_series: None,
+            lifecycle_day: None,
             unallocated_before_expiry: None,
             settled_units: 0,
             proposal_id: 1,
@@ -807,9 +813,8 @@ impl Default for FixtureState {
             ocomp_full_node_local_first_digest: None,
             ocomp_full_node_mismatch_job_id: None,
             ocomp_full_node_mismatch_evidence_files: Vec::new(),
-            l2_bls_private_hex: None,
-            l2_chain_id: None,
             l2_rejected_offer_tx_hash: None,
+            l2_next_governed_chain_id: 57_005,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

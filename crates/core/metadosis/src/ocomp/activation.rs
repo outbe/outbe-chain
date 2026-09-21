@@ -13,7 +13,8 @@ use outbe_ocomp_protocol::{
         VerifiedFinalizedIntentV1,
     },
     profile::ProtocolBundleV1,
-    receipts::{ActivationOutcome, RequestBudgetSplitReceiptV1},
+    receipts::{ActivationOutcome, RequestLimitSplitReceiptV1},
+    result::wwd_allocation_ceiling,
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
@@ -304,11 +305,11 @@ fn apply_certified_result(
     } = certified;
     let binding = plan.binding().clone();
     let mut request_receipt = metadosis
-        .request_budget_receipt(
+        .request_limit_receipt(
             outbe_primitives::time::WorldwideDay::new(plan.carry_over().source_wwd()),
             limits,
         )?
-        .ok_or_else(|| storage_corruption_message("OCOMP request budget receipt is missing"))?;
+        .ok_or_else(|| storage_corruption_message("OCOMP request limit receipt is missing"))?;
     let active_generation = ActiveGenerationV1 {
         job_id: binding.job_id,
         program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -327,7 +328,7 @@ fn apply_certified_result(
         roots: result.roots.clone(),
         counts: plan.nod().exact_counts().clone(),
         nod_amount_total: plan.nod().nod_amount_total(),
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
     let contributor_input = CertifiedContributorRootV1 {
@@ -344,20 +345,36 @@ fn apply_certified_result(
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
     };
-    let lysis_budget = plan
+    let lysis_limit_minor = plan
         .nod()
-        .nod_gratis_consumed()
-        .checked_add(plan.carry_over().credited_unused_lysis())
-        .ok_or_else(|| crate::errors::business_failure("Lysis budget overflow"))?;
+        .lysis_allocation_minor()
+        .checked_add(plan.carry_over().credited_unused_lysis_limit_minor())
+        .ok_or_else(|| crate::errors::business_failure("Lysis limit overflow"))?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),
-        lysis_budget,
-        nod_gratis_consumed: plan.nod().nod_gratis_consumed(),
-        unused_lysis: plan.carry_over().credited_unused_lysis(),
+        lysis_limit_minor,
+        lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
+        unused_lysis_limit_minor: plan.carry_over().credited_unused_lysis_limit_minor(),
     };
 
     storage.with_lysis_activation_frame(binding.activation_call_id, |capability| {
+        // C37: Lysis Allocation is frozen; Desis Allocation is not. Fail
+        // against the Desis Limit before any owner write, so a Limit that
+        // could breach the Tribute nominal never installs Nods or briefs.
+        wwd_allocation_ceiling(
+            plan.nod().lysis_allocation_minor(),
+            request_receipt.desis_limit_minor,
+            plan.tribute().consumed_nominal_total(),
+        )
+        .map_err(|error| match error {
+            ProtocolError::IntegerOverflow { .. } => {
+                crate::errors::business_failure("day allocation overflow")
+            }
+            _ => crate::errors::business_failure(
+                "day allocation exceeds the nominal its tributes retired",
+            ),
+        })?;
         let prepared_tribute =
             prepare_certified_partition_retirement(storage, capability, &tribute_input, limits)
                 .map_err(owner_apply_error)?;
@@ -369,20 +386,8 @@ fn apply_certified_result(
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
-        // Measured against the auction's whole limit: the actual draw is only
-        // known two days later, and the limit bounds it.
-        let allocated = plan
-            .nod()
-            .nod_gratis_consumed()
-            .checked_add(request_receipt.auction_base)
-            .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
-        if allocated > plan.tribute().consumed_nominal_total() {
-            return Err(crate::errors::business_failure(
-                "day allocation exceeds the nominal its tributes retired",
-            ));
-        }
         // Lysis has closed and returned what it did not spend, so the auction can now draw.
-        crate::ocomp_budget::apply_auction_brief(storage.clone(), &request_receipt)?;
+        crate::ocomp_limits::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {
             nod,
             contributor,
@@ -409,8 +414,8 @@ fn apply_certified_result(
             binding.intent_id,
             active_generation,
             result_evidence_hash,
-            plan.nod().nod_gratis_consumed(),
-            plan.carry_over().credited_unused_lysis(),
+            plan.nod().lysis_allocation_minor(),
+            plan.carry_over().credited_unused_lysis_limit_minor(),
             current_height,
             current_time,
             permit,
@@ -426,7 +431,7 @@ fn apply_certified_result(
 }
 
 fn inject_test_receipt_fault(
-    request_receipt: &mut RequestBudgetSplitReceiptV1,
+    request_receipt: &mut RequestLimitSplitReceiptV1,
     receipts: &mut LysisOwnerReceiptsV1,
 ) {
     #[cfg(test)]

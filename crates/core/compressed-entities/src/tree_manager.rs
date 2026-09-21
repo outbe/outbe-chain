@@ -932,7 +932,10 @@ mod tests {
         let view = read_only.open_exact(offer.identity()).unwrap();
         let catalog_root = view.catalog_root();
         let acknowledgement = offer.confirm_open(&view).unwrap();
-        std::fs::write(acknowledgement_path, acknowledgement.encode_fixed()).unwrap();
+        // Publish atomically so the parent cannot read an empty or partial acknowledgement.
+        let pending_ack = std::path::Path::new(&acknowledgement_path).with_extension("tmp");
+        std::fs::write(&pending_ack, acknowledgement.encode_fixed()).unwrap();
+        std::fs::rename(pending_ack, acknowledgement_path).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !std::path::Path::new(&release_path).exists() {

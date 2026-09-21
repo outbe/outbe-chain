@@ -13,7 +13,7 @@ use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
 
-/// Commitment-tree depth, fixed by the `outbe.paynote@1.1.0` circuit's
+/// Commitment-tree depth, fixed by the `outbe.paynote@1.2.0` circuit's
 /// generated `auth_path: [Field; 32]`.
 pub const PAYNOTE_TREE_DEPTH: usize = 32;
 

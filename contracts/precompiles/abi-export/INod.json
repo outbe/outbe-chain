@@ -85,7 +85,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "nodGratisConsumed",
+            "name": "lysisAllocationMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -159,12 +159,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "costOfGratisMinor",
+            "name": "entryPriceMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "costAmountMinor",
+            "name": "settlementCostMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -190,6 +190,46 @@
           },
           {
             "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "isSettled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "effectiveState",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callRate",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
           }
@@ -525,6 +565,50 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QualifyScanSkipped",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SweepDaySkipped",
+    "inputs": [
+      {
+        "name": "sweep",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "skippedDay",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "inFlightDay",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

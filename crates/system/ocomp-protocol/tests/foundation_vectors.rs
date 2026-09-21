@@ -572,7 +572,7 @@ fn generated_input_codec_ids_match_independent_descriptor_hashes() {
         FIDELITY_OPENING_CODEC_ID
     );
     assert_eq!(
-        codec_id(3, 1, ORACLE_OPENING_CODEC_DESCRIPTOR),
+        codec_id(3, 2, ORACLE_OPENING_CODEC_DESCRIPTOR),
         ORACLE_OPENING_CODEC_ID
     );
 

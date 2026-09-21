@@ -1,7 +1,7 @@
 //! Outbe `DispatchFn` adapter for the Emit precompile, the payable-selector
 //! policy, and the selector-sensitive base gas.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
     dispatch_call, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
@@ -9,7 +9,6 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::hash::field_from_be_bytes;
 use crate::runtime::{self, MintStatement};
 use crate::schema::EmitContract;
 
@@ -79,23 +78,14 @@ pub fn dispatch(
             }),
             isSpent(c) => view(c, |c| {
                 let emit: EmitContract<'_> = storage.contract();
-                emit.spent_nullifiers.read(&normalize(c.nullifier))
+                emit.spent_nullifiers.read(&c.nullifier)
             }),
             hasCommitment(c) => view(c, |c| {
                 let emit: EmitContract<'_> = storage.contract();
-                emit.commitments.read(&normalize(c.commitment))
+                emit.commitments.read(&c.commitment)
             }),
         }
     })
-}
-
-/// Membership keys are stored as canonical field words. A non-canonical query
-/// can never name a stored key, so it reads the zero slot and returns `false`.
-fn normalize(word: B256) -> B256 {
-    match field_from_be_bytes(&word.0) {
-        Some(_) => word,
-        None => B256::ZERO,
-    }
 }
 
 /// Base gas charged by the registry before invoking [`dispatch`]:

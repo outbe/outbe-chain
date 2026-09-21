@@ -197,7 +197,7 @@ pub struct RootReduceSummaryV1 {
     pub contributor_count: u32,
     pub tribute_nominal_total: U256,
     pub eligible_nominal_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub nod_cost_total: U256,
     pub first_error_ordinal: Option<u32>,
 }
@@ -280,9 +280,9 @@ impl RootReduceSummaryV1 {
                 self.eligible_nominal_total,
                 right.eligible_nominal_total,
             )?,
-            nod_gratis_consumed: checked_add_summary_total(
-                self.nod_gratis_consumed,
-                right.nod_gratis_consumed,
+            lysis_allocation_minor: checked_add_summary_total(
+                self.lysis_allocation_minor,
+                right.lysis_allocation_minor,
             )?,
             nod_cost_total: checked_add_summary_total(self.nod_cost_total, right.nod_cost_total)?,
             first_error_ordinal: match (self.first_error_ordinal, right.first_error_ordinal) {
@@ -389,7 +389,7 @@ pub fn encode_root_reduce_summary(
     output.write_u32(summary.contributor_count)?;
     output.write_u256(summary.tribute_nominal_total)?;
     output.write_u256(summary.eligible_nominal_total)?;
-    output.write_u256(summary.nod_gratis_consumed)?;
+    output.write_u256(summary.lysis_allocation_minor)?;
     output.write_u256(summary.nod_cost_total)?;
     output.write_option(summary.first_error_ordinal.as_ref(), |writer, ordinal| {
         writer.write_u32(*ordinal)
@@ -477,7 +477,7 @@ pub fn decode_root_reduce_summary(
         contributor_count: input.read_u32()?,
         tribute_nominal_total: input.read_u256()?,
         eligible_nominal_total: input.read_u256()?,
-        nod_gratis_consumed: input.read_u256()?,
+        lysis_allocation_minor: input.read_u256()?,
         nod_cost_total: input.read_u256()?,
         first_error_ordinal: input.read_option(|reader| reader.read_u32())?,
     };
@@ -596,7 +596,7 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
             || summary.contributor_count != 0
             || !summary.tribute_nominal_total.is_zero()
             || !summary.eligible_nominal_total.is_zero()
-            || !summary.nod_gratis_consumed.is_zero()
+            || !summary.lysis_allocation_minor.is_zero()
             || !summary.nod_cost_total.is_zero()
             || summary.first_error_ordinal.is_some()
         {

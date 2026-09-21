@@ -53,14 +53,18 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 }
 
 #[test]
-fn only_polls_and_calendar_owned_protocol_cycle_coalesce() {
+fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
     for spec in ACTIVE_TRIGGERS {
-        let is_poll = spec.id == TriggerId::AuctionClearing.as_u32()
-            || spec.id == TriggerId::IntexNotify.as_u32()
+        let coalesces = spec.id == TriggerId::AuctionClearing.as_u32()
+            || spec.id == TriggerId::IntexDrainNotices.as_u32()
             || spec.id == TriggerId::AuctionAdvance.as_u32()
-            || spec.id == TriggerId::ProtocolCycle.as_u32();
+            || spec.id == TriggerId::ProtocolCycle.as_u32()
+            || spec.id == TriggerId::NodCallDaily.as_u32()
+            || spec.id == TriggerId::IntexDaily.as_u32()
+            || spec.id == TriggerId::GemDaily.as_u32()
+            || spec.id == TriggerId::IntexDrainParked.as_u32();
         assert_eq!(
-            spec.coalesces_backlog, is_poll,
+            spec.coalesces_backlog, coalesces,
             "{} must not change its backlog policy",
             spec.label
         );
@@ -102,7 +106,7 @@ fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7, 8, 9, 10]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();

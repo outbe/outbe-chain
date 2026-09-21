@@ -1,34 +1,16 @@
 use super::*;
 
 #[test]
-fn dispatch_set_authorized_settler_round_trip() {
-    with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        let data = IIntexFactory::setAuthorizedSettlerCall {
-            seriesId: sid(7).into(),
-            settler,
-        }
-        .abi_encode();
-        // Caller (holder) is taken from msg.sender, not the calldata.
-        precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).unwrap();
-        let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(
-            f.read_authorized_settler(holder(), sid(7)).unwrap(),
-            settler
-        );
-    });
-}
-
-#[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        let data = IIntexFactory::setAuthorizedSettlerCall {
+        let data = IIntexFactory::settleIntexWithPayNoteCall {
             seriesId: sid(7).into(),
-            settler,
+            intexOwner: owner(),
+            amount: U256::from(1),
+            payNoteProof: Default::default(),
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::from(1)).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::from(1)).is_err());
     });
 }
 
@@ -38,13 +20,14 @@ fn dispatch_mine_promis_routes_to_runtime() {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
+            owner: owner(),
             amount: U256::from(1),
             nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
             opNonce: 0,
         }
         .abi_encode();
-        assert!(precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).is_err());
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::ZERO).is_err());
     });
 }
 
@@ -92,7 +75,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = crate::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(r.call_notice_period, dev.call_notice_period);
+        assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
             r.floor_price_minor,
             U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
@@ -104,9 +87,9 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window: dev.call_window,
-                call_threshold: dev.call_threshold,
-                call_notice_period: dev.call_notice_period,
+                call_window_seconds: dev.call_window_seconds,
+                call_threshold_seconds: dev.call_threshold_seconds,
+                call_notice_period_seconds: dev.call_notice_period_seconds,
             }
         );
 
@@ -157,5 +140,22 @@ fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
         assert_eq!(f.config_profile.slot(), U256::from(10));
+    });
+}
+
+/// The sweep reads the router before it acts, so a router that answers nothing (or is not there at
+/// all) has to leave the block alone rather than fail it.
+#[test]
+fn the_parked_sweep_is_a_no_op_without_a_router() {
+    with_factory(|s| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            s.clone(),
+        );
+        crate::parked::drain(&ctx).expect("a silent router is not a failed block");
+
+        let factory = IntexFactoryContract::new(s.clone());
+        assert_eq!(factory.parked_message_cursor.read().unwrap(), 0);
+        assert_eq!(factory.parked_proceeds_cursor.read().unwrap(), 0);
     });
 }

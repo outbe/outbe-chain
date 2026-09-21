@@ -12,7 +12,7 @@ use crate::constants::calc_floor_price;
 use super::{
     execute::{
         calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
-        validate_entry_price, validate_required_gratis,
+        validate_required_gratis,
     },
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
@@ -62,7 +62,7 @@ pub struct AmountRecordV1 {
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
     pub floor_price_minor: U256,
-    pub cost_amount_minor: U256,
+    pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
@@ -326,7 +326,7 @@ pub fn fidelity_reduce_pair(
 
 pub fn finalize_fi_fraction_table(
     aggregate: &FidelityAggregateV1,
-    gratis_allocation: U256,
+    lysis_limit_minor: U256,
 ) -> Result<Vec<LeagueFractionV1>, ProgramErrorV1> {
     if aggregate.tribute_count == 0 || aggregate.checked_total_nominal.is_zero() {
         return Err(ProgramErrorV1::ZeroTotalNominal);
@@ -345,7 +345,7 @@ pub fn finalize_fi_fraction_table(
         &groups,
         aggregate.tribute_count,
         aggregate.checked_total_nominal,
-        gratis_allocation,
+        lysis_limit_minor,
     )
     .map(|fractions| {
         fractions
@@ -360,7 +360,6 @@ pub fn amount_map(
     observed: &[ObservedTributeV1],
     fidelity_observations: &[FidelityObservationV1],
     fractions: &[LeagueFractionV1],
-    mandatory_entry_price_840: U256,
 ) -> Result<AmountRunV1, ProgramErrorV1> {
     if observed.is_empty()
         || observed.len() != fidelity_observations.len()
@@ -370,7 +369,6 @@ pub fn amount_map(
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    validate_entry_price(mandatory_entry_price_840, None, 840)?;
     let mut fraction_by_league = BTreeMap::new();
     let mut previous_league = None;
     for fraction in fractions {
@@ -432,21 +430,13 @@ pub fn amount_map(
             fraction,
             raw_ordinal as usize,
         )?;
-        let entry_price_minor = if item.tribute.reference_currency == 840 {
-            mandatory_entry_price_840
-        } else {
-            item.conditional_entry_price_minor.copied().ok_or(
-                ProgramErrorV1::ConditionalOracleUnavailable {
+        let entry_price_minor =
+            item.entry_price_minor
+                .copied()
+                .ok_or(ProgramErrorV1::EntryPriceUnavailable {
                     ordinal: raw_ordinal as usize,
                     currency: item.tribute.reference_currency,
-                },
-            )?
-        };
-        validate_entry_price(
-            entry_price_minor,
-            Some(raw_ordinal as usize),
-            item.tribute.reference_currency,
-        )?;
+                })?;
         if !item.nod_target_available || item.tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget {
                 ordinal: raw_ordinal as usize,
@@ -454,7 +444,7 @@ pub fn amount_map(
         }
         let floor_price_minor =
             calc_floor_price(item.tribute.tribute_price_minor.max(entry_price_minor));
-        let cost_amount_minor =
+        let settlement_cost_minor =
             calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
         checked_segment_gratis_total = checked_segment_gratis_total
             .checked_add(gratis_load_minor)
@@ -472,7 +462,7 @@ pub fn amount_map(
             gratis_load_minor,
             entry_price_minor,
             floor_price_minor,
-            cost_amount_minor,
+            settlement_cost_minor,
             issuance_currency: item.tribute.issuance_currency,
             reference_currency: item.tribute.reference_currency,
             exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
@@ -692,7 +682,7 @@ pub fn output_finalize(
                 floor_price_minor: amount.floor_price_minor,
                 gratis_load_minor: amount.gratis_load_minor,
                 entry_price_minor: amount.entry_price_minor,
-                cost_amount_minor: amount.cost_amount_minor,
+                settlement_cost_minor: amount.settlement_cost_minor,
                 issuance_currency: amount.issuance_currency,
                 reference_currency: amount.reference_currency,
                 bucket_key,

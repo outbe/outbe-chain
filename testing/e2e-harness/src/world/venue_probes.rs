@@ -45,7 +45,7 @@ sol! {
             ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
-            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
         }
         function auctions(uint32 worldwideDay)
             external view
@@ -54,11 +54,11 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IParkedWork {
-        struct ParkedSend { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
-        function nextPendingBidsRelayIdx() external view returns (uint256);
-        function flushPendingBidsRelay(uint256 idx) external;
-        function parkedSend(uint256 idx) external view returns (ParkedSend memory);
-        function flushPendingSend(uint256 idx) external;
+        struct ParkedMessage { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
+        function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done);
+        function relayBids(uint32 worldwideDay) external;
+        function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
+        function resendParkedMessage(uint256 idx) external;
         function nextParkedIdx() external view returns (uint256);
         function retryDelivery(uint256 idx) external;
     }
@@ -182,16 +182,19 @@ pub(crate) fn parked_work(
     venue_url: &str,
     router: Address,
     venue_router: Address,
+    worldwide_day: u32,
 ) -> String {
-    let relays = eth::read_call(
+    let relay = eth::read_call(
         venue_url,
         venue_router,
-        &IParkedWork::nextPendingBidsRelayIdxCall {},
+        &IParkedWork::bidsRelayCall {
+            worldwideDay: worldwide_day,
+        },
     );
     let parked = eth::read_call(
         url,
         router,
-        &IParkedWork::parkedSendCall { idx: U256::ZERO },
+        &IParkedWork::parkedMessageCall { idx: U256::ZERO },
     );
     let parked_note = match parked {
         Some(send) if !send.payload.is_empty() => {
@@ -201,7 +204,7 @@ pub(crate) fn parked_work(
                 url,
                 router,
                 crate::world::forge::DEPLOYER_KEY,
-                &IParkedWork::flushPendingSendCall { idx: U256::ZERO },
+                &IParkedWork::resendParkedMessageCall { idx: U256::ZERO },
                 None,
             );
             format!(
@@ -215,23 +218,28 @@ pub(crate) fn parked_work(
         Some(_) => "origin parked nothing".to_owned(),
         None => "origin did not report parked sends".to_owned(),
     };
-    let relay_note = match relays {
-        Some(count) if count > U256::ZERO => {
-            // Retrying a parked relay is permissionless, and its revert carries
-            // the reason the venue swallowed when it parked.
-            let flush = eth::send_call(
+    let relay_note = match relay {
+        Some(progress) if !progress.done => {
+            // Carrying an unfinished relay on is permissionless, and its revert carries
+            // the reason the venue stopped where it did.
+            let push = eth::send_call(
                 venue_url,
                 venue_router,
                 crate::world::forge::DEPLOYER_KEY,
-                &IParkedWork::flushPendingBidsRelayCall { idx: U256::ZERO },
+                &IParkedWork::relayBidsCall {
+                    worldwideDay: worldwide_day,
+                },
                 None,
             );
             format!(
-                "venue parked {count} bid relays, retry says {:?}",
-                flush.err().map(|error| error.to_string())
+                "venue relayed {} of {} bid batches, push says {:?}",
+                progress.nextBatch,
+                progress.totalBatches,
+                push.err().map(|error| error.to_string())
             )
         }
-        _ => format!("venue parked bid relays {relays:?}"),
+        Some(_) => "venue relayed every bid batch".to_owned(),
+        None => "venue did not report its bids relay".to_owned(),
     };
     format!("{parked_note}, {relay_note}")
 }
@@ -525,7 +533,7 @@ pub(crate) fn parked_origin_sends(world: &World) -> u32 {
         let Some(send) = eth::read_call(
             &url,
             contracts.origin_router,
-            &IParkedWork::parkedSendCall {
+            &IParkedWork::parkedMessageCall {
                 idx: U256::from(idx),
             },
         ) else {
@@ -552,7 +560,7 @@ sol! {
     struct SeriesData {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedIntexCount;
+        uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -573,8 +581,8 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
-        function pendingMark(bytes14 seriesId) external view returns (uint8);
-        function applyPendingMark(bytes14 seriesId) external;
+        function parkedMark(bytes14 seriesId) external view returns (uint8);
+        function applyParkedMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -608,7 +616,7 @@ pub(crate) fn issued_series(
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn deferred_issuances(url: &str, venue_router: Address) -> usize {
     let topic0 =
-        alloy_primitives::keccak256(b"IssuanceDeferred(uint256,bytes14,address,bytes)".as_slice());
+        alloy_primitives::keccak256(b"IssuanceParked(uint256,bytes14,address,bytes)".as_slice());
     logs_of(
         url,
         venue_router,
@@ -643,13 +651,13 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
     None
 }
 
-/// What `holder` owns of `series`: units still issued, and units already settled.
+/// What `owner` owns of `series`: units still issued, and units already settled.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_balances(
     url: &str,
     nft: Address,
     series: alloy_primitives::FixedBytes<14>,
-    holder: Address,
+    owner: Address,
 ) -> Option<(u64, u64)> {
     let issued_id = eth::read_call(
         url,
@@ -665,7 +673,7 @@ pub(crate) fn series_balances(
         url,
         nft,
         &IIssuedSeries::balanceOfCall {
-            account: holder,
+            account: owner,
             id: issued_id,
         },
     )?;
@@ -673,7 +681,7 @@ pub(crate) fn series_balances(
         url,
         nft,
         &IIssuedSeries::balanceOfCall {
-            account: holder,
+            account: owner,
             id: settled_id,
         },
     )?;
@@ -715,7 +723,7 @@ pub(crate) fn series_issued_count(
     series: alloy_primitives::FixedBytes<14>,
 ) -> Option<u32> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
-        .map(|data| data.issuedIntexCount)
+        .map(|data| data.issuedUnits)
 }
 
 /// When the series was Called, as both chains recorded it.

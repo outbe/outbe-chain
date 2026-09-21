@@ -120,7 +120,7 @@ interface IIntexNFT1155Bridge {
     /// @param receiveId Inbound bridge message id whose item was reclaimed.
     /// @param idx Position of the reclaimed item in the original batch.
     /// @param srcChainId Origin chainId the reverse transfer was sent to.
-    /// @param to Holder re-minted on the origin chain.
+    /// @param to Owner re-minted on the origin chain.
     /// @param tokenId Token ID reclaimed.
     /// @param amount Amount reclaimed.
     event CrosschainMintReclaimed(

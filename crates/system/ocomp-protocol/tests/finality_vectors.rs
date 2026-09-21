@@ -48,7 +48,7 @@ use outbe_node::ocomp::finality::{
     TrieHistoricalCommitteeAuthority,
 };
 use outbe_node::ocomp::retention::{
-    CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, RethFinalizedInputProofSource,
+    CandidatePinV1, FinalizedInputProofSource, RethFinalizedInputProofSource,
 };
 use outbe_ocomp_protocol::{
     codec::CodecLimits,
@@ -132,16 +132,16 @@ fn intent() -> JobIntentV1 {
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
-            gratis_supply: U256::from(20),
-            lysis_budget: U256::from(300),
-            auction_base: U256::from(700),
+            day_gratis_limit_minor: U256::from(20),
+            lysis_limit_minor: U256::from(300),
+            desis_limit_minor: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: 840,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: hash(9),
+            request_limit_split_receipt_hash: hash(9),
         },
         logical_evaluation_height: FINALIZED_BLOCK_NUMBER,
         logical_evaluation_time: 1_000,
@@ -1224,7 +1224,7 @@ fn ocm_fin_001_production_builder_reconstructs_and_verifies_the_independent_vect
 }
 
 #[test]
-fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity() {
+fn ocm_fin_001_production_source_builds_exact_proof_and_refuses_missing_or_ambiguous_finality() {
     let fixture = fixture(&[0, 1, 2]);
     let candidate = CandidatePinV1 {
         block_number: FINALIZED_BLOCK_NUMBER,
@@ -1236,28 +1236,16 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         protocol_bundle_hash: fixture.intent.protocol_bundle_hash,
         input_lease_id: fixture.intent.input_lease_id().expect("input lease id"),
     };
-    let expected_job_id = fixture
-        .intent
-        .job_id(fixture.header_hash, fixture.state_root, &LIMITS)
-        .expect("expected JobId");
-
     let exact_store = FinalizedParentCertStore::new();
     exact_store
         .put_finalization(fixture.finalization_record.clone())
         .expect("persist exact finalization");
-    let exact_source =
-        RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store, || Ok(None), 64);
+    let exact_source = RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store);
     assert_eq!(
         exact_source
-            .resolve_finality(candidate)
+            .build_finalized_intent_proof(candidate)
             .expect("exact persisted finality resolves"),
-        CandidateFinalityV1::Finalized(outbe_node::ocomp::retention::FinalizedJobPinV1 {
-            candidate,
-            job_id: expected_job_id,
-            finality_recorded_height: FINALIZED_BLOCK_NUMBER,
-            open_height: FINALIZED_BLOCK_NUMBER + 4,
-            deadline_height: FINALIZED_BLOCK_NUMBER + 4 + 64,
-        })
+        fixture.proof
     );
 
     let competing_store = FinalizedParentCertStore::new();
@@ -1266,18 +1254,11 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     competing_store
         .put_finalization(competing)
         .expect("persist competing finalization identity");
-    let competing_source = RethFinalizedInputProofSource::new(
-        fixture.provider.clone(),
-        competing_store,
-        || Ok(None),
-        64,
-    );
-    assert_eq!(
-        competing_source
-            .resolve_finality(candidate)
-            .expect("one exact competing finalization proves orphaning"),
-        CandidateFinalityV1::Orphaned
-    );
+    let competing_source =
+        RethFinalizedInputProofSource::new(fixture.provider.clone(), competing_store);
+    assert!(competing_source
+        .build_finalized_intent_proof(candidate)
+        .is_err());
 
     let ambiguous_store = FinalizedParentCertStore::new();
     ambiguous_store
@@ -1288,13 +1269,11 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     ambiguous_store
         .put_finalization(duplicate)
         .expect("persist second exact-key variant");
-    let ambiguous_source = RethFinalizedInputProofSource::new(
-        fixture.provider.clone(),
-        ambiguous_store,
-        || Ok(None),
-        64,
-    );
-    assert!(ambiguous_source.resolve_finality(candidate).is_err());
+    let ambiguous_source =
+        RethFinalizedInputProofSource::new(fixture.provider.clone(), ambiguous_store);
+    assert!(ambiguous_source
+        .build_finalized_intent_proof(candidate)
+        .is_err());
 }
 
 #[test]

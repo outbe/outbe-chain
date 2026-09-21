@@ -117,7 +117,7 @@ contract BridgeMsgCodecHardeningTest is Test {
             seriesId: "20260212-TRY-U",
             worldwideDay: 2,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: 1,
+            issuedUnits: 1,
             promisLoadMinor: 1,
             entryPriceMinor: 1,
             floorPriceMinor: 1,

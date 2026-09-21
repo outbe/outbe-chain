@@ -361,7 +361,7 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
-    // GemFactory.parkIntex burns through IntexNFT1155, which gates on GEM_ROLE;
+    // GemFactory.sendToGemFactory burns through IntexNFT1155, which gates on GEM_ROLE;
     // without this grant the merchant gem path reverts on access control.
     hardhat::task(
         intex,

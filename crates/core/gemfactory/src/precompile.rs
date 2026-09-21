@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::SolInterface;
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
+use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::errors::GemFactoryError;
 use crate::runtime;
@@ -24,14 +24,10 @@ mod abi {
 }
 pub use abi::IGemFactory;
 
-/// Base gas charged by the registry before invoking [`dispatch`]: `settleGem`
-/// verifies a PayNote spend proof, which is real native work every validator
-/// repeats.
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&IGemFactory::settleGemCall::SELECTOR) => ZK_VERIFY_GAS,
-        _ => PRECOMPILE_BASE_GAS,
-    }
+/// Ordinary dispatch charge. Settlement still verifies its PayNote proof but
+/// does not add a separate `ZK_VERIFY_GAS` tariff to calldata and storage gas.
+pub fn base_gas(_input: &[u8]) -> u64 {
+    PRECOMPILE_BASE_GAS
 }
 
 pub fn dispatch(
@@ -56,20 +52,23 @@ pub fn dispatch(
                 runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId, &c.payNoteProof)
+                runtime::settle_gem(&storage, sender, c.gemId, c.asset)
             }),
-            minePromis(c) => mutate(c, caller, |sender, c| {
+            settleGemWithPayNote(c) => mutate_void(c, caller, |sender, c| {
+                runtime::settle_gem_with_paynote(&storage, sender, c.gemId, &c.payNoteProof)
+            }),
+            minePromis(c) => mutate(c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_promis(&storage, sender, c.gemId, c.nonce, auth)
+                runtime::mine_promis(&storage, c.gemId, c.nonce, auth)
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());
                 Ok(IGemFactory::getStatisticsReturn {
                     totalGemsIssued: factory.total_gems_issued.read()?,
-                    totalIntexParked: factory.total_intex_parked.read()?,
+                    totalGemFactoryUnits: factory.total_gem_factory_units.read()?,
                 })
             }),
 

@@ -10,15 +10,15 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/nod/image/";
 /// `REAL_ID_SHIFT`, `MAX_BIN_ID`) live in `outbe_primitives::math::constants`.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Maximum number of off-chain bucket bodies inspected by the consensus
-/// begin-block qualifier. Remaining work stays in the compact EVM worklist
-/// and is resumed deterministically in the next block.
+/// Maximum number of off-chain bucket bodies inspected by one qualification
+/// slice. Remaining work stays in the compact EVM worklist and is resumed
+/// on the next CycleTick against the same frozen UTC day.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
-/// The four call terms below are snapshotted onto a bucket when it qualifies,
-/// and every later check reads the bucket's copy. Retuning one of them re-terms
-/// buckets that qualify afterwards, and leaves every already-armed bucket on
-/// the terms it was armed with - the same guarantee gem and intex give.
+/// The four call terms below are snapshotted onto a bucket when it is first
+/// issued, and every later check reads the bucket's copy. Retuning one of them
+/// re-terms buckets issued afterwards, and leaves every already-issued bucket
+/// on the terms it was issued with - the same guarantee gem and intex give.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
@@ -32,32 +32,38 @@ pub const SECS_PER_DAY: u32 = 24 * 3600;
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 
-/// Breach days within the lookback window that arm a call. A day at or below the
-/// call price, and a day with no published price, both simply fail to count, so
-/// the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either.
-pub const CALL_BREACH_DAYS: u32 = 21;
+/// Qualifying days within the lookback window that arm a call. A day at or
+/// below the call price, and a day with no published price, both simply fail
+/// to count, so the window absorbs up to
+/// `CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS` of either.
+pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
 /// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window`
-/// seals at qualification, matching `GemData::call_window`.
+/// seals at issuance, matching `GemData::call_window`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
-/// [`CALL_BREACH_DAYS`] in seconds - the encoding
-/// `callable_bucket_call_threshold` seals at qualification, matching
+/// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding
+/// `callable_bucket_call_threshold` seals at issuance, matching
 /// `GemData::call_threshold`.
-pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
+pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
-/// Seconds after `called_at` within which the owner must settle and mine. Once
+/// Seconds after `called_at` within which the owner must settle. Once
 /// elapsed the bucket's remaining Nods are forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
-/// Callable buckets visited per daily run; the cursor resumes the rest. A bucket
-/// displaced past the cursor is picked up a day later, which cannot change an
-/// outcome: the call needs a multi-week breach count and the forfeit follows the
-/// bucket's sealed notice period.
-pub const MAX_NOD_CALL_VISITS: u32 = 4096;
+/// Callable buckets visited per call slice; the cursor resumes the rest on the
+/// next CycleTick against the same frozen UTC day. A bucket displaced past the
+/// cursor is picked up later in the same sweep, which cannot change an outcome:
+/// the call needs a multi-week breach count and the forfeit follows the bucket's
+/// sealed notice period.
+pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
 
-/// Nod bodies forfeit-burned per daily run, far below the visit budget because a
+/// Nod bodies forfeit-burned per call slice, far below the visit budget because a
 /// forfeit is a compressed-entity load plus delete rather than an EVM slot write.
 /// A correlated mass-forfeit is the expected shape of a call event, not a tail
 /// case, so the burst needs its own cap.
-pub const MAX_NOD_FORFEITS_PER_RUN: u32 = 256;
+pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;
+
+/// `SweepDaySkipped.sweep` of each daily sweep.
+pub const QUALIFY_SWEEP: u8 = 0;
+pub const CALL_SWEEP: u8 = 1;

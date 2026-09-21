@@ -5,10 +5,11 @@ pragma solidity ^0.8.0;
 interface IVaultRouter {
     enum StablesSource {
         Unknown,
-        IntexCostAmount, // todo remove once implement PayNoteDeposit
+        IntexCostAmount,
         CredisCostAmount,
-        GemCostAmount, // todo remove once implement PayNoteDeposit
-        PayNoteDeposit
+        GemCostAmount,
+        PayNoteDeposit,
+        NodCostAmount
     }
 
     enum StablesTarget {
@@ -16,6 +17,7 @@ interface IVaultRouter {
         Credis
     }
 
+    error TokenOperationFailed();
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
     error InvalidReferenceCurrency();

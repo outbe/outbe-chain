@@ -27,7 +27,7 @@ fn action(ordinal: u32) -> NodActionV1 {
         floor_price_minor: U256::from(1_000 + ordinal),
         gratis_load_minor: U256::from(100 + ordinal),
         entry_price_minor: U256::from(20 + ordinal),
-        cost_amount_minor: U256::from(120 + ordinal),
+        settlement_cost_minor: U256::from(120 + ordinal),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_785_024_000,
@@ -89,7 +89,7 @@ fn finalized_active_nod_accepts_its_canonical_membership_proof() {
 fn altered_nod_body_is_not_a_member_of_the_active_nod_root() {
     let limits = poc_schema_limits();
     let (authority, mut proof) = fixture();
-    proof.action.cost_amount_minor += U256::from(1);
+    proof.action.settlement_cost_minor += U256::from(1);
 
     assert!(proof.verify_against(&authority, &limits).is_err());
 }

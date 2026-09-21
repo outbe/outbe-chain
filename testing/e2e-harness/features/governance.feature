@@ -8,9 +8,9 @@ Feature: Governance proposals and protocol updates
   Scenario: Validator quorum registers an L2 network through JSON governance
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height
-    When an L2 network is registered for the operator with zk enabled
+    When an L2 network is registered for the operator
     Then proposal 1 is approved
-    And the governed L2 network is registered with zk enabled
+    And the governed L2 network is registered
     And the committee nodes agree on the state root
 
   Scenario: OIP and GIP are approved and materialized
@@ -123,11 +123,11 @@ Feature: Governance proposals and protocol updates
     Then the committee does not advance past the activation height
     And the active protocol version is unchanged
     And the scheduled update is still waiting for activation
-    And validator "validator-0" logs report the unsupported activation as fatal
+    And the current committee logs report the unsupported activation as fatal
     When the entire committee restarts after the unsupported activation failure
     Then every validator RPC recovers below the unsupported activation height
     And the unsupported proposal and waiting schedule are identical on every validator
     And the committee remains stalled below the unsupported activation height
-    And validator "validator-0" logs report the unsupported activation as fatal
+    And the current committee logs report the unsupported activation as fatal
     When the operator replaces the committee binary with the supported version
     Then the replacement binary activates the scheduled version and resumes the committee

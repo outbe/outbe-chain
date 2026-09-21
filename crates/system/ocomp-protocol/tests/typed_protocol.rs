@@ -35,16 +35,16 @@ use outbe_ocomp_protocol::{
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, empty_apply_event_summary_hash,
-        ActivationOutcome, AggregateActivationReceiptV1, BudgetSplitDestination,
-        CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1, NodBatchReceiptV1,
-        RequestBudgetSplitReceiptV1, TributeReceiptV1,
+        ActivationOutcome, AggregateActivationReceiptV1, CarryOverReceiptV1, ContributorReceiptV1,
+        EffectBindingV1, LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1,
+        TributeReceiptV1,
     },
     registry::{HashDomain, ListKind, ObjectKind},
     result::{
-        lysis_v1_empty_semantic_event_root, ActivationPayloadV1, CarryOverCreditActionV1,
-        CarryOverReason, CompletionStatus, ConservationTotalsV1, ExactCountsV1,
-        LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
-        ResultRootsV1,
+        lysis_v1_empty_semantic_event_root, wwd_allocation_ceiling, ActivationPayloadV1,
+        CarryOverCreditActionV1, CarryOverReason, CompletionStatus, ConservationTotalsV1,
+        ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1,
+        ResultChunkV1, ResultRootsV1,
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
@@ -199,16 +199,16 @@ fn intent() -> JobIntentV1 {
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
             gratis_demand: U256::ZERO,
-            gratis_supply: U256::ZERO,
-            lysis_budget: U256::ZERO,
-            auction_base: U256::ZERO,
+            day_gratis_limit_minor: U256::ZERO,
+            lysis_limit_minor: U256::ZERO,
+            desis_limit_minor: U256::ZERO,
             auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
                 reference_currency: 840,
                 entry_price_minor: U256::ZERO,
                 source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: hash(113),
+            request_limit_split_receipt_hash: hash(113),
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
@@ -288,11 +288,11 @@ fn result() -> LysisResultV1 {
         tribute_nominal_total: U256::ZERO,
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
-        gratis_supply: U256::ZERO,
-        lysis_budget: U256::ZERO,
-        auction_base: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
-        unused_lysis: U256::ZERO,
+        day_gratis_limit_minor: U256::ZERO,
+        lysis_limit_minor: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
+        unused_lysis_limit_minor: U256::ZERO,
         carry_over_credit: U256::ZERO,
         status: CompletionStatus::Completed,
         logical_evaluation_height: 100,
@@ -316,11 +316,11 @@ fn result() -> LysisResultV1 {
         eligible_nominal_total: U256::ZERO,
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
-        gratis_supply: U256::ZERO,
-        lysis_budget: U256::ZERO,
-        auction_base: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
-        unused_lysis: U256::ZERO,
+        day_gratis_limit_minor: U256::ZERO,
+        lysis_limit_minor: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
+        unused_lysis_limit_minor: U256::ZERO,
         carry_over_credit: U256::ZERO,
         nod_cost_total: U256::ZERO,
     };
@@ -355,12 +355,59 @@ fn result() -> LysisResultV1 {
         metadosis_completion_summary,
         tribute_count: 1,
         tribute_nominal_total: U256::ZERO,
-        unused_lysis: U256::ZERO,
+        unused_lysis_limit_minor: U256::ZERO,
         roots,
         counts,
         conservation,
         arithmetic_commitment,
         event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
+    }
+}
+
+fn result_with_conservation(conservation: ConservationTotalsV1) -> LysisResultV1 {
+    let mut result = result();
+    result.tribute_nominal_total = conservation.tribute_nominal_total;
+    result.unused_lysis_limit_minor = conservation.unused_lysis_limit_minor;
+    result.conservation = conservation.clone();
+    let completion = &mut result.metadosis_completion_summary;
+    completion.tribute_nominal_total = conservation.tribute_nominal_total;
+    completion.day_limit = conservation.day_limit;
+    completion.gratis_demand = conservation.gratis_demand;
+    completion.day_gratis_limit_minor = conservation.day_gratis_limit_minor;
+    completion.lysis_limit_minor = conservation.lysis_limit_minor;
+    completion.desis_limit_minor = conservation.desis_limit_minor;
+    completion.lysis_allocation_minor = conservation.lysis_allocation_minor;
+    completion.unused_lysis_limit_minor = conservation.unused_lysis_limit_minor;
+    completion.carry_over_credit = conservation.carry_over_credit;
+    result.arithmetic_commitment = hash_framed(
+        HashDomain::LysisArithmetic,
+        &result
+            .arithmetic_summary()
+            .encode_canonical(&LIMITS)
+            .unwrap(),
+    )
+    .unwrap();
+    result
+}
+
+fn ceiling_conservation(
+    tribute_nominal_total: u64,
+    lysis_allocation_minor: u64,
+    desis_limit_minor: u64,
+) -> ConservationTotalsV1 {
+    let lysis_limit_minor = lysis_allocation_minor;
+    ConservationTotalsV1 {
+        tribute_nominal_total: U256::from(tribute_nominal_total),
+        eligible_nominal_total: U256::from(tribute_nominal_total),
+        day_limit: U256::from(lysis_limit_minor + desis_limit_minor),
+        gratis_demand: U256::from(lysis_limit_minor),
+        day_gratis_limit_minor: U256::from(lysis_limit_minor),
+        lysis_limit_minor: U256::from(lysis_limit_minor),
+        desis_limit_minor: U256::from(desis_limit_minor),
+        lysis_allocation_minor: U256::from(lysis_allocation_minor),
+        unused_lysis_limit_minor: U256::ZERO,
+        carry_over_credit: U256::ZERO,
+        nod_cost_total: U256::from(lysis_allocation_minor),
     }
 }
 
@@ -805,7 +852,7 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         contributor_receipt_hash: None,
         tribute_receipt_hash: None,
         carry_over_receipt_hash: None,
-        request_budget_split_receipt_hash: hash(113),
+        request_limit_split_receipt_hash: hash(113),
         active_generation_hash: None,
         effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
         event_summary_hash: empty_apply_event_summary_hash().unwrap(),
@@ -1020,7 +1067,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         nod_count: 0,
         nod_root: result.roots.nod_root,
         nod_amount_total: U256::ZERO,
-        nod_gratis_consumed: U256::ZERO,
+        lysis_allocation_minor: U256::ZERO,
         issued_at: 1_000,
         state_event_digest: hash(110),
     };
@@ -1041,15 +1088,15 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         retired_generation: 3,
         state_event_digest: hash(112),
     };
-    let request_budget_split_receipt = RequestBudgetSplitReceiptV1 {
+    let request_limit_split_receipt = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::ZERO,
-        lysis_budget: U256::ZERO,
-        auction_base: U256::ZERO,
-        destination: BudgetSplitDestination::DesisAuction,
+        lysis_limit_minor: U256::ZERO,
+        desis_limit_minor: U256::ZERO,
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1064,7 +1111,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         binding: binding(),
         source_wwd: 7,
         before_value: U256::ZERO,
-        credited_unused_lysis: U256::ZERO,
+        credited_unused_lysis_limit_minor: U256::ZERO,
         after_value: U256::ZERO,
         state_event_digest: hash(115),
     };
@@ -1189,9 +1236,9 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     );
     assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
     assert_round_trip!(
-        request_budget_split_receipt,
-        RequestBudgetSplitReceiptV1,
-        RequestBudgetSplitReceiptV1
+        request_limit_split_receipt,
+        RequestLimitSplitReceiptV1,
+        RequestLimitSplitReceiptV1
     );
     assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
     assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
@@ -1583,7 +1630,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
             attempt: 0,
             input_manifest_hash: hash(3),
             wwd: 20_260_724,
-            lysis_budget: U256::from(99_000_000_u64),
+            lysis_limit_minor: U256::from(99_000_000_u64),
             logical_evaluation_time: 1_784_765_900,
             tribute_count,
             max_tributes_per_work_shard: 256,
@@ -1603,7 +1650,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
         let mut changed_wwd = plan.clone();
         changed_wwd.wwd += 1;
         let mut changed_budget = plan.clone();
-        changed_budget.lysis_budget += U256::from(1);
+        changed_budget.lysis_limit_minor += U256::from(1);
         let mut changed_time = plan.clone();
         changed_time.logical_evaluation_time += 1;
         for changed in [changed_wwd, changed_budget, changed_time] {
@@ -1636,22 +1683,22 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
 fn a_split_short_of_the_day_limit_is_accepted() {
     let mut short_intent = intent();
     short_intent.frozen_metadosis_values.day_limit = U256::from(10);
-    short_intent.frozen_metadosis_values.lysis_budget = U256::from(3);
-    short_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    short_intent.frozen_metadosis_values.lysis_limit_minor = U256::from(3);
+    short_intent.frozen_metadosis_values.desis_limit_minor = U256::from(2);
     short_intent.encode_canonical(&LIMITS).unwrap();
 }
 
 #[test]
 fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
-    let credited_headroom = RequestBudgetSplitReceiptV1 {
+    let credited_headroom = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(10),
-        lysis_budget: U256::from(4),
-        auction_base: U256::from(5),
-        destination: BudgetSplitDestination::DesisAuction,
+        lysis_limit_minor: U256::from(4),
+        desis_limit_minor: U256::from(5),
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::from(1),
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1668,13 +1715,13 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
     dropped_headroom.carry_over_credit = U256::ZERO;
     assert!(matches!(
         dropped_headroom.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("request budget split"))
+        Err(ProtocolError::InvalidInvariant("request limit split"))
     ));
 
     // A red day briefs nothing, so its base returns together with the headroom.
     let mut red_returns_everything = credited_headroom;
     red_returns_everything.day_type = DayType::Red;
-    red_returns_everything.destination = BudgetSplitDestination::CarryOver;
+    red_returns_everything.destination = LimitSplitDestination::CarryOver;
     red_returns_everything.carry_over_credit = U256::from(6);
     red_returns_everything.encode_canonical(&LIMITS).unwrap();
 }
@@ -1683,21 +1730,21 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
 fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut invalid_intent = intent();
     invalid_intent.frozen_metadosis_values.day_limit = U256::from(1);
-    invalid_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    invalid_intent.frozen_metadosis_values.desis_limit_minor = U256::from(2);
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("Metadosis budget split"))
+        Err(ProtocolError::InvalidInvariant("Metadosis limit split"))
     ));
 
-    let green_split = RequestBudgetSplitReceiptV1 {
+    let green_split = RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
         pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(10),
-        lysis_budget: U256::from(4),
-        auction_base: U256::from(6),
-        destination: BudgetSplitDestination::DesisAuction,
+        lysis_limit_minor: U256::from(4),
+        desis_limit_minor: U256::from(6),
+        destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
         auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
@@ -1711,20 +1758,20 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     green_split.encode_canonical(&LIMITS).unwrap();
 
     let mut green_to_carry_over = green_split.clone();
-    green_to_carry_over.destination = BudgetSplitDestination::CarryOver;
+    green_to_carry_over.destination = LimitSplitDestination::CarryOver;
     green_to_carry_over.desis_brief_hash = None;
-    green_to_carry_over.carry_over_credit = green_to_carry_over.auction_base;
+    green_to_carry_over.carry_over_credit = green_to_carry_over.desis_limit_minor;
     assert!(matches!(
         green_to_carry_over.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
     let mut red_split = green_split;
     red_split.day_type = DayType::Red;
-    red_split.destination = BudgetSplitDestination::CarryOver;
-    red_split.carry_over_credit = red_split.auction_base;
+    red_split.destination = LimitSplitDestination::CarryOver;
+    red_split.carry_over_credit = red_split.desis_limit_minor;
     red_split.encode_canonical(&LIMITS).unwrap();
 
     let mut red_without_brief = red_split.clone();
@@ -1732,27 +1779,27 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     assert!(matches!(
         red_without_brief.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
     let mut red_to_desis = red_split;
-    red_to_desis.destination = BudgetSplitDestination::DesisAuction;
+    red_to_desis.destination = LimitSplitDestination::DesisAuction;
     red_to_desis.desis_brief_hash = Some(hash(113));
     red_to_desis.carry_over_credit = U256::ZERO;
     assert!(matches!(
         red_to_desis.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "request budget split destination"
+            "request limit split destination"
         ))
     ));
 
     let mut invalid_lysis_conservation = result();
     invalid_lysis_conservation.conservation.day_limit = U256::from(1);
-    invalid_lysis_conservation.conservation.lysis_budget = U256::from(1);
+    invalid_lysis_conservation.conservation.lysis_limit_minor = U256::from(1);
     assert!(matches!(
         invalid_lysis_conservation.encode_canonical(&LIMITS),
-        Err(ProtocolError::InvalidInvariant("Lysis budget conservation"))
+        Err(ProtocolError::InvalidInvariant("Lysis limit conservation"))
     ));
 
     let mut invalid_carry_over = result();
@@ -1766,7 +1813,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         binding: binding(),
         source_wwd: 7,
         before_value: U256::from(3),
-        credited_unused_lysis: U256::from(4),
+        credited_unused_lysis_limit_minor: U256::from(4),
         after_value: U256::from(8),
         state_event_digest: hash(115),
     };
@@ -1782,6 +1829,42 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         Err(ProtocolError::InvalidInvariant(
             "aggregate receipt outcome shape"
         ))
+    ));
+}
+
+/// C37/A39: a one-unit mutation of Lysis Allocation or Desis Limit past the
+/// sealed Tribute nominal is detected, including checked-add overflow.
+#[test]
+fn wwd_allocation_ceiling_holds_at_equality_and_rejects_a_one_unit_mutation() {
+    assert!(wwd_allocation_ceiling(U256::from(6), U256::from(4), U256::from(10)).is_ok());
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::from(6), U256::from(5), U256::from(10)),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::from(7), U256::from(4), U256::from(10)),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        wwd_allocation_ceiling(U256::MAX, U256::from(1), U256::MAX),
+        Err(ProtocolError::IntegerOverflow {
+            what: "WWD allocation ceiling"
+        })
+    ));
+}
+
+#[test]
+fn mutating_lysis_plus_desis_above_tribute_nominal_is_detected() {
+    result_with_conservation(ceiling_conservation(10, 6, 4))
+        .validate_semantics(&LIMITS)
+        .unwrap();
+    assert!(matches!(
+        result_with_conservation(ceiling_conservation(10, 6, 5)).validate_semantics(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
+    ));
+    assert!(matches!(
+        result_with_conservation(ceiling_conservation(10, 7, 4)).validate_semantics(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("WWD allocation ceiling"))
     ));
 }
 
@@ -1839,7 +1922,7 @@ fn applied_receipt_validates_the_fixed_owner_event_order() {
 fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let protocol_bundle_hash = hash(41);
     let wwd = 7_u32;
-    let auction_base = U256::from(6);
+    let desis_limit_minor = U256::from(6);
     let prices = |price: u64, currency: u16| {
         vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
             reference_currency: currency,
@@ -1854,7 +1937,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let digest = desis_request_brief_hash(
         protocol_bundle_hash,
         wwd,
-        auction_base,
+        desis_limit_minor,
         &entry_prices,
         logical_anchor,
     )
@@ -1862,7 +1945,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(protocol_bundle_hash.as_slice());
     preimage.extend_from_slice(&wwd.to_be_bytes());
-    preimage.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    preimage.extend_from_slice(&desis_limit_minor.to_be_bytes::<32>());
     preimage.extend_from_slice(&1_u16.to_be_bytes());
     preimage.extend_from_slice(&840_u16.to_be_bytes());
     preimage.extend_from_slice(&U256::from(2).to_be_bytes::<32>());
@@ -1882,12 +1965,18 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         rows
     };
     for changed in [
-        desis_request_brief_hash(hash(42), wwd, auction_base, &entry_prices, logical_anchor)
-            .unwrap(),
+        desis_request_brief_hash(
+            hash(42),
+            wwd,
+            desis_limit_minor,
+            &entry_prices,
+            logical_anchor,
+        )
+        .unwrap(),
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd + 1,
-            auction_base,
+            desis_limit_minor,
             &entry_prices,
             logical_anchor,
         )
@@ -1895,7 +1984,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base + U256::from(1),
+            desis_limit_minor + U256::from(1),
             &entry_prices,
             logical_anchor,
         )
@@ -1903,7 +1992,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &prices(3, 840),
             logical_anchor,
         )
@@ -1911,7 +2000,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &prices(2, 978),
             logical_anchor,
         )
@@ -1919,7 +2008,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &two_rows,
             logical_anchor,
         )
@@ -1927,7 +2016,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd,
-            auction_base,
+            desis_limit_minor,
             &entry_prices,
             logical_anchor + 1,
         )

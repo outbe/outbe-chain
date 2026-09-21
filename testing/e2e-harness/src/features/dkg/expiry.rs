@@ -15,6 +15,10 @@ const PHASE: &str = "dkg_expiry_halt_only";
 const FINALIZED: &str = "marshal-delivered block finalized and acked";
 const FCU: &str = "forkchoice update returned valid status";
 const EXPIRED: &str = "frozen DKG target missed VRF expiry: cycle ";
+// Cover pre-window progress with a founder offline, reaching expiry, natural
+// process exits, and the durable header scan within one finite budget. The SGX
+// run reached only height 52 of expiry 66 in 240 seconds due to missed proposers.
+const PROOF_BUDGET: Duration = Duration::from_secs(1200);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +60,8 @@ struct Telemetry {
 fn within(deadline: Instant) -> Result<()> {
     ensure!(
         Instant::now() < deadline,
-        "240-second DKG expiry proof budget exhausted"
+        "{}-second DKG expiry proof budget exhausted",
+        PROOF_BUDGET.as_secs()
     );
     Ok(())
 }
@@ -194,7 +199,7 @@ fn telemetry(log: &str, target: &FrozenTarget, expiry: u64) -> Result<Telemetry>
     for line in log.lines() {
         if line.contains(FINALIZED) || line.contains(FCU) {
             ensure!(
-                line.contains(" INFO outbe_consensus::executor::actor: "),
+                line.contains(" INFO outbe_consensus::executor::actor::finalization: "),
                 "wrong finalization record source"
             );
             let (height, hash, map) = if line.contains(FINALIZED) {
@@ -228,7 +233,8 @@ fn telemetry(log: &str, target: &FrozenTarget, expiry: u64) -> Result<Telemetry>
             // The same error can also appear in the terminal eyre cause chain.
             // Validate every copy, but only the production tracing record is
             // positive evidence that this stack selected its expiry branch.
-            saw_expiry |= line.contains(" ERROR outbe_chain: consensus stack failed ");
+            saw_expiry |=
+                line.contains(" ERROR outbe_chain::launch::node: consensus stack failed ");
         }
     }
     ensure!(saw_expiry, "missing exact frozen-target stack error");
@@ -369,7 +375,7 @@ fn check_chain(
 }
 
 pub(super) fn observe(world: &mut World) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(240);
+    let deadline = Instant::now() + PROOF_BUDGET;
     ensure!(
         !world
             .state
@@ -435,24 +441,37 @@ pub(super) fn observe(world: &mut World) -> Result<()> {
         sleep(Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())));
     };
 
+    last_error = format!(
+        "target acquired: cycle={}, freeze={}, expiry={expiry}; waiting for natural exits",
+        target.cycle, target.freeze
+    );
     while !owners(world)? {
-        within(deadline).map_err(|error| eyre!("{error}; last RPC diagnostic: {last_error}"))?;
+        within(deadline)
+            .map_err(|error| eyre!("{error}; last expiry observation: {last_error}"))?;
+        let mut observations = Vec::new();
         // Each expected port stays in scope. An RPC failure is diagnostic, not
         // a negative membership observation or evidence that the node halted.
         for (&index, &port) in COHORT.iter().zip(&ports) {
             let expected_pid = world.state.lifecycle_incarnations[&index].node_pid;
             let (pid, status) = world.localnet.owned_validator_process(index)?;
             if checked_exit(expected_pid, pid, status)? {
+                observations.push(format!("validator-{index} exited with code 1"));
                 continue; // Typed exit, never a responsive-peer filter.
             }
             match world.rpc.finalized_result(port) {
-                Ok(height) => ensure!(height <= expiry, "live survivor finalized above expiry"),
-                Err(error) => last_error = error.to_string(),
+                Ok(height) => {
+                    ensure!(height <= expiry, "live survivor finalized above expiry");
+                    observations.push(format!(
+                        "validator-{index} live: finalized={height}, expiry={expiry}"
+                    ));
+                }
+                Err(error) => observations.push(format!("validator-{index} live: RPC {error}")),
             }
         }
+        last_error = observations.join("; ");
         sleep(Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())));
     }
-    within(deadline).map_err(|error| eyre!("{error}; last RPC diagnostic: {last_error}"))?;
+    within(deadline).map_err(|error| eyre!("{error}; last expiry observation: {last_error}"))?;
     let mut peers = Vec::new();
     let mut common_anchor = None;
     for index in COHORT {
@@ -685,12 +704,12 @@ mod tests {
     fn log(headers: &[HeaderWitness]) -> String {
         let mut log = String::new();
         for header in headers {
-            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor: {FCU} finalized_height={} finalized_block_hash={}\n",
+            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor::finalization: {FCU} finalized_height={} finalized_block_hash={}\n",
                 header.height, header.block_hash));
-            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor: {FINALIZED} height={} digest={}\n",
+            log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor::finalization: {FINALIZED} height={} digest={}\n",
                 header.height, header.block_hash));
         }
-        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
+        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain::launch::node: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
         log
     }
 
@@ -748,8 +767,21 @@ mod tests {
             good.replace("deadline 66", "deadline 67"),
             good.replace("height=66 ", "height=oops "),
             good.replace("height=66 ", "height=66 height=66 "),
-            good.replace("outbe_consensus::executor::actor:", "another_actor:"),
-            good.replace(" ERROR outbe_chain:", " ERROR another_process:"),
+            good.replace(
+                "outbe_consensus::executor::actor::finalization:",
+                "another_actor:",
+            ),
+            good.replace(
+                " ERROR outbe_chain::launch::node:",
+                " ERROR another_process:",
+            ),
+            good.replace(
+                "outbe_consensus::executor::actor::finalization:",
+                "outbe_consensus::executor::actor:",
+            ),
+            good.replace(" ERROR outbe_chain::launch::node:", " ERROR outbe_chain:"),
+            good.replace(" INFO ", " DEBUG "),
+            good.replace(" ERROR ", " WARN "),
             good.replace("deadline 66", "deadline 18446744073709551616"),
             good.trim_end().to_owned(),
             good.replace("digest=0x", "digest=xx"),
@@ -762,6 +794,20 @@ mod tests {
             .map(|line| format!("{line}\n"))
             .collect();
         assert!(telemetry(&missing, &proof.target, proof.expiry).is_err());
+    }
+
+    #[test]
+    fn terminal_log_accepts_current_production_finalization_and_expiry_records() {
+        let captured = "2026-09-13T19:38:27.057012Z  INFO outbe_consensus::executor::actor::finalization: marshal-delivered block finalized and acked height=66 digest=0x82b8a3fa749f55a368d7ce6a2c2ad2b73bcd1110304f1d59a20ded5de6e2dc00\n\
+            2026-09-13T19:39:49.404497Z ERROR outbe_chain::launch::node: consensus stack failed e=frozen DKG target missed VRF expiry: cycle 1, height 66, deadline 66\n";
+        let records = telemetry(captured, &target(), 66).unwrap();
+        assert_eq!(records.finalized.len(), 1);
+        assert_eq!(
+            records.finalized[&66],
+            "0x82b8a3fa749f55a368d7ce6a2c2ad2b73bcd1110304f1d59a20ded5de6e2dc00"
+                .parse::<B256>()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -802,7 +848,7 @@ mod tests {
         ] {
             assert!(telemetry(
                 &format!(
-                    "{good}2026-09-05T12:00:01Z  INFO outbe_consensus::executor::actor: {extra}\n"
+                    "{good}2026-09-05T12:00:01Z  INFO outbe_consensus::executor::actor::finalization: {extra}\n"
                 ),
                 &proof.target,
                 proof.expiry

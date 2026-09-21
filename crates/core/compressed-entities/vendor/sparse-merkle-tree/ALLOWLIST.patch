@@ -18,6 +18,14 @@
 +            }
 +            Error::TreeInvariant(message) => {
 +                write!(f, "Tree invariant failed: {}", message)?;
+--- pristine/src/h256.rs
++++ production/src/h256.rs
+@@ -53 +53 @@
+-        for h in (0..=core::u8::MAX).rev() {
++        for h in (0..=u8::MAX).rev() {
+@@ -64 +64 @@
+-        if height == core::u8::MAX {
++        if height == u8::MAX {
 --- pristine/src/lib.rs
 +++ production/src/lib.rs
 @@ -1 +1 @@
@@ -27,6 +35,9 @@
 +#![forbid(unsafe_code)]
 --- pristine/src/merkle_proof.rs
 +++ production/src/merkle_proof.rs
+@@ -76 +76 @@
+-                core::u8::MAX
++                u8::MAX
 @@ -108 +108 @@
 -                            _ => unreachable!(),
 +                            _ => return Err(Error::CorruptedProof),
@@ -71,27 +82,47 @@
 +                                last_n.wrapping_add(n);
 --- pristine/src/tree.rs
 +++ production/src/tree.rs
-@@ -205 +205,3 @@
+@@ -108 +108 @@
+-        let root_branch_key = BranchKey::new(core::u8::MAX, H256::zero());
++        let root_branch_key = BranchKey::new(u8::MAX, H256::zero());
+@@ -113,3 +113 @@
+-                    .map(|n| {
+-                        merge::<H>(core::u8::MAX, &H256::zero(), &n.left, &n.right).hash::<H>()
+-                    })
++                    .map(|n| merge::<H>(u8::MAX, &H256::zero(), &n.left, &n.right).hash::<H>())
+@@ -140 +138 @@
+-        for height in 0..=core::u8::MAX {
++        for height in 0..=u8::MAX {
+@@ -205 +203,3 @@
 -                let (neighbor_key, _, neighbor_height) = nodes.front().expect("nodes is not empty");
 +                let (neighbor_key, _, neighbor_height) = nodes
 +                    .front()
 +                    .ok_or(Error::TreeInvariant("non-empty node queue has no front"))?;
-@@ -210 +212,3 @@
+@@ -210 +210,3 @@
 -                        let (_, neighbor_value, _) = nodes.pop_front().expect("nodes is not empty");
 +                        let (_, neighbor_value, _) = nodes
 +                            .pop_front()
 +                            .ok_or(Error::TreeInvariant("neighbor disappeared from node queue"))?;
-@@ -335 +339,3 @@
+@@ -244 +246 @@
+-            if height == core::u8::MAX {
++            if height == u8::MAX {
+@@ -283 +285 @@
+-            for height in 0..=core::u8::MAX {
++            for height in 0..=u8::MAX {
+@@ -311 +313 @@
+-                core::u8::MAX
++                u8::MAX
+@@ -335 +337,3 @@
 -                            unreachable!();
 +                            return Err(Error::TreeInvariant(
 +                                "proof bitmap points at an empty sibling",
 +                            ));
-@@ -342 +348,3 @@
+@@ -342 +346,3 @@
 -            debug_assert!(stack_top < MAX_STACK_SIZE);
 +            if stack_top >= MAX_STACK_SIZE {
 +                return Err(Error::CorruptedStack);
 +            }
-@@ -347 +355,3 @@
+@@ -347 +353,3 @@
 -        assert_eq!(stack_top, 1);
 +        if stack_top != 1 {
 +            return Err(Error::CorruptedStack);

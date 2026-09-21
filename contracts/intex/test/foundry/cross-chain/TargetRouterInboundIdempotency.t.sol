@@ -191,7 +191,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
 
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.CONFLICT);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 5, 60e6, 0));
-        assertEq(auction.getAuctionInfo(DAY).result.issuedIntexCount, 0, "the first RESULT stands");
+        assertEq(auction.getAuctionInfo(DAY).result.issuedUnits, 0, "the first RESULT stands");
     }
 
     function test_AResultFailingAPermanentBoundIsInvalid() public {

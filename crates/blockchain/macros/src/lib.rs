@@ -810,12 +810,6 @@ fn generate_storage_record(
         let offset_lit = *offset;
         let dynamic_kind = dynamic_field_kind(&field.ty);
 
-        if field.name == exists_field_ident && dynamic_kind.is_some() {
-            return Err(syn::Error::new_spanned(
-                &field.name,
-                "exists_field cannot be a dynamic String or Vec<u8> record field",
-            ));
-        }
         if is_optional_type(&field.ty) && dynamic_kind.is_some() {
             return Err(syn::Error::new_spanned(
                 &field.name,
@@ -947,7 +941,11 @@ fn generate_storage_record(
         });
 
         if field.name == exists_field_ident {
-            exists_expr = Some(if is_optional_type(&field.ty) {
+            exists_expr = Some(if dynamic_kind.is_some() {
+                let map_new =
+                    dynamic_bytes_mapping_new(&format_ident!("entry"), key_ty, offset_lit);
+                quote! { Ok(!#map_new.get_bytes(entry.key_ref()).is_empty()?) }
+            } else if is_optional_type(&field.ty) {
                 quote! {
                     Ok(::outbe_primitives::storage::dsl::OptionalField::<#key_ty, #storage_ty>::new(
                         entry.base_slot() + ::alloy_primitives::U256::from(#offset_lit),

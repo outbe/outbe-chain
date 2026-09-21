@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
-    /// @notice Park the caller's Intex series `sourceIntexId` (burning `amount`
+    /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `amount`
     ///         units via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
     function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
@@ -10,23 +10,30 @@ interface IGemFactory {
     ///         capacity. Only the position's merchant (the caller) may call.
     function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
-    /// @notice Settle a gem by spending a PayNote for its cost.
+    /// @notice Settle a gem paying its cost in `asset`. Any caller may pay; the
+    ///         gem stays with its owner.
+    /// @dev Approve GemFactory for the `quoteSettlement` amount before calling.
+    ///      Payment is deposited into the Reserve through VaultRouter.
+    /// @param asset Settlement asset the gem accepts.
+    function settleGem(uint256 gemId, address asset) external;
+    /// @notice Settle a gem by spending a PayNote for its cost. Any caller may
+    ///         pay; the gem stays with its owner.
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        spender, carry a settlement asset the gem accepts, and cover the cost.
-    function settleGem(uint256 gemId, bytes calldata payNoteProof) external;
-    /// @notice Burn a settled gem and mint confidential Promis to the caller,
-    ///         gated by off-chain proof of work. Authorized by the caller's Promis
-    ///         modify key: `mac = HMAC(modifyKey, op-preimage)` where `opNonce`
-    ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
+    ///        owner, carry a settlement asset the gem accepts, and cover the cost.
+    function settleGemWithPayNote(uint256 gemId, bytes calldata payNoteProof) external;
+    /// @notice Burn a settled gem and mint confidential Promis to its owner,
+    ///         gated by off-chain proof of work. Any caller may submit. Authorized
+    ///         by the owner's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
-    /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
-    ///         Promis unit ever parked; it is not reduced when a position drains
+    /// @notice Cumulative totals since genesis. `totalGemFactoryUnits` counts every
+    ///         Promis unit ever sent there; it is not reduced when a position drains
     ///         or expires.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalIntexParked);
+    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalGemFactoryUnits);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the
@@ -50,7 +57,7 @@ interface IGemFactory {
     /// @notice Full terms of the position `positionId`.
     function getPosition(uint256 positionId) external view returns (PositionData memory);
 
-    /// @notice A merchant's parked Intex: the pool Merchant gems are drawn from.
+    /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct PositionData {
         uint256 positionId;
         address merchant;
@@ -60,7 +67,8 @@ interface IGemFactory {
         uint256 sourceFloorPrice;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint64 parkedAt;
+        /// @notice When the position was issued.
+        uint64 issuedAt;
         /// @notice When the position stops issuing and returns its remainder.
         uint64 expiresAt;
     }
@@ -80,8 +88,8 @@ interface IGemFactory {
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
-    /// @notice A settled gem was burned to mine confidential Promis.
-    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoad);
+    /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
+    event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoad);
     /// @notice A position ended its validity with capacity it never issued.
     event GemPositionExpired(
         uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity

@@ -1,7 +1,7 @@
 //! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
-//! `outbe.paynote@1.1.0` statement from **Rust-computed** public inputs and
+//! `outbe.paynote@1.2.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
 //! the in-circuit ones and proving would fail — that is what pins the mirror.
@@ -15,29 +15,33 @@ use alloy_sol_types::SolCall;
 use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::Codec as _;
 use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
 use outbe_zk_canonical::paynote::{
     COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
 };
 use outbe_zk_canonical::CircuitId as _;
 
-use crate::hash::{empty_subtrees, field_to_be_bytes, Field};
+use crate::hash::empty_subtrees;
 use crate::precompile::{base_gas, dispatch, IPayNote, PAYABLE_SELECTORS};
 use crate::runtime;
 use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
+use crate::Field;
+
+use crate::{PayNoteSuit, PayNoteTree};
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
 
 const ALICE: Address = Address::new([0x11; 20]);
-const SPENDER: Address = Address::new([0x22; 20]);
+const OWNER: Address = Address::new([0x22; 20]);
 const USDC: Address = Address::new([0x33; 20]);
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+    PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {
@@ -48,10 +52,11 @@ fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expecte
 }
 // ---- proving fixtures -----------------------------------------------------
 //
-// The reference tree, note derivation, proving, and pool seeding live in
+// Note derivation, proving, and pool seeding live in
 // `test_support` so downstream consumers of notes can reuse them.
 
-use crate::test_support::{note, note_and_spend_proof, seed_pool, ReferenceTree};
+use crate::client::{new_tree, witness};
+use crate::test_support::{note, note_and_spend_proof, seed_pool};
 
 /// Prove a spend of `spend_amount` out of a single-leaf tree holding `amount`
 /// of `asset`, returning the combined proof and the statement it carries.
@@ -60,11 +65,11 @@ fn prove_spend(
     asset: Address,
     amount: u128,
     spend_amount: u128,
-) -> (Vec<u8>, PublicInputs, ReferenceTree) {
+) -> (Vec<u8>, PublicInputs, PayNoteTree) {
     let fixture = note_and_spend_proof(
         chain_id,
         asset,
-        SPENDER,
+        OWNER,
         U256::from(amount),
         U256::from(spend_amount),
     );
@@ -136,14 +141,14 @@ fn empty_leaf_is_chain_specific_and_nonzero() {
 #[test]
 fn incremental_append_matches_naive_recompute() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let mut reference = ReferenceTree::new(CHAIN_ID);
+    let mut reference = new_tree(CHAIN_ID).unwrap();
     let leaves: Vec<Field> = (0..5)
         .map(|i| note(CHAIN_ID, 100 + i, USDC, U256::from(10 + u128::from(i))).commitment)
         .collect();
 
     seed_pool(&mut provider, CHAIN_ID, &leaves);
     for leaf in &leaves {
-        reference.append(*leaf);
+        reference.append(*leaf).unwrap();
     }
 
     provider.enter(|storage| {
@@ -253,7 +258,7 @@ fn consume_rejects_a_root_outside_the_window() {
 fn consume_rejects_a_foreign_chain_statement() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (proof, _, tree) = prove_spend(OTHER_CHAIN_ID, USDC, 100, 100);
-    seed_pool(&mut provider, CHAIN_ID, &tree.leaves);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
@@ -299,11 +304,11 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
         "full spend has no change"
     );
 
-    seed_pool(&mut provider, CHAIN_ID, &tree.leaves);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
     provider.enter(|storage| {
         let claim = runtime::consume(&storage, &proof).expect("valid full spend");
         assert_eq!(claim.asset, USDC);
-        assert_eq!(claim.spender, SPENDER);
+        assert_eq!(claim.owner, OWNER);
         assert_eq!(claim.spend_amount, 100);
 
         let paynote: PayNoteContract<'_> = storage.contract();
@@ -323,7 +328,7 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
 fn replaying_a_spent_proof_reverts() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (proof, _, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
-    seed_pool(&mut provider, CHAIN_ID, &tree.leaves);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
 
     provider.enter(|storage| {
         runtime::consume(&storage, &proof).expect("first spend");
@@ -345,7 +350,7 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
         "partial spend must publish change"
     );
 
-    seed_pool(&mut provider, CHAIN_ID, &tree.leaves);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
     provider.enter(|storage| {
         let claim = runtime::consume(&storage, &proof).expect("valid partial spend");
         assert_eq!(claim.spend_amount, 40);
@@ -365,16 +370,16 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
         );
 
         // And the resulting root must match a recompute over both leaves.
-        let mut reference = ReferenceTree::new(CHAIN_ID);
-        reference.append(tree.leaves[0]);
-        reference.append(public.change_commitment);
+        let mut reference = new_tree(CHAIN_ID).unwrap();
+        reference.append(tree.leaves()[0]).unwrap();
+        reference.append(public.change_commitment).unwrap();
         assert_eq!(paynote.current_root.read().unwrap(), b256(reference.root()));
     });
 }
 
 #[test]
 fn full_width_u256_spend_round_trip() {
-    assert_eq!(Paynote::VERSION, "1.1.0");
+    assert_eq!(Paynote::VERSION, "1.2.0");
     assert_eq!(
         Paynote::CIRCUIT_HASH,
         alloy_primitives::hex!("3154da6976ca8ee5f00b228fe821ce0868b189ff73cefb1a9a562d2768a9f9cc")
@@ -386,7 +391,7 @@ fn full_width_u256_spend_round_trip() {
 
     let note_amount = (U256::from(1) << 200) + U256::from(100);
     let spend_amount = (U256::from(1) << 199) + U256::from(40);
-    let fixture = note_and_spend_proof(CHAIN_ID, USDC, SPENDER, note_amount, spend_amount);
+    let fixture = note_and_spend_proof(CHAIN_ID, USDC, OWNER, note_amount, spend_amount);
     assert_eq!(fixture.proof.len(), PAYNOTE_COMBINED_LEN);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -422,27 +427,38 @@ fn a_note_cannot_be_spent_as_a_different_asset() {
 }
 
 #[test]
-fn client_witnesses_match_the_reference_tree() {
-    use crate::client::Tree;
-
-    let empty = Tree::new(CHAIN_ID).unwrap();
-    assert!(empty.leaves().is_empty());
-    assert!(empty.witness(Field::from(1)).is_err());
-    // Independent tree implementation cross-checks odd widths and both branch directions.
-    let mut reference = ReferenceTree::new(CHAIN_ID);
-    let mut tree = Tree::new(CHAIN_ID).unwrap();
+fn client_witnesses_match_runtime_roots() {
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    assert!(tree.leaves().is_empty());
+    assert!(witness(&tree, Field::from(1)).is_err());
     for i in 1..=9 {
-        let leaf = Field::from(i);
-        tree.append(leaf).unwrap();
-        reference.append(leaf);
-        assert_eq!(tree.root(), reference.root());
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        tree.append(Field::from(i)).unwrap();
+        seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+        provider.enter(|storage| {
+            let paynote: PayNoteContract<'_> = storage.contract();
+            assert_eq!(paynote.current_root.read().unwrap(), b256(tree.root()));
+        });
         for (index, leaf) in tree.leaves().iter().enumerate() {
-            let index = u32::try_from(index).unwrap();
-            assert_eq!(
-                tree.witness(*leaf).unwrap(),
-                (index, reference.path_at(index))
-            );
+            let (actual_index, siblings) = witness(&tree, *leaf).unwrap();
+            assert_eq!(actual_index, u32::try_from(index).unwrap());
+            let root = PayNoteTree::root_from_inclusion_path(
+                crate::hash::paynote_domain(),
+                *leaf,
+                u64::from(actual_index),
+                &siblings,
+            )
+            .unwrap();
+            assert_eq!(root, tree.root());
         }
     }
-    assert!(tree.witness(Field::from(10)).is_err());
+    assert!(witness(&tree, Field::from(10)).is_err());
+    for (domain, depth) in [
+        (crate::hash::paynote_domain(), PAYNOTE_TREE_DEPTH - 1),
+        (Field::from(42), PAYNOTE_TREE_DEPTH),
+    ] {
+        let mut wrong_tree = PayNoteTree::new(domain, Field::from(0), depth).unwrap();
+        wrong_tree.append(Field::from(1)).unwrap();
+        assert!(witness(&wrong_tree, Field::from(1)).is_err());
+    }
 }

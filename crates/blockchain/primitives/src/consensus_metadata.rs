@@ -388,7 +388,7 @@ fn read_addresses(data: &[u8], offset: &mut usize) -> Result<Vec<Address>> {
     *offset = end;
 
     let mut addrs = Vec::with_capacity(count);
-    for chunk in bytes.chunks_exact(20) {
+    for chunk in bytes.as_chunks::<20>().0 {
         addrs.push(Address::from_slice(chunk));
     }
     Ok(addrs)

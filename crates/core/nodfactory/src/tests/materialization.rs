@@ -36,7 +36,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
         entry_price_minor: U256::from(500_000),
-        cost_amount_minor: U256::from(500),
+        settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
@@ -147,7 +147,7 @@ fn seed_projection(
                 nod_count: population.actions.len() as u32,
                 bucket_count: 1,
                 nod_amount_total: U256::from(10_000),
-                nod_gratis_consumed: U256::from(10_000),
+                lysis_allocation_minor: U256::from(10_000),
                 issued_at: 1_600_000_000,
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
@@ -164,8 +164,8 @@ fn seed_projection(
                 .write(&worldwide_day, projection.metadata_word())?;
             nod.ocomp_nod_amount_total
                 .write(&worldwide_day, projection.nod_amount_total)?;
-            nod.ocomp_nod_gratis_consumed
-                .write(&worldwide_day, projection.nod_gratis_consumed)?;
+            nod.ocomp_lysis_allocation_minor
+                .write(&worldwide_day, projection.lysis_allocation_minor)?;
             nod.ocomp_materialization_job_id
                 .write(&worldwide_day, projection.job_id)?;
             nod.ocomp_materialization_protocol_bundle_hash
@@ -210,7 +210,7 @@ fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
             );
             assert_eq!(nod.ocomp_nod_amount_total.read(&worldwide_day)?, U256::ZERO);
             assert_eq!(
-                nod.ocomp_nod_gratis_consumed.read(&worldwide_day)?,
+                nod.ocomp_lysis_allocation_minor.read(&worldwide_day)?,
                 U256::ZERO
             );
             assert_eq!(
@@ -610,7 +610,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                     nod_id,
                     nonce: 0,
                     auth: dummy_auth(),
-                    paynote_proof: &[],
                 },
             )
         })
@@ -621,11 +620,15 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
             if reason == &NodFactoryError::NodGenerationNotMaterialized.to_string()
     ));
 
+    assert!(
+        matches!(world.settle(nod_id, population.actions[0].owner, &[]).unwrap_err(),
+        PrecompileError::Revert(reason) if reason == NodFactoryError::NodGenerationNotMaterialized.to_string())
+    );
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = outbe_nod::api::cost_amount_minor(
+    let cost = outbe_nod::api::settlement_cost_minor(
         population.actions[0].entry_price_minor,
         population.actions[0].gratis_load_minor,
     )
@@ -634,7 +637,10 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     let paynote_proof = world
         .fund_note(NOTE_ASSET, population.actions[0].owner, cost.max(1), cost)
         .0;
-    let nonce = find_valid_nonce(nod_id);
+    world
+        .settle(nod_id, population.actions[0].owner, &paynote_proof)
+        .unwrap();
+    let nonce = world.pow_nonce(nod_id);
     assert_eq!(
         world
             .enter(|storage, scope, parent| {
@@ -650,7 +656,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                             population.actions[0].owner,
                             population.actions[0].gratis_load_minor,
                         ),
-                        paynote_proof: &paynote_proof,
                     },
                 )
             })

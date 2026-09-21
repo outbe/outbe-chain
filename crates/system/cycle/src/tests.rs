@@ -843,25 +843,24 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
         // No tributes for any AgentReward pool, so all three
         // WAA/SRA/CCA amounts are accounted for.
-        // burn parity: WAA + SRA pools are pre-funded then burned in
-        // their no-tribute branch; CCA lands on its own
-        // accumulator address. AGENT_REWARD balance is therefore
-        // zero (no claimable was credited).
+        // Empty WAA/SRA pools burn their backing; an empty CCA pool mints
+        // nothing. All three allocations return to terminal Metadosis.
         let agent_reward_balance = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
-        // The CCA accumulator received its 4 %. The exact amount comes
-        // from `day_emission_limit(0) * 4 / 100` which is fully covered
-        // by emissionlimit pinned tests; here we only assert it is
-        // non-zero.
+        // No eligible CCA: its full allocation goes to terminal Metadosis.
         let cca = ctx_fire
             .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
             .unwrap();
-        assert!(!cca.is_zero(), "CCA accumulator received its 4 %");
+        assert_eq!(
+            cca,
+            U256::ZERO,
+            "no eligible CCA weight; pool goes to Metadosis"
+        );
     });
 }
 
@@ -964,6 +963,11 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             .checked_add(amount_for(
                 outbe_emissionlimit::allocation::EmissionSinkId::Sra,
             ))
+            .and_then(|amount| {
+                amount.checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                ))
+            })
             .unwrap();
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         let planned = rewards
@@ -1049,6 +1053,11 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
                         outbe_emissionlimit::allocation::EmissionSinkId::Sra,
                     ))
                 })
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                    ))
+                })
                 .unwrap();
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
@@ -1068,6 +1077,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
     storage.enter(|handle| {
         let anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle);
         anchor_genesis(&anchor);
+        seed_reward_cca(&anchor.storage);
         dispatch_triggers(&anchor).unwrap();
     });
 
@@ -1112,10 +1122,10 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         }
         assert_eq!(
             fire.storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            U256::ZERO,
-            "CCA credit before the terminal failure must roll back"
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "CCA reward credit must roll back, preserving the bond"
         );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
@@ -1179,12 +1189,13 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         assert_eq!(
             retry
                 .storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_primitives::units::checked_protocol_to_native(amount_for(
-                outbe_emissionlimit::allocation::EmissionSinkId::Cca,
-            ))
-            .unwrap(),
+            outbe_ccaregistry::constants::BOND_REQUIREMENT
+                + outbe_primitives::units::checked_protocol_to_native(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                ))
+                .unwrap(),
             "retry must credit CCA exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
@@ -1293,6 +1304,11 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
                         outbe_emissionlimit::allocation::EmissionSinkId::Sra,
                     ))
                 })
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+                    ))
+                })
                 .unwrap();
         let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
         assert_eq!(
@@ -1312,6 +1328,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
     storage.enter(|handle| {
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
         anchor_genesis(&ctx_anchor);
+        seed_reward_cca(&ctx_anchor.storage);
         dispatch_triggers(&ctx_anchor).unwrap();
 
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
@@ -1326,20 +1343,23 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         let cca_after_first = ctx
             .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
             .unwrap();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
-        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
+        assert!(
+            cca_after_first > outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "first fire credited CCA"
+        );
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early - no double-mint.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
             cca_after_first,
             "CCA pool must not be minted twice for the same prev_day"
@@ -1678,4 +1698,146 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             "CycleTick must settle genesis day (day_number=0)"
         );
     });
+}
+
+#[test]
+fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
+    use outbe_nod::{api, NodContract, NodItemState, NodRepositoryReader};
+    use outbe_oracle::{api::AddressPair, schema::OracleContract};
+    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+
+    let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
+        with_execution_scope(&ctx, |scope, _| {
+            let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+            let cycle = Cycle::new(storage.clone());
+            // Isolate Nod's schedule; unrelated triggers are not due.
+            for spec in ACTIVE_TRIGGERS {
+                cycle
+                    .last_executed_at
+                    .write(&spec.id, midnight + 10 * SECONDS_PER_DAY)?;
+            }
+            let trigger = TriggerId::NodCallDaily.as_u32();
+            cycle.last_executed_at.write(&trigger, midnight - 1)?;
+            let oracle = OracleContract::new(storage.clone());
+            let index =
+                outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))?;
+            oracle.reference_currencies.push(840)?;
+            let mut day = previous_date_key(timestamp_to_date_key(midnight));
+            oracle.utc_day_vwap_last_finalized.write(day)?;
+            for _ in 0..28 {
+                oracle
+                    .utc_day_vwap_value
+                    .get_nested(&day)
+                    .write(&index, U256::from(100))?;
+                day = previous_date_key(day);
+            }
+            let issue = |owner, floor| {
+                let worldwide_day = WorldwideDay::from_timestamp(GENESIS_TS);
+                let body = NodItemState {
+                    is_settled: false,
+                    nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+                    owner,
+                    gratis_load_minor: U256::from(11),
+                    worldwide_day,
+                    league_id: 4,
+                    floor_price_minor: U256::from(floor),
+                    bucket_key: NodContract::bucket_key(worldwide_day, U256::from(floor), 840),
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                    issued_at: GENESIS_TS,
+                };
+                api::add_nod(&storage, scope, &parent, &body, U256::from(5)).unwrap();
+                outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+                    worldwide_day,
+                    body.bucket_key,
+                )
+            };
+            let first = issue(Address::repeat_byte(0x51), 13);
+            crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            assert!(
+                !api::get_bucket(&storage, scope, &parent, first)?
+                    .unwrap()
+                    .is_qualified
+            );
+
+            let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
+            crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            assert!(
+                api::get_bucket(&storage, scope, &parent, first)?
+                    .unwrap()
+                    .is_qualified
+            );
+            let first_key = NodContract::bucket_key(
+                WorldwideDay::from_timestamp(GENESIS_TS),
+                U256::from(13),
+                840,
+            );
+            assert_eq!(
+                NodContract::new(storage.clone())
+                    .bucket_called_at
+                    .read(&first_key)?,
+                midnight
+            );
+            assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
+
+            // New work created after the daily run waits for the next UTC slot.
+            let second = issue(Address::repeat_byte(0x52), 14);
+            let ctx = BlockRuntimeContext::new(block_ctx(4, midnight + 1), storage.clone());
+            crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            assert!(
+                !api::get_bucket(&storage, scope, &parent, second)?
+                    .unwrap()
+                    .is_qualified
+            );
+
+            // A multi-day halt runs once against the latest completed day,
+            // rather than replaying the same latest price on subsequent blocks.
+            let late = midnight + 3 * SECONDS_PER_DAY;
+            let previous = previous_date_key(timestamp_to_date_key(late));
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&previous)
+                .write(&index, U256::from(100))?;
+            oracle.utc_day_vwap_last_finalized.write(previous)?;
+            let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
+            crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            assert!(
+                api::get_bucket(&storage, scope, &parent, second)?
+                    .unwrap()
+                    .is_qualified
+            );
+            assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
+            let third = issue(Address::repeat_byte(0x53), 15);
+            let ctx = BlockRuntimeContext::new(block_ctx(6, late + 1), storage.clone());
+            crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            assert!(
+                !api::get_bucket(&storage, scope, &parent, third)?
+                    .unwrap()
+                    .is_qualified
+            );
+            Ok(())
+        })
+        .unwrap();
+    });
+}
+
+fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle<'_>) {
+    let cca = Address::repeat_byte(0xc1);
+    storage
+        .increase_balance(
+            outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        )
+        .unwrap();
+    outbe_ccaregistry::runtime::bond(
+        storage.clone(),
+        cca,
+        outbe_ccaregistry::constants::BOND_REQUIREMENT,
+        "Test CCA".into(),
+    )
+    .unwrap();
+    outbe_ccaregistry::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
 }

@@ -33,7 +33,7 @@ sol! {
     }
 }
 
-/// The stablecoin holders settle in, and the vault their payment lands in.
+/// The stablecoin owners settle in, and the vault their payment lands in.
 #[derive(Clone, Copy, Debug)]
 pub struct SettlementCurrency {
     pub asset: Address,

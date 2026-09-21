@@ -161,7 +161,7 @@ pub struct LysisPlannerBindingsV1 {
     pub fidelity_opening_root: B256,
     pub oracle_opening_root: B256,
     pub wwd: u32,
-    pub lysis_budget: U256,
+    pub lysis_limit_minor: U256,
     pub logical_evaluation_time: u64,
     pub tribute_count: u32,
     pub lysis_program_semantics_hash: B256,
@@ -264,7 +264,7 @@ impl LysisPlannerV1 {
             || bindings.fidelity_opening_root.is_zero()
             || bindings.oracle_opening_root.is_zero()
             || bindings.wwd == 0
-            || bindings.lysis_budget.is_zero()
+            || bindings.lysis_limit_minor.is_zero()
             || bindings.logical_evaluation_time == 0
             || bindings.lysis_program_semantics_hash.is_zero()
             || bindings.input_manifest_encoded_bytes == 0
@@ -353,7 +353,7 @@ impl LysisPlannerV1 {
             attempt: self.bindings.attempt,
             input_manifest_hash: self.bindings.input_manifest_hash,
             wwd: self.bindings.wwd,
-            lysis_budget: self.bindings.lysis_budget,
+            lysis_limit_minor: self.bindings.lysis_limit_minor,
             logical_evaluation_time: self.bindings.logical_evaluation_time,
             tribute_count: self.bindings.tribute_count,
             max_tributes_per_work_shard: PRIMARY_WORK_SHARD_SIZE,

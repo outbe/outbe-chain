@@ -59,7 +59,7 @@ pub use ocomp::vote::{
     deadline_passed_result_vote_revert_data, is_deadline_passed_result_vote_revert_data,
     resolve_historical_result_vote_carrier_signer, resolve_historical_result_vote_participant,
 };
-pub(crate) mod ocomp_budget;
+pub(crate) mod ocomp_limits;
 mod pre_admission;
 pub mod precompile;
 pub mod proof_layout;

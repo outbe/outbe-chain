@@ -10,14 +10,14 @@ use outbe_ocomp_protocol::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RequestBudgetSplitApplyV1 {
+pub(super) struct RequestLimitSplitApplyV1 {
     pub protocol_bundle_hash: B256,
     pub wwd: u32,
     pub pending_nonce: u64,
     pub day_type: DayType,
     pub day_limit: U256,
-    pub lysis_budget: U256,
-    pub auction_base: U256,
+    pub lysis_limit_minor: U256,
+    pub desis_limit_minor: U256,
     pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }
@@ -30,7 +30,7 @@ pub struct NodGenerationApplyV1 {
     output_manifest_root: B256,
     exact_counts: ExactCountsV1,
     nod_amount_total: U256,
-    nod_gratis_consumed: U256,
+    lysis_allocation_minor: U256,
     issued_at: u64,
 }
 
@@ -66,8 +66,8 @@ impl NodGenerationApplyV1 {
     }
 
     #[must_use]
-    pub const fn nod_gratis_consumed(&self) -> U256 {
-        self.nod_gratis_consumed
+    pub const fn lysis_allocation_minor(&self) -> U256 {
+        self.lysis_allocation_minor
     }
 
     #[must_use]
@@ -139,7 +139,7 @@ impl TributeRetirementApplyV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CarryOverApplyV1 {
     source_wwd: u32,
-    credited_unused_lysis: U256,
+    credited_unused_lysis_limit_minor: U256,
 }
 
 impl CarryOverApplyV1 {
@@ -149,8 +149,8 @@ impl CarryOverApplyV1 {
     }
 
     #[must_use]
-    pub const fn credited_unused_lysis(&self) -> U256 {
-        self.credited_unused_lysis
+    pub const fn credited_unused_lysis_limit_minor(&self) -> U256 {
+        self.credited_unused_lysis_limit_minor
     }
 }
 
@@ -158,8 +158,8 @@ impl CarryOverApplyV1 {
 pub struct LysisApplyPlanV1 {
     call_core: ActivationCallCoreV1,
     binding: EffectBindingV1,
-    request_budget_split_receipt_hash: B256,
-    request_budget_split: RequestBudgetSplitApplyV1,
+    request_limit_split_receipt_hash: B256,
+    request_limit_split: RequestLimitSplitApplyV1,
     nod: NodGenerationApplyV1,
     contributors: ContributorRootApplyV1,
     tribute: TributeRetirementApplyV1,
@@ -178,12 +178,12 @@ impl LysisApplyPlanV1 {
     }
 
     #[must_use]
-    pub const fn request_budget_split_receipt_hash(&self) -> B256 {
-        self.request_budget_split_receipt_hash
+    pub const fn request_limit_split_receipt_hash(&self) -> B256 {
+        self.request_limit_split_receipt_hash
     }
 
-    pub(super) const fn request_budget_split(&self) -> &RequestBudgetSplitApplyV1 {
-        &self.request_budget_split
+    pub(super) const fn request_limit_split(&self) -> &RequestLimitSplitApplyV1 {
+        &self.request_limit_split
     }
 
     #[must_use]
@@ -210,8 +210,8 @@ impl LysisApplyPlanV1 {
 pub(super) struct LysisApplyPlanPartsV1 {
     pub call_core: ActivationCallCoreV1,
     pub binding: EffectBindingV1,
-    pub request_budget_split_receipt_hash: B256,
-    pub request_budget_split: RequestBudgetSplitApplyV1,
+    pub request_limit_split_receipt_hash: B256,
+    pub request_limit_split: RequestLimitSplitApplyV1,
     pub nod: NodGenerationApplyV1,
     pub contributors: ContributorRootApplyV1,
     pub tribute: TributeRetirementApplyV1,
@@ -223,8 +223,8 @@ impl From<LysisApplyPlanPartsV1> for LysisApplyPlanV1 {
         Self {
             call_core: parts.call_core,
             binding: parts.binding,
-            request_budget_split_receipt_hash: parts.request_budget_split_receipt_hash,
-            request_budget_split: parts.request_budget_split,
+            request_limit_split_receipt_hash: parts.request_limit_split_receipt_hash,
+            request_limit_split: parts.request_limit_split,
             nod: parts.nod,
             contributors: parts.contributors,
             tribute: parts.tribute,
@@ -240,7 +240,7 @@ pub(super) struct NodGenerationApplyPartsV1 {
     pub output_manifest_root: B256,
     pub exact_counts: ExactCountsV1,
     pub nod_amount_total: U256,
-    pub nod_gratis_consumed: U256,
+    pub lysis_allocation_minor: U256,
     pub issued_at: u64,
 }
 
@@ -252,7 +252,7 @@ pub(super) fn nod_apply(parts: NodGenerationApplyPartsV1) -> NodGenerationApplyV
         output_manifest_root: parts.output_manifest_root,
         exact_counts: parts.exact_counts,
         nod_amount_total: parts.nod_amount_total,
-        nod_gratis_consumed: parts.nod_gratis_consumed,
+        lysis_allocation_minor: parts.lysis_allocation_minor,
         issued_at: parts.issued_at,
     }
 }
@@ -287,10 +287,10 @@ pub(super) fn tribute_apply(
 
 pub(super) const fn carry_over_apply(
     source_wwd: u32,
-    credited_unused_lysis: U256,
+    credited_unused_lysis_limit_minor: U256,
 ) -> CarryOverApplyV1 {
     CarryOverApplyV1 {
         source_wwd,
-        credited_unused_lysis,
+        credited_unused_lysis_limit_minor,
     }
 }

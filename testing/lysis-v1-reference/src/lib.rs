@@ -38,8 +38,7 @@ struct CorpusCase {
 struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
-    gratis_allocation: String,
-    mandatory_price_840: Option<String>,
+    lysis_limit_minor: String,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -56,7 +55,7 @@ struct CorpusTribute {
     excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
-    conditional_price: Option<String>,
+    entry_price: Option<String>,
     nod_target_available: bool,
 }
 
@@ -81,14 +80,6 @@ impl ReferenceFailure {
             kind,
             ordinal: Some(ordinal),
             currency: None,
-        }
-    }
-
-    const fn currency(kind: &'static str, currency: u16) -> Self {
-        Self {
-            kind,
-            ordinal: None,
-            currency: Some(currency),
         }
     }
 
@@ -411,7 +402,14 @@ fn fraction_table_with_projection(
     }
     let target = wrap_u256(allocation * &unit) / total_nominal;
     let maximum = wrap_u256(&target * 2_u8);
+    // The distribution prioritizes its first group: highest league first.
+    shares.reverse();
+    populations.reverse();
     let mut fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
+    // Restore ascending league order for projection and the public table.
+    fractions.reverse();
+    shares.reverse();
+    populations.reverse();
     let raw_projected = group_nominals
         .iter()
         .zip(&fractions)
@@ -507,7 +505,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         return Err(ReferenceFailure::new("ZERO_TOTAL_NOMINAL"));
     }
 
-    let allocation = decimal(&input.gratis_allocation)?;
+    let allocation = decimal(&input.lysis_limit_minor)?;
     let table = fraction_table(&tributes, &total_nominal, &allocation)?;
     let fractions = table
         .iter()
@@ -523,21 +521,6 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             (league, fraction)
         })
         .collect::<BTreeMap<_, _>>();
-
-    let mandatory_price = input
-        .mandatory_price_840
-        .as_deref()
-        .ok_or_else(|| ReferenceFailure::currency("MANDATORY_ORACLE_UNAVAILABLE", 840))
-        .and_then(decimal)?;
-    if mandatory_price.is_zero() {
-        return Err(ReferenceFailure::currency("ZERO_ENTRY_PRICE", 840));
-    }
-    observations.push(json!({
-        "kind": "ORACLE",
-        "ordinal": Value::Null,
-        "currency": 840,
-        "entry_price": mandatory_price.to_string(),
-    }));
 
     let unit = scale();
     let mut remaining = allocation.clone();
@@ -563,35 +546,19 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         remaining -= &load;
 
         let currency = tribute.reference_currency;
-        let entry_price = if currency == 840 {
-            mandatory_price.clone()
-        } else {
-            let price = tribute
-                .conditional_price
-                .as_deref()
-                .ok_or_else(|| {
-                    ReferenceFailure::ordinal_currency(
-                        "CONDITIONAL_ORACLE_UNAVAILABLE",
-                        ordinal,
-                        currency,
-                    )
-                })
-                .and_then(decimal)?;
-            if price.is_zero() {
-                return Err(ReferenceFailure::ordinal_currency(
-                    "ZERO_ENTRY_PRICE",
-                    ordinal,
-                    currency,
-                ));
-            }
-            observations.push(json!({
-                "kind": "ORACLE",
-                "ordinal": ordinal,
-                "currency": currency,
-                "entry_price": price.to_string(),
-            }));
-            price
-        };
+        let entry_price = tribute
+            .entry_price
+            .as_deref()
+            .ok_or_else(|| {
+                ReferenceFailure::ordinal_currency("ENTRY_PRICE_UNAVAILABLE", ordinal, currency)
+            })
+            .and_then(decimal)?;
+        observations.push(json!({
+            "kind": "ORACLE",
+            "ordinal": ordinal,
+            "currency": currency,
+            "entry_price": entry_price.to_string(),
+        }));
 
         let tribute_price = decimal(&tribute.tribute_price)?;
         let base_price = tribute_price.max(entry_price.clone());
@@ -647,8 +614,8 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
     Ok(json!({
         "status": "SUCCESS",
         "total_nominal": total_nominal.to_string(),
-        "gratis_allocation": allocation.to_string(),
-        "remaining_gratis": remaining.to_string(),
+        "lysis_limit_minor": allocation.to_string(),
+        "remaining_lysis_limit_minor": remaining.to_string(),
         "group_table": table,
         "nod_actions": actions,
         "contributors": contributors
@@ -966,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn six_decimal_projection_normalization_has_the_frozen_eight_unit_dust() {
+    fn six_decimal_projection_has_the_frozen_twenty_five_unit_dust() {
         let case = load_cases(&default_vectors_path())
             .unwrap()
             .into_iter()
@@ -977,14 +944,16 @@ mod tests {
             .iter()
             .map(|tribute| decimal(&tribute.nominal).unwrap())
             .sum::<BigUint>();
-        let allocation = decimal(&case.input.gratis_allocation).unwrap();
+        let allocation = decimal(&case.input.lysis_limit_minor).unwrap();
         let (_, raw, normalized) =
             fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
 
         assert_eq!(allocation, BigUint::from(4_800_000u64));
-        assert_eq!(raw, BigUint::from(4_800_034u64));
-        assert_eq!(normalized, BigUint::from(4_799_992u64));
-        assert_eq!(allocation - normalized, BigUint::from(8u64));
+        // The share remainder belongs to the highest league, so this projection
+        // is already within budget and needs no real-amount scaling.
+        assert_eq!(raw, BigUint::from(4_799_975u64));
+        assert_eq!(normalized, raw);
+        assert_eq!(allocation - normalized, BigUint::from(25u64));
     }
 
     #[test]

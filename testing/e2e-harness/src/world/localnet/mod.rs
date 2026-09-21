@@ -487,7 +487,6 @@ impl Localnet {
     /// Read only this incarnation's output, including messages emitted before
     /// the caller began polling. This binds the launch, not liveness: callers
     /// must separately verify the expected PID is their current owned process.
-    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn node_launch_log(&mut self, index: usize, expected_pid: u32) -> Result<String> {
         let (pid, log) = self
             .node_launch_logs
@@ -819,7 +818,7 @@ mod tests {
         ] {
             let dir = tempfile::tempdir().unwrap();
             let env = Environment {
-                data_dir: dir.path().to_owned(),
+                data_dir: dir.path().canonicalize().unwrap(),
                 ..Environment::default()
             };
             let mut localnet = Localnet::new(Config::resolve(&env));
@@ -846,7 +845,7 @@ mod tests {
     fn expiry_cleanup_fixture(script: &str, exited: bool) -> (tempfile::TempDir, Localnet, u32) {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment {
-            data_dir: dir.path().to_owned(),
+            data_dir: dir.path().canonicalize().unwrap(),
             ..Environment::default()
         };
         let mut localnet = Localnet::new(Config::resolve(&env));
@@ -959,7 +958,7 @@ mod tests {
     fn node_launch_log_excludes_prior_incarnation_and_rejects_stale_pid() {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment {
-            data_dir: dir.path().to_owned(),
+            data_dir: dir.path().canonicalize().unwrap(),
             ..Environment::default()
         };
         let mut localnet = Localnet::new(Config::resolve(&env));
@@ -986,7 +985,7 @@ mod tests {
         for damage in ["missing", "replaced", "truncated"] {
             let dir = tempfile::tempdir().unwrap();
             let env = Environment {
-                data_dir: dir.path().to_owned(),
+                data_dir: dir.path().canonicalize().unwrap(),
                 ..Environment::default()
             };
             let mut localnet = Localnet::new(Config::resolve(&env));
@@ -1013,7 +1012,7 @@ mod tests {
     fn node_launch_log_failed_spawn_discards_previous_capture() {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment {
-            data_dir: dir.path().to_owned(),
+            data_dir: dir.path().canonicalize().unwrap(),
             ..Environment::default()
         };
         let mut localnet = Localnet::new(Config::resolve(&env));
@@ -1036,7 +1035,7 @@ mod tests {
     fn node_launch_log_cleanup_drops_capture_but_retains_diagnostics() {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment {
-            data_dir: dir.path().to_owned(),
+            data_dir: dir.path().canonicalize().unwrap(),
             ..Environment::default()
         };
         let mut localnet = Localnet::new(Config::resolve(&env));

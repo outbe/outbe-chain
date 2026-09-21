@@ -6,17 +6,17 @@ import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 
-/// @notice A bids relay parked because its outbound send reverted (e.g. relay float too low); retried via
-///         `flushPendingBidsRelay`. Bids stay in auction state, so only the worldwideDay is snapshotted.
-struct PendingBidsRelay {
-    uint32 worldwideDay;
-    bool exists;
+/// @notice How far a day's bids relay has got: the span the first round froze, the next chunk to send and
+///         whether the completeness marker has left. Five bytes, so one slot.
+struct BidsRelayProgress {
+    uint16 nextBatch;
+    uint16 totalBatches;
     bool done;
 }
 
 /// @notice An issuance parked because a recipient's ERC-1155 receiver hook reverted; retried via
-///         `flushPendingIssuance`.
-struct PendingIssuance {
+///         `applyParkedIssuance`.
+struct ParkedIssuance {
     bytes14 seriesId;
     address recipient;
     uint256 quantity;
@@ -25,7 +25,7 @@ struct PendingIssuance {
 }
 
 /// @notice A lifecycle mark waiting for its series, with the origin's call time for a Called one.
-struct PendingMark {
+struct ParkedMark {
     uint8 msgType;
     uint32 calledAt;
 }
@@ -51,29 +51,27 @@ struct TargetRouterStorage {
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
-    /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
-    /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-    uint256 nextPendingBidsRelayIdx;
-    /// @dev Monotonic per-series counter stamped on every BIDS_BATCH send/flush. The Outbe receiver
-    ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
-    ///      relay cannot double-count demand.
+    /// @dev Retired: the bids relay queue and its index, replaced by resumable rounds. Held so every field
+    ///      below keeps the slot it was deployed on.
+    uint256 __retiredPendingBidsRelays;
+    uint256 __retiredNextPendingBidsRelayIdx;
+    /// @dev Per-day counter stamped on every BIDS_BATCH of the day's relay. Bumped once, when the first
+    ///      round starts: every round of the same day shares it, so the receiver collects them together.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
     /// @dev Parked issuances awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingIssuance) pendingIssuances;
-    /// @dev Next index to assign in `pendingIssuances`; also the count ever enqueued.
-    uint256 nextPendingIssuanceIdx;
+    mapping(uint256 idx => ParkedIssuance) parkedIssuance;
+    /// @dev Next index to assign in `parkedIssuance`; also the count ever enqueued.
+    uint256 nextParkedIssuanceIdx;
     /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
     IERC7786TokenBridge tokenBridge;
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
     address originRouter;
     /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
-    /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
-    uint256 nextPendingProceedsRouteIdx;
-    /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
-    ///      re-relays under a fresh generation.
-    mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
+    mapping(uint256 idx => ParkedProceeds) parkedProceeds;
+    /// @dev Next index to assign in `parkedProceeds`; also the count ever enqueued.
+    uint256 nextParkedProceedsIdx;
+    /// @dev Retired: the per-day `clearingRelayed` flag, replaced by `bidsRelay` at the tail.
+    uint256 __retiredClearingRelayed;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
@@ -84,10 +82,10 @@ struct TargetRouterStorage {
     ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
-    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`. Carries the
+    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyParkedMark`. Carries the
     ///      origin's call time so a slot applied later still derives the deadline settlement honours rather
     ///      than one from its own arrival. Five bytes, so the pair shares a slot and is cleared in one write.
-    mapping(bytes14 seriesId => PendingMark) pendingMarks;
+    mapping(bytes14 seriesId => ParkedMark) parkedMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
@@ -96,11 +94,13 @@ struct TargetRouterStorage {
     /// @dev Bit per applied issuance chunk, so a repeat neither issues nor counts. Mirrors
     ///      `refundChunksApplied`; one word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
+    /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
+    mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
-///         via `flushPendingProceedsRoute`. The WCOEN is already held here, so only series+amount is snapshotted.
-struct PendingProceedsRoute {
+///         via `resendParkedProceeds`. The WCOEN is already held here, so only series+amount is snapshotted.
+struct ParkedProceeds {
     uint32 worldwideDay;
     uint128 amount;
     bool exists;

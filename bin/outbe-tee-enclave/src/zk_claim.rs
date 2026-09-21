@@ -65,7 +65,7 @@ pub(crate) fn derive_expected_hashes(
         worldwide_day: offer.worldwide_day.into(),
         currency: offer.tribute_currency,
         base: amount.base,
-        atto: amount.atto,
+        atto: amount.micro,
         su_ids,
     };
     let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft)

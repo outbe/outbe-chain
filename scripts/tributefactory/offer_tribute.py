@@ -6,10 +6,16 @@ Required inputs:
 - --wwd
 - --private-key
 - env TEE_PUBLIC_KEY  (the on-chain offer public key)
+- --zk-proof / --zk-merkle-root / --signature / --chain-id / --version
+- --tribute-draft-id / --su-hash / --amount-base (the proof-bound draft fields)
 
 The HKDF salt is the fixed protocol constant `outbe_tee::OFFER_HKDF_SALT`; env
-TEE_SALT is optional and only overrides it for testing. Everything else is
-generated automatically with reasonable defaults.
+TEE_SALT is optional and only overrides it for testing. ZK verification is
+mandatory: the proof is produced on the L2 and passed through unchanged (as are
+its root and BLS signature) - empty `0x` values are accepted only as a deliberate
+negative offer that the node rejects. The draft id, SU hashes, amount and day
+must be the values the proof and the caller's registered L2 attestation bind: the
+enclave folds them into the `nft_hash` the node checks against the proof.
 
 Dependencies:
 - cast (Foundry)
@@ -20,7 +26,10 @@ Example:
   python3 scripts/tributefactory/offer_tribute.py \
     --wwd 20260422 \
     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-    --rpc-url http://127.0.0.1:8545
+    --rpc-url http://127.0.0.1:8545 \
+    --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
+    --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
+    --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH> --amount-base 100
 """
 
 from __future__ import annotations
@@ -28,7 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
+import re
 import subprocess
 import sys
 
@@ -66,10 +75,6 @@ def run_cast(*args: str, expect_json: bool = False) -> str | dict:
     return output
 
 
-def random_amount_base() -> str:
-    return str(random.randint(10, 499))
-
-
 def canonical_amount_base(value: str) -> str:
     if not value or not value.isascii() or not value.isdigit():
         raise argparse.ArgumentTypeError("amount_base must be a canonical unsigned u64")
@@ -79,17 +84,39 @@ def canonical_amount_base(value: str) -> str:
     return value
 
 
-def canonical_amount_atto(value: str) -> str:
+def canonical_amount_micro(value: str) -> str:
     if not value or not value.isascii() or not value.isdigit():
-        raise argparse.ArgumentTypeError("amount_atto must be a canonical unsigned remainder")
+        raise argparse.ArgumentTypeError("amount_micro must be a canonical unsigned remainder")
     parsed = int(value)
     if str(parsed) != value or parsed >= 1_000_000:
-        raise argparse.ArgumentTypeError("amount_atto must be between 0 and 999999")
+        raise argparse.ArgumentTypeError("amount_micro must be between 0 and 999999")
     return value
 
 
-def random_hex32() -> str:
-    return "0x" + os.urandom(32).hex()
+_HEX = re.compile(r"\A(?:[0-9a-fA-F]{2})*\Z")
+
+
+def hex_bytes_arg(value: str) -> bytes:
+    """`0x`-hex flag value -> bytes. `0x` alone is empty and left to the node."""
+    raw = value.removeprefix("0x")
+    if not _HEX.match(raw):
+        raise argparse.ArgumentTypeError("must be 0x-prefixed hex")
+    return bytes.fromhex(raw)
+
+
+def hex32_arg(value: str) -> bytes:
+    """`0x`-hex of exactly 32 bytes - the enclave parses these as B256."""
+    data = hex_bytes_arg(value)
+    if len(data) != 32:
+        raise argparse.ArgumentTypeError("must be exactly 32 bytes of 0x-hex")
+    return data
+
+
+def uint32_arg(value: str) -> int:
+    parsed = int(value)
+    if not 0 <= parsed <= 0xFFFF_FFFF:
+        raise argparse.ArgumentTypeError("must fit uint32")
+    return parsed
 
 
 def load_hex_env(name: str, expected_len: int) -> bytes:
@@ -172,15 +199,59 @@ def main() -> None:
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8545", help="RPC URL")
     parser.add_argument(
         "--amount-base",
-        default=None,
-        help="Canonical unsigned settlement base amount; defaults to a random integer in [10,500)",
+        default="100",
+        help="Canonical unsigned settlement base amount; must match the amount the proof binds",
     )
     parser.add_argument(
-        "--amount-atto",
+        "--amount-micro",
         default="0",
-        help="Six-decimal raw remainder in [0,999999] (legacy field name)",
+        help="Micro-unit remainder in [0,999999] (10^6 units per whole unit); must match the proof",
     )
     parser.add_argument("--currency", default="840", help="ISO currency code")
+    parser.add_argument(
+        "--zk-proof",
+        required=True,
+        type=hex_bytes_arg,
+        help="Combined FullProof bytes (0x-hex): 4-byte public-input word count, public "
+        "inputs, proof; 0x is a deliberate negative offer the node rejects",
+    )
+    parser.add_argument(
+        "--zk-merkle-root",
+        required=True,
+        type=hex_bytes_arg,
+        help="L2 Merkle root the proof's public input commits to (0x-hex)",
+    )
+    parser.add_argument(
+        "--signature",
+        required=True,
+        type=hex_bytes_arg,
+        help="BLS MinSig signature over --zk-merkle-root by the network key registered "
+        "in the L2Registry (0x-hex)",
+    )
+    parser.add_argument(
+        "--chain-id",
+        required=True,
+        type=uint32_arg,
+        help="L2 chain id the proof verifies under; must be the caller's registered L2",
+    )
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="Exact circuit version enabled for that chain, e.g. 1.1.0",
+    )
+    parser.add_argument(
+        "--tribute-draft-id",
+        required=True,
+        type=hex32_arg,
+        help="32-byte TributeDraft id the proof and the caller's L2 attestation bind (0x-hex)",
+    )
+    parser.add_argument(
+        "--su-hash",
+        required=True,
+        action="append",
+        type=hex32_arg,
+        help="32-byte SpendingUnit hash bound by the proof (0x-hex, repeatable)",
+    )
     parser.add_argument(
         "--gas-limit",
         default=8_000_000,
@@ -211,23 +282,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    amount_base = (
-        canonical_amount_base(args.amount_base) if args.amount_base else random_amount_base()
-    )
-    amount_atto = canonical_amount_atto(args.amount_atto)
+    amount_base = canonical_amount_base(args.amount_base)
+    amount_micro = canonical_amount_micro(args.amount_micro)
     sender = sender_from_private_key(args.private_key)
     tee_pubkey, tee_salt = load_tee_config_from_env()
 
     if bool(args.wallet_address) != bool(args.sra_address):
         raise SystemExit("wallet-address and sra-address must be provided together or both omitted")
 
-    # worldwide_day + currency are cleartext ABI args, not payload fields.
+    # worldwide_day + currency are cleartext ABI args, not payload fields. The
+    # draft id, amount and SU hashes are the ones the proof binds.
     payload = {
         "creator": sender,
-        "tribute_draft_id": "0x" + os.urandom(32).hex(),
+        "tribute_draft_id": "0x" + args.tribute_draft_id.hex(),
         "amount_base": amount_base,
-        "amount_atto": amount_atto,
-        "su_hashes": [random_hex32(), random_hex32()],
+        "amount_micro": amount_micro,
+        "su_hashes": ["0x" + su_hash.hex() for su_hash in args.su_hash],
         "wallet_addresses": args.wallet_address,
         "sra_addresses": args.sra_address,
     }
@@ -256,13 +326,18 @@ def main() -> None:
         print(f"TRIBUTE_CURRENCY={int(args.currency)}")
         print(f"REFERENCE_CURRENCY={int(args.currency)}")
         print(f"EXCLUDE_FROM_INTEX_ISSUANCE={str(args.exclude_from_intex_issuance).lower()}")
+        print(f"ZK_PROOF=0x{args.zk_proof.hex()}")
+        print(f"L2_CHAIN_ID={args.chain_id}")
+        print(f"CIRCUIT_VERSION={args.version}")
+        print(f"ZK_MERKLE_ROOT=0x{args.zk_merkle_root.hex()}")
+        print(f"ZK_SIGNATURE=0x{args.signature.hex()}")
         print(f"SENDER={sender}")
         return
 
     result = run_cast(
         "send",
         FACTORY,
-        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,bytes,bytes,bytes,bytes)(bytes)",
+        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,uint32,string,bytes,bytes,bytes)(uint256)",
         cipher_text,
         nonce,
         ephemeral_pubkey,
@@ -270,11 +345,12 @@ def main() -> None:
         str(args.currency),
         str(args.currency),
         str(args.exclude_from_intex_issuance).lower(),
-        "0x",
-        "0x",
-        "0x",
-        "0x",
-        "0x",
+        "0x" + args.zk_proof.hex(),
+        str(args.chain_id),
+        args.version,
+        "0x",  # zkPublicKey: the combined proof carries its own
+        "0x" + args.zk_merkle_root.hex(),
+        "0x" + args.signature.hex(),
         "--rpc-url",
         args.rpc_url,
         "--private-key",

@@ -1,5 +1,8 @@
 //! Release E2E evidence for the existing Gem and Nod settlement/redemption paths.
 
+#[path = "settlement_nod.rs"]
+mod erc20_nod;
+
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -392,13 +395,18 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::settleGemCall {
+        350_000,
+        &eth::IGemFactory::settleGemWithPayNoteCall {
             gemId: gem_id,
             payNoteProof: paynote_proof.into(),
         },
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
+    eprintln!(
+        "settlement_evidence kind=sponsored_settle_gem tx={} gas_limit=350000 gas_used={}",
+        settle.transaction_hash, settle.receipt["gasUsed"]
+    );
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
 
     let promis_before = promis_balance(&url, owner, &keys.view);
@@ -422,6 +430,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
+        500_000,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
@@ -456,6 +465,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::PROMIS_FACTORY_ADDR,
+        500_000,
         &eth::IPromisFactory::mineCoenCall {
             amount: gem.promisLoad,
             mac: B256::from(burn_mac),
@@ -603,7 +613,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &url,
             addresses::GEM_FACTORY_ADDR,
             &key,
-            &eth::IGemFactory::settleGemCall {
+            &eth::IGemFactory::settleGemWithPayNoteCall {
                 gemId: gem_id,
                 payNoteProof: proof.into(),
             },
@@ -659,7 +669,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     assert_receipt_event(
         &mint.receipt,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::GemMined {
+        &eth::IGemFactory::GemExercised {
             gemId: gem_id,
             owner,
             promisLoad: gem.promisLoad,
@@ -780,7 +790,7 @@ fn native_balance_at(url: &str, owner: Address, height: u64) -> U256 {
     serde_json::from_value(value).expect("native balance must decode")
 }
 
-fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
+pub(crate) fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
     receipt: &serde_json::Value,
     emitter: Address,
     event: &E,
@@ -808,6 +818,30 @@ fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
     );
 }
 
+#[when("the feeder publishes a Nod qualification quote before the next UTC day")]
+fn publish_nod_qualification_quote(world: &mut World) {
+    let key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("public Tribute owner key");
+    let owner = world
+        .rpc
+        .address_of(&key)
+        .expect("public Tribute owner address")
+        .parse::<Address>()
+        .expect("canonical owner address");
+    let (_, body) = wait_for_materialized_nod(world, world.validators.primary_port(), owner);
+    // NodDaily consumes the completed previous UTC day's VWAP. Publish before
+    // the scenario's existing V2 day transition, with room for earlier samples.
+    let rate = body
+        .floorPriceMinor
+        .checked_mul(U256::from(3))
+        .expect("qualification quote fits scale-6 amount");
+    assert!(rate > body.floorPriceMinor);
+    crate::features::price_oracle::publish_controlled_quote(world, rate);
+}
+
 #[then("the public Tribute owner settles its Nod and redeems its exact Gratis into COEN")]
 fn owner_redeems_materialized_nod(world: &mut World) {
     let key = world
@@ -823,21 +857,66 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         .expect("canonical public Tribute owner address");
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
-    let (nod_id, mut body) = wait_for_materialized_nod(world, port, owner);
+    let (nod_id, _) = wait_for_materialized_nod(world, port, owner);
+    let ports = world.validators.committee_ports();
+    let height = world
+        .rpc
+        .finalized(port)
+        .expect("Nod settlement finalized height");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 20)
+        .expect("Nod qualification common finalized checkpoint");
+    let timestamp = world
+        .rpc
+        .block_timestamp(port, checkpoint.height)
+        .expect("Nod qualification checkpoint timestamp");
+    let previous_day = outbe_primitives::time::timestamp_to_date_key(
+        timestamp.checked_sub(86_400).expect("previous UTC day"),
+    );
+    let mut expected_vwap = None;
+    let mut qualified_body = None;
+    for &peer in &ports {
+        let peer_url = world.rpc.url(peer);
+        let body = eth::read_call_at_result(
+            &peer_url,
+            addresses::NOD_ADDR,
+            &eth::INod::nodDataCall {
+                nodId: U256::from_be_slice(&nod_id),
+            },
+            checkpoint.height,
+        )
+        .expect("finalized original Nod body");
+        let vwap = eth::read_call_at_result(
+            &peer_url,
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getUtcDayVwapCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(USD_ISO),
+                utcDay: previous_day,
+            },
+            checkpoint.height,
+        )
+        .expect("completed previous UTC day must have finalized VWAP");
+        assert!(
+            expected_vwap.is_none_or(|expected| expected == vwap),
+            "daily VWAP differs across validators"
+        );
+        expected_vwap = Some(vwap);
+        assert!(vwap > body.floorPriceMinor, "qualification fixture requires completed-day VWAP above Nod floor: day={previous_day} vwap={vwap} floor={}", body.floorPriceMinor);
+        assert!(
+            body.isQualified,
+            "Nod must be qualified at common finalized checkpoint on port {peer}"
+        );
+        qualified_body = Some(body);
+    }
+    let body = qualified_body.expect("nonempty validator committee");
     assert!(
-        !body.costAmountMinor.is_zero(),
+        !body.settlementCostMinor.is_zero(),
         "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
 
-    if !body.isQualified {
-        let qualifying_rate = body
-            .floorPriceMinor
-            .checked_add(U256::ONE)
-            .expect("Nod floor price admits one exact higher scale-6 quote");
-        crate::features::price_oracle::publish_controlled_quote(world, qualifying_rate);
-        body = wait_for_qualified_materialized_nod(world, port, owner, &nod_id);
-    }
     assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
     let fixture = deploy_settlement_fixture(world);
@@ -850,7 +929,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &key,
         owner,
         fixture.asset,
-        body.costAmountMinor,
+        body.settlementCostMinor,
     );
     assert_eq!(
         eth::read_call(
@@ -860,9 +939,22 @@ fn owner_redeems_materialized_nod(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(body.costAmountMinor),
+        Some(body.settlementCostMinor),
         "reserve vault did not receive exact Nod cost at deposit time"
     );
+
+    let settlement = eth::send_call_outcome(
+        &url,
+        addresses::NOD_FACTORY_ADDR,
+        &key,
+        &eth::INodFactory::settleNodWithPayNoteCall {
+            nodId: U256::from_be_slice(&nod_id),
+            payNoteProof: paynote_proof.into(),
+        },
+        None,
+    )
+    .expect("settle Nod with deposited PayNote");
+    assert_mined_success(&settlement, "settle Nod with deposited PayNote");
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
@@ -882,7 +974,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_pow_nonce(U256::from_be_slice(&nod_id));
+    let pow = find_nod_pow_nonce(U256::from_be_slice(&nod_id), owner);
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -892,15 +984,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
-            payNoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis by spending the deposited PayNote");
-    assert_mined_success(
-        &mine_gratis,
-        "mine Gratis by spending the deposited PayNote",
-    );
+    .expect("exercise the paid Nod");
+    assert_mined_success(&mine_gratis, "exercise the paid Nod");
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + body.gratisLoadMinor,
@@ -951,7 +1039,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
-        hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,
+        hex::encode(&nod_id), fixture.asset, fixture.vault, body.settlementCostMinor,
         body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
     );
 }
@@ -978,46 +1066,6 @@ fn wait_for_materialized_nod(
                 world.rpc.finalized(port)
             ),
         }
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn wait_for_qualified_materialized_nod(
-    world: &World,
-    port: u16,
-    owner: Address,
-    expected_nod_id: &[u8],
-) -> crate::internal::eth::INod::NodData {
-    let deadline = Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
-    loop {
-        let (candidate, observation) = match world.rpc.materialized_nod_for_owner(port, owner) {
-            Ok(Some((nod_id, body))) => {
-                let observation = format!(
-                    "nod_id=0x{} qualified={} floor={}",
-                    hex::encode(&nod_id),
-                    body.isQualified,
-                    body.floorPriceMinor,
-                );
-                (Some((nod_id, body)), observation)
-            }
-            Ok(None) => (None, "Nod not found".to_owned()),
-            Err(error) => (None, format!("Nod lookup error: {error}")),
-        };
-        if let Some((nod_id, body)) = candidate {
-            assert_eq!(
-                nod_id, expected_nod_id,
-                "owner's materialized Nod changed while awaiting qualification"
-            );
-            if body.isQualified {
-                return body;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "materialized Nod did not qualify within {MATERIALIZED_NOD_TIMEOUT_SECS}s: owner={owner:#x} {observation} head={:?} finalized={:?}",
-            world.rpc.head(port),
-            world.rpc.finalized(port),
-        );
         sleep(Duration::from_millis(250));
     }
 }
@@ -1404,6 +1452,20 @@ pub(crate) fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
         .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
+}
+
+pub(crate) fn find_nod_pow_nonce(id: U256, owner: Address) -> u64 {
+    (0_u64..100_000)
+        .find(|nonce| {
+            outbe_common::pow::validate_mining_pow(
+                id,
+                owner,
+                outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,
+                *nonce,
+            )
+            .is_ok()
+        })
+        .expect("bounded Nod PoW nonce")
 }
 
 pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {

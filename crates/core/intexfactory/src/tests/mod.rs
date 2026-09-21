@@ -9,7 +9,9 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
+};
 
 use crate::called;
 use crate::constants::{
@@ -26,7 +28,7 @@ use crate::state::Group;
 const REFERENCE_ISO: u16 = 840;
 const DAY: u64 = 24 * 60 * 60;
 
-fn holder() -> Address {
+fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
@@ -45,6 +47,14 @@ const EXPECTED_FLOOR: u64 = 1_080_000; // ENTRY_PRICE * 108/100
 const EXPECTED_TRIGGER: u64 = 2_280_000; // ENTRY_PRICE * 228/100
 
 fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = factory_provider();
+    StorageHandle::enter(&mut storage, |handle| {
+        select_prod_profile(&handle);
+        f(handle)
+    })
+}
+
+fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     // Stub IntexNFT1155: void calls succeed; balanceOf returns 0 (32 bytes).
@@ -57,10 +67,7 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    StorageHandle::enter(&mut storage, |handle| {
-        select_prod_profile(&handle);
-        f(handle)
-    })
+    storage
 }
 
 /// These cases assert the PROD terms; an unset profile resolves by chain id, and
@@ -112,14 +119,14 @@ fn qualify_day(
     let group = f
         .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
         .unwrap();
-    qualified::try_qualify_group(s, f, &group, rate).unwrap()
+    qualified::try_qualify_group(s, f, &group, rate, first_full_day(ISSUED_AT as u64)).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
         worldwide_day: worldwide_day.into(),
-        issued_intex_count: 100,
+        issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
         issuance_currency: 840,
@@ -137,6 +144,7 @@ mod entrypoints;
 mod groups;
 mod issuance;
 mod lifecycle;
+mod parked;
 mod scans;
 mod settlement;
 
@@ -147,6 +155,21 @@ const EUR_PAIR_ID: u32 = 2;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
     alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// The finalized VWAP of the UTC day before `ts`, as the Oracle closes it.
+fn write_day_vwap(oracle: &OracleContract, iso_code: u16, pair_id: u32, ts: u64, vwap: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
+    let day = previous_date_key(timestamp_to_date_key(ts));
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&pair_id, vwap)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
 }
 
 fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {

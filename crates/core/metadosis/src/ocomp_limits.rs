@@ -1,0 +1,216 @@
+use alloy_primitives::{B256, U256};
+use outbe_ocomp_protocol::{
+    intent::{DayType, ReferenceEntryPriceV1},
+    receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
+};
+use outbe_primitives::{
+    error::{PrecompileError, Result},
+    storage::StorageHandle,
+};
+use outbe_promislimit::PromisLimitContract;
+
+use crate::errors::MetadosisError;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RequestLimitEffect {
+    pub protocol_bundle_hash: B256,
+    pub wwd: u32,
+    pub pending_nonce: u64,
+    pub day_type: DayType,
+    pub day_limit: U256,
+    pub lysis_limit_minor: U256,
+    pub nominal_total: U256,
+    pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
+    pub logical_anchor: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RequestLimitSplit {
+    /// The day's own emission plus what it drew from the accumulator.
+    pub day_limit: U256,
+    /// Maximum Lysis capacity, in protocol units (1e6 per whole COEN).
+    pub lysis_limit_minor: U256,
+    /// Maximum Desis capacity, not actual Intex issuance, in protocol units.
+    pub desis_limit_minor: U256,
+    /// What Lysis left of the day's own emission, credited before the auction draws.
+    pub carry_over_credit: U256,
+}
+
+impl RequestLimitSplit {
+    /// Lysis is bounded by the day's own emission and what it leaves is credited to the
+    /// accumulator. The auction then draws from that accumulator: no more than the nominal beyond
+    /// the symbolic share, and no more than the accumulator holds.
+    pub(crate) fn derive(
+        base_limit: U256,
+        lysis_limit_minor: U256,
+        nominal_total: U256,
+        carry_over_before: U256,
+        green: bool,
+    ) -> Result<Self> {
+        let invalid = || MetadosisError::InvalidOcompLimitSplit {
+            day_limit: base_limit,
+            lysis_limit_minor,
+        };
+        let carry_over_credit = base_limit
+            .checked_sub(lysis_limit_minor)
+            .ok_or_else(invalid)?;
+        let available = carry_over_before
+            .checked_add(carry_over_credit)
+            .ok_or_else(invalid)?;
+        let desis_limit_minor = if green {
+            nominal_total
+                .checked_sub(lysis_limit_minor)
+                .ok_or_else(invalid)?
+                .min(available)
+        } else {
+            U256::ZERO
+        };
+        Self::assemble(
+            base_limit,
+            lysis_limit_minor,
+            desis_limit_minor,
+            carry_over_credit,
+        )
+    }
+
+    fn assemble(
+        base_limit: U256,
+        lysis_limit_minor: U256,
+        desis_limit_minor: U256,
+        carry_over_credit: U256,
+    ) -> Result<Self> {
+        let invalid = || MetadosisError::InvalidOcompLimitSplit {
+            day_limit: base_limit,
+            lysis_limit_minor,
+        };
+        if lysis_limit_minor.checked_add(carry_over_credit) != Some(base_limit) {
+            return Err(invalid().into());
+        }
+        let day_limit = base_limit
+            .checked_add(desis_limit_minor)
+            .ok_or_else(invalid)?;
+        Ok(Self {
+            day_limit,
+            lysis_limit_minor,
+            desis_limit_minor,
+            carry_over_credit,
+        })
+    }
+}
+
+/// Apply the request effect for a split that the authoritative Metadosis job
+/// state has proven fresh.
+///
+/// The single-attempt FSM invokes this exactly once for a WorldwideDay. An
+/// existing receipt is an invariant violation rather than a replay path.
+pub(crate) fn apply_fresh_request_limit_effect(
+    storage: StorageHandle<'_>,
+    request: RequestLimitEffect,
+) -> Result<RequestLimitSplitReceiptV1> {
+    let green = request.day_type == DayType::Green;
+    let carry_over_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    let split = RequestLimitSplit::derive(
+        request.day_limit,
+        request.lysis_limit_minor,
+        request.nominal_total,
+        carry_over_before,
+        green,
+    )?;
+    let receipt = expected_receipt(&request, split, request.pending_nonce)?;
+    receipt
+        .validate_semantics()
+        .map_err(protocol_error_to_revert)?;
+    // The request only credits what Lysis left of the day's own emission. The draw and the brief
+    // wait for the Lysis deadline: a day whose Lysis never completes must not open an auction.
+    if !split.carry_over_credit.is_zero() {
+        let delta = PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(split.carry_over_credit)?;
+        if delta.credited != split.carry_over_credit {
+            return Err(MetadosisError::OcompLimitReceiptMismatch.into());
+        }
+    }
+    Ok(receipt)
+}
+
+/// Draw the day's Desis Limit from the accumulator and brief Desis with it.
+///
+/// Called once Lysis has closed, so the accumulator already holds what Lysis returned and a day
+/// whose Lysis never completed never opens an auction.
+///
+/// The amount was frozen on the request receipt, because the brief hash covers it. An activation
+/// delayed past a later day's own draw can therefore find the accumulator short; the draw then
+/// fails the activation rather than briefing less than the receipt promises, and the day's whole
+/// emission returns to the accumulator.
+pub(crate) fn apply_auction_brief(
+    storage: StorageHandle<'_>,
+    receipt: &RequestLimitSplitReceiptV1,
+) -> Result<()> {
+    let green = receipt.day_type == DayType::Green;
+    // One checkpoint: the draw and the brief may not survive each other's failure.
+    storage.with_checkpoint(|| {
+        if !receipt.desis_limit_minor.is_zero() {
+            let drawn = PromisLimitContract::new(storage.clone())
+                .checked_take_carry_over_up_to(receipt.desis_limit_minor)?;
+            if drawn.taken != receipt.desis_limit_minor {
+                return Err(MetadosisError::OcompLimitReceiptMismatch.into());
+            }
+        }
+        let actual = outbe_desis::ocomp_limits::apply_request_desis_limit(
+            storage.clone(),
+            receipt.protocol_bundle_hash,
+            receipt.wwd.into(),
+            receipt.desis_limit_minor,
+            &receipt.auction_entry_prices,
+            receipt.logical_anchor,
+            green,
+        )?;
+        if receipt.desis_brief_hash != Some(actual) {
+            return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
+        }
+        Ok(())
+    })
+}
+
+fn expected_receipt(
+    request: &RequestLimitEffect,
+    split: RequestLimitSplit,
+    effect_nonce: u64,
+) -> Result<RequestLimitSplitReceiptV1> {
+    let (destination, desis_limit_minor) = match request.day_type {
+        DayType::Green => (LimitSplitDestination::DesisAuction, split.desis_limit_minor),
+        DayType::Red => (LimitSplitDestination::CarryOver, U256::ZERO),
+    };
+    let carry_over_credit = split.carry_over_credit;
+    let desis_brief_hash = Some(
+        desis_request_brief_hash(
+            request.protocol_bundle_hash,
+            request.wwd,
+            desis_limit_minor,
+            &request.auction_entry_prices,
+            request.logical_anchor,
+        )
+        .map_err(protocol_error_to_revert)?,
+    );
+    let receipt = RequestLimitSplitReceiptV1 {
+        protocol_bundle_hash: request.protocol_bundle_hash,
+        wwd: request.wwd,
+        pending_nonce: effect_nonce,
+        day_type: request.day_type,
+        day_limit: split.day_limit,
+        lysis_limit_minor: split.lysis_limit_minor,
+        desis_limit_minor: split.desis_limit_minor,
+        destination,
+        desis_brief_hash,
+        carry_over_credit,
+        auction_entry_prices: request.auction_entry_prices.clone(),
+        logical_anchor: request.logical_anchor,
+    };
+    receipt
+        .validate_semantics()
+        .map_err(protocol_error_to_revert)?;
+    Ok(receipt)
+}
+
+fn protocol_error_to_revert(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
+    crate::errors::caller_rejection(format!("invalid OCOMP request limit receipt: {error}"))
+}

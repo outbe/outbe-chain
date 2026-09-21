@@ -115,7 +115,8 @@ RUN apt-get update && \
       mold \
       python-is-python3 \
       unzip \
-      xz-utils && \
+      xz-utils \
+      zstd && \
     rm -rf /var/lib/apt/lists/*
 
 # Exact release binary with a checksum, rather than piping the install script to
@@ -164,7 +165,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold python; do \
+                cog duckdb uv uvx aderyn sccache jq mold zstd python; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \

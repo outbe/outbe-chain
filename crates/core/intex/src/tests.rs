@@ -115,6 +115,11 @@ fn certified_contributor_installation_has_no_public_write_selector() {
     assert!(provider.get_ordered_events().is_empty());
 }
 
+/// The owner the unit ledgers are booked against in these tests.
+fn owner() -> Address {
+    Address::repeat_byte(0xA1)
+}
+
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
@@ -124,15 +129,15 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: sid(worldwide_day),
         worldwide_day: WorldwideDay::new(worldwide_day),
-        issued_intex_count: 100,
+        issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
         floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
         call_price_minor: U256::from(CALL_PRICE_MINOR),
         call_trigger: IntexCallTrigger {
-            call_window: 30 * 24 * 60 * 60,
-            call_threshold: 5 * 24 * 60 * 60,
-            call_notice_period: CALL_NOTICE_PERIOD,
+            call_window_seconds: 30 * 24 * 60 * 60,
+            call_threshold_seconds: 5 * 24 * 60 * 60,
+            call_notice_period_seconds: CALL_NOTICE_PERIOD,
         },
         issued_at: ISSUED_AT,
         issuance_currency: 840,
@@ -157,13 +162,13 @@ fn create_then_read_round_trip() {
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(r.floor_price_minor, U256::from(FLOOR_PRICE_MINOR));
-        assert_eq!(r.issued_intex_count, 100);
+        assert_eq!(r.issued_units, 100);
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
-                call_window: 30 * 24 * 60 * 60,
-                call_threshold: 5 * 24 * 60 * 60,
-                call_notice_period: CALL_NOTICE_PERIOD,
+                call_window_seconds: 30 * 24 * 60 * 60,
+                call_threshold_seconds: 5 * 24 * 60 * 60,
+                call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
@@ -172,7 +177,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.worldwide_day, 20260101.into());
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
-        assert_eq!(r.call_notice_period, CALL_NOTICE_PERIOD);
+        assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         assert_eq!(r.issuance_currency, 840);
         assert_eq!(r.reference_currency, 840);
     });
@@ -348,7 +353,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(data.floorPriceMinor, U256::from(FLOOR_PRICE_MINOR));
-        assert_eq!(data.issuedIntexCount, 100);
+        assert_eq!(data.issuedUnits, 100);
         assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
         assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
@@ -1100,7 +1105,7 @@ fn expiry_forfeits_every_unrealized_unit() {
         assert_eq!(api::expire_series(&s, id).unwrap().units, 100);
         assert_eq!(
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
-            IntexState::Expired
+            IntexState::Called
         );
     });
 }
@@ -1110,45 +1115,46 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 41);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_parked_units(&s, id, 25).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
-        assert_eq!(api::parked_units(&s, id).unwrap(), 25);
+        assert_eq!(api::gem_factory_units(&s, id).unwrap(), 25);
         assert_eq!(api::expire_series(&s, id).unwrap().units, 45);
     });
 }
 
 #[test]
-fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
+fn a_fully_realized_series_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
         api::record_settled_units(&s, id, 60).unwrap();
-        api::record_parked_units(&s, id, 40).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
 
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
-        assert_eq!(
-            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
-            IntexState::Expired
-        );
     });
 }
 
 #[test]
-fn the_view_carries_what_is_still_unrealized() {
+fn the_view_carries_the_whole_split() {
     with_registry(|s| {
         let id = called_series(&s, 46);
         api::record_settled_units(&s, id, 30).unwrap();
-        api::record_parked_units(&s, id, 25).unwrap();
+        api::record_exercised_units(&s, id, owner(), 5).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
+        // Every class the series record can answer for, without a second call.
         let data = dispatch_series_data(&s, id);
-        assert_eq!(data.settledUnits, 30);
-        assert_eq!(data.parkedUnits, 25);
+        assert_eq!(data.issuedUnits, 100);
+        assert_eq!(data.settledUnits, 25);
+        assert_eq!(data.exercisedUnits, 5);
+        assert_eq!(data.gemFactoryUnits, 25);
 
         // The counters survive expiry, so the split stays readable afterwards.
         api::expire_series(&s, id).unwrap();
         let data = dispatch_series_data(&s, id);
-        assert_eq!(data.settledUnits, 30);
-        assert_eq!(data.parkedUnits, 25);
+        assert_eq!(data.settledUnits, 25);
+        assert_eq!(data.exercisedUnits, 5);
+        assert_eq!(data.gemFactoryUnits, 25);
     });
 }
 
@@ -1177,15 +1183,55 @@ fn expiry_is_rejected_before_the_series_is_called() {
     });
 }
 
-#[test]
-fn expired_is_terminal() {
-    with_registry(|s| {
-        let id = called_series(&s, 44);
-        api::expire_series(&s, id).unwrap();
+/// The registry with its clock at `now`; series still carry `ISSUED_AT`.
+fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(now));
+    StorageHandle::enter(&mut storage, f)
+}
 
-        assert!(api::expire_series(&s, id).is_err());
-        assert!(api::mark_qualified(&s, id).is_err());
-        assert!(api::mark_called(&s, id, ISSUED_AT).is_err());
+const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
+
+#[test]
+fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
+    // Strictly after: on the deadline itself the notice has not run out.
+    with_registry_at(NOTICE_END, |s| {
+        let id = called_series(&s, 60);
+        assert_eq!(dispatch_series_data(&s, id).state, IntexState::Called as u8);
+    });
+
+    with_registry_at(NOTICE_END + 1, |s| {
+        let id = called_series(&s, 61);
+        assert_eq!(
+            dispatch_series_data(&s, id).state,
+            IntexState::Expired as u8
+        );
+        // Derived, not written: the sweep has not run.
+        assert_eq!(
+            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
+            IntexState::Called
+        );
+    });
+}
+
+#[test]
+fn a_series_an_older_node_stored_as_expired_still_reads_expired() {
+    with_registry(|s| {
+        let id = called_series(&s, 63);
+        api::record_settled_units(&s, id, 30).unwrap();
+        let mut registry = crate::IntexContract::new(s.clone());
+        let mut record = registry.load_series(id).unwrap();
+        record.state = IntexState::Expired as u8;
+        registry.update_series_record(&record).unwrap();
+
+        // The clock is still before the deadline: only the stored state says Expired.
+        assert_eq!(
+            dispatch_series_data(&s, id).state,
+            IntexState::Expired as u8
+        );
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.forfeited, 70);
     });
 }
 
@@ -1196,7 +1242,139 @@ fn realized_units_can_never_exceed_the_issued_count() {
         api::record_settled_units(&s, id, 100).unwrap();
         // One unit past the cap means the two ledgers disagree; the forfeit
         // arithmetic would underflow later, so it is refused here instead.
-        assert!(api::record_parked_units(&s, id, 1).is_err());
+        assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
         assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
+    });
+}
+
+#[test]
+fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
+    with_registry(|s| {
+        let id = called_series(&s, 50);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_exercised_units(&s, id, owner(), 15).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.issued, 100);
+        assert_eq!(counts.active, 45);
+        assert_eq!(counts.settled, 15);
+        assert_eq!(counts.exercised, 15);
+        assert_eq!(counts.gem_factory, 25);
+        assert_eq!(counts.forfeited, 0);
+        assert_eq!(
+            counts.active
+                + counts.settled
+                + counts.exercised
+                + counts.gem_factory
+                + counts.forfeited,
+            counts.issued
+        );
+    });
+}
+
+#[test]
+fn expiry_moves_the_active_units_into_forfeited() {
+    with_registry_at(NOTICE_END + 1, |s| {
+        let id = called_series(&s, 51);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_exercised_units(&s, id, owner(), 30).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.forfeited, 45);
+        assert_eq!(counts.settled, 0);
+        assert_eq!(counts.exercised, 30);
+        assert_eq!(
+            counts.active
+                + counts.settled
+                + counts.exercised
+                + counts.gem_factory
+                + counts.forfeited,
+            counts.issued
+        );
+    });
+}
+
+#[test]
+fn a_series_mined_before_the_upgrade_counts_nothing_as_exercised() {
+    with_registry(|s| {
+        let id = called_series(&s, 52);
+        api::record_settled_units(&s, id, 40).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.exercised, 0);
+        assert_eq!(counts.settled, 40);
+        assert_eq!(counts.active, 60);
+    });
+}
+
+#[test]
+fn exercising_more_than_was_settled_is_refused() {
+    with_registry(|s| {
+        let id = called_series(&s, 53);
+        api::record_settled_units(&s, id, 10).unwrap();
+
+        assert!(api::record_exercised_units(&s, id, owner(), 11).is_err());
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        assert!(api::record_exercised_units(&s, id, owner(), 1).is_err());
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
+    });
+}
+
+#[test]
+fn exercising_moves_units_out_of_the_settled_ledger() {
+    with_registry(|s| {
+        let id = called_series(&s, 54);
+        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_exercised_units(&s, id, owner(), 15).unwrap();
+
+        // The ledger holds what is still settled, not what was ever paid.
+        assert_eq!(api::settled_units(&s, id).unwrap(), 25);
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 15);
+    });
+}
+
+/// The worked example of the spec: 100 issued, 20 settled, 10 exercised and 15 sent
+/// to the Gem Factory leave 55 unpaid units to forfeit.
+#[test]
+fn the_unpaid_remainder_excludes_settled_exercised_and_gem_factory_units() {
+    with_registry(|s| {
+        let id = called_series(&s, 55);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        api::record_gem_factory_units(&s, id, owner(), 15).unwrap();
+
+        let counts = api::unit_counts(&s, id).unwrap();
+        assert_eq!(counts.settled, 20);
+        assert_eq!(counts.exercised, 10);
+        assert_eq!(counts.gem_factory, 15);
+        assert_eq!(counts.active, 55);
+
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 55);
+    });
+}
+
+/// Burning erases who held the units, so the two per-owner ledgers are written at
+/// the moment of the burn. Nothing reads them on chain yet; a later reader cannot
+/// reconstruct them.
+#[test]
+fn the_per_owner_ledgers_record_who_burned_the_units() {
+    with_registry(|s| {
+        let other = Address::repeat_byte(0xB2);
+        let id = called_series(&s, 56);
+        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_exercised_units(&s, id, owner(), 10).unwrap();
+        api::record_gem_factory_units(&s, id, other, 5).unwrap();
+
+        assert_eq!(api::owner_exercised_units(&s, id, owner()).unwrap(), 10);
+        assert_eq!(api::owner_gem_factory_units(&s, id, owner()).unwrap(), 0);
+        assert_eq!(api::owner_exercised_units(&s, id, other).unwrap(), 0);
+        assert_eq!(api::owner_gem_factory_units(&s, id, other).unwrap(), 5);
+
+        // Each owner's share adds up to the series totals.
+        assert_eq!(api::exercised_units(&s, id).unwrap(), 10);
+        assert_eq!(api::gem_factory_units(&s, id).unwrap(), 5);
     });
 }

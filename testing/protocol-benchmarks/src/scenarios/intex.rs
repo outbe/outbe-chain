@@ -67,7 +67,7 @@ fn params(index: usize) -> IssuanceParams {
     IssuanceParams {
         series_id,
         worldwide_day: TARGET_WWD,
-        issued_intex_count: 100,
+        issued_units: 100,
         promis_load_minor: 1_000_000,
         entry_price_minor: U256::from(1_000_000),
         issuance_currency: 840,

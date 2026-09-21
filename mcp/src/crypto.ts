@@ -52,6 +52,12 @@ export function encryptOffer(offerPub: Uint8Array, plaintext: Uint8Array): Encry
 export interface OfferPayload {
   creator: string;
   amount_base: string;
+  /** Six-decimal remainder; must match the proof's draft. Defaults to "0". */
+  amount_micro?: string;
+  /** TributeDraft id bound by the proof and by the caller's L2 attestation. */
+  tribute_draft_id: string;
+  /** SpendingUnit hashes bound by the proof; at least one. */
+  su_hashes: readonly string[];
 }
 
 const U64_MAX = 18_446_744_073_709_551_615n;
@@ -64,19 +70,29 @@ export function canonicalAmountBase(value: string): string {
   return value;
 }
 
+/** Return one canonical lexical u64 below 10^6 for the `amount_micro` remainder. */
+export function canonicalAmountMicro(value: string): string {
+  if (!/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) >= 1_000_000n) {
+    throw new Error("amount_micro must be a canonical unsigned u64 below 1000000");
+  }
+  return value;
+}
+
 /**
- * Build the plaintext JSON payload (fresh draft id + su hash per offer).
- * `worldwide_day` and `currency` are cleartext `offerTribute` arguments, not
- * payload fields - the node needs them to admit and price the offer.
+ * Build the plaintext JSON payload. The draft id, amount and SU hashes come
+ * from the caller and MUST be the values its proof and L2 attestation bind:
+ * the enclave folds them into `nft_hash`, which the node checks against the
+ * proof's public input. `worldwide_day` and `currency` are cleartext
+ * `offerTribute` arguments, not payload fields - the node needs them to admit
+ * and price the offer.
  */
 export function buildPayload(p: OfferPayload): Uint8Array {
-  const hex32 = () => `0x${Buffer.from(randomBytes(32)).toString("hex")}`;
   const obj = {
     creator: p.creator,
-    tribute_draft_id: hex32(),
+    tribute_draft_id: p.tribute_draft_id,
     amount_base: canonicalAmountBase(p.amount_base),
-    amount_atto: "0",
-    su_hashes: [hex32()],
+    amount_micro: canonicalAmountMicro(p.amount_micro ?? "0"),
+    su_hashes: [...p.su_hashes],
     wallet_addresses: [] as string[],
     sra_addresses: [] as string[],
   };

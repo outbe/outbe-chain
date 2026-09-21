@@ -12,7 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 pub struct IssuanceParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
-    pub issued_intex_count: u32,
+    pub issued_units: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
     pub entry_price_minor: U256,
@@ -27,20 +27,21 @@ pub struct IssuanceParams {
     pub snapshot_chains: Vec<u32>,
 }
 
-/// EVM storage layout: settlement bookkeeping (authorized_settler, mine_seq), the
+/// EVM storage layout: settlement bookkeeping (mine_seq), the
 /// lifecycle bin indexes and the queue of called groups awaiting their deadline.
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// `keccak256(holder ++ series_id)` -> authorized settler address.
+    /// Retired and never read; the slot stays declared so the fields after it
+    /// keep their numbers on an upgraded chain. Not to be reused.
     #[attribute(order = 0)]
-    pub authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
+    pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 
-    /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
+    /// `keccak256(series_id ++ owner)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
+    // Unqualified-series bin index (by floor_price_minor) the qualify sweep walks.
     // A floor is only comparable to the rate of its own reference currency, so
     // every column is namespaced by ISO code and each currency walks its own trie.
     #[attribute(order = 2)]
@@ -117,7 +118,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 23)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Lifecycle notices waiting for the `intex_notify` trigger to send them: the
+    // Lifecycle notices waiting for the `intex_drain_notices` trigger to send them: the
     // scans run in a block hook, which cannot call contracts. Head and tail reset
     // to 0 whenever the queue drains empty.
     #[attribute(order = 24)]
@@ -153,9 +154,9 @@ pub struct IntexFactoryContract {
     // Widest terms ever issued in a currency; both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 35)]
-    pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 36)]
@@ -172,17 +173,21 @@ pub struct IntexFactoryContract {
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 41)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 42)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 43)]
+    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 44)]
+    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// Where the parked-message sweep resumes: every index below it is sent or empty.
+    #[attribute(order = 45)]
+    pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    /// As `parked_message_cursor`, for the proceeds the factory refused.
+    #[attribute(order = 46)]
+    pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl IntexFactoryContract<'_> {
-    /// Composite key for `authorized_settler`: `keccak256(holder ++ series_id)`.
-    pub fn authorized_settler_key(holder: Address, series_id: SeriesId) -> B256 {
-        let mut buf = [0u8; 20 + SERIES_ID_LEN];
-        buf[0..20].copy_from_slice(holder.as_slice());
-        buf[20..].copy_from_slice(series_id.as_bytes());
-        keccak256(buf)
-    }
-
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
@@ -196,11 +201,11 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.
-    pub fn mine_seq_key(series_id: SeriesId, holder: Address) -> B256 {
+    /// Composite key for `mine_seq`: `keccak256(series_id ++ owner)`.
+    pub fn mine_seq_key(series_id: SeriesId, owner: Address) -> B256 {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
-        buf[SERIES_ID_LEN..].copy_from_slice(holder.as_slice());
+        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
         keccak256(buf)
     }
 }

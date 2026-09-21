@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
 use outbe_compressed_entities::{
     decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
@@ -11,6 +11,7 @@ use outbe_compressed_entities::{
 };
 
 use crate::features::common::boot_bounded_tribute_localnet;
+use crate::features::l2_registration;
 use crate::world::World;
 
 #[given(
@@ -32,13 +33,14 @@ fn fresh_bounded_tribute_localnet(world: &mut World, window: u64) {
 #[when("an operator submits one encrypted tribute offer")]
 fn submit_one_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         .tribute_offer(&key, &wwd)
@@ -46,16 +48,70 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("an operator submits one encrypted cross-currency tribute offer")]
-fn submit_one_cross_currency_offer(world: &mut World) {
+#[when("an operator submits one encrypted tribute offer for an unregistered L2 chain")]
+fn submit_one_offer_for_unregistered_chain(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    wait_for_offering(world, &wwd);
+    // Chain zero cannot be registered. Reject before day, pricing, or enclave
+    // work, even though the offer carries no ZK material.
+    let tx_hash = world
+        .rpc
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            crate::world::rpc::TributeZkOffer {
+                tribute_draft_id_hex: &format!("{:#x}", B256::with_last_byte(0x11)),
+                su_hash_hex: &format!("{:#x}", B256::with_last_byte(0x22)),
+                merkle_root_hex: "0x",
+                proof_hex: "0x",
+                l2_chain_id: 0,
+                circuit_version: "",
+                signature_hex: "0x",
+            },
+        )
+        .expect("product CLI offerTribute returned a transaction hash");
+    world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
+}
+
+#[then("the offer is rejected for an unregistered L2 chain and tribute supply stays zero")]
+fn unregistered_offer_rejected(world: &mut World) {
+    let tx_hash = world
+        .state
+        .l2_rejected_offer_tx_hash
+        .as_deref()
+        .expect("unregistered offer tx");
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    super::tribute_negatives::assert_rejection(
+        world,
+        tx_hash,
+        &key,
+        super::tribute_negatives::Rejection::UnregisteredNetwork,
+    );
+    super::tribute_negatives::assert_supply(world, 0);
+}
+
+#[when("an operator submits one encrypted cross-currency tribute offer")]
+fn submit_one_cross_currency_offer(world: &mut World) {
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         .tribute_cross_currency_offer(&key, &wwd, "0", "410000", 949, 978, false)
@@ -100,13 +156,14 @@ pub(super) fn wait_for_offering(world: &World, wwd: &str) {
 #[when("the operator submits a duplicate logical tribute offer with different parameters for the same day")]
 fn submit_duplicate_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
-    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
         .expect("validator-0")
         .evm_key()
         .expect("validator-0 key");
+    l2_registration::ensure_tribute_offer_operator(world, &key);
+    wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
         // The first offer uses amount=100 and exclude=false. Change both
@@ -411,4 +468,161 @@ fn verify_absence_on_committee(
             "validator on port {port} did not expose the expected verifiable absence; last result: {observed:?}"
         );
     }
+}
+
+const INDEPENDENT_TRIBUTE_USER_KEY: &str =
+    "0x6666666666666666666666666666666666666666666666666666666666666666";
+
+#[when("a user without an L2 registration rejects a wrong network signature then offers through the registered network")]
+fn independent_user_offers_through_network(world: &mut World) {
+    use crate::internal::{eth, l2_fixture};
+    use crate::world::rpc::TributeZkOffer;
+    let funder = world.validators.get(0);
+    let operator_key = funder.evm_key().expect("L2 network administrator key");
+    l2_registration::ensure_tribute_offer_operator(world, &operator_key);
+    let operator = l2_registration::operator_address(world, &operator_key);
+    let caller = l2_registration::operator_address(world, INDEPENDENT_TRIBUTE_USER_KEY);
+    assert_ne!(caller, operator);
+    assert_eq!(world.rpc.l2_chain_by_l1_address(caller), Some(0));
+    let network = world
+        .rpc
+        .l2_chain_by_l1_address(operator)
+        .expect("administrator network");
+    assert_ne!(network, 0);
+    let funding = world
+        .rpc
+        .fund_key(&funder, INDEPENDENT_TRIBUTE_USER_KEY, 100)
+        .expect("fund independent user for real encrypted offers");
+    assert!(world.rpc.wait_successful_receipt(&funding, 120));
+    let wwd = world.state.wwd.clone().expect("offering day");
+    let day: u32 = wwd.parse().expect("numeric day");
+    let (draft, su_hash) = l2_fixture::offer_identifiers("independent-user", caller, day);
+    let zk =
+        world
+            .rpc
+            .prove_offer_for_network(caller, network, day, 840, ("100", "0"), draft, su_hash);
+    let wrong_signature = l2_fixture::sign_merkle_root(
+        network.checked_add(1).expect("other network key"),
+        &zk.merkle_root,
+    );
+    assert!(
+        !l2_fixture::verify_merkle_root(
+            &l2_fixture::root_signing_public_key(network),
+            &zk.merkle_root,
+            &wrong_signature
+        ),
+        "negative fixture must reach signature rejection"
+    );
+    wait_for_offering(world, &wwd);
+    let submit = |signature: &str| {
+        world
+            .rpc
+            .tribute_offer_with_zk(
+                INDEPENDENT_TRIBUTE_USER_KEY,
+                &wwd,
+                TributeZkOffer {
+                    tribute_draft_id_hex: &zk.tribute_draft_id_hex,
+                    su_hash_hex: &zk.su_hash_hex,
+                    merkle_root_hex: &zk.merkle_root_hex(),
+                    proof_hex: &zk.proof_hex(),
+                    l2_chain_id: zk.l2_chain_id,
+                    circuit_version: zk.circuit_version,
+                    signature_hex: signature,
+                },
+            )
+            .expect("CLI submitted independent-user Tribute")
+    };
+    let rejected = submit(&format!("0x{}", hex::encode(wrong_signature)));
+    super::tribute_negatives::assert_rejection(
+        world,
+        &rejected,
+        INDEPENDENT_TRIBUTE_USER_KEY,
+        super::tribute_negatives::Rejection::InvalidSignature,
+    );
+    super::tribute_negatives::assert_supply(world, 0);
+    world
+        .projection
+        .assert_no_tribute_projection()
+        .expect("wrong-network signature left no projection");
+    assert!(l2_fixture::verify_merkle_root(
+        &l2_fixture::root_signing_public_key(network),
+        &zk.merkle_root,
+        &zk.signature
+    ));
+    let accepted = submit(&zk.signature_hex());
+    let tx = eth::raw_json_result(
+        &world.rpc.url(world.validators.primary_port()),
+        "eth_getTransactionByHash",
+        serde_json::json!([accepted]),
+    )
+    .expect("independent user transaction");
+    assert_eq!(tx["from"], serde_json::json!(format!("{caller:#x}")));
+    world.state.tribute_tx_hash = Some(accepted);
+}
+
+#[then("the Tribute belongs to the independent user on every validator while the L2 administrator owns none")]
+fn independent_tribute_owner_is_projected(world: &mut World) {
+    let caller = l2_registration::operator_address(world, INDEPENDENT_TRIBUTE_USER_KEY);
+    let operator_key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("network administrator");
+    let operator = l2_registration::operator_address(world, &operator_key);
+    let tx = world
+        .state
+        .tribute_tx_hash
+        .as_deref()
+        .expect("independent-user offer");
+    let primary = world.validators.primary_port();
+    let height = world
+        .rpc
+        .receipt_block_number(tx, primary)
+        .expect("offer receipt block");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), height, 120)
+        .expect("independent-user offer finalized everywhere");
+    for index in 0..world.validators.size() {
+        let projected = world
+            .projection
+            .projected_tribute(index, tx)
+            .expect("independent-user canonical Tribute projection");
+        let body = decode_stored_tribute_v1(&projected.stored_body)
+            .expect("canonical independent-user body");
+        assert_eq!(
+            body.owner, caller,
+            "network administrator must not receive the user's Tribute"
+        );
+        assert_eq!(body.tribute_id, projected.raw_id);
+        assert_eq!(
+            body.worldwide_day.value(),
+            world
+                .state
+                .wwd
+                .as_ref()
+                .expect("offering day")
+                .parse::<u32>()
+                .expect("day")
+        );
+    }
+    let mut expected_ids = None;
+    for port in world.validators.committee_ports() {
+        let ids = world
+            .rpc
+            .tributes_by_owner(port, caller)
+            .expect("user Tribute index");
+        assert_eq!(ids.len(), 1);
+        assert_eq!(*expected_ids.get_or_insert(ids.clone()), ids);
+        assert!(world
+            .rpc
+            .tributes_by_owner(port, operator)
+            .expect("administrator index")
+            .is_empty());
+    }
+    assert_eq!(
+        world.rpc.l2_chain_by_l1_address(caller),
+        Some(0),
+        "offer must not register its caller"
+    );
 }

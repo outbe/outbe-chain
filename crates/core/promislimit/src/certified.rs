@@ -23,9 +23,9 @@ use crate::{precompile::IPromisLimit, PromisLimitContract};
 pub struct CertifiedCarryOverCreditV1 {
     pub binding: EffectBindingV1,
     pub source_wwd: u32,
-    pub lysis_budget: U256,
-    pub nod_gratis_consumed: U256,
-    pub unused_lysis: U256,
+    pub lysis_limit_minor: U256,
+    pub lysis_allocation_minor: U256,
+    pub unused_lysis_limit_minor: U256,
 }
 
 /// Adds the exact certified unused-Lysis amount to the live carry-over
@@ -44,11 +44,11 @@ pub fn credit_certified_carry_over(
 
     storage.with_checkpoint(|| {
         let mut promis_limit = PromisLimitContract::new(storage.clone());
-        let credit = promis_limit.checked_add_carry_over(input.unused_lysis)?;
+        let credit = promis_limit.checked_add_carry_over(input.unused_lysis_limit_minor)?;
         let state_projection = CarryOverStateEventProjectionV1 {
             source_wwd: input.source_wwd,
             before_value: credit.before,
-            credited_unused_lysis: credit.credited,
+            credited_unused_lysis_limit_minor: credit.credited,
             after_value: credit.after,
         };
         let state_event_digest =
@@ -58,7 +58,7 @@ pub fn credit_certified_carry_over(
             binding: input.binding.clone(),
             source_wwd: input.source_wwd,
             before_value: credit.before,
-            credited_unused_lysis: credit.credited,
+            credited_unused_lysis_limit_minor: credit.credited,
             after_value: credit.after,
             state_event_digest,
         };
@@ -93,8 +93,12 @@ fn validate_input(
     if capability.activation_call_id() != input.binding.activation_call_id {
         return Err(revert("certified carry-over activation binding mismatch"));
     }
-    if input.nod_gratis_consumed.checked_add(input.unused_lysis) != Some(input.lysis_budget) {
-        return Err(revert("invalid certified carry-over budget conservation"));
+    if input
+        .lysis_allocation_minor
+        .checked_add(input.unused_lysis_limit_minor)
+        != Some(input.lysis_limit_minor)
+    {
+        return Err(revert("invalid certified carry-over limit conservation"));
     }
     Ok(())
 }
@@ -287,9 +291,9 @@ mod tests {
                 activation_call_id: B256::repeat_byte(call),
             },
             source_wwd: 20_260_725,
-            lysis_budget: U256::from(consumed + unused),
-            nod_gratis_consumed: U256::from(consumed),
-            unused_lysis: U256::from(unused),
+            lysis_limit_minor: U256::from(consumed + unused),
+            lysis_allocation_minor: U256::from(consumed),
+            unused_lysis_limit_minor: U256::from(unused),
         }
     }
 
@@ -334,8 +338,28 @@ mod tests {
         })
     }
 
+    /// Unused Lysis Limit is Limit minus Allocation, and that
+    /// remainder increases Promis Limit exactly once. A conservation mismatch
+    /// is already rejected with no credit (`wrong_binding_or_limit_conservation_is_side_effect_free`).
     #[test]
-    fn certified_credit_adds_unused_lysis_to_actual_current_value() {
+    fn unused_lysis_plus_allocation_equals_the_limit_and_credits_once() {
+        let input = input(37, 8, 2);
+        assert_eq!(
+            input.lysis_allocation_minor + input.unused_lysis_limit_minor,
+            input.lysis_limit_minor
+        );
+        let mut provider = ActivationTestProvider::new();
+        seed(&mut provider, U256::from(40));
+        let before = current(&mut provider);
+        run(&mut provider, &input).unwrap();
+        assert_eq!(
+            current(&mut provider),
+            before + input.unused_lysis_limit_minor
+        );
+    }
+
+    #[test]
+    fn certified_credit_adds_the_unused_lysis_limit_to_actual_current_value() {
         let input = input(31, 8, 2);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(40));
@@ -343,13 +367,13 @@ mod tests {
 
         assert_eq!(receipt.source_wwd, input.source_wwd);
         assert_eq!(receipt.before_value, U256::from(40));
-        assert_eq!(receipt.credited_unused_lysis, U256::from(2));
+        assert_eq!(receipt.credited_unused_lysis_limit_minor, U256::from(2));
         assert_eq!(receipt.after_value, U256::from(42));
         assert_eq!(current(&mut provider), U256::from(42));
         let expected_projection = CarryOverStateEventProjectionV1 {
             source_wwd: input.source_wwd,
             before_value: U256::from(40),
-            credited_unused_lysis: U256::from(2),
+            credited_unused_lysis_limit_minor: U256::from(2),
             after_value: U256::from(42),
         };
         assert_eq!(
@@ -382,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_unused_lysis_preserves_the_accumulator_and_returns_exact_receipt() {
+    fn zero_unused_lysis_limit_preserves_the_accumulator_and_returns_exact_receipt() {
         let input = input(32, 10, 0);
         let mut provider = ActivationTestProvider::new();
         seed(&mut provider, U256::from(17));
@@ -390,14 +414,14 @@ mod tests {
         let receipt = run(&mut provider, &input).unwrap();
 
         assert_eq!(receipt.before_value, U256::from(17));
-        assert_eq!(receipt.credited_unused_lysis, U256::ZERO);
+        assert_eq!(receipt.credited_unused_lysis_limit_minor, U256::ZERO);
         assert_eq!(receipt.after_value, U256::from(17));
         assert_eq!(current(&mut provider), U256::from(17));
         assert_eq!(provider.inner.get_ordered_events().len(), 1);
     }
 
     #[test]
-    fn wrong_binding_or_budget_conservation_is_side_effect_free() {
+    fn wrong_binding_or_limit_conservation_is_side_effect_free() {
         let expected = input(33, 8, 2);
 
         let mut wrong_binding = ActivationTestProvider::new();
@@ -406,18 +430,18 @@ mod tests {
         assert_eq!(current(&mut wrong_binding), U256::from(9));
         assert!(wrong_binding.inner.get_ordered_events().is_empty());
 
-        let mut wrong_budget_input = expected.clone();
-        wrong_budget_input.lysis_budget += U256::from(1);
-        let mut wrong_budget = ActivationTestProvider::new();
-        seed(&mut wrong_budget, U256::from(9));
-        assert!(run(&mut wrong_budget, &wrong_budget_input).is_err());
-        assert_eq!(current(&mut wrong_budget), U256::from(9));
-        assert!(wrong_budget.inner.get_ordered_events().is_empty());
+        let mut wrong_limit_input = expected.clone();
+        wrong_limit_input.lysis_limit_minor += U256::from(1);
+        let mut wrong_limit = ActivationTestProvider::new();
+        seed(&mut wrong_limit, U256::from(9));
+        assert!(run(&mut wrong_limit, &wrong_limit_input).is_err());
+        assert_eq!(current(&mut wrong_limit), U256::from(9));
+        assert!(wrong_limit.inner.get_ordered_events().is_empty());
 
         let mut overflowing_split_input = expected;
-        overflowing_split_input.nod_gratis_consumed = U256::MAX;
-        overflowing_split_input.unused_lysis = U256::from(1);
-        overflowing_split_input.lysis_budget = U256::ZERO;
+        overflowing_split_input.lysis_allocation_minor = U256::MAX;
+        overflowing_split_input.unused_lysis_limit_minor = U256::from(1);
+        overflowing_split_input.lysis_limit_minor = U256::ZERO;
         let mut overflowing_split = ActivationTestProvider::new();
         seed(&mut overflowing_split, U256::from(9));
         assert!(run(&mut overflowing_split, &overflowing_split_input).is_err());

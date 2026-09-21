@@ -8,23 +8,12 @@ use crate::precompile::IL2Registry;
 use crate::schema::{L2NetworkRecord, L2RegistryContract, BLS_PUBLIC_KEY_LEN};
 
 impl L2RegistryContract<'_> {
-    /// Registers an L2 network with ZK verification disabled.
+    /// Atomically registers an L2 operator and its root-signing key.
     pub fn register_network(
         &mut self,
         chain_id: u64,
         l1_address: Address,
         public_key: &[u8],
-    ) -> Result<()> {
-        self.register_network_with_zk(chain_id, l1_address, public_key, false)
-    }
-
-    /// Atomically registers an L2 network with its approved initial ZK policy.
-    pub fn register_network_with_zk(
-        &mut self,
-        chain_id: u64,
-        l1_address: Address,
-        public_key: &[u8],
-        zk_enabled: bool,
     ) -> Result<()> {
         if chain_id == 0 {
             return Err(L2RegistryError::InvalidChainId.into());
@@ -63,7 +52,6 @@ impl L2RegistryContract<'_> {
                 pubkey_lo,
                 pubkey_mid,
                 pubkey_hi,
-                zk_enabled,
             })?;
             self.l1_to_chain.write(&l1_address, chain_id)?;
 
@@ -72,26 +60,8 @@ impl L2RegistryContract<'_> {
                 l1Address: l1_address,
                 publicKey: Bytes::copy_from_slice(public_key),
             })?;
-            if zk_enabled {
-                self.emit(IL2Registry::L2NetworkZkSet {
-                    chainId: chain_id,
-                    enabled: true,
-                })?;
-            }
             Ok(())
         })
-    }
-
-    /// Enables or disables ZK verification for a registered network.
-    pub fn set_zk_enabled(&mut self, chain_id: u64, enabled: bool) -> Result<()> {
-        let mut record = self.load_network(chain_id)?;
-        record.zk_enabled = enabled;
-        self.networks.update(&record)?;
-        self.emit(IL2Registry::L2NetworkZkSet {
-            chainId: chain_id,
-            enabled,
-        })?;
-        Ok(())
     }
 
     /// Removes a registered network when `caller` is its stored L1 owner.
@@ -115,18 +85,6 @@ impl L2RegistryContract<'_> {
         self.networks
             .get(chain_id)?
             .ok_or_else(|| L2RegistryError::NetworkNotRegistered { chain_id }.into())
-    }
-
-    /// Loads the registration owned by `l1_address`, if any.
-    pub(crate) fn network_by_l1_address(
-        &self,
-        l1_address: Address,
-    ) -> Result<Option<L2NetworkRecord>> {
-        let chain_id = self.l1_to_chain.read(&l1_address)?;
-        if chain_id == 0 {
-            return Ok(None);
-        }
-        self.load_network(chain_id).map(Some)
     }
 }
 

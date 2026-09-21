@@ -27,6 +27,7 @@ use outbe_lysis::program_v1::planner::{
 use outbe_lysis::program_v1::result::{
     decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
 };
+use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
@@ -75,9 +76,8 @@ use outbe_ocomp_protocol::{
     ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
-use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_primitives::time::WorldwideDay;
-use tempfile::tempdir;
+use support::tempdir;
 
 struct RunningWorker {
     child: Child,
@@ -198,9 +198,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         tribute_id: derive_poseidon_entity_id(owner, day).expect("fixture Tribute id"),
         owner,
         worldwide_day: day,
-        issuance_amount_minor: U256::from(9),
+        issuance_amount_minor: U256::from(90_000_000),
         issuance_currency: 840,
-        nominal_amount_minor: U256::from(10),
+        nominal_amount_minor: U256::from(100_000_000),
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
         exclude_from_intex_issuance: false,
@@ -217,29 +217,19 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let oracle_plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
-        .expect("fixture Oracle slot plan");
+    let oracle_plan = entry_price_slots(day, &[840, 978]).expect("fixture Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
-        U256::from(2),   // reference_currencies length
-        U256::from(840), // reference_currencies[0]
-        U256::from(978), // reference_currencies[1]
-        U256::from(1),   // pair_index[COEN/840]
-        U256::from(2),   // pair_index[COEN/978]
-        U256::from(1),   // wwd_vwap_exists
-        // One value word per subject pair, at its registry index.
-        coen840_price,                       // wwd_vwap_value[1]
-        generic_price_scale * U256::from(2), // wwd_vwap_value[2]
-        U256::ZERO,                          // scurve_count
-        U256::ZERO,                          // scurve_oldest
+        U256::from(1),
+        coen840_price,
+        generic_price_scale * U256::from(2),
     ];
-    assert_eq!(oracle_plan.slots.len(), oracle_values.len());
+    assert_eq!(oracle_plan.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
-        contract_address: Address::repeat_byte(0x56),
+        contract_address: outbe_primitives::addresses::NOD_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: oracle_plan
-            .slots
             .into_iter()
             .zip(oracle_values)
             .map(|(slot, value)| RawStorageSlotV1 { slot, value })
@@ -362,7 +352,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         attempt: 0,
         input_manifest_hash: published.manifest_hash,
         wwd: day.value(),
-        lysis_budget: U256::from(99_000_000_u64),
+        lysis_limit_minor: U256::from(99_000_000_u64),
         logical_evaluation_time: 1_784_765_900,
         tribute_count: published.tribute_count,
         max_tributes_per_work_shard: 256,
@@ -371,6 +361,11 @@ fn real_worker_processes_execute_through_output_finalize() {
         planner_spec_version: 1,
         reducer_spec_version: 1,
     };
+    let desis_limit_minor = U256::from(1_000);
+    assert!(
+        plan.lysis_limit_minor + desis_limit_minor <= tribute.nominal_amount_minor,
+        "fixture budgets must fit within the sealed Tribute nominal"
+    );
     let plan_hash = plan.plan_hash(&limits).expect("fixture plan hash");
     let plan_ref = cas
         .publish_bytes(
@@ -567,7 +562,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: day.value(),
-        lysis_budget: plan.lysis_budget,
+        lysis_limit_minor: plan.lysis_limit_minor,
         logical_evaluation_time: plan.logical_evaluation_time,
         tribute_count: published.tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -1183,10 +1178,10 @@ fn real_worker_processes_execute_through_output_finalize() {
         panic!("expected GratisPrefixDown leaf output");
     };
     assert_eq!(prefix.segment_ordinal, 0);
-    assert_eq!(prefix.incoming_remaining, plan.lysis_budget);
+    assert_eq!(prefix.incoming_remaining, plan.lysis_limit_minor);
     assert_eq!(
         prefix.outgoing_remaining,
-        plan.lysis_budget - amount.checked_segment_gratis_total
+        plan.lysis_limit_minor - amount.checked_segment_gratis_total
     );
 
     let mut amount_finalize_ref = cas
@@ -1613,7 +1608,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(summary.tribute_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(summary.eligible_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(
-        summary.nod_gratis_consumed,
+        summary.lysis_allocation_minor,
         finalized.ordered_records[0].nod_action.gratis_load_minor
     );
 
@@ -1650,20 +1645,20 @@ fn real_worker_processes_execute_through_output_finalize() {
         source_availability_policy_id: B256::repeat_byte(0x44),
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
             day_type: DayType::Green,
-            day_limit: plan.lysis_budget + U256::from(1_000),
+            day_limit: plan.lysis_limit_minor + desis_limit_minor,
             previous_vwap: U256::from(90),
             current_vwap: U256::from(100),
             gratis_demand: U256::from(25),
-            gratis_supply: U256::from(20),
-            lysis_budget: plan.lysis_budget,
-            auction_base: U256::from(1_000),
+            day_gratis_limit_minor: U256::from(20),
+            lysis_limit_minor: plan.lysis_limit_minor,
+            desis_limit_minor,
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
                 reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,
             }],
-            request_budget_split_receipt_hash: B256::repeat_byte(0x45),
+            request_limit_split_receipt_hash: B256::repeat_byte(0x45),
         },
         logical_evaluation_height: manifest.checkpoint.finalized_block_number,
         logical_evaluation_time: plan.logical_evaluation_time,
@@ -1823,7 +1818,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     );
 
     let mut changed_intent = intent.clone();
-    changed_intent.frozen_metadosis_values.lysis_budget += U256::from(1);
+    changed_intent.frozen_metadosis_values.lysis_limit_minor += U256::from(1);
     changed_intent.frozen_metadosis_values.day_limit += U256::from(1);
     assert!(run_finalizer(
         &changed_intent,
@@ -1930,7 +1925,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         attempt,
         input_manifest_hash: manifest_hash,
         wwd: day.value(),
-        lysis_budget: U256::from(10_000),
+        lysis_limit_minor: U256::from(10_000),
         logical_evaluation_time: 2_026_072_500,
         tribute_count,
         max_tributes_per_work_shard: 256,
@@ -1957,7 +1952,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         fidelity_opening_root: manifest.fidelity_opening_root,
         oracle_opening_root: manifest.oracle_opening_root,
         wwd: day.value(),
-        lysis_budget: plan.lysis_budget,
+        lysis_limit_minor: plan.lysis_limit_minor,
         logical_evaluation_time: plan.logical_evaluation_time,
         tribute_count,
         lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -2000,7 +1995,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     gratis_load_minor: U256::from(1),
                     entry_price_minor: U256::from(2),
                     floor_price_minor: U256::from(3),
-                    cost_amount_minor: U256::from(4),
+                    settlement_cost_minor: U256::from(4),
                     issuance_currency: 840,
                     reference_currency: 978,
                     exclude_from_intex_issuance: raw_ordinal == 0,

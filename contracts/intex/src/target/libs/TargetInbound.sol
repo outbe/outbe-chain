@@ -10,11 +10,11 @@ import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
+    BidsRelayProgress,
     ChunkProgress,
-    PendingMark,
-    PendingBidsRelay,
-    PendingIssuance,
-    PendingProceedsRoute,
+    ParkedMark,
+    ParkedIssuance,
+    ParkedProceeds,
     RefundProgress,
     TargetRouterStorage
 } from "../TargetRouterStorage.sol";
@@ -23,6 +23,7 @@ import {
 ///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
+    function reportBidsRemaining(uint32 worldwideDay) external;
     function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
     function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
@@ -33,6 +34,13 @@ interface ITargetRouterShims {
 /// @notice Inbound message handlers of {TargetRouter}, linked as an external library so their bodies stay off
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
+    /// @notice Whether a finished round owes the origin a remainder report. A round that sent nothing has
+    ///         nothing to recover from: the origin would answer with the same budget for the same outcome,
+    ///         and that is a loop. A finished day is reported by its completeness marker instead.
+    function advanced(BidsRelayProgress storage relay, uint16 batchBefore) internal view returns (bool) {
+        return !relay.done && relay.nextBatch > batchBefore;
+    }
+
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
     /// @dev An auction the day already has (same terms -> duplicate, other terms -> conflict), a schedule the day
     ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
@@ -98,15 +106,24 @@ library TargetInbound {
             return;
         }
 
-        // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
-        if (!$.clearingRelayed[worldwideDay]) {
-            $.clearingRelayed[worldwideDay] = true;
+        // Carry the relay as far as this delivery's gas allows, holding back enough to report the rest.
+        // The self-call keeps a failed round from taking the stage flip with it.
+        BidsRelayProgress storage relay = $.bidsRelay[worldwideDay];
+        if (!relay.done && gasleft() > IntexGas.RELAY_REPORT_GAS) {
+            uint16 batchBefore = relay.nextBatch;
             // solhint-disable-next-line no-empty-blocks
-            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: IntexGas.RELAY_BIDS_CAP}(worldwideDay) {}
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingBidsRelayIdx++;
-                $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
-                emit ITargetRouter.BidsRelayDeferred(idx, worldwideDay, reason);
+            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: gasleft() - IntexGas.RELAY_REPORT_GAS}(
+                worldwideDay
+            ) {}
+            catch {
+                emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
+            }
+            if (advanced(relay, batchBefore)) {
+                // solhint-disable-next-line no-empty-blocks
+                try ITargetRouterShims(address(this)).reportBidsRemaining(worldwideDay) {}
+                catch {
+                    emit ITargetRouter.BidsRemainingUnreported(worldwideDay, relay.nextBatch, relay.totalBatches);
+                }
             }
         }
 
@@ -118,18 +135,18 @@ library TargetInbound {
     ///      result that fails the auction's permanent sanity bounds are acknowledged without effect. A day whose
     ///      reveal stage has not closed yet (clock skew) propagates so the bridge redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
+        (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(message);
 
-        try $.auction.executeAuctionClearing(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount) {
-            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
+        try $.auction.executeAuctionClearing(worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount) {
+            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedUnits, auctionClearingRate);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
                 IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
                 if (current == IIntexAuction.AuctionStage.Completed) {
-                    why = _sameResult($, worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount)
+                    why = _sameResult($, worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount)
                         ? InboundReason.DUPLICATE
                         : InboundReason.CONFLICT;
                 } else if (current == IIntexAuction.AuctionStage.Cancelled) {
@@ -172,13 +189,14 @@ library TargetInbound {
     function _sameResult(
         TargetRouterStorage storage $,
         uint32 worldwideDay,
-        uint32 issuedIntexCount,
+        uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) private view returns (bool) {
         IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(worldwideDay).result;
-        return r.issuedIntexCount == issuedIntexCount && r.auctionClearingRate == auctionClearingRate
-            && r.wonBidsCount == wonBidsCount;
+        return
+            r.issuedUnits == issuedUnits && r.auctionClearingRate == auctionClearingRate
+                && r.wonBidsCount == wonBidsCount;
     }
 
     /// @dev `currentStage` argument of a `StageRequired(requiredStage, currentStage)` revert payload.
@@ -232,7 +250,7 @@ library TargetInbound {
         // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
-            if (series[s].issuedIntexCount == 0) {
+            if (series[s].issuedUnits == 0) {
                 _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.INVALID);
                 return;
             }
@@ -277,7 +295,7 @@ library TargetInbound {
                         issuedAt: payload.issuedAt,
                         issuanceCurrency: payload.issuanceCurrency,
                         referenceCurrency: payload.referenceCurrency,
-                        issuedIntexCount: payload.issuedIntexCount,
+                        issuedUnits: payload.issuedUnits,
                         promisLoadMinor: payload.promisLoadMinor,
                         entryPriceMinor: payload.entryPriceMinor,
                         floorPriceMinor: payload.floorPriceMinor,
@@ -322,11 +340,11 @@ library TargetInbound {
             // Per-recipient self-call: a reverting receiver hook parks only that issuance, not the whole batch.
             try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, quantity) {}
             catch (bytes memory reason) {
-                uint256 idx = $.nextPendingIssuanceIdx++;
-                $.pendingIssuances[idx] = PendingIssuance({
+                uint256 idx = $.nextParkedIssuanceIdx++;
+                $.parkedIssuance[idx] = ParkedIssuance({
                     seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
                 });
-                emit ITargetRouter.IssuanceDeferred(idx, payload.seriesId, recipient, reason);
+                emit ITargetRouter.IssuanceParked(idx, payload.seriesId, recipient, reason);
             }
         }
 
@@ -339,7 +357,7 @@ library TargetInbound {
         BridgeMsgCodec.IssuanceInstructionsPayload memory b
     ) private pure returns (bool) {
         return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
-            && a.referenceCurrency == b.referenceCurrency && a.issuedIntexCount == b.issuedIntexCount
+            && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
             && a.floorPriceMinor == b.floorPriceMinor && a.callPriceMinor == b.callPriceMinor
             && a.callWindow == b.callWindow && a.callThreshold == b.callThreshold
@@ -354,7 +372,7 @@ library TargetInbound {
     {
         IIntexNFT1155.SeriesData memory d = $.intex.readData(payload.seriesId);
         return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
-            && d.referenceCurrency == payload.referenceCurrency && d.issuedIntexCount == payload.issuedIntexCount
+            && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
             && d.floorPriceMinor == payload.floorPriceMinor && d.callPriceMinor == payload.callPriceMinor
             && d.callTrigger.callWindow == payload.callWindow && d.callTrigger.callThreshold == payload.callThreshold
@@ -451,7 +469,7 @@ library TargetInbound {
 
     /// @dev Apply one lifecycle mark through its self-call shim. A series this chain has not seen keeps the mark
     ///      in its slot; a mark the series already carries (or one a later mark superseded) is acknowledged
-    ///      without effect; any other failure slots the mark for `applyPendingMark`.
+    ///      without effect; any other failure slots the mark for `applyParkedMark`.
     function _applyMark(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -485,9 +503,9 @@ library TargetInbound {
         // independently, and the Called is the later decision even when it lands second.
         if (
             msgType == BridgeMsgCodec.MSG_MARK_CALLED
-                || $.pendingMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
+                || $.parkedMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
         ) {
-            delete $.pendingMarks[seriesId];
+            delete $.parkedMarks[seriesId];
         }
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
@@ -508,42 +526,42 @@ library TargetInbound {
     ) private returns (bool slotted) {
         if (
             msgType != BridgeMsgCodec.MSG_MARK_CALLED
-                && $.pendingMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
+                && $.parkedMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
         ) {
             _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
             return false;
         }
-        $.pendingMarks[seriesId] = PendingMark({msgType: msgType, calledAt: calledAt});
-        emit ITargetRouter.MarkSlotted(seriesId, msgType);
+        $.parkedMarks[seriesId] = ParkedMark({msgType: msgType, calledAt: calledAt});
+        emit ITargetRouter.MarkParked(seriesId, msgType);
         return true;
     }
 
     /// @dev Apply the mark waiting for a series that has just been created. A mark is a state flip and
     ///      moves no balances, so Called applies here as readily as Qualified. A failure re-announces the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
-        PendingMark memory waiting = $.pendingMarks[seriesId];
+        ParkedMark memory waiting = $.parkedMarks[seriesId];
         uint8 msgType = waiting.msgType;
         if (msgType == 0) return;
         uint32 calledAt = waiting.calledAt;
-        delete $.pendingMarks[seriesId];
+        delete $.parkedMarks[seriesId];
         try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {
-            emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
+            emit ITargetRouter.ParkedMarkApplied(seriesId, msgType);
         } catch {
-            $.pendingMarks[seriesId] = waiting;
-            emit ITargetRouter.MarkSlotted(seriesId, msgType);
+            $.parkedMarks[seriesId] = waiting;
+            emit ITargetRouter.MarkParked(seriesId, msgType);
         }
     }
 
     /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
-    ///      back the finalization (the WCOEN is already held here). Retried via `flushPendingProceedsRoute`.
+    ///      back the finalization (the WCOEN is already held here). Retried via `resendParkedProceeds`.
     function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint128 amount) private {
         // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {}
         catch (bytes memory reason) {
-            uint256 idx = $.nextPendingProceedsRouteIdx++;
-            $.pendingProceedsRoutes[idx] =
-                PendingProceedsRoute({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
-            emit ITargetRouter.ProceedsRouteDeferred(idx, worldwideDay, amount, reason);
+            uint256 idx = $.nextParkedProceedsIdx++;
+            $.parkedProceeds[idx] =
+                ParkedProceeds({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
+            emit ITargetRouter.ProceedsParked(idx, worldwideDay, amount, reason);
         }
     }
 }

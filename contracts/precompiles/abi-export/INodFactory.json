@@ -53,11 +53,6 @@
         "name": "opNonce",
         "type": "uint64",
         "internalType": "uint64"
-      },
-      {
-        "name": "payNoteProof",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -67,6 +62,71 @@
         "internalType": "uint256"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "quoteSettlement",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "settlementCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "payableUnits",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "settleNod",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleNodWithPayNote",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "payNoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -140,7 +200,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "nodGratisConsumed",
+        "name": "lysisAllocationMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -163,6 +223,31 @@
   {
     "type": "event",
     "name": "NodBurned",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gratisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodExercised",
     "inputs": [
       {
         "name": "owner",
@@ -232,7 +317,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "costAmountMinor",
+        "name": "settlementCostMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

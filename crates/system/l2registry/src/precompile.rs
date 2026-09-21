@@ -35,7 +35,6 @@ pub fn dispatch(
                 Ok(IL2Registry::getNetworkReturn {
                     l1Address: record.l1_address,
                     publicKey: Bytes::copy_from_slice(&record.public_key_bytes()),
-                    zkEnabled: record.zk_enabled,
                 })
             }),
             chainIdByL1Address(c) => view(c, |c| registry.l1_to_chain.read(&c.l1Address)),

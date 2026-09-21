@@ -30,13 +30,21 @@ interface INod {
 
     /// Qualified bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
-    /// Nod in the bucket must be settled and mined by `settlementDeadline` or it
+    /// Nod in the bucket must be settled by `settlementDeadline` or it
     /// is forfeit-burned.
     event NodBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
 
     /// Nod burned by the Call scan because its bucket's settlement deadline
-    /// lapsed while the Nod was still unmined. No Gratis is minted.
+    /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+
+    /// @notice A reference currency was left out of one day's qualification because its
+    ///         day price could not be indexed. The next day's pass tries it again.
+    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
+    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
     struct NodData {
         uint256 nodId;
@@ -44,9 +52,13 @@ interface INod {
         uint32 worldwideDay;
         uint16 leagueId;
         uint256 floorPriceMinor;
+        /// Gratis entitlement in protocol units (1,000,000 per whole COEN).
         uint256 gratisLoadMinor;
-        uint256 costOfGratisMinor;
-        uint256 costAmountMinor;
+        /// Price of one whole COEN in referenceCurrency at six-decimal precision.
+        uint256 entryPriceMinor;
+        /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
+        /// at six-decimal precision; payment in an asset is quoted separately.
+        uint256 settlementCostMinor;
         bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
@@ -54,6 +66,19 @@ interface INod {
         /// Block timestamp the Nod's bucket was force-called; `0` while not
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
+        bool isSettled;
+        /// Read-time state: 0 Issued, 1 Qualified, 2 Called, 3 Settled, 4 Forfeited.
+        /// Paid entitlements remain Settled after expiry. Forfeited items are
+        /// still stored pending cleanup; deleted items revert with NodNotFound.
+        uint8 effectiveState;
+        /// Bucket terms sealed at issuance, independent of current defaults.
+        uint256 callPriceMinor;
+        uint16 callRate; // percent
+        uint32 callWindow; // seconds
+        uint32 callThreshold; // seconds
+        uint32 callNoticePeriod; // seconds
+        /// Inclusive deadline: 0 when uncalled, uint64.max for zero notice.
+        uint64 settlementDeadline;
     }
 
     /// Finalized on-chain commitment to one activated OCOMP Nod generation.
@@ -71,7 +96,8 @@ interface INod {
         uint32 nodCount;
         uint32 bucketCount;
         uint256 nodAmountTotal;
-        uint256 nodGratisConsumed;
+        /// Actual Lysis Allocation: sum of Nod gratisLoadMinor, not the Lysis Limit.
+        uint256 lysisAllocationMinor;
         uint64 issuedAt;
     }
 

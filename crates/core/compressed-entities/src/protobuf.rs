@@ -34,6 +34,7 @@ pub struct NodItemBodyV1 {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+    pub is_settled: bool,
 }
 
 /// Canonical v1 Nod bucket payload.
@@ -43,12 +44,10 @@ pub struct NodBucketBodyV1 {
     pub worldwide_day: WorldwideDay,
     pub floor_price_minor: U256,
     pub is_qualified: bool,
-    pub total_nods: u64,
     pub entry_price_minor: U256,
-    /// ISO 4217 numeric code denominating `floor_price_minor`. Encoded only
-    /// when nonzero, so bodies written before the field existed keep their
-    /// exact prior bytes.
+    /// ISO 4217 numeric code denominating `floor_price_minor`, omitted when zero.
     pub reference_currency: u16,
+    pub settled_nods: u64,
 }
 
 impl NodBucketBodyV1 {
@@ -202,6 +201,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_optional_varint_field(9, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(10, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(11, body.issued_at, &mut output);
+    encode_optional_varint_field(12, u64::from(body.is_settled), &mut output);
     Ok(output)
 }
 
@@ -218,6 +218,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let issuance_currency = optional_u16(&mut fields, 9)?;
     let reference_currency = optional_u16(&mut fields, 10)?;
     let issued_at = optional_varint(&mut fields, 11)?;
+    let is_settled = optional_bool(&mut fields, 12)?;
     fields.finish()?;
 
     let body = NodItemBodyV1 {
@@ -231,6 +232,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
         issuance_currency,
         reference_currency,
         issued_at,
+        is_settled,
     };
     validate_identity_day(body.nod_id, body.worldwide_day)?;
     if encode_nod_item_v1(&body)? != bytes {
@@ -252,9 +254,10 @@ pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, Canonical
     encode_optional_varint_field(2, u64::from(body.worldwide_day.value()), &mut output);
     encode_bytes_field(3, &body.floor_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(4, u64::from(body.is_qualified), &mut output);
-    encode_optional_varint_field(5, body.total_nods, &mut output);
+    // Field 5 is reserved: membership is not part of the shared body commitment.
     encode_bytes_field(6, &body.entry_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);
+    encode_optional_varint_field(8, body.settled_nods, &mut output);
     Ok(output)
 }
 
@@ -265,9 +268,9 @@ pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBo
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 2)?);
     let floor_price_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
     let is_qualified = optional_bool(&mut fields, 4)?;
-    let total_nods = optional_varint(&mut fields, 5)?;
     let entry_price_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
     let reference_currency = optional_u16(&mut fields, 7)?;
+    let settled_nods = optional_varint(&mut fields, 8)?;
     fields.finish()?;
 
     let body = NodBucketBodyV1 {
@@ -275,9 +278,9 @@ pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBo
         worldwide_day,
         floor_price_minor,
         is_qualified,
-        total_nods,
         entry_price_minor,
         reference_currency,
+        settled_nods,
     };
     if encode_nod_bucket_v1(&body)? != bytes {
         return Err(CanonicalBodyError::NonCanonicalEncoding);

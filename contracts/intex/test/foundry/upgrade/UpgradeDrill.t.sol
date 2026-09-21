@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
@@ -56,11 +57,11 @@ contract UpgradeDrillTest is CrossChainTest {
 
     function test_Drill_IntexNFT1155() public {
         IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
-        address holder = makeAddr("holder");
+        address owner = makeAddr("owner");
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(owner, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -68,7 +69,7 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
+        assertEq(nft.balanceOf(owner, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
         assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
         (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) =
             nft.seriesData(nft.issuedTokenId(CreateSeriesLib.seriesId(7)));
@@ -86,11 +87,11 @@ contract UpgradeDrillTest is CrossChainTest {
     ///      migration that sets a new v2 field, while pre-upgrade state survives.
     function test_Drill_IntexNFT1155_ReinitializerPath() public {
         IntexNFT1155 nft = DeployProxy.intexNFT1155(admin, admin);
-        address holder = makeAddr("holder");
+        address owner = makeAddr("owner");
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(owner, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
@@ -101,7 +102,7 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
+        assertEq(nft.balanceOf(owner, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
         assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost across reinit");
     }
 
@@ -189,7 +190,7 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, "");
         vm.prank(address(desisMock));
-        origin.sendAuctionStageClearing(day);
+        origin.sendAuctionStageClearing(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING);
 
         OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
@@ -203,7 +204,7 @@ contract UpgradeDrillTest is CrossChainTest {
         uint32[] memory snapshot = origin.targetsOf(day);
         assertEq(snapshot.length, 1, "day snapshot lost");
         assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
-        IOriginRouter.ParkedSend memory parked = origin.parkedSend(0);
+        IOriginRouter.ParkedMessage memory parked = origin.parkedMessage(0);
         assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
         assertFalse(parked.sent, "parked send flag lost");
 
@@ -211,8 +212,8 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        origin.flushPendingSend(0);
-        assertTrue(origin.parkedSend(0).sent, "flush broken after upgrade");
+        origin.resendParkedMessage(0);
+        assertTrue(origin.parkedMessage(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {

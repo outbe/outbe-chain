@@ -2,7 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
     intent::{intent_storage_key, JobIntentV1},
-    receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestBudgetSplitReceiptV1},
+    receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestLimitSplitReceiptV1},
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
         OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome, RESULT_VOTE_MIN_FINALITY_DEPTH,
@@ -58,14 +58,14 @@ impl MetadosisContract<'_> {
 
     /// Commits one canonical live job and all Metadosis-owned indexes.
     ///
-    /// The caller has already applied or replay-validated the owner budget
+    /// The caller has already applied or replay-validated the owner limit
     /// effect. This method nevertheless requires and stores the exact receipt,
     /// closing the persisted receipt/state equivalence.
     pub(crate) fn commit_ocomp_request(
         &mut self,
         outer_transition: &OuterWwdTransition,
         intent: &JobIntentV1,
-        receipt: &RequestBudgetSplitReceiptV1,
+        receipt: &RequestLimitSplitReceiptV1,
         schema_limits: &SchemaLimits,
     ) -> Result<()> {
         (|| {
@@ -99,11 +99,11 @@ impl MetadosisContract<'_> {
             if receipt_hash
                 != intent
                     .frozen_metadosis_values
-                    .request_budget_split_receipt_hash
+                    .request_limit_split_receipt_hash
                 || receipt.wwd != intent.wwd
                 || receipt.pending_nonce > intent.pending_nonce
                 || receipt.protocol_bundle_hash != intent.protocol_bundle_hash
-                || receipt.lysis_budget != intent.frozen_metadosis_values.lysis_budget
+                || receipt.lysis_limit_minor != intent.frozen_metadosis_values.lysis_limit_minor
             {
                 return Err(storage_corruption_message(
                     "OCOMP intent/request receipt binding mismatch",
@@ -111,7 +111,7 @@ impl MetadosisContract<'_> {
             }
             let mut state = self.ocomp_fsm_state(wwd, schema_limits)?;
             let ready_key = ReadyIndexKey::from_projection(state.projection())?;
-            let existing_receipt = self.request_budget_receipt(wwd, schema_limits)?;
+            let existing_receipt = self.request_limit_receipt(wwd, schema_limits)?;
             if matches!(existing_receipt, Some(ref existing) if existing != receipt) {
                 return Err(storage_corruption_message(
                     "immutable OCOMP request receipt changed",
@@ -139,13 +139,13 @@ impl MetadosisContract<'_> {
                     at_height: intent.logical_evaluation_height,
                     deadline_height: awaiting_finality_deadline,
                     intent_id,
-                    lysis_budget: intent.frozen_metadosis_values.lysis_budget,
-                    request_budget_receipt_hash: receipt_hash,
+                    lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
+                    request_limit_receipt_hash: receipt_hash,
                 })
                 .map_err(|error| storage_corruption_message(error.to_string()))?;
 
             if existing_receipt.is_none() {
-                self.ocomp_request_budget_receipts.get_bytes(&wwd).write(
+                self.ocomp_request_limit_receipts.get_bytes(&wwd).write(
                     &receipt.encode_canonical(schema_limits).map_err(|error| {
                         storage_corruption_message(format!("encode request receipt: {error}"))
                     })?,
@@ -407,10 +407,11 @@ impl MetadosisContract<'_> {
                     "OCOMP WorldwideDay already has a terminal job",
                 ));
             }
-            let retained_lysis_budget = terminal.retained_lysis_budget;
-            if retained_lysis_budget != record.intent.frozen_metadosis_values.lysis_budget {
+            let retained_lysis_limit_minor = terminal.retained_lysis_limit_minor;
+            if retained_lysis_limit_minor != record.intent.frozen_metadosis_values.lysis_limit_minor
+            {
                 return Err(storage_corruption_message(
-                    "expired OCOMP job retained budget mismatch",
+                    "expired OCOMP job retained limit mismatch",
                 ));
             }
 
@@ -424,7 +425,7 @@ impl MetadosisContract<'_> {
             self.write_ocomp_job_record(live_intent_id, &record, schema_limits)?;
             self.push_terminal_intent(wwd, live_intent_id)?;
             self.release_ocomp_lineage(live_intent_id, at_height, schema_limits)?;
-            Ok(retained_lysis_budget)
+            Ok(retained_lysis_limit_minor)
         })()
     }
 
@@ -440,8 +441,8 @@ impl MetadosisContract<'_> {
         intent_id: B256,
         active_generation: ActiveGenerationV1,
         result_evidence_hash: B256,
-        nod_gratis_consumed: U256,
-        unused_lysis: U256,
+        lysis_allocation_minor: U256,
+        unused_lysis_limit_minor: U256,
         activated_at_height: u64,
         activated_at_time: u64,
         permit: LysisTerminalPermitV1<'_, '_>,
@@ -510,14 +511,15 @@ impl MetadosisContract<'_> {
                 || binding.attempt != record.intent.attempt
                 || binding.protocol_bundle_hash != record.intent.protocol_bundle_hash
                 || binding.activation_preconditions_hash != activation_preconditions_hash
-                || permit.request_budget_split_receipt_hash()
+                || permit.request_limit_split_receipt_hash()
                     != record
                         .intent
                         .frozen_metadosis_values
-                        .request_budget_split_receipt_hash
-                || unused_lysis > record.intent.frozen_metadosis_values.lysis_budget
-                || nod_gratis_consumed.checked_add(unused_lysis)
-                    != Some(record.intent.frozen_metadosis_values.lysis_budget)
+                        .request_limit_split_receipt_hash
+                || unused_lysis_limit_minor
+                    > record.intent.frozen_metadosis_values.lysis_limit_minor
+                || lysis_allocation_minor.checked_add(unused_lysis_limit_minor)
+                    != Some(record.intent.frozen_metadosis_values.lysis_limit_minor)
             {
                 return Err(storage_corruption_message(
                     "OCOMP terminal permit is not bound to the live job",
@@ -551,7 +553,7 @@ impl MetadosisContract<'_> {
                 contributor_receipt_hash: Some(permit.contributor_receipt_hash()),
                 tribute_receipt_hash: Some(permit.tribute_receipt_hash()),
                 carry_over_receipt_hash: Some(permit.carry_over_receipt_hash()),
-                request_budget_split_receipt_hash: permit.request_budget_split_receipt_hash(),
+                request_limit_split_receipt_hash: permit.request_limit_split_receipt_hash(),
                 active_generation_hash: Some(active_generation_hash),
                 effect_commitment: permit.effect_commitment(),
                 event_summary_hash: permit.event_summary_hash(),
@@ -619,11 +621,11 @@ impl MetadosisContract<'_> {
                 worldwideDay: record.intent.wwd,
                 tributeTotals: record.intent.authenticated_day_nominal,
                 dayGratisDemand: frozen.gratis_demand,
-                dayGratisLimit: frozen.gratis_supply,
-                dayGratisAllocation: frozen.lysis_budget,
-                dayGratisAllocationRemainder: unused_lysis,
-                netDayGratisAllocation: nod_gratis_consumed,
-                dayMetadosisLimitRemainder: unused_lysis,
+                dayGratisLimit: frozen.day_gratis_limit_minor,
+                lysisLimitMinor: frozen.lysis_limit_minor,
+                unusedLysisLimitMinor: unused_lysis_limit_minor,
+                lysisAllocationMinor: lysis_allocation_minor,
+                dayMetadosisLimitRemainder: unused_lysis_limit_minor,
                 status: "COMPLETED".into(),
                 blockNumber: activated_at_height,
             })?;

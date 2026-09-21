@@ -207,7 +207,8 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// Computes lysis fractions for each FI group using fixed-point integer math.
 ///
 /// # Parameters
-/// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE, sorted ascending FI).
+/// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE), ordered
+///   by allocation priority, highest first. Population counts use the same order.
 ///   Caller is responsible for normalization - integer-division truncation must
 ///   be absorbed before this call.
 /// - `p`: population counts per FI group
@@ -288,7 +289,7 @@ pub fn calc_fraction_distribution_fp(
 
     // normalize f1 so weighted expenditure does not exceed f_fp.
     // Raw algorithm output can have `sum(f1[i] * y_fp[i]) / SCALE > f_fp` because
-    // the per-group distribution doesn't enforce a budget-preserving invariant
+    // the per-group distribution doesn't enforce a limit-preserving invariant
     // on its own. Scale down proportionally (monotone, preserves ratios, never
     // rounds up) so downstream `gratis_load = fraction * nominal / SCALE` in
     // `lysis::runtime` cannot overspend the allocation and silently skip the

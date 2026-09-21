@@ -5,20 +5,19 @@
  *
  *   1. Ensure user has native balance (funds gas + the EntryPoint deposit step 5 needs)
  *   2. Ensure CCA has native balance (gas, its EntryPoint deposit, and the COEN stake
- *      requestCredis now takes - see CCA_MIN_NATIVE)
+ *      requestCredis takes) and register its 1 billion COEN bond.
  *
  * Usage: npx tsx src/0-setup-native.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";
+import { ICcaRegistry__factory } from "./contracts/index.js";
 import { coen, formatCoen, DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
 
-// `requestCredis` is payable and takes a stake equal to the pledged collateral, so
-// the CCA needs COEN proportional to the credit it originates - at the seeded
-// COEN/USD rate a 1-stable pledge costs 1 COEN - plus gas and its EntryPoint
-// deposit. 50 COEN covers the documented pledges with headroom and stays far under
-// the ~10,000 COEN a genesis account is prefunded with.
-const CCA_MIN_NATIVE = coen("50");
+// Registration escrow is separate from the COEN spent on individual positions.
+const BOND_REQUIREMENT = coen("1000000000");
+const CCA_GAS_AND_POSITION_FUNDS = coen("50");
+const CCA_REGISTRY = "0x0000000000000000000000000000000000001011";
 const USER_FUND_NATIVE = coen("100");
 
 const envName = process.argv[2] || DEFAULT_ENV;
@@ -32,6 +31,23 @@ const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const ownerWallet = new Wallet(ownerPrivateKey, provider);
+  const ccaWallet = new Wallet(requireEnv("CCA_PRIVATE_KEY", envPath), provider);
+  if (ccaWallet.address.toLowerCase() !== ccaAddress.toLowerCase()) {
+    throw new Error("CCA_PRIVATE_KEY does not match CCA_ADDRESS");
+  }
+  const registry = ICcaRegistry__factory.connect(CCA_REGISTRY, ccaWallet);
+  const registration = await registry.getCca(ccaAddress).catch((error: unknown) => {
+    if (ethers.isError(error, "CALL_EXCEPTION") && error.reason === "CCA is not registered") {
+      return { state: null, bondedAmount: 0n };
+    }
+    throw error;
+  });
+  if (registration.state === 2n) {
+    throw new Error("CCA has a pending unbond; claim it before registering again");
+  }
+  const remainingBond = registration.bondedAmount < BOND_REQUIREMENT
+    ? BOND_REQUIREMENT - registration.bondedAmount : 0n;
+  const requiredCcaBalance = remainingBond + CCA_GAS_AND_POSITION_FUNDS;
 
   console.log("=== Setup Native ===");
   console.log(`Env:   ${envName}`);
@@ -60,14 +76,20 @@ async function main() {
   const ccaNative = await provider.getBalance(ccaAddress);
   console.log(`    Current: ${formatCoen(ccaNative)} COEN`);
 
-  if (ccaNative < CCA_MIN_NATIVE) {
-    const tx = await ownerWallet.sendTransaction({ to: ccaAddress, value: CCA_MIN_NATIVE });
+  if (ccaNative < requiredCcaBalance) {
+    const shortfall = requiredCcaBalance - ccaNative;
+    const tx = await ownerWallet.sendTransaction({ to: ccaAddress, value: shortfall });
     await tx.wait();
-    console.log(`    Funded CCA with ${formatCoen(CCA_MIN_NATIVE)} COEN (tx: ${tx.hash})`);
+    console.log(`    Funded CCA with ${formatCoen(shortfall)} COEN (tx: ${tx.hash})`);
   } else {
     console.log("    Sufficient - skipping");
   }
 
+  if (remainingBond > 0n) {
+    const tx = await registry.bond("Credis Flow CCA", { value: remainingBond });
+    await tx.wait();
+    console.log(`    Bonded ${formatCoen(remainingBond)} COEN (tx: ${tx.hash})`);
+  }
   console.log("\n=== Setup Native complete ===");
 }
 

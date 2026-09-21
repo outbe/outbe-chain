@@ -1,6 +1,7 @@
 //! Daily call scan: force-calls qualified Nod buckets off the Oracle's
 //! finalized per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose
-//! notice period lapsed. Driven by the Cycle daily trigger.
+//! notice period lapsed. The Cycle daily trigger pins the closed UTC day and
+//! runs the first slice; later CycleTicks continue the same day.
 //!
 //! One pass over the dense callable-bucket index applies at most one transition
 //! per bucket, in lifecycle order:
@@ -9,12 +10,12 @@
 //!   call price on at least its `call_threshold` of the trailing
 //!   `call_window`.
 //! - *called* -> *forfeited* when the bucket's `call_notice_period` has lapsed
-//!   with Nods still unmined. The two can never fire in one pass, since a
+//!   with Nods still unpaid. The two can never fire in one pass, since a
 //!   bucket called now cannot also be a notice period past its call.
 //!
-//! All four terms are sealed onto the bucket when it qualifies and read back
-//! from it here, so retuning a constant leaves every armed bucket on the terms
-//! it was armed with. Gem and intex give the same guarantee.
+//! All four terms are sealed onto the bucket at issuance and read back from it
+//! here, so retuning a constant leaves every issued bucket on the terms it was
+//! issued with. Gem and intex give the same guarantee.
 //!
 //! The breach rule needs no per-bucket streak state: the daily series is global
 //! per currency, so one trailing window per currency decides every bucket
@@ -22,22 +23,28 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Unlike qualification - which reads the *live* COEN rate in `hooks.rs` - the
-//! call reads the *finalized daily VWAP*. Gem splits the two feeds the same way.
+//! Qualification and calls both read finalized UTC-day VWAPs, and both stop
+//! at `first_full_day` of the bucket's sealed `issued_at`, so delayed
+//! materialization cannot inherit pre-issuance days and a partial issuance
+//! UTC day does not count.
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    daily_sweep::{Scheduled, SweepDays},
     error::Result,
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key},
 };
 
 use crate::{
     api,
-    constants::{CALL_WINDOW, MAX_NOD_CALL_VISITS, MAX_NOD_FORFEITS_PER_RUN, SECS_PER_DAY},
+    constants::{
+        CALL_SWEEP, CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK, MAX_NOD_FORFEITS_PER_BLOCK,
+        SECS_PER_DAY,
+    },
     precompile::INod,
     schema::{CallTerms, NodContract},
 };
@@ -46,18 +53,8 @@ use crate::{
 /// `None` marks a day the pair published no reference price.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Cycle daily-trigger entry: runs the scan, discarding the count.
-pub fn run_call_daily(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
-    scan_and_call(ctx, scope, parent)?;
-    Ok(())
-}
-
-/// Runs the daily call scan. Returns the number of buckets called plus Nods
-/// forfeited.
+/// Schedule the day the Oracle has just finalized: open a Called sweep over it
+/// and run its first slice, or queue it behind the sweep still in flight.
 ///
 /// Never returns `Err` for missing market data: the Cycle dispatcher propagates
 /// a handler error out of the `CycleTick` system transaction, which fails the
@@ -68,34 +65,111 @@ pub fn scan_and_call(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
+    let Some(last_closed_day) = closed_day(ctx)? else {
+        return Ok(0);
+    };
+    let mut nod = NodContract::new(ctx.storage.clone());
+    if nod.call_sweep_day.read()? == 0 && nod.callable_buckets.len()? == 0 {
+        return Ok(0);
+    }
+    let days = SweepDays {
+        current: nod.call_sweep_day.read()?,
+        pending: nod.call_pending_day.read()?,
+    };
+    match days.schedule(last_closed_day) {
+        (next, Scheduled::Opened) => {
+            start_call_sweep(&nod, next)?;
+            run_call_slice(ctx, scope, parent)
+        }
+        (next, Scheduled::Queued) => {
+            nod.call_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            nod.call_pending_day.write(next.pending)?;
+            nod.emit(INod::SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: next.current,
+            })?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
 
-    // Most recent fully-closed UTC day. The call counts plain UTC days, so this
-    // is `timestamp_to_date_key`, NOT the UTC+14 `WorldwideDay` key.
+/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
+pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke - skip loudly instead of
-    // misreading an unfinalized day as one with no published price.
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    let finalized = OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
     if finalized < last_closed_day {
         tracing::warn!(
             target: "outbe::nod",
             last_closed_day,
             finalized,
-            "nod call scan: utc-day VWAP not finalized yet, skipping run"
+            "nod: utc-day VWAP not finalized yet, skipping the day's sweeps"
+        );
+        return Ok(None);
+    }
+    Ok(Some(last_closed_day))
+}
+
+/// Pin the sweep's current day and walk the callable list from the top.
+fn start_call_sweep(nod: &NodContract, days: SweepDays) -> Result<()> {
+    nod.call_sweep_day.write(days.current)?;
+    nod.call_pending_day.write(days.pending)?;
+    nod.call_scan_cursor.write(0)?;
+    Ok(())
+}
+
+fn finish_call_sweep(nod: &NodContract, pinned_day: u32) -> Result<()> {
+    let next = SweepDays {
+        current: pinned_day,
+        pending: nod.call_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
+        nod.call_sweep_day.write(0)
+    } else {
+        start_call_sweep(nod, next)
+    }
+}
+
+/// Advance an open sweep by one slice, pinned to the day it opened on so
+/// later blocks decide against the same prices. Returns how many buckets
+/// were called plus Nods forfeited.
+pub fn run_call_slice(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<u32> {
+    let mut nod = NodContract::new(ctx.storage.clone());
+    let pinned_day = nod.call_sweep_day.read()?;
+    if pinned_day == 0 {
+        return Ok(0);
+    }
+    let len = nod.callable_buckets.len()?;
+    if len == 0 {
+        finish_call_sweep(&nod, pinned_day)?;
+        return Ok(0);
+    }
+    let oracle = OracleContract::new(ctx.storage.clone());
+    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    if finalized < pinned_day {
+        tracing::warn!(
+            target: "outbe::nod",
+            pinned_day,
+            finalized,
+            "nod call scan: pinned utc-day VWAP not finalized, holding the sweep"
         );
         return Ok(0);
     }
 
-    let mut nod = NodContract::new(ctx.storage.clone());
-    let len = nod.callable_buckets.len()?;
-    if len == 0 {
-        return Ok(0);
-    }
-
     // Stored as `index + 1`; 0 means "start a fresh pass from the top".
-    let mut cursor = match nod.call_scan_cursor.read()? {
+    let initial_cursor = nod.call_scan_cursor.read()?;
+    let mut cursor = match initial_cursor {
         0 => len - 1,
         resume => resume.saturating_sub(1).min(len - 1),
     };
@@ -114,25 +188,33 @@ pub fn scan_and_call(
     // the tail is already behind a descending cursor, so no live entry is
     // skipped and none is visited twice.
     let completed = loop {
-        if visited >= MAX_NOD_CALL_VISITS {
+        if visited >= MAX_NOD_CALL_VISITS_PER_BLOCK {
             break false;
         }
         if let Some(bucket_key) = nod.callable_buckets.get(cursor)? {
             visited = visited.saturating_add(1);
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
-            if called_at == 0 {
+            // Paid entitlements retain their bucket terms, but cannot be called or forfeited.
+            let has_unpaid = nod.bucket_nod_count.read(&bucket_key)? != 0;
+            if has_unpaid && called_at == 0 {
                 // Structural reads stay on `?` so infra errors still propagate.
                 let terms = nod.read_call_terms(bucket_key)?;
-                let start_day = nod.bucket_worldwide_day.read(&bucket_key)?.value();
+                // Sealed at first issuance. Zero means the bucket predates the
+                // stamp: skip rather than treat epoch-midnight as a full day,
+                // which would count every observation. Such a bucket can be
+                // deleted through the existing empty-bucket path and reissued.
+                let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
                 let index = window_for(
                     &nod,
                     &ctx.storage,
                     &oracle,
                     &mut windows,
                     terms.reference_currency,
-                    last_closed_day,
+                    pinned_day,
                 )?;
-                if breached_enough(&windows[index].1, &terms, start_day) {
+                if issued_at != 0
+                    && breached_enough(&windows[index].1, &terms, first_full_day(issued_at))
+                {
                     // Isolate per-bucket: a deterministic Err rolls back this
                     // bucket's checkpoint and is skipped, so one bad bucket never
                     // halts the daily scan.
@@ -143,9 +225,10 @@ pub fn scan_and_call(
                         mutated = mutated.saturating_add(1);
                     }
                 }
-            } else if now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
+            } else if has_unpaid
+                && now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
             {
-                let budget = MAX_NOD_FORFEITS_PER_RUN.saturating_sub(forfeited);
+                let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
                 if budget > 0 {
                     let res = ctx.storage.with_checkpoint(|| {
                         forfeit_members(&ctx.storage, &mut nod, scope, parent, bucket_key, budget)
@@ -163,11 +246,17 @@ pub fn scan_and_call(
         cursor -= 1;
     };
 
-    nod.call_scan_cursor.write(if completed {
+    let next_cursor = if completed {
         0
     } else {
         cursor.saturating_add(1)
-    })?;
+    };
+    if next_cursor != initial_cursor {
+        nod.call_scan_cursor.write(next_cursor)?;
+    }
+    if completed {
+        finish_call_sweep(&nod, pinned_day)?;
+    }
     Ok(mutated)
 }
 
@@ -180,16 +269,18 @@ pub fn scan_and_call(
 ///
 /// Days at or below the call price, and days with no published price, both
 /// simply fail to count, so the window absorbs up to `window - threshold` of
-/// either. The walk stops at the first day preceding the bucket's worldwide day
-/// so a bucket can never inherit a breach run that predates it - the window is
-/// newest-first, so everything beyond that point is older still.
+/// either. The walk stops at the first UTC day preceding `first_full_day` of
+/// the bucket's sealed `issued_at`, so a delayed materialization cannot inherit
+/// a breach run from before the right existed, and a partial issuance UTC day
+/// does not count. The window is newest-first, so everything beyond that point
+/// is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
     let window_days = terms.call_window / SECS_PER_DAY;
     let threshold_days = terms.call_threshold / SECS_PER_DAY;
     // A bucket armed before the terms existed carries zeroes. Zero days is "no
     // terms", not "every day breaches"; leave it uncallable. Same guard as
     // `outbe_gem::runtime::trigger_call`.
-    if window_days == 0 || threshold_days == 0 {
+    if window_days == 0 || threshold_days == 0 || threshold_days > window_days {
         return false;
     }
     let mut breaches: u32 = 0;
@@ -198,10 +289,13 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
             break;
         }
         if vwap.is_some_and(|value| value > terms.call_price) {
-            breaches = breaches.saturating_add(1);
+            breaches += 1;
+            if breaches >= threshold_days {
+                return true;
+            }
         }
     }
-    breaches >= threshold_days
+    false
 }
 
 /// The bucket's sealed notice period. Read on its own in the forfeit arm, which
@@ -225,11 +319,11 @@ fn mark_called(
     })
 }
 
-/// Forfeit-burns up to `budget` of a lapsed bucket's remaining Nods, newest
+/// Forfeit-burns up to `budget` of a lapsed bucket's remaining unpaid Nods, newest
 /// first. Returns how many were burned.
 ///
 /// A bucket holding more members than the budget resumes on the next run, which
-/// cannot change an outcome: the deadline has already passed and mining is
+/// cannot change an outcome: the deadline has already passed and settlement is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the callable index.
 ///
@@ -238,7 +332,7 @@ fn mark_called(
 /// unmined would otherwise leave the reserve with nothing minted against it.
 /// The credit is one accumulated write per pass, and the caller's checkpoint
 /// makes it atomic with the burns it accounts for.
-fn forfeit_members(
+pub(crate) fn forfeit_members(
     storage: &StorageHandle<'_>,
     nod: &mut NodContract<'_>,
     scope: &ExecutionScope,
@@ -269,6 +363,13 @@ fn forfeit_members(
                 "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
             ))
         })?;
+        if item.body().is_settled || item.body().bucket_key != bucket_key {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
+                )),
+            );
+        }
         let owner = item.body().owner;
         let gratis_load_minor = item.body().gratis_load_minor;
         let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);

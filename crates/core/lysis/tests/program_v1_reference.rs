@@ -28,8 +28,7 @@ struct CorpusCase {
 struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
-    gratis_allocation: String,
-    mandatory_price_840: Option<String>,
+    lysis_limit_minor: String,
     tributes: Vec<CorpusTribute>,
 }
 
@@ -46,7 +45,7 @@ struct CorpusTribute {
     excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
-    conditional_price: Option<String>,
+    entry_price: Option<String>,
     nod_target_available: bool,
 }
 
@@ -84,8 +83,7 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
     ProgramInputV1 {
         worldwide_day: WorldwideDay::new(input.worldwide_day),
         logical_evaluation_time: input.logical_evaluation_time,
-        gratis_allocation: u256(&input.gratis_allocation),
-        mandatory_entry_price_840: observed_value(input.mandatory_price_840.as_deref().map(u256)),
+        lysis_limit_minor: u256(&input.lysis_limit_minor),
         tributes: input
             .tributes
             .iter()
@@ -102,9 +100,7 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
                 },
                 first_league: observed_value(tribute.f1),
                 second_league: observed_value(tribute.f2),
-                conditional_entry_price_minor: observed_value(
-                    tribute.conditional_price.as_deref().map(u256),
-                ),
+                entry_price_minor: observed_value(tribute.entry_price.as_deref().map(u256)),
                 nod_target_available: tribute.nod_target_available,
             })
             .collect(),
@@ -170,7 +166,7 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
                 "floor_price": action.floor_price_minor.to_string(),
                 "gratis_load": action.gratis_load_minor.to_string(),
                 "entry_price": action.entry_price_minor.to_string(),
-                "cost": action.cost_amount_minor.to_string(),
+                "cost": action.settlement_cost_minor.to_string(),
                 "issuance_currency": action.issuance_currency,
                 "reference_currency": action.reference_currency,
                 "issued_at": action.issued_at,
@@ -221,8 +217,8 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
     json!({
         "status": "SUCCESS",
         "total_nominal": result.total_nominal.to_string(),
-        "gratis_allocation": result.gratis_allocation.to_string(),
-        "remaining_gratis": result.remaining_gratis.to_string(),
+        "lysis_limit_minor": result.lysis_limit_minor.to_string(),
+        "remaining_lysis_limit_minor": result.remaining_lysis_limit_minor.to_string(),
         "group_table": table,
         "nod_actions": nod_actions,
         "contributors": contributors,
@@ -259,16 +255,8 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         ProgramErrorV1::FidelityMismatch { ordinal, .. } => {
             ("FIDELITY_MISMATCH", Some(ordinal), None)
         }
-        ProgramErrorV1::MandatoryOracleUnavailable => {
-            ("MANDATORY_ORACLE_UNAVAILABLE", None, Some(840))
-        }
-        ProgramErrorV1::ConditionalOracleUnavailable { ordinal, currency } => (
-            "CONDITIONAL_ORACLE_UNAVAILABLE",
-            Some(ordinal),
-            Some(currency),
-        ),
-        ProgramErrorV1::ZeroEntryPrice { ordinal, currency } => {
-            ("ZERO_ENTRY_PRICE", ordinal, Some(currency))
+        ProgramErrorV1::EntryPriceUnavailable { ordinal, currency } => {
+            ("ENTRY_PRICE_UNAVAILABLE", Some(ordinal), Some(currency))
         }
         ProgramErrorV1::Arithmetic { .. } => ("ARITHMETIC", None, None),
         ProgramErrorV1::ZeroGratisLoad { ordinal } => ("ZERO_GRATIS_LOAD", Some(ordinal), None),
@@ -337,6 +325,26 @@ fn source_and_worker_order_are_not_semantic_inputs() {
 }
 
 #[test]
+fn entry_price_is_required_for_the_tribute_currency_only() {
+    let case = corpus_cases()
+        .into_iter()
+        .find(|case| case.case_id == "non840-tribute-floor")
+        .unwrap();
+    let mut input = program_input(&case.input);
+    assert!(execute(input.clone()).is_ok());
+    input.tributes[0].tribute.reference_currency = 840;
+    assert!(execute(input.clone()).is_ok());
+    input.tributes[0].entry_price_minor = ObservationValueV1::Unavailable;
+    assert_eq!(
+        execute(input),
+        Err(ProgramErrorV1::EntryPriceUnavailable {
+            ordinal: 0,
+            currency: 840,
+        })
+    );
+}
+
+#[test]
 fn boundary_record_counts_keep_raw_id_order() {
     for count in [31_usize, 32, 33] {
         let day = WorldwideDay::new(20_260_723);
@@ -360,7 +368,7 @@ fn boundary_record_counts_keep_raw_id_order() {
                     },
                     first_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
-                    conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                    entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
                     nod_target_available: true,
                 }
             })
@@ -370,8 +378,7 @@ fn boundary_record_counts_keep_raw_id_order() {
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,
-            gratis_allocation: nominal * U256::from(32_u8) / U256::from(100_u8),
-            mandatory_entry_price_840: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+            lysis_limit_minor: nominal * U256::from(32_u8) / U256::from(100_u8),
             tributes,
         })
         .expect("31/32/33 bounded shapes execute");

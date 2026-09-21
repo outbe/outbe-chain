@@ -59,7 +59,7 @@ contract IntexAuction is
         /// @dev Revealed bids per series.
         mapping(uint32 worldwideDay => IIntexAuction.SubmittedBidData[]) revealedBids;
         /// @dev Cleared marker per series. Set once by `executeAuctionClearing` and the sole
-        ///      `Completed`-stage signal - so a no-sale clearing (issuedIntexCount == 0,
+        ///      `Completed`-stage signal - so a no-sale clearing (issuedUnits == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 worldwideDay => bool) cleared;
         /// @dev Registry gating who may commit bids. Zero address leaves the gate open.
@@ -212,7 +212,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
-                issuedIntexLoadedPromis: 0, auctionClearingRate: 0, issuedIntexCount: 0, wonBidsCount: 0
+                issuedIntexLoadedPromis: 0, auctionClearingRate: 0, issuedUnits: 0, wonBidsCount: 0
             })
         });
 
@@ -251,7 +251,7 @@ contract IntexAuction is
     /// @inheritdoc IIntexAuction
     function executeAuctionClearing(
         uint32 worldwideDay,
-        uint32 issuedIntexCount,
+        uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external override onlyRole(RELAYER_ROLE) nonReentrant {
@@ -263,33 +263,33 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        // No-sale (issuedIntexCount == 0): supply was exhausted/zero, nothing is issued and every
+        // No-sale (issuedUnits == 0): supply was exhausted/zero, nothing is issued and every
         // bidder is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained
         // - it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
         // must carry a real clearing rate at or above the floor.
-        if (issuedIntexCount > 0 && auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
+        if (issuedUnits > 0 && auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
 
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
         // against on-chain counters - winners cannot exceed revealed bids, and a sale's clearing
         // rate cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[worldwideDay].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
-        if (issuedIntexCount > 0 && auctionClearingRate < a.params.minIntexBidRate) {
+        if (issuedUnits > 0 && auctionClearingRate < a.params.minIntexBidRate) {
             revert ClearingRateBelowMin(auctionClearingRate, a.params.minIntexBidRate);
         }
 
         // Final data provided by Outbe; `issuedIntexLoadedPromis` is derived on-chain.
-        a.result.issuedIntexCount = issuedIntexCount;
+        a.result.issuedUnits = issuedUnits;
         a.result.auctionClearingRate = auctionClearingRate;
         a.result.wonBidsCount = wonBidsCount;
         // 256-bit product: over-range reverts typed, not Panic(0x11).
-        uint256 loadedPromis = uint256(issuedIntexCount) * a.params.promisLoadMinor;
-        if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedIntexCount, a.params.promisLoadMinor);
+        uint256 loadedPromis = uint256(issuedUnits) * a.params.promisLoadMinor;
+        if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(issuedUnits, a.params.promisLoadMinor);
         a.result.issuedIntexLoadedPromis = uint128(loadedPromis);
         $.cleared[worldwideDay] = true;
 
         emit AuctionStageUpdated(worldwideDay, IIntexAuction.AuctionStage.Completed, uint32(block.timestamp), "");
-        emit AuctionClearingExecuted(worldwideDay, auctionClearingRate, issuedIntexCount);
+        emit AuctionClearingExecuted(worldwideDay, auctionClearingRate, issuedUnits);
     }
 
     // --- User Actions ---
@@ -511,6 +511,29 @@ contract IntexAuction is
         IIntexAuction.AuctionData memory a = _s().auctions[worldwideDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         return a;
+    }
+
+    /// @inheritdoc IIntexAuction
+    function revealedBidsCount(uint32 worldwideDay) external view override returns (uint256) {
+        return _s().revealedBids[worldwideDay].length;
+    }
+
+    /// @inheritdoc IIntexAuction
+    function revealedBidsSlice(uint32 worldwideDay, uint256 offset, uint256 limit)
+        external
+        view
+        override
+        returns (IIntexAuction.SubmittedBidData[] memory slice)
+    {
+        IIntexAuction.SubmittedBidData[] storage bids = _s().revealedBids[worldwideDay];
+        uint256 length = bids.length;
+        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; i++) {
+            slice[i] = bids[offset + i];
+        }
     }
 
     /// @inheritdoc IIntexAuction

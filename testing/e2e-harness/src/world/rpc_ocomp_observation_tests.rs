@@ -42,11 +42,11 @@ fn pending_record() -> OcompJobRecordV1 {
                 previous_vwap: U256::ZERO,
                 current_vwap: U256::ZERO,
                 gratis_demand: U256::ZERO,
-                gratis_supply: U256::ZERO,
-                lysis_budget: U256::ZERO,
-                auction_base: U256::ZERO,
+                day_gratis_limit_minor: U256::ZERO,
+                lysis_limit_minor: U256::ZERO,
+                desis_limit_minor: U256::ZERO,
                 auction_entry_prices: vec![],
-                request_budget_split_receipt_hash: hash(113),
+                request_limit_split_receipt_hash: hash(113),
             },
             logical_evaluation_height: 100,
             logical_evaluation_time: 1_000,
@@ -182,6 +182,9 @@ impl RpcServer {
                     }
                     Err(error) => panic!("accept RPC: {error}"),
                 };
+                // Accepted sockets inherit nonblocking mode on some platforms;
+                // this fixture uses blocking reads with bounded timeouts.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

@@ -7,15 +7,16 @@ use crate::precompile::IGem::{GemCalled, GemExpired, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
-    /// `rate` is COEN/`iso_code`. Each currency walks its own bin trie, so the
-    /// currency check below only ever fires on a corrupt index; it skips rather
-    /// than promoting against an unrelated rate.
+    /// `rate` is COEN/`iso_code` on `day`, which the gem must have held in full. Each
+    /// currency walks its own bin trie, so the currency check below only ever fires
+    /// on a corrupt index; it skips rather than promoting against an unrelated rate.
     pub(crate) fn qualify(
         &mut self,
         gem_id: U256,
         now: u64,
         iso_code: u16,
         rate: U256,
+        day: u32,
     ) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Issued as u8 {
@@ -24,7 +25,7 @@ impl GemContract<'_> {
         if item.reference_currency != iso_code {
             return Ok(false);
         }
-        if rate <= item.floor_price_minor {
+        if day < first_full_day(item.issued_at) || rate <= item.floor_price_minor {
             return Ok(false);
         }
         self.set_state(gem_id, GemState::Qualified)?;
@@ -36,7 +37,7 @@ impl GemContract<'_> {
     }
 
     /// `Qualified -> Called` when the coen daily VWAP exceeded this gem's Call
-    /// Threshold on at least `call_threshold` of its trailing `call_window`,
+    /// Threshold on at least `call_threshold_seconds` of its trailing `call_window_seconds`,
     /// read off `window` (newest-first `(day, vwap)` pairs). No-op unless the
     /// gem is Qualified. Returns true if called.
     ///
@@ -55,8 +56,8 @@ impl GemContract<'_> {
             return Ok(false);
         }
         // Both terms are stored in seconds; the daily scan needs day counts.
-        let window_days = item.call_window / 86_400;
-        let threshold_days = item.call_threshold / 86_400;
+        let window_days = item.call_window_seconds / 86_400;
+        let threshold_days = item.call_threshold_seconds / 86_400;
         if window_days == 0 || threshold_days == 0 {
             return Ok(false);
         }
@@ -85,14 +86,14 @@ impl GemContract<'_> {
     }
 
     /// Forfeit-burn a Called gem whose Call Notice Period has lapsed. No-op
-    /// unless the gem is Called and past `called_at + call_notice_period`.
+    /// unless the gem is Called and past `called_at + call_notice_period_seconds`.
     /// Returns true if burned.
     pub(crate) fn forfeit(&mut self, gem_id: U256, now_ts: u64) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Called as u8 {
             return Ok(false);
         }
-        let deadline = item.called_at + u64::from(item.call_notice_period);
+        let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
         if now_ts <= deadline {
             return Ok(false);
         }

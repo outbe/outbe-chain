@@ -91,7 +91,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         outbeRouter.addTarget(BNB_CHAIN_ID);
     }
 
-    /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE holder) so its bids pass the inbound
+    /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE owner) so its bids pass the inbound
     ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
     function _freezeSnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
@@ -121,7 +121,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
             BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
 
-        assertEq(bnbRouter.pendingMark(SERIES_ID), BridgeMsgCodec.MSG_MARK_CALLED, "the mark waits for its series");
+        assertEq(bnbRouter.parkedMark(SERIES_ID), BridgeMsgCodec.MSG_MARK_CALLED, "the mark waits for its series");
     }
 
     /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
@@ -136,7 +136,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         // Prerequisite lands (the ISSUANCE that would have created the series).
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
-        bnbRouter.applyPendingMark(SERIES_ID);
+        bnbRouter.applyParkedMark(SERIES_ID);
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on flush");

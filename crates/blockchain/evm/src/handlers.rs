@@ -221,7 +221,6 @@ pub mod vote {
                 "chainId": chain_id,
                 "l1Address": format!("{l1_address:#x}"),
                 "publicKey": format!("0x{}", hex::encode(public_key.encode())),
-                "zkEnabled": true,
             })
             .to_string()
         }
@@ -322,7 +321,6 @@ pub mod vote {
                     .load_network(L2_CHAIN_ID)
                     .unwrap();
                 assert_eq!(record.l1_address, l1_address);
-                assert!(record.zk_enabled);
 
                 vote.process_begin_block(
                     &finalize_context(storage.clone(), deadline + 2, VALIDATOR_A),

@@ -35,7 +35,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd - the auction day (root)
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
-    uint32 internal constant ISSUED_INTEX_COUNT = 100;
+    uint32 internal constant ISSUED_UNITS = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
@@ -96,11 +96,11 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         auction.startClearingStage(WORLDWIDE_DAY);
 
         uint64 clearingPrice = 100e6;
-        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, clearingPrice, 0);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_UNITS, clearingPrice, 0);
         _deliver(packet);
 
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(WORLDWIDE_DAY).result;
-        assertEq(result.issuedIntexCount, ISSUED_INTEX_COUNT, "issuedIntexCount persisted");
+        assertEq(result.issuedUnits, ISSUED_UNITS, "issuedUnits persisted");
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
@@ -174,7 +174,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedAt: uint32(block.timestamp),
-            issuedIntexCount: ISSUED_INTEX_COUNT,
+            issuedUnits: ISSUED_UNITS,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: ENTRY_PRICE,
             floorPriceMinor: FLOOR_PRICE_MINOR,
@@ -210,7 +210,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     seriesId: SERIES_ID,
                     worldwideDay: WORLDWIDE_DAY,
                     issuedAt: uint32(block.timestamp),
-                    issuedIntexCount: ISSUED_INTEX_COUNT,
+                    issuedUnits: ISSUED_UNITS,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
                     entryPriceMinor: ENTRY_PRICE,
                     floorPriceMinor: FLOOR_PRICE_MINOR,
@@ -241,8 +241,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
         assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
-        assertEq(bnbRouter.nextPendingIssuanceIdx(), 1, "one mint parked");
-        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuances(0);
+        assertEq(bnbRouter.parkedIssuanceCount(), 1, "one mint parked");
+        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.parkedIssuance(0);
         assertEq(s, SERIES_ID);
         assertEq(r, address(bad));
         assertEq(q, 3);
@@ -250,7 +250,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertFalse(done);
     }
 
-    function test_flushPendingIssuance_afterFix() public {
+    function test_applyParkedIssuance_afterFix() public {
         RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
         address[] memory recipients = new address[](2);
         recipients[0] = bidder;
@@ -262,15 +262,15 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         // Recipient stops reverting; the parked mint is retried permissionlessly.
         bad.setReject(false);
-        bnbRouter.flushPendingIssuance(0);
+        bnbRouter.applyParkedIssuance(0);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
-        (,,,, bool done) = bnbRouter.pendingIssuances(0);
+        (,,,, bool done) = bnbRouter.parkedIssuance(0);
         assertTrue(done);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
-        bnbRouter.flushPendingIssuance(0);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
+        bnbRouter.applyParkedIssuance(0);
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---
@@ -332,7 +332,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, 0));
+        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, ISSUED_UNITS, 0));
     }
 
     function _deliver(bytes memory packet) internal {

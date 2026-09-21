@@ -16,20 +16,29 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
-    #[error("not the owner")]
-    NotOwner,
-
     #[error("nod is not qualified")]
     NodNotQualified,
 
-    #[error("PayNote proof names spender {actual}, expected {expected}")]
-    PayNoteSpenderMismatch { expected: Address, actual: Address },
+    #[error("nod is already settled")]
+    NodAlreadySettled,
 
-    #[error("PayNote proof carries asset {asset}, which is not registered for reference currency {reference_currency}")]
-    PayNoteAssetMismatch {
-        asset: Address,
-        reference_currency: u16,
-    },
+    #[error("nod is not settled")]
+    NodNotSettled,
+
+    #[error("PayNote proof names owner {actual}, expected {expected}")]
+    PayNoteOwnerMismatch { expected: Address, actual: Address },
+
+    #[error("settlement asset {asset} has no registered vault")]
+    SettlementAssetNotRegistered { asset: Address },
+
+    #[error("settlement asset currency {iso_code} does not match the nod")]
+    SettlementCurrencyMismatch { iso_code: u16 },
+
+    #[error("ERC20 operation failed or returned malformed data")]
+    TokenOperationFailed,
+
+    #[error("ERC20 payment did not move the exact Nod cost")]
+    SettlementAmountMismatch,
 
     #[error("PayNote spends {covered}, nod cost is {required}")]
     PayNoteCostMismatch { covered: U256, required: U256 },

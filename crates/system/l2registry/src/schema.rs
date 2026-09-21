@@ -14,8 +14,8 @@ pub struct L2NetworkRecord {
     #[key]
     pub chain_id: u64,
 
-    /// L1 account submitting on behalf of the network. Non-zero for every
-    /// registered network (validated at registration; doubles as existence).
+    /// L1 operator account managing the network, not a required Tribute submitter.
+    /// Non-zero for every registered network; doubles as the existence marker.
     #[attribute(order = 0)]
     pub l1_address: Address,
 
@@ -30,10 +30,6 @@ pub struct L2NetworkRecord {
     /// BLS MinSig group public key bytes 64..96.
     #[attribute(order = 3)]
     pub pubkey_hi: B256,
-
-    /// Whether ZK verification is enabled for this network.
-    #[attribute(order = 4)]
-    pub zk_enabled: bool,
 }
 
 impl L2NetworkRecord {
@@ -59,7 +55,7 @@ impl L2NetworkRecord {
 /// EVM storage layout for the L2 network registry.
 ///
 /// Storage slots:
-///   0: networks - mapping(chain_id => L2NetworkRecord) (5 slots)
+///   0: networks - mapping(chain_id => L2NetworkRecord) (4 slots)
 ///   1: l1_to_chain - mapping(l1_address => chain_id), 0 = absent
 #[storage_schema]
 #[contract(addr = L2_REGISTRY_ADDRESS)]

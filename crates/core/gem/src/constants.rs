@@ -5,13 +5,17 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/gem/image/";
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Gems a begin-block qualify scan may inspect, shared across all reference
-/// currencies. The per-currency bin cursor resumes the rest next block.
+/// Gems one qualify slice may inspect, shared across all reference currencies.
+/// The per-currency bin cursor resumes the rest next block.
 pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
 /// Gems one call slice may call before it gives out; the sweep resumes on the
 /// next block.
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
+
+/// `SweepDaySkipped.sweep` of each daily sweep.
+pub const QUALIFY_SWEEP: u8 = 0;
+pub const CALL_SWEEP: u8 = 1;
 
 /// Slots one block's expiry sweep may step through. Low because a forfeit compacts
 /// the owner's whole gem list and a block hook is not gas-metered.
@@ -27,11 +31,11 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
-/// the holder must settle. Once elapsed the gem is forfeit-burned.
+/// the owner must settle. Once elapsed the gem is forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
-/// GemPosition validity period: a parked Intex expires this long after
-/// `parked_at`; no new gems may be issued afterward. 1 year.
+/// GemPosition validity period: an Intex in the Gem Factory expires this long after
+/// `issued_at`; no new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 
 /// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.
