@@ -10,11 +10,12 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title DeployTarget
 /// @author Outbe
 /// @notice Deploy the auction target stack on one chain: the NFT collection + bridge, EscrowAdapter,
-///         IntexAuction and TargetRouter. Uniform for every target - including the origin chain as a
+///         IntexAuction, TargetRouter and, off the origin, the VwapRegistry. Uniform for every target - including the origin chain as a
 ///         loopback target (origin==target): the shared NFT/bridge fall out of idempotent CREATE3
 ///         deploy, and the bridge meshes only with OTHER targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
@@ -74,6 +75,19 @@ contract DeployTarget is BaseScript {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
+        // Daily VWAPs land in a registry on a remote target; the origin chain has the oracle itself.
+        address vwapRegistry;
+        if (local != originChainId) {
+            vwapRegistry = deployProxy(
+                factory,
+                deployer,
+                "VwapRegistry",
+                address(new VwapRegistry()),
+                abi.encodeCall(VwapRegistry.initialize, (admin, router))
+            );
+            TargetRouter(payable(router)).setVwapRegistry(vwapRegistry);
+        }
+
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
             .setRemoteMessenger(
@@ -114,5 +128,6 @@ contract DeployTarget is BaseScript {
         console.log("IntexAuction:", auction);
         console.log("IntexNFT1155Bridge:", nftBridge);
         console.log("TargetRouter:", router);
+        if (vwapRegistry != address(0)) console.log("VwapRegistry:", vwapRegistry);
     }
 }
