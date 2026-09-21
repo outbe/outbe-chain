@@ -274,8 +274,7 @@ fn test_address_list_deduplication() {
     });
 }
 
-/// Registers COEN/840, adds 840 to the reference registry and publishes `price`
-/// as both its spot and the previous UTC day's VWAP.
+/// Registers COEN/840 with `price` as its spot and previous-day VWAP.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
@@ -294,8 +293,7 @@ fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     seed_day_vwap(storage, price);
 }
 
-/// Publishes `vwap` as the finalized COEN/840 VWAP of the UTC day before `T_NOW`;
-/// zero leaves that day without a price.
+/// Publishes `vwap` as the COEN/840 VWAP of the UTC day before `T_NOW`; zero clears it.
 fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
         .unwrap()
@@ -426,7 +424,6 @@ fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
     let backing = native(500);
 
     with_contract_mut(|storage, contract| {
-        // A live spot alone does not price the Gem.
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, U256::ZERO);
         let err = claim_waa(&storage, contract, alice, backing).unwrap_err();

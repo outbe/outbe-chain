@@ -628,8 +628,7 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-/// The previous UTC day's VWAP of COEN in `reference_currency`; a missing one maps
-/// to `OracleUnavailable`, so issuance waits rather than pricing off another source.
+/// The previous UTC day's VWAP; a missing one maps to `OracleUnavailable`.
 fn read_market_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
@@ -652,8 +651,7 @@ fn compute_params(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let (floor_price, initial_state) = match gem_type {
-        // Genesis: validator gem during the genesis window - born Qualified with
-        // a zero floor, but paid and called like every other agent class.
+        // Genesis: born Qualified with a zero floor, otherwise like other agent gems.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
             (U256::ZERO, GemState::Qualified)

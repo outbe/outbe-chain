@@ -91,8 +91,7 @@ fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
 #[test]
 fn a_batch_prices_off_the_day_before_its_delivery() {
     with_ctx(|ctx| {
-        // The reward day, the day before delivery and the live quote all differ,
-        // so only the day before delivery satisfies the assertion.
+        // Only the day before delivery matches the assertion.
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
         seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
         seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::from(5u64) * one_coen840());

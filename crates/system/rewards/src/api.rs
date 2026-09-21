@@ -567,8 +567,7 @@ fn deliver_oldest_reward_gem_batch_inner(
     })
 }
 
-/// The COEN price a batch mints at: the previous UTC day's VWAP at delivery, not
-/// the day it rewards. `None` keeps the batch queued until that day is priced.
+/// The previous UTC day's VWAP at delivery, not the day the batch rewards.
 fn resolve_reward_entry_price(
     ctx: &BlockRuntimeContext,
     reference_currency: u16,

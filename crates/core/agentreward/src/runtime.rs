@@ -223,9 +223,7 @@ impl AgentRewardContract<'_> {
     }
 }
 
-/// The COEN price an agent reward Gem is issued at: the previous UTC day's VWAP
-/// at claim time. The agent picks the moment it claims, so a price frozen on the
-/// day of accrual would be a look-back option.
+/// The previous UTC day's VWAP at claim time, not the day the reward accrued.
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
     let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
     else {
