@@ -453,8 +453,8 @@ enum StartOutcome {
     Retired,
 }
 
-/// Dispatch the START message for a briefed day: a red day is born cancelled, a
-/// day past its commit window is cancelled unstarted, otherwise it starts green.
+/// Dispatch the START message for a briefed day: a red, unpriced or sub-unit day is born
+/// cancelled, a day past its commit window is cancelled unstarted, otherwise it starts green.
 #[allow(clippy::too_many_arguments)]
 fn start_auction(
     storage: &StorageHandle<'_>,
