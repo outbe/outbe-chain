@@ -236,6 +236,9 @@ pub fn dispatch(
                         payableUnits: amount,
                     })
                 }),
+                isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {
+                    runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
+                }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
                 // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has the protocol's leading zero bytes; `seq` is the on-chain

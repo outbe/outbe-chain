@@ -9,7 +9,7 @@ use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -953,6 +953,23 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
     )?;
     IERC1155::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+}
+
+/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
+pub fn is_qualified(
+    storage: &StorageHandle<'_>,
+    series: &outbe_intex::SeriesRecord,
+) -> Result<bool> {
+    outbe_oracle::api::crossed_floor(
+        storage.clone(),
+        series.reference_currency,
+        series.floor_price_minor,
+        first_full_day(u64::from(series.issued_at)),
+    )
+}
+
+pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
+    is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
 }
 
 /// What settling `amount` units of `series_id` with `payment_token` costs, and

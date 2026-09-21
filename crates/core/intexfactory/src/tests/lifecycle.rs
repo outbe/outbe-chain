@@ -1655,3 +1655,56 @@ mod called_pstar {
         series_id
     }
 }
+
+#[test]
+fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        let qualified = || runtime::is_series_qualified(&s, sid(7)).unwrap();
+        let close_day = |days_after_issue: u64, vwap: u64| {
+            write_day_vwap(
+                &oracle,
+                REFERENCE_ISO,
+                PAIR_ID,
+                ISSUED_AT as u64 + days_after_issue * DAY,
+                U256::from(vwap),
+            )
+        };
+
+        assert!(!qualified(), "no finalized day yet");
+        close_day(1, EXPECTED_FLOOR * 2);
+        assert!(!qualified(), "the partial issuance day never counts");
+        close_day(2, EXPECTED_FLOOR);
+        assert!(!qualified(), "a day at the floor does not qualify");
+        close_day(3, EXPECTED_FLOOR + 1);
+        assert!(qualified());
+        close_day(4, 1);
+        assert!(qualified(), "a later low day does not undo it");
+    });
+}
+
+#[test]
+fn is_series_qualified_dispatch() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        write_day_vwap(
+            &OracleContract::new(s.clone()),
+            REFERENCE_ISO,
+            PAIR_ID,
+            ISSUED_AT as u64 + 2 * DAY,
+            U256::from(EXPECTED_FLOOR + 1),
+        );
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::isSeriesQualifiedCall {
+                seriesId: sid(7).into(),
+            }
+            .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert!(IIntexFactory::isSeriesQualifiedCall::abi_decode_returns(&out).unwrap());
+    });
+}
