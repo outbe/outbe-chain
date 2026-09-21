@@ -1,42 +1,14 @@
-//! Block-hook carry-on for the Intex sweeps, and the queue of Called notices the
-//! `intex_drain_notices` trigger sends: the scans run in a block hook, which cannot
-//! call contracts.
+//! The queue of Called notices the `intex_drain_notices` trigger sends: the scans
+//! run in a block hook, which cannot call contracts.
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
-    error::Result,
-    storage::StorageHandle,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
 use crate::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use crate::schema::IntexFactoryContract;
-
-pub struct IntexLifecycle;
-
-impl BlockLifecycle for IntexLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // A call sweep the daily trigger could not finish in one go carries on
-        // here, block by block, rather than waiting a day for the next trigger.
-        crate::called::run_call_slice(ctx)?;
-        // Drain in-flight payouts first, then start rounds for any series whose
-        // proceeds fan-in deadline has passed.
-        crate::runtime::drain_distributions(&ctx.storage)?;
-        crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
-        crate::expired::sweep_expiry_deadlines(ctx)?;
-        Ok(())
-    }
-
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
-        Ok(())
-    }
-}
 
 /// A notice carrying one Called series, which its group no longer holds. It is the only kind
 /// sent; an entry of any other kind is dropped.

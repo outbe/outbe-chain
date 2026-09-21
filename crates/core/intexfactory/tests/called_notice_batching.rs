@@ -6,7 +6,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
-use outbe_intexfactory::qualified::{drain_notices, joins_run, pack_called_notice, NOTICE_CALLED};
+use outbe_intexfactory::notify::{drain_notices, joins_run, pack_called_notice, NOTICE_CALLED};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
