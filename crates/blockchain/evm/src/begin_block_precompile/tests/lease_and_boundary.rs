@@ -204,3 +204,19 @@ fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
         );
     });
 }
+
+/// The bridge sync at the boundary is best effort: with no sub-call driver
+/// (this provider stubs nothing) the controller call fails, and the boundary
+/// still commits. A bridge outage must never block epoch activation.
+#[test]
+fn boundary_outcome_survives_unavailable_hyperlane_sync() {
+    let mut provider = configured_storage(2, 2);
+    provider.enter(|storage| {
+        let input = SystemTxInputV2::BoundaryOutcome {
+            artifact: boundary_noop(),
+        }
+        .encode()
+        .unwrap();
+        dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
+    });
+}

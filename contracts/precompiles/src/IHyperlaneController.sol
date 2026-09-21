@@ -26,6 +26,12 @@ interface IHyperlaneController {
     /// Tops up the balance that pays Interchain Account dispatch fees (IGP quote).
     function fund() external payable;
 
+    /// Mirrors the active Outbe validator set into every ISM: validators =
+    /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
+    /// already matches. Permissionless: it only applies what consensus decided.
+    /// Returns whether a rotation was dispatched.
+    function sync() external returns (bool changed);
+
     function router() external view returns (address);
 
     /// ISM for `domain`, or zero when not configured.

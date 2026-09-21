@@ -832,11 +832,11 @@ mod boundary_value_tests {
     use alloy_primitives::{Address, U256};
     use outbe_primitives::addresses::{
         CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, EMIT_ADDRESS, GRATIS_ADDRESS,
-        INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+        HYPERLANE_CONTROLLER_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
     };
     use revm::interpreter::CallValue;
 
-    const PAYABLE: [Address; 6] = [
+    const PAYABLE: [Address; 7] = [
         STAKING_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         VOTE_ADDRESS,
@@ -845,6 +845,8 @@ mod boundary_value_tests {
         // burn is the pool's only value-carrying entry point.
         EMIT_ADDRESS,
         CCA_REGISTRY_ADDRESS,
+        // fund tops up the float that pays Interchain Account dispatch fees.
+        HYPERLANE_CONTROLLER_ADDRESS,
     ];
 
     fn policy(address: Address) -> ValuePolicy {

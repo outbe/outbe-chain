@@ -404,3 +404,72 @@ fn validator_shape_checks() {
         Err(HyperlaneControllerError::InvalidValidatorCount { .. })
     ));
 }
+
+mod sync {
+    use super::*;
+    use outbe_validatorset::contract::ValidatorSet;
+
+    const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
+
+    fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) {
+        let mut vs = ValidatorSet::new(storage);
+        if vs.config_owner.read().unwrap().is_zero() {
+            vs.config_owner.write(VALIDATOR_OWNER).unwrap();
+            vs.set_config_max_validators(100).unwrap();
+        }
+        let mut pubkey = [0u8; 48];
+        pubkey[0] = seed;
+        vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)
+            .unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
+    }
+
+    #[test]
+    fn threshold_is_two_thirds_rounded_up() {
+        assert_eq!(crate::consensus_threshold(1).unwrap(), 1);
+        assert_eq!(crate::consensus_threshold(2).unwrap(), 2);
+        assert_eq!(crate::consensus_threshold(3).unwrap(), 2);
+        assert_eq!(crate::consensus_threshold(4).unwrap(), 3);
+        assert_eq!(crate::consensus_threshold(255).unwrap(), 170);
+        assert!(crate::consensus_threshold(0).is_err());
+        assert!(crate::consensus_threshold(256).is_err());
+    }
+
+    #[test]
+    fn sync_mirrors_the_active_set_and_is_idempotent() {
+        let mut p = initialized_provider();
+        // ISM currently holds a stale set {v1} / 1.
+        stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
+        StorageHandle::enter(&mut p, |storage| {
+            for (i, addr) in [v(1), v(2), v(3), v(4)].into_iter().enumerate() {
+                activate(storage.clone(), addr, i as u8 + 1);
+            }
+        });
+        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        StorageHandle::enter(&mut p, |storage| {
+            let call: Bytes = IHyperlaneController::syncCall {}.abi_encode().into();
+            let ret = dispatch(storage, &call, stranger(), U256::ZERO).unwrap();
+            assert!(IHyperlaneController::syncCall::abi_decode_returns(&ret).unwrap());
+        });
+        let t = topics(&p);
+        assert_eq!(
+            *t.last().unwrap(),
+            IHyperlaneController::ValidatorsAndThresholdApplied::SIGNATURE_HASH
+        );
+        let applied = IHyperlaneController::ValidatorsAndThresholdApplied::decode_log_data(
+            p.get_events(HYPERLANE_CONTROLLER_ADDRESS).last().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(applied.threshold, 3);
+        assert_eq!(applied.validatorCount, U256::from(4));
+
+        // ISM now reports the mirrored set (any order): nothing to do.
+        stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
+        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            assert!(!c.sync().unwrap());
+        });
+        assert!(topics(&p).is_empty());
+    }
+}

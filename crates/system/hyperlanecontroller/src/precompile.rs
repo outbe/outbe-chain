@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -41,6 +41,7 @@ pub fn dispatch(
                         controller.fund(sender, amount)
                     })
                 }
+                sync(c) => mutate(c, caller, |_, _| controller.sync()),
                 router(c) => view(c, |_| controller.router.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 domains(c) => view(c, |_| controller.domains.read_all()),

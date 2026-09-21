@@ -6,7 +6,8 @@
 //! same contracts on remote chains. It holds no validator set of its own: the
 //! ISMs are the source of truth, the controller only forwards owner calls.
 //!
-//! - `initialize` and `fund` are the only direct write selectors.
+//! - `initialize`, `fund` and the permissionless `sync` (mirror the active
+//!   validator set into every ISM) are the only direct write selectors.
 //! - Validator rotation, generic local / remote owner calls and table changes
 //!   are methods on [`HyperlaneControllerContract`]; the trigger that runs them
 //!   (validator vote or another authority) is not wired yet.
@@ -20,7 +21,7 @@ pub mod schema;
 mod runtime;
 mod sol_ext;
 
-pub use runtime::{validate_validators, RemoteCall};
+pub use runtime::{consensus_threshold, validate_validators, RemoteCall};
 pub use schema::HyperlaneControllerContract;
 
 #[cfg(test)]

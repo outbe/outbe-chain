@@ -27,6 +27,14 @@ of truth, the controller only forwards owner calls to them.
   controller). The controller `acceptOwnership()`s the ISM (it is Ownable2Step),
   verifies it already owns `router`, and stores the table.
 - `fund()` payable — tops up the balance that pays IGP fees for ICA dispatches.
+- `sync()` — permissionless. Mirrors the active Outbe validator set into every ISM:
+  validators = active validators, threshold = `ceil(2n/3)` (the vote quorum rule).
+  No-op when the local ISM already matches, so a keeper can call it every epoch;
+  new validators become bridge signers as soon as someone calls it after their
+  boundary activation. Hyperlane validator keys are the validators' own addresses.
+  The `BoundaryOutcome` system tx sub-calls `sync()` right after every epoch
+  boundary activation (`crates/blockchain/evm/src/begin_block_precompile/boundary.rs`),
+  best effort: a failure is logged, never blocks the boundary.
 - views: `router()`, `ismByDomain(domain)`, `domains()`.
 
 ## Owner operations (Rust methods, trigger not wired yet)

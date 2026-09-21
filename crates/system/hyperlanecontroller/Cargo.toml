@@ -8,13 +8,13 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-vote.workspace = true
+outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-hex.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

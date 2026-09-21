@@ -8922,12 +8922,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "hex",
  "outbe-macros",
  "outbe-primitives",
- "outbe-vote",
- "serde",
- "serde_json",
+ "outbe-validatorset",
  "thiserror 2.0.18",
 ]
 

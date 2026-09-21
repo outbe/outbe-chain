@@ -6,6 +6,7 @@ use crate::errors::HyperlaneControllerError;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
+use outbe_validatorset::contract::ValidatorSet;
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -93,6 +94,25 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::ZeroFund.into());
         }
         self.emit(IHyperlaneController::Funded { from, amount })
+    }
+
+    /// Mirrors the active Outbe validator set into every ISM (validators =
+    /// active validators, threshold = [`consensus_threshold`]). Returns `false`
+    /// when the local ISM already matches, so a keeper can call it every epoch.
+    pub fn sync(&mut self) -> Result<bool> {
+        let validator_set = ValidatorSet::new(self.storage.clone());
+        let active: Vec<Address> = validator_set
+            .get_active_validators()?
+            .into_iter()
+            .map(|record| record.validator_address)
+            .collect();
+        let threshold = consensus_threshold(active.len())?;
+        let (current, current_threshold) = self.current_validators()?;
+        if current_threshold == threshold && same_set(&current, &active) {
+            return Ok(false);
+        }
+        self.set_validators_and_threshold(&active, threshold)?;
+        Ok(true)
     }
 
     // ----------------------------------------------------------------------
@@ -379,6 +399,24 @@ impl HyperlaneControllerContract<'_> {
         self.ism_by_domain.write(&domain, ism)?;
         self.emit(IHyperlaneController::DomainAdded { domain, ism })
     }
+}
+
+/// Bridge threshold for `n` active validators: the same 2/3 rule as the
+/// validator vote quorum, rounded up (`ceil(2n / 3)`).
+pub fn consensus_threshold(active: usize) -> Result<u8> {
+    if active == 0 || active > MAX_VALIDATORS {
+        return Err(HyperlaneControllerError::InvalidValidatorCount { count: active }.into());
+    }
+    u8::try_from(active.saturating_mul(2).div_ceil(3))
+        .map_err(|_| HyperlaneControllerError::InvalidValidatorCount { count: active }.into())
+}
+
+fn same_set(left: &[Address], right: &[Address]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_unstable();
+    right.sort_unstable();
+    left == right
 }
 
 /// Shape checks Hyperlane's `setValidatorsAndThreshold` would reject on-chain.
