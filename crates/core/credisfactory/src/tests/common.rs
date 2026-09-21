@@ -26,7 +26,7 @@ use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
     pledge_secret, spend_auth_mac,
 };
-use outbe_vaultrouter::{StablesReservation, VaultRouterContract};
+use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use crate::runtime;
 
@@ -185,7 +185,7 @@ pub fn seed_reservation_at(
     let id = nonce;
     contract
         .reservations
-        .create(&StablesReservation {
+        .create(&LiquidityReservation {
             id,
             asset: reserved_asset,
             amount,

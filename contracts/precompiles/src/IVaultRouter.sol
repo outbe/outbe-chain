@@ -17,7 +17,7 @@ interface IVaultRouter {
         Credis
     }
 
-    struct StablesReservation {
+    struct LiquidityReservation {
         address asset;
         uint256 amount;
         address smartAccount;
@@ -215,5 +215,5 @@ interface IVaultRouter {
     function returnReservation(uint256 id) external returns (uint256 mintedShares);
 
     /// @notice The reservation held under `id`, or a zeroed struct if none.
-    function reservationOf(uint256 id) external view returns (StablesReservation memory reservation);
+    function reservationOf(uint256 id) external view returns (LiquidityReservation memory reservation);
 }

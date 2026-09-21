@@ -178,7 +178,7 @@ fn dispatch_local(
             hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
             reservationOf(c) => view(c, |c| {
                 let record = runtime::reservation_of(&storage, c.id)?;
-                Ok(IVaultRouter::StablesReservation {
+                Ok(IVaultRouter::LiquidityReservation {
                     asset: record.asset,
                     amount: record.amount,
                     smartAccount: record.smart_account,

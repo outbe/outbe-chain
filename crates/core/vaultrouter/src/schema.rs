@@ -8,10 +8,10 @@ use outbe_primitives::storage::types::{StorageKey, StorageSet};
 /// `IVaultRouter.StablesTarget.Unknown == 0`.
 pub const UNKNOWN: u8 = 0;
 
-/// One CCA-held stables reservation. A zero `asset` means the slot is empty.
+/// One CCA-held liquidity reservation. A zero `asset` means the slot is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = asset)]
-pub struct StablesReservation {
+pub struct LiquidityReservation {
     #[key]
     pub id: U256,
     #[attribute(order = 0)]
@@ -134,7 +134,7 @@ pub struct VaultRouterContract {
 
     /// slot 27: CCA stables reservations keyed by id.
     #[attribute(order = 24)]
-    pub reservations: outbe_primitives::storage::dsl::Map<U256, StablesReservation>,
+    pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

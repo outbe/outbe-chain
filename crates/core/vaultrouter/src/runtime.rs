@@ -20,7 +20,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::constants::RESERVATION_TTL_SECS;
 use crate::errors::VaultRouterError;
-use crate::schema::{StablesReservation, VaultRouterContract, UNKNOWN};
+use crate::schema::{LiquidityReservation, VaultRouterContract, UNKNOWN};
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
 
@@ -447,7 +447,7 @@ pub(crate) fn reserve_stables(
         }
 
         vault_withdraw(&storage, vault, amount, SELF, SELF)?;
-        contract.reservations.create(&StablesReservation {
+        contract.reservations.create(&LiquidityReservation {
             id,
             asset,
             amount,
@@ -567,7 +567,7 @@ pub(crate) fn return_reservation(
 }
 
 /// Reads and deletes the reservation under `id`, rejecting an unknown one.
-fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<StablesReservation> {
+fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
     take_reservation_if_held(storage, id)?
         .ok_or_else(|| VaultRouterError::ReservationNotFound(id).into())
 }
@@ -576,7 +576,7 @@ fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<StablesRese
 fn take_reservation_if_held(
     storage: &StorageHandle<'_>,
     id: U256,
-) -> Result<Option<StablesReservation>> {
+) -> Result<Option<LiquidityReservation>> {
     let contract = VaultRouterContract::new(storage.clone());
     let Some(record) = contract.reservations.get(id)? else {
         return Ok(None);
@@ -764,12 +764,12 @@ pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U25
 }
 
 /// `reservationOf`: the reservation held under `id`, or a zeroed record when none.
-pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<StablesReservation> {
+pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
     let contract = VaultRouterContract::new(storage.clone());
     Ok(contract
         .reservations
         .get(id)?
-        .unwrap_or(StablesReservation {
+        .unwrap_or(LiquidityReservation {
             id,
             asset: Address::ZERO,
             amount: U256::ZERO,

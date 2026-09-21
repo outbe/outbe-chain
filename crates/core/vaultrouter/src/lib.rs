@@ -11,7 +11,7 @@ pub mod runtime;
 pub mod schema;
 mod sol_ext;
 
-pub use schema::{StablesReservation, VaultRouterContract};
+pub use schema::{LiquidityReservation, VaultRouterContract};
 
 #[cfg(test)]
 mod tests;

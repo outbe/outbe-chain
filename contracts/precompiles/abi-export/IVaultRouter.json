@@ -475,7 +475,7 @@
       {
         "name": "reservation",
         "type": "tuple",
-        "internalType": "struct IVaultRouter.StablesReservation",
+        "internalType": "struct IVaultRouter.LiquidityReservation",
         "components": [
           {
             "name": "asset",

@@ -16,7 +16,7 @@ use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_pledged, derive_modify_key, derive_view_key, modify_mac, pledge_secret, spend_auth_mac,
 };
-use outbe_vaultrouter::{StablesReservation, VaultRouterContract};
+use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -146,7 +146,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
     let reservation_id = U256::from(1);
     contract
         .reservations
-        .create(&StablesReservation {
+        .create(&LiquidityReservation {
             id: reservation_id,
             asset: ASSET,
             amount: pledge_stables(),

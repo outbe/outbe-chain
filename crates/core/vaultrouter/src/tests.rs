@@ -18,7 +18,7 @@ use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::crosschain;
 use crate::precompile::{dispatch, dispatch_crosschain};
 use crate::runtime;
-use crate::schema::{StablesReservation, VaultRouterContract};
+use crate::schema::{LiquidityReservation, VaultRouterContract};
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{IVaultV2, IERC20};
 
@@ -2293,7 +2293,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
     let id = U256::from(0x51u64);
     VaultRouterContract::new(storage.clone())
         .reservations
-        .create(&StablesReservation {
+        .create(&LiquidityReservation {
             id,
             asset: asset(),
             amount: U256::from(10),

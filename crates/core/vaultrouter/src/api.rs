@@ -50,7 +50,7 @@ pub fn reference_currency_assets(
 pub fn reservation_of(
     storage: &StorageHandle<'_>,
     id: U256,
-) -> Result<crate::schema::StablesReservation> {
+) -> Result<crate::schema::LiquidityReservation> {
     crate::runtime::reservation_of(storage, id)
 }
 
