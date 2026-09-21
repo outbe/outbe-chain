@@ -1192,6 +1192,54 @@ mod tests {
     }
 
     #[test]
+    fn rebuilt_cohort_binds_new_donor_pid_and_requires_post_restart_publication() {
+        let mut owners = owned(&[0, 1, 2, 3]);
+        let active = owners
+            .iter()
+            .map(|member| member.address)
+            .collect::<Vec<_>>();
+        let old = plan_cohort(checkpoint(), &active, &owners, false).unwrap();
+        let old_pid = old.members[3].node_pid;
+        owners[3].node_pid = old_pid + 100;
+        let new_checkpoint = OracleCheckpointV1 {
+            height: 21,
+            block_hash: alloy_primitives::B256::repeat_byte(3),
+            state_root: alloy_primitives::B256::repeat_byte(4),
+        };
+        let rebuilt = plan_cohort(new_checkpoint, &active, &owners, false).unwrap();
+        assert_eq!(old.members[3].node_pid, old_pid);
+        assert_eq!(rebuilt.members[3].node_pid, owners[3].node_pid);
+        assert_ne!(rebuilt.members[3].node_pid, old.members[3].node_pid);
+        assert_eq!(rebuilt.members, owners);
+        assert_eq!(rebuilt.quorum, old.quorum);
+        assert_eq!(rebuilt.feeder_indices, old.feeder_indices);
+        validate_membership(&rebuilt, &active).unwrap();
+        let lower_bound = publication_lower_bound(Some(19), rebuilt.checkpoint.height);
+        assert_eq!(lower_bound, 21);
+        let mut observations = reads();
+        observations.truncate(4);
+        let ports = rebuilt
+            .members
+            .iter()
+            .map(|member| member.port)
+            .collect::<Vec<_>>();
+        for observation in &mut observations {
+            observation.finalized = 22;
+            observation.checkpoint = OracleCheckpointV1 {
+                height: 22,
+                block_hash: alloy_primitives::B256::repeat_byte(5),
+                state_root: alloy_primitives::B256::repeat_byte(6),
+            };
+            observation.oracle_block = lower_bound;
+        }
+        assert!(!evaluate_publication(&ports, &observations, lower_bound, EXPECTED_RATE).unwrap());
+        for observation in &mut observations {
+            observation.oracle_block = lower_bound + 1;
+        }
+        assert!(evaluate_publication(&ports, &observations, lower_bound, EXPECTED_RATE).unwrap());
+    }
+
+    #[test]
     fn admission_handoff_waits_for_five_finalized_identities_without_changing_generic_planning() {
         let all = owned(&[0, 1, 2, 3, 4]);
         let expected = all.iter().map(|member| member.address).collect::<Vec<_>>();

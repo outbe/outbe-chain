@@ -153,13 +153,38 @@ pub(super) async fn start_recovery_marshal_with_reporter<R>(
 where
     R: Reporter<Activity = outbe_consensus::marshal_types::MarshalUpdate> + Send + 'static,
 {
+    let test_id = STACK_MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
+    start_recovery_marshal_in_partition(
+        context,
+        provider,
+        reporter,
+        format!("stack-finalized-round-recovery-{test_id}"),
+        recovery_block(0),
+    )
+    .await
+}
+
+/// Copy/reopen fixtures use the same native partition names in different runtime roots.
+pub(super) async fn start_recovery_marshal_in_partition<R>(
+    context: commonware_runtime::tokio::Context,
+    provider: HybridSchemeProvider<MinSig>,
+    reporter: R,
+    partition_prefix: String,
+    genesis: ConsensusBlock,
+) -> (
+    outbe_consensus::marshal_types::MarshalMailbox,
+    handler::Handler<outbe_consensus::digest::Digest>,
+    commonware_runtime::Handle<()>,
+)
+where
+    R: Reporter<Activity = outbe_consensus::marshal_types::MarshalUpdate> + Send + 'static,
+{
+    assert!(!partition_prefix.is_empty());
     let page_cache = CacheRef::from_pooler(
         &context,
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
-    let test_id = STACK_MARSHAL_TEST_ID.fetch_add(1, Ordering::SeqCst);
-    let partition_prefix = format!("stack-finalized-round-recovery-{test_id}");
     let items_per_section = NonZeroU64::new(10).unwrap();
     let replay_buffer = NonZeroUsize::new(1024).unwrap();
     let write_buffer = NonZeroUsize::new(1024).unwrap();
@@ -224,7 +249,7 @@ where
             // 2026.5.0: the floor/genesis anchor is now an explicit `Start`.
             // A fresh epoch starts from the height-0 genesis block (the actor
             // asserts the anchor height is zero).
-            start: Start::Genesis(recovery_block(0)),
+            start: Start::Genesis(genesis),
             partition_prefix,
             // `mailbox_size` is now `NonZeroUsize`.
             mailbox_size: NonZeroUsize::new(32).unwrap(),

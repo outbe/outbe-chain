@@ -8245,22 +8245,28 @@ dependencies = [
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
+ "outbe-intex",
+ "outbe-lysis",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",
  "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
+ "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
  "outbe-rpc",
+ "outbe-snapshot",
  "outbe-tee",
+ "outbe-tribute",
  "outbe-txpool",
  "outbe-update",
  "outbe-validatorset",
  "outbe-zk-backend",
+ "postcard",
  "reqwest 0.12.28",
  "reth-chainspec",
  "reth-cli",
@@ -8273,6 +8279,7 @@ dependencies = [
  "reth-rpc-server-types",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -9693,6 +9700,20 @@ dependencies = [
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "tracing",
+]
+
+[[package]]
+name = "outbe-snapshot"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "k256 0.13.4",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
 ]
 
 [[package]]

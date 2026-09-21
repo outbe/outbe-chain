@@ -1476,9 +1476,15 @@ impl CatalogLock {
         let path = root.join(LOCK_FILE);
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(&path)
             .map_err(|source| io_error("open read-only catalog lock", &path, source))?;
+        let metadata = file
+            .metadata()
+            .map_err(|source| io_error("inspect read-only catalog lock", &path, source))?;
+        if !metadata.file_type().is_file() {
+            return Err(InputRefCatalogError::InvalidEnvelope);
+        }
         // SAFETY: `file` owns a live descriptor for the complete flock call.
         let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
         if result != 0 {

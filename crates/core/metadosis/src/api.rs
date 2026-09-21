@@ -131,5 +131,5 @@ pub fn pre_admission_projection(
 
 pub use crate::ocomp::views::{
     get_active_lysis_generation, get_lysis_terminal_receipt, get_offchain_job,
-    get_offchain_vote_accountability,
+    get_offchain_vote_accountability, read_live_ocomp_jobs,
 };
