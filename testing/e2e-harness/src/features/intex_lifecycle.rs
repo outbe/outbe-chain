@@ -44,10 +44,8 @@ const REFERENCE_BYTE: u8 = b'U';
 /// sweep sees the period closed rather than exactly met.
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The daily trigger comes round every minute in e2e, then the mark waits on a drain.
-const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
-/// `IntexState::Qualified`.
-const QUALIFIED: u8 = 1;
+/// Qualification is read off the seeded day, so it waits only for that block.
+const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Called`.
 const CALLED: u8 = 2;
 /// Derived against the clock on both chains; never written by anything.
@@ -208,8 +206,7 @@ fn issue_two_series(world: &mut World) {
                 issuance_currency: 978,
             },
             // Only part of this one is settled, so it is still holding units when the
-            // notice runs out. It rides this call because a series that arrives after
-            // its group is indexed never qualifies.
+            // notice runs out.
             SeriesSpec {
                 issuance: *b"GBP",
                 issuance_currency: 826,
@@ -345,17 +342,21 @@ fn rate_above_floor(world: &mut World) {
 #[then("every series qualifies in one group decision")]
 fn both_series_qualify(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let deadline = Instant::now() + Duration::from_secs(QUALIFY_SWEEP_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(QUALIFY_TIMEOUT_SECS);
 
     for series in world.state.lifecycle_series.clone() {
         loop {
-            if venue_probes::series_state(&url, nft, series) == Some(QUALIFIED) {
+            let qualified = eth::read_call(
+                &url,
+                addresses::INTEX_FACTORY_ADDR,
+                &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
+            );
+            if qualified == Some(true) {
                 break;
             }
             assert!(
                 Instant::now() < deadline,
-                "series {series} never left Issued; the qualify sweep did not promote its group"
+                "series {series} did not qualify on the seeded day"
             );
             sleep(Duration::from_secs(2));
         }
