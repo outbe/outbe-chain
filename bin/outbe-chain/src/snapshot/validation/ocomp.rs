@@ -217,7 +217,6 @@ pub(crate) fn verify_local_result(
     job: &OcompJobRecordV1,
 ) -> eyre::Result<Option<LocalResultAudit>> {
     use outbe_node::ocomp::local_result::LocalLysisResultReader;
-    use outbe_ocomp_protocol::result::LysisResultV1;
 
     let root = ocomp_root.join("node-v1/local-results");
     match std::fs::symlink_metadata(&root) {
@@ -234,7 +233,19 @@ pub(crate) fn verify_local_result(
     let Some(loaded) = reader.load(finalized.job_id)? else {
         return Ok(None);
     };
-    let result = LysisResultV1::decode_canonical(&loaded.canonical_result, &limits)?;
+    Ok(Some(verify_loaded_local_result(job, &loaded)?))
+}
+
+fn verify_loaded_local_result(
+    job: &OcompJobRecordV1,
+    loaded: &outbe_node::ocomp::local_result::LoadedLocalLysisResultV1,
+) -> eyre::Result<LocalResultAudit> {
+    use outbe_ocomp_protocol::result::LysisResultV1;
+    let finalized = job
+        .finalized
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("local result lacks canonical finality"))?;
+    let result = LysisResultV1::decode_canonical(&loaded.canonical_result, &poc_schema_limits())?;
     ensure!(
         result.job_id == finalized.job_id,
         "local result differs from canonical JobId"
@@ -251,10 +262,88 @@ pub(crate) fn verify_local_result(
             "local result differs from canonical completed binding"
         );
     }
-    Ok(Some(LocalResultAudit {
+    Ok(LocalResultAudit {
         result,
         terminal_digest_checked: completed.is_some(),
-    }))
+    })
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LocalResultsAudit {
+    pub results: u64,
+    pub terminal_digests: u64,
+}
+
+/// Authenticate every surviving local result, including retired jobs absent
+/// from the live canonical inventory. Open the native reader once; its initial
+/// whole-directory validation must not be repeated for every result.
+/// Callback observations remain provisional until the entire traversal succeeds.
+pub(crate) fn verify_present_local_results(
+    state: &CanonicalState<'_>,
+    view: &super::super::native::RethReadOnlyView,
+    ocomp_root: &Path,
+    maximum_records: Option<u64>,
+    visitor: &mut impl FnMut(&OcompJobRecordV1, &LocalResultAudit) -> eyre::Result<()>,
+) -> eyre::Result<LocalResultsAudit> {
+    use outbe_node::ocomp::local_result::LocalLysisResultReader;
+    use outbe_ocomp_protocol::result::LysisResultV1;
+    let root = ocomp_root.join("node-v1/local-results");
+    match std::fs::symlink_metadata(&root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LocalResultsAudit::default());
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let limits = poc_schema_limits();
+    let reader = LocalLysisResultReader::open_existing(&root, limits)?;
+    let mut counts = LocalResultsAudit::default();
+    for entry in std::fs::read_dir(&root)? {
+        let entry = entry?;
+        if maximum_records.is_some_and(|maximum| counts.results >= maximum) {
+            return Err(Incomplete(format!(
+                "local result inventory stopped after {} records",
+                counts.results
+            ))
+            .into());
+        }
+        // The owner has checked exact native filename/record identity. Decode
+        // that locator to use its typed read API, never a caller-supplied path.
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("invalid native result filename"))?;
+        let encoded_job = name
+            .strip_suffix(".lysis-result-v1.ocb1")
+            .ok_or_else(|| eyre::eyre!("invalid native result filename"))?;
+        let mut bytes = [0_u8; 32];
+        hex::decode_to_slice(encoded_job, &mut bytes)?;
+        let job_id = B256::from(bytes);
+        let loaded = reader
+            .load(job_id)?
+            .ok_or_else(|| Incomplete(format!("local result disappeared for job {job_id}")))?;
+        let result = LysisResultV1::decode_canonical(&loaded.canonical_result, &limits)?;
+        let summary = &result.metadosis_completion_summary;
+        let job = locate_request_job(
+            state,
+            view,
+            summary.logical_evaluation_height,
+            job_id,
+            WorldwideDay::new(summary.wwd),
+            maximum_records,
+        )?;
+        let observation = verify_loaded_local_result(&job, &loaded)?;
+        visitor(&job, &observation)?;
+        counts.results = counts
+            .results
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("local result count overflow"))?;
+        counts.terminal_digests = counts
+            .terminal_digests
+            .checked_add(u64::from(observation.terminal_digest_checked))
+            .ok_or_else(|| eyre::eyre!("local result digest count overflow"))?;
+    }
+    Ok(counts)
 }
 
 /// Check a complete public export against an already authenticated canonical

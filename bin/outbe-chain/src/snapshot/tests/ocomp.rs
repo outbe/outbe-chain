@@ -3096,7 +3096,443 @@ mod frames_inventory {
 }
 // Append as a child module of snapshot::tests::ocomp.
 mod pin_authority {
+    // Insert inside tests::ocomp::pin_authority. This fixture is TEST SETUP ONLY.
+    // It uses public Registry initialization and native WWD/model capabilities;
+    // private Metadosis persistence codecs are reproduced only to seed source words.
+    // Every constructed aggregate must pass the real public native getter.
+    mod active_canonical {
+        use super::super::{queued_owner, with_prepared_owner_storage, CanonicalInventory};
+        use super::{canonical_job, DAY};
+        use alloy_consensus::Sealable;
+        use alloy_primitives::U256;
+        use outbe_metadosis::{
+            api::read_live_ocomp_jobs,
+            model::{JobFsmCommand, JobFsmState},
+            test_support::{seed_ready_worldwide_days_for_capacity, ForkInstallScenario},
+            WwdStatus,
+        };
+        use outbe_ocomp_protocol::{
+            intent::JobIntentV1,
+            profile::{poc_schema_limits, ProtocolBundleV1},
+            receipts::{
+                desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1,
+            },
+            state::{OcompJobRecordV1, OcompJobStatus},
+        };
+        use outbe_ocompregistry::{OcompProtocolAuthorityV1, OcompRegistry};
+        use outbe_primitives::{
+            addresses::METADOSIS_ADDRESS,
+            storage::{
+                hashmap::HashMapStorageProvider,
+                types::{StorageBytes, StorageKey},
+                StorageHandle,
+            },
+            OutbeHeader,
+        };
+
+        #[derive(Clone, Copy, Debug)]
+        enum Phase {
+            AwaitingFinality,
+            VotingOpen,
+        }
+
+        struct ActiveFixture {
+            owner: HashMapStorageProvider,
+            job: OcompJobRecordV1,
+            bundle: ProtocolBundleV1,
+        }
+
+        fn fixture(
+            request: &OutbeHeader,
+            phase: Phase,
+            configure_input: impl FnOnce(&mut JobIntentV1),
+        ) -> ActiveFixture {
+            let limits = poc_schema_limits();
+            let mut job = canonical_job(request, false);
+            let install = ForkInstallScenario::final_at(
+                outbe_ocompregistry::OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+                job.intent.chain_id,
+                job.intent.genesis_hash,
+            )
+            .unwrap()
+            .into_install();
+            let profile = &install.request_profile;
+            job.intent.fork_id = profile.fork_id;
+            job.intent.protocol_bundle_hash = profile.protocol_bundle_hash;
+            job.intent.source_availability_policy_id = profile.source_availability_policy_id;
+            job.intent_height = request.inner.number;
+            job.intent.logical_evaluation_height = request.inner.number;
+            job.intent.logical_evaluation_time = request.inner.timestamp;
+            configure_input(&mut job.intent);
+            assert_eq!(job.intent.wwd, DAY.value());
+
+            let frozen = &job.intent.frozen_metadosis_values;
+            let receipt = RequestLimitSplitReceiptV1 {
+                protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                wwd: job.intent.wwd,
+                pending_nonce: 0,
+                day_type: frozen.day_type,
+                day_limit: frozen.day_limit,
+                lysis_limit_minor: frozen.lysis_limit_minor,
+                desis_limit_minor: frozen.desis_limit_minor,
+                destination: LimitSplitDestination::DesisAuction,
+                desis_brief_hash: Some(
+                    desis_request_brief_hash(
+                        job.intent.protocol_bundle_hash,
+                        job.intent.wwd,
+                        frozen.desis_limit_minor,
+                        &frozen.auction_entry_prices,
+                        job.intent.logical_evaluation_time,
+                    )
+                    .unwrap(),
+                ),
+                carry_over_credit: U256::ZERO,
+                auction_entry_prices: frozen.auction_entry_prices.clone(),
+                logical_anchor: job.intent.logical_evaluation_time,
+            };
+            let receipt_hash = receipt.receipt_hash(&limits).unwrap();
+            job.intent
+                .frozen_metadosis_values
+                .request_limit_split_receipt_hash = receipt_hash;
+            let intent_id = job.intent.intent_id(&limits).unwrap();
+            let request_deadline = job.intent_height.checked_add(64).unwrap();
+            // 64 is native OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS, currently private
+            // behind the owner module. Keep this constant confined to the fixture.
+            let mut fsm = JobFsmState::initial_ready(DAY, job.intent_height);
+            fsm.apply(JobFsmCommand::Request {
+                at_height: job.intent_height,
+                deadline_height: request_deadline,
+                intent_id,
+                lysis_limit_minor: receipt.lysis_limit_minor,
+                request_limit_receipt_hash: receipt_hash,
+            })
+            .unwrap();
+            match phase {
+                Phase::AwaitingFinality => {
+                    job.status = OcompJobStatus::AwaitingFinality;
+                    job.finalized = None;
+                }
+                Phase::VotingOpen => {
+                    job.status = OcompJobStatus::VotingOpen;
+                    let finalized = job.finalized.as_mut().unwrap();
+                    finalized.job_id = job
+                        .intent
+                        .job_id(request.hash_slow(), request.inner.state_root, &limits)
+                        .unwrap();
+                    finalized.finality_recorded_height = job.intent_height;
+                    finalized.open_height = job.intent_height.checked_add(4).unwrap();
+                    finalized.deadline_height = job.intent_height.checked_add(100).unwrap();
+                    fsm.apply(JobFsmCommand::OpenVoting {
+                        at_height: finalized.open_height,
+                        deadline_height: finalized.deadline_height,
+                    })
+                    .unwrap();
+                }
+            }
+            job.validate_semantics(&limits).unwrap();
+
+            let mut owner = HashMapStorageProvider::new_with_chain_identity(
+                job.intent.chain_id,
+                job.intent.genesis_hash,
+            );
+            owner.set_block_number(install.activation_height);
+            StorageHandle::enter(&mut owner, |storage| {
+                OcompRegistry::new(storage.clone())
+                    .initialize_genesis_authority(
+                        &OcompProtocolAuthorityV1 {
+                            request_profile: profile.clone(),
+                            protocol_bundle: install.protocol_bundle.clone(),
+                        },
+                        install.install_hash(&limits).unwrap(),
+                        install.activation_height,
+                        install.activation_height,
+                        &limits,
+                    )
+                    .unwrap();
+                seed_ready_worldwide_days_for_capacity(storage, &[DAY]).unwrap();
+            });
+            // Native schema scalar mappings use DAY.mapping_slot(base+field_offset).
+            // Ready aggregate membership was created by the public owner fixture.
+            let status_slot = DAY.mapping_slot(U256::from(1));
+            assert_eq!(
+                owner.storage.get(&(METADOSIS_ADDRESS, status_slot)),
+                Some(&U256::from(WwdStatus::Ready.as_u8()))
+            );
+            owner.storage.insert(
+                (METADOSIS_ADDRESS, status_slot),
+                U256::from(WwdStatus::OffchainPending.as_u8()),
+            );
+            for (base, value) in [
+                (8_u64, receipt.day_limit),
+                (9, job.intent.frozen_metadosis_values.previous_vwap),
+                (10, job.intent.frozen_metadosis_values.current_vwap),
+            ] {
+                owner.storage.insert(
+                    (METADOSIS_ADDRESS, DAY.mapping_slot(U256::from(base))),
+                    value,
+                );
+            }
+
+            // Exact bounded persistence of the public model's valid snapshot.
+            // Current owner codec.rs: OMJS/v1, pending=2, fixed-width big endian.
+            let snapshot = fsm.snapshot();
+            let live = snapshot.live.unwrap();
+            let mut scheduler = b"OMJS".to_vec();
+            scheduler.extend_from_slice(&1_u16.to_be_bytes());
+            scheduler.push(2);
+            scheduler.extend_from_slice(&snapshot.worldwide_day.value().to_be_bytes());
+            scheduler.extend_from_slice(&live.pending_nonce.to_be_bytes());
+            scheduler.extend_from_slice(&0_u64.to_be_bytes());
+            scheduler.extend_from_slice(live.intent_id.as_slice());
+            scheduler.extend_from_slice(&live.requested_height.to_be_bytes());
+            scheduler.extend_from_slice(&live.deadline_height.unwrap().to_be_bytes());
+            scheduler.push(1);
+            scheduler.extend_from_slice(&live.retained_effect.effect_nonce.to_be_bytes());
+            scheduler
+                .extend_from_slice(&live.retained_effect.lysis_limit_minor.to_be_bytes::<32>());
+            scheduler.extend_from_slice(live.retained_effect.receipt_hash.as_slice());
+            assert_eq!(scheduler.len(), 148);
+            let mut live_index = b"OMLI".to_vec();
+            live_index.extend_from_slice(&1_u16.to_be_bytes());
+            live_index.extend_from_slice(&1_u16.to_be_bytes());
+            live_index.extend_from_slice(&scheduler);
+            StorageHandle::enter(&mut owner, |storage| {
+                let write = |slot, bytes: &[u8]| {
+                    StorageBytes::new(slot, METADOSIS_ADDRESS, storage.clone())
+                        .write(bytes)
+                        .unwrap();
+                };
+                write(U256::from(20), &live_index);
+                write(
+                    DAY.mapping_slot(U256::from(22)),
+                    &receipt.encode_canonical(&limits).unwrap(),
+                );
+                write(DAY.mapping_slot(U256::from(25)), &scheduler);
+                write(
+                    outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
+                        .unwrap()
+                        .mapping_slot(U256::from(21)),
+                    &job.encode_canonical(&limits).unwrap(),
+                );
+                if let Some(finalized) = &job.finalized {
+                    let mut response = b"OMDI".to_vec();
+                    response.extend_from_slice(&1_u16.to_be_bytes());
+                    response.extend_from_slice(&1_u16.to_be_bytes());
+                    response.extend_from_slice(&finalized.deadline_height.to_be_bytes());
+                    response.extend_from_slice(finalized.job_id.as_slice());
+                    response.extend_from_slice(intent_id.as_slice());
+                    write(U256::from(33), &response);
+                }
+                assert_eq!(
+                    read_live_ocomp_jobs(storage).unwrap(),
+                    vec![(intent_id, job.clone())]
+                );
+            });
+            // Complete the independent empty NOD inventory without overriding owner words.
+            for (key, value) in queued_owner(0).storage {
+                assert!(owner.storage.insert(key, value).is_none());
+            }
+            ActiveFixture {
+                owner,
+                job,
+                bundle: install.protocol_bundle,
+            }
+        }
+
+        #[test]
+        fn genuine_active_owner_is_discovered_without_any_local_job_population() {
+            for version in [1, 2] {
+                for phase in [Phase::AwaitingFinality, Phase::VotingOpen] {
+                    with_prepared_owner_storage(
+                        version,
+                        400,
+                        |request| {
+                            let prepared = fixture(request, phase, |_| {});
+                            assert_eq!(
+                                prepared
+                                    .bundle
+                                    .protocol_bundle_hash(&poc_schema_limits())
+                                    .unwrap(),
+                                prepared.job.intent.protocol_bundle_hash
+                            );
+                            prepared.owner
+                        },
+                        |state, source| {
+                            let request = source.header(100).unwrap().unwrap();
+                            let expected = fixture(&request, phase, |_| {}).job;
+                            let scratch = tempfile::tempdir().unwrap();
+                            let inventory = CanonicalInventory::scan(
+                                state,
+                                scratch.path(),
+                                &source.protected,
+                                None,
+                            )
+                            .unwrap();
+                            assert_eq!(inventory.bounds.active_intents, 1);
+                            assert_eq!(
+                                inventory.active_jobs(),
+                                &[(
+                                    expected.intent.intent_id(&poc_schema_limits()).unwrap(),
+                                    expected
+                                )]
+                            );
+                            assert_eq!(inventory.bounds.nod_entries, 0);
+                            assert_eq!(inventory.bounds.unpaid_days, 0);
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     mod request_locator {
+        mod present_results {
+            use super::super::local_result::{authority, result_for, write_result};
+            use super::*;
+            use crate::snapshot::{
+                tests::headers::fingerprint, validation::ocomp::verify_present_local_results,
+            };
+            use std::{fs, path::Path};
+
+            fn fixture(
+                version: u32,
+                backend: Receipts,
+                case: Case,
+                completed: bool,
+                inspect: impl FnOnce(
+                    &crate::snapshot::validation::canonical_state::CanonicalState<'_>,
+                    &crate::snapshot::native::RethReadOnlyView,
+                    OcompJobRecordV1,
+                ),
+            ) {
+                with_prepared_owner_storage_setup(
+                    version,
+                    400,
+                    |layout| setup_frame(layout, backend, case),
+                    |request| {
+                        let job = authority(request, completed);
+                        let limits = poc_schema_limits();
+                        stored_job(
+                            job.intent.intent_id(&limits).unwrap(),
+                            &job.encode_canonical(&limits).unwrap(),
+                        )
+                    },
+                    |state, view| {
+                        inspect(
+                            state,
+                            view,
+                            authority(&view.header(B).unwrap().unwrap(), completed),
+                        );
+                    },
+                );
+            }
+
+            fn inspect(
+                state: &crate::snapshot::validation::canonical_state::CanonicalState<'_>,
+                view: &crate::snapshot::native::RethReadOnlyView,
+                root: &Path,
+                maximum: Option<u64>,
+            ) -> eyre::Result<(u64, u64)> {
+                let before = fingerprint(root);
+                let mut visited = 0;
+                let result =
+                    verify_present_local_results(state, view, root, maximum, &mut |job, audit| {
+                        assert_eq!(job.finalized.as_ref().unwrap().job_id, audit.result.job_id);
+                        visited += 1;
+                        Ok(())
+                    });
+                assert_eq!(fingerprint(root), before);
+                result.map(|audit| {
+                    assert_eq!(audit.results, visited);
+                    (audit.results, audit.terminal_digests)
+                })
+            }
+
+            #[test]
+            fn bare_results_use_exact_request_frames_without_retired_export_or_spool() {
+                for version in [1, 2] {
+                    for backend in [Receipts::Mdbx, Receipts::Static] {
+                        for completed in [false, true] {
+                            fixture(
+                                version,
+                                backend,
+                                Case::Valid,
+                                completed,
+                                |state, view, job| {
+                                    let root = tempfile::tempdir().unwrap();
+                                    write_result(root.path(), &result_for(&job));
+                                    assert_eq!(
+                                        inspect(state, view, root.path(), None).unwrap(),
+                                        (1, u64::from(completed))
+                                    );
+                                    assert!(!root.path().join("exporter-v1").exists());
+                                    assert!(!root.path().join("supervisor-v1").exists());
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+
+            #[test]
+            fn absent_optional_results_do_not_create_a_store_or_spend_budget() {
+                fixture(1, Receipts::Mdbx, Case::Valid, true, |state, view, _| {
+                    let root = tempfile::tempdir().unwrap();
+                    assert_eq!(inspect(state, view, root.path(), Some(0)).unwrap(), (0, 0));
+                    assert!(!root.path().join("node-v1").exists());
+                    fs::create_dir(root.path().join("node-v1")).unwrap();
+                    drop(
+                        outbe_node::ocomp::local_result::LocalLysisResultStore::open(
+                            root.path().join("node-v1/local-results"),
+                            poc_schema_limits(),
+                        )
+                        .unwrap(),
+                    );
+                    assert_eq!(inspect(state, view, root.path(), Some(0)).unwrap(), (0, 0));
+                });
+            }
+
+            #[test]
+            fn result_inventory_budget_and_missing_request_receipt_are_incomplete() {
+                for (case, budget) in [(Case::Valid, Some(0)), (Case::MissingReceipt, None)] {
+                    fixture(2, Receipts::Mdbx, case, true, |state, view, job| {
+                        let root = tempfile::tempdir().unwrap();
+                        write_result(root.path(), &result_for(&job));
+                        let error = inspect(state, view, root.path(), budget).unwrap_err();
+                        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                    });
+                }
+            }
+
+            #[test]
+            fn semantically_valid_changed_result_still_fails_canonical_terminal_digest() {
+                fixture(1, Receipts::Mdbx, Case::Valid, true, |state, view, job| {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut result = result_for(&job);
+                    result.input_manifest_hash = B256::repeat_byte(0xea);
+                    super::super::local_result::refresh_arithmetic(&mut result);
+                    write_result(root.path(), &result);
+                    let error = inspect(state, view, root.path(), None).unwrap_err();
+                    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                });
+            }
+
+            #[test]
+            fn every_present_result_is_examined_even_without_canonical_active_jobs() {
+                fixture(1, Receipts::Mdbx, Case::Valid, true, |state, view, job| {
+                    assert!(state.live_ocomp_jobs().unwrap().is_empty());
+                    let root = tempfile::tempdir().unwrap();
+                    write_result(root.path(), &result_for(&job));
+                    let mut foreign = result_for(&job);
+                    foreign.job_id = B256::repeat_byte(0xed);
+                    super::super::local_result::refresh_arithmetic(&mut foreign);
+                    write_result(root.path(), &foreign);
+                    let error = inspect(state, view, root.path(), None).unwrap_err();
+                    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                });
+            }
+        }
+
         use super::super::with_prepared_owner_storage_setup;
         use super::{canonical_job, stored_job, DAY};
         use crate::snapshot::{
@@ -3577,7 +4013,7 @@ mod pin_authority {
             path::{Path, PathBuf},
         };
 
-        fn refresh_arithmetic(result: &mut LysisResultV1) {
+        pub(super) fn refresh_arithmetic(result: &mut LysisResultV1) {
             result.arithmetic_commitment = hash_framed(
                 HashDomain::LysisArithmetic,
                 &result
@@ -3591,7 +4027,7 @@ mod pin_authority {
 
         // Compact native-result fixture, bound to the actual canonical JobIntent
         // and B-derived JobId. This proves stored evidence, not worker execution.
-        fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
+        pub(super) fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
             let intent = &job.intent;
             let frozen = &intent.frozen_metadosis_values;
             let unused = frozen.lysis_limit_minor;
@@ -3666,7 +4102,7 @@ mod pin_authority {
             result
         }
 
-        fn authority(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
+        pub(super) fn authority(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             let limits = poc_schema_limits();
             let mut job = canonical_job(request, completed);
             if completed {
@@ -3731,7 +4167,7 @@ mod pin_authority {
             root.join("node-v1/local-results")
         }
 
-        fn write_result(root: &Path, result: &LysisResultV1) -> PathBuf {
+        pub(super) fn write_result(root: &Path, result: &LysisResultV1) -> PathBuf {
             fs::create_dir_all(root.join("node-v1")).unwrap();
             let directory = result_root(root);
             let writer = LocalLysisResultStore::open(&directory, poc_schema_limits()).unwrap();
