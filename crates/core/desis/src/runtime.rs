@@ -474,7 +474,9 @@ fn start_auction(
     // unlike a red day it was briefed with a limit, which has to go back.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
-    if unpriced || red {
+    let desis_limit_minor = contract.pending_desis_limit_minor.read(&worldwide_day)?;
+    let below_one_unit = desis_limit_minor < U256::from(config.promis_load_minor);
+    if unpriced || red || below_one_unit {
         send_stage_start(
             storage,
             worldwide_day,
@@ -491,10 +493,17 @@ fn start_auction(
                 worldwideDay: worldwide_day.into(),
             })?;
             refund_unused_desis_limit(storage, contract, worldwide_day)?;
-        } else {
+        } else if red {
             contract.emit(IDesis::AuctionCancelledRedDay {
                 worldwideDay: worldwide_day.into(),
             })?;
+        } else {
+            contract.emit(IDesis::AuctionCancelledBelowOneUnit {
+                worldwideDay: worldwide_day.into(),
+                desisLimitMinor: desis_limit_minor,
+                promisLoadMinor: config.promis_load_minor,
+            })?;
+            refund_unused_desis_limit(storage, contract, worldwide_day)?;
         }
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);

@@ -623,7 +623,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             storage.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
+            U256::from(7 * LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
             true,
@@ -643,7 +643,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             storage.clone(),
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
-            U256::from(9 * PROMIS_LOAD_MINOR),
+            U256::from(9 * LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
             true,
@@ -660,7 +660,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
                 .pending_desis_limit_minor
                 .read(&WORLDWIDE_DAY)
                 .unwrap(),
-            U256::from(7 * PROMIS_LOAD_MINOR)
+            U256::from(7 * LOAD_MINOR)
         );
         assert_eq!(after.read_auction_config(WORLDWIDE_DAY).unwrap(), config);
         assert_eq!(after.auction_at.read(&WORLDWIDE_DAY).unwrap(), anchor);
@@ -1654,46 +1654,24 @@ fn clearing_transitions_to_cleared() {
 }
 
 #[test]
-fn zero_limit_brief_arms_clearing() {
+fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     with_storage(|s| {
-        open_clearing(&s, 0);
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
-            0
-        );
-        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
-    });
-}
-
-#[test]
-fn clearing_empty_limit_refunds_all_bidders() {
-    with_storage(|s| {
-        open_clearing(&s, 0);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            bids(3, 200),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 3);
-        let result = clear(&s);
-
-        assert_eq!(result.issued_units, 0);
-        assert!(result.winners.is_empty());
-        assert_eq!(result.all_bidders.len(), 3);
-        assert!(result.paid_amounts.iter().all(|&p| p == 0));
-        assert!(result.refunded_amounts.iter().all(|&r| r > 0));
+        brief_at(&s, WORLDWIDE_DAY, LOAD_MINOR - 1, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Cleared
+            AuctionStage::Cancelled
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(LOAD_MINOR - 1),
+            "a cancelled day returns its limit"
         );
     });
 }
