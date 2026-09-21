@@ -30,6 +30,11 @@ fn drain_fatal_cannot_be_overwritten_by_an_inflight_reader_tick() {
 
 #[tokio::test]
 async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce() {
+    if !crate::test_utils::in_isolated_process(
+        "ocomp_exex::tests::recovery::real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce",
+    ) {
+        return;
+    }
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeTopologyV1, Commitment, CompressedTreeService, EntityRef,
         EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker, WwdEntityId,
@@ -402,11 +407,19 @@ pub(super) mod copied_native {
     }
 
     pub(in crate::ocomp_exex::tests) fn chain() -> Arc<reth_chainspec::ChainSpec<OutbeHeader>> {
-        Arc::new(
-            reth_chainspec::ChainSpecBuilder::mainnet()
-                .build()
-                .map_header(OutbeHeader::new),
-        )
+        // Building mainnet recomputes its allocation trie. Reuse the immutable
+        // fixture across frames and restarts instead of rebuilding it per read.
+        static CHAIN: std::sync::OnceLock<Arc<reth_chainspec::ChainSpec<OutbeHeader>>> =
+            std::sync::OnceLock::new();
+        CHAIN
+            .get_or_init(|| {
+                Arc::new(
+                    reth_chainspec::ChainSpecBuilder::mainnet()
+                        .build()
+                        .map_header(OutbeHeader::new),
+                )
+            })
+            .clone()
     }
 
     // Real MDBX headers/body indices/receipts and static-file transactions.
@@ -2177,12 +2190,18 @@ mod copied_exex_startup {
     }
 
     fn chain() -> Arc<reth_chainspec::ChainSpec<OutbeHeader>> {
-        Arc::new(
-            reth_chainspec::ChainSpecBuilder::mainnet()
-                .chain(outbe_primitives::chain::TESTNET_CHAIN_ID.into())
-                .build()
-                .map_header(OutbeHeader::new),
-        )
+        static CHAIN: std::sync::OnceLock<Arc<reth_chainspec::ChainSpec<OutbeHeader>>> =
+            std::sync::OnceLock::new();
+        CHAIN
+            .get_or_init(|| {
+                Arc::new(
+                    reth_chainspec::ChainSpecBuilder::mainnet()
+                        .chain(outbe_primitives::chain::TESTNET_CHAIN_ID.into())
+                        .build()
+                        .map_header(OutbeHeader::new),
+                )
+            })
+            .clone()
     }
 
     fn bundle() -> PinnedProtocolBundle {
