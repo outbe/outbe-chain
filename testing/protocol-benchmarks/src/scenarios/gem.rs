@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use outbe_gemfactory::{GemFactoryContract, GemTypes};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -91,7 +91,7 @@ fn source_intex_id() -> SeriesId {
 
 fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
     let rate = U256::from(2) * six_decimal_unit();
-    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+    let index = outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
         .map_err(|error| error.to_string())?;
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
@@ -102,16 +102,11 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         T_NOW,
     )
     .map_err(|error| error.to_string())?;
-    let mut oracle = OracleContract::new(storage);
+    let oracle = OracleContract::new(storage);
     oracle
-        .config_lookback_duration
-        .write(86_400)
-        .map_err(|error| error.to_string())?;
-    oracle
-        .write_snapshot(
-            T_NOW - 60,
-            &[(outbe_oracle::api::DAY_TYPE_PAIR, rate, six_decimal_unit())],
-        )
+        .utc_day_vwap_value
+        .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
+        .write(&index, rate)
         .map_err(|error| error.to_string())?;
     oracle
         .reference_currencies
