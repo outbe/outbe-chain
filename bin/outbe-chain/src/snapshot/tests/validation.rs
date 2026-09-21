@@ -1004,6 +1004,71 @@ mod orchestration {
     }
 
     #[test]
+    fn missing_historical_ce_header_does_not_block_current_evm() {
+        use outbe_compressed_entities::{
+            sealed_root, AuthenticatedParentTree, CeMdbx, ExactParentIdentity, FinalizedMarker,
+            MdbxAuthenticatedTree, ACTIVE_COMMITMENT_SCHEME,
+        };
+        use std::sync::Arc;
+        for version in [1, 2] {
+            let (root, layout, _) = state_fixture(version);
+            let genesis = FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: layout.chain.genesis_hash(),
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: sealed_root(B256::ZERO).unwrap(),
+            };
+            drop(
+                reth_ethereum::provider::db::create_db(
+                    layout.chain_root.join("compressed_entities/smt"),
+                    DatabaseArguments::test(),
+                )
+                .unwrap(),
+            );
+            let ce = Arc::new(
+                CeMdbx::open(
+                    &layout.chain_root,
+                    crate::snapshot::native::ce_identity(&layout),
+                    genesis,
+                )
+                .unwrap(),
+            );
+            let parent = MdbxAuthenticatedTree::open(
+                ce.clone(),
+                ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 0,
+                    block_hash: genesis.block_hash,
+                    root: genesis.new_root,
+                },
+            )
+            .unwrap();
+            let prepared = parent.prepare_seal(1, &[], &[]).unwrap();
+            ce.apply_finalized(&prepared.freeze(B256::repeat_byte(0x99)))
+                .unwrap();
+            drop(parent);
+            drop(ce);
+            // Retained execution headers are 0, 100, 101; CE's historical Q=1
+            // is unavailable, while all current E=101 state remains present.
+            let report = run(root.path(), &inputs("evm,ce"));
+            assert_eq!(
+                report.check(CheckName::Headers).status,
+                CheckStatus::Incomplete
+            );
+            assert_eq!(report.check(CheckName::Ce).status, CheckStatus::Incomplete);
+            assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Passed);
+            assert_eq!(report.observed.q.as_ref().unwrap().number, 1);
+            assert!(report
+                .required_missing
+                .iter()
+                .any(|missing| missing.height == 1));
+            assert!(!report.success());
+        }
+    }
+
+    #[test]
     fn corrupt_unselected_ocomp_artifacts_do_not_poison_evm_validation() {
         let (root, layout, _) = state_fixture(2);
         for relative in [

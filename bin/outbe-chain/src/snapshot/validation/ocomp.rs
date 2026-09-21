@@ -2229,14 +2229,27 @@ pub(crate) fn verify_canonical_obligations(
         // Missing pin is observed; P>=B alone cannot imply corruption across all
         // native runtime policies. Current source capability is still mandatory.
         let saved_export = pin.and_then(|pin| pin.authority.export);
-        require_source(&job, saved_export.is_none())?;
+        // A surviving complete receipt records local export progress independently
+        // of the retention pin. Only current active jobs acquire this obligation.
+        let receipt_present = match &job.finalized {
+            Some(finalized) => existing_file(
+                &layout
+                    .ocomp_root
+                    .join("exporter-v1/receipts")
+                    .join(hex::encode(finalized.job_id))
+                    .join("receipt.ref"),
+            )?,
+            None => false,
+        };
+        let export_recorded = saved_export.is_some() || receipt_present;
+        require_source(&job, !export_recorded)?;
         if let Some(report) = report.as_deref_mut() {
             report.active_ocomp[active_index].source_verified = true;
         }
         let mut export_verified = false;
-        if let Some(export) = saved_export {
+        if export_recorded {
             // A historical GC exemption cannot waive a current active obligation.
-            require_export(&job, Some(export))?;
+            require_export(&job, saved_export)?;
             export_verified = true;
             if let Some(report) = report.as_deref_mut() {
                 report.active_ocomp[active_index].export_verified = true;
@@ -3008,8 +3021,21 @@ pub(crate) fn verify_ocomp_relations(
             "invalid scratch job union"
         );
         let job = B256::from_slice(&key[1..]);
-        if canonical.is_some() {
-            errors.observe(verify_present_job(&context, job, value[0], &mut counts));
+        if let Some(canonical) = &canonical {
+            let active = canonical.active.iter().any(|active| {
+                active
+                    .job
+                    .finalized
+                    .as_ref()
+                    .is_some_and(|finalized| finalized.job_id == job)
+            });
+            errors.observe(verify_present_job(
+                &context,
+                job,
+                value[0],
+                active,
+                &mut counts,
+            ));
         }
         jobs = jobs
             .checked_add(1)
@@ -3162,6 +3188,7 @@ fn verify_present_job(
     context: &PresentJobContext<'_, '_>,
     id: B256,
     flags: u8,
+    active: bool,
     counts: &mut PresentArtifactCounts,
 ) -> eyre::Result<()> {
     let PresentJobContext {
@@ -3227,6 +3254,12 @@ fn verify_present_job(
     if flags & PRESENT_INPUTS != 0 && !input_present {
         errors.observe::<()>(Err(Incomplete(format!(
             "job {id}: input catalog has no sealed header; exact comparison unavailable"
+        ))
+        .into()));
+    }
+    if active && ack.is_some() && !receipt_present {
+        errors.observe::<()>(Err(Incomplete(format!(
+            "job {id}: active acknowledged export lacks its required complete receipt"
         ))
         .into()));
     }

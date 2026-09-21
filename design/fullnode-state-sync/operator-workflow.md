@@ -156,6 +156,13 @@ Native-only all includes native checks and adds artifact checks when metadata is
 supplied; explicitly requested files/provenance without metadata is Incomplete.
 A report is optional evidence and never startup authority.
 
+Each native check requires its own header: an unavailable historical CE header
+does not prevent checking an available current EVM state. When CE and projection
+have different saved heights or hashes, `body_structure` records a completed
+primary/index and retained-body audit at the projection checkpoint; the overall
+`bodies` result remains Incomplete because CE/body equality is unavailable.
+A null `body_structure` makes no completed structural claim.
+
 With the recipient writers still stopped, validate the placed files using the
 recipient's ordinary configuration. Keep the report outside the native stores:
 

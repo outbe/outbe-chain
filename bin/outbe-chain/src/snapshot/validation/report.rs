@@ -114,6 +114,14 @@ pub(crate) struct ActiveOcompObservation {
     pub(crate) export_verified: bool,
 }
 
+/// A completed primary/index and retained-body structural audit at P.
+/// This does not establish equality to the CE leaf stream at Q.
+#[derive(Debug, Serialize)]
+pub(crate) struct BodyStructureObservation {
+    pub(crate) checkpoint: BlockIdentity,
+    pub(crate) status: CheckStatus,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidationReport {
     /// Known source/configuration paths for safe optional report publication.
@@ -127,6 +135,8 @@ pub(crate) struct ValidationReport {
     pub(crate) inventory_bounds: Vec<InventoryBounds>,
     pub(crate) provenance: ProvenanceObservation,
     pub(crate) active_ocomp: Vec<ActiveOcompObservation>,
+    /// None means no completed structural claim, including unselected/blocked checks.
+    pub(crate) body_structure: Option<BodyStructureObservation>,
 }
 
 impl ValidationReport {
@@ -160,6 +170,7 @@ impl ValidationReport {
             inventory_bounds: Vec::new(),
             provenance: ProvenanceObservation::default(),
             active_ocomp: Vec::new(),
+            body_structure: None,
         }
     }
 

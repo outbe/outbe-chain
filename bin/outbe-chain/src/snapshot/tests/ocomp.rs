@@ -3849,6 +3849,97 @@ mod pin_authority {
                     }
                 }
 
+                #[test]
+                fn unequal_body_frontiers_preserve_successful_structure_in_json() {
+                    for same_height in [false, true] {
+                        let fixture = AllFixture::new(2);
+                        let checkpoint = ProjectionCheckpoint {
+                            block_number: if same_height { 1 } else { 0 },
+                            block_hash: if same_height {
+                                B256::repeat_byte(0x99)
+                            } else {
+                                fixture.layout.chain.genesis_hash()
+                            },
+                        };
+                        let storage = RocksDbStorage::open(&fixture.layout.offchain_root).unwrap();
+                        let state = ProjectionState {
+                            chain_id: fixture.layout.chain.chain().id(),
+                            genesis_hash: fixture.layout.chain.genesis_hash(),
+                            storage_schema_version: STORAGE_SCHEMA_VERSION,
+                            start_block: fixture.layout.projection_start_block,
+                            checkpoint: Some(checkpoint),
+                        };
+                        storage
+                            .put(
+                                Namespace::new("projection_state").unwrap(),
+                                &Key::new(b"offchain_data".to_vec()).unwrap(),
+                                &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
+                            )
+                            .unwrap();
+                        drop(storage);
+                        let inputs = ValidationInputs {
+                            checks: "bodies".into(),
+                            ..Default::default()
+                        };
+                        let report = fixture.validate(&inputs);
+                        assert_eq!(report.check(CheckName::Ce).status, CheckStatus::Passed);
+                        assert_eq!(
+                            report.check(CheckName::Bodies).status,
+                            CheckStatus::Incomplete
+                        );
+                        assert!(!report.success());
+                        let json = serde_json::to_value(&report).unwrap();
+                        assert_eq!(json["body_structure"]["status"], "passed");
+                        assert_eq!(
+                            json["body_structure"]["checkpoint"]["number"],
+                            checkpoint.block_number
+                        );
+                        assert_eq!(
+                            json["body_structure"]["checkpoint"]["hash"],
+                            hex::encode(checkpoint.block_hash)
+                        );
+                        assert_eq!(json["observed"]["q"]["number"], 1);
+                        assert_eq!(json["observed"]["p"]["number"], checkpoint.block_number);
+                        assert!(!report
+                            .retained_ranges
+                            .iter()
+                            .any(|range| range.domain == "live_body_equality"));
+                        assert!(!report
+                            .inventory_bounds
+                            .iter()
+                            .any(|bound| bound.name == "live_projection_bodies"));
+
+                        // Even with unavailable equality, primary corruption must fail structure.
+                        let storage = RocksDbStorage::open(&fixture.layout.offchain_root).unwrap();
+                        storage
+                            .put(
+                                Namespace::new("nod_buckets").unwrap(),
+                                &Key::new(source_body().tribute_id.to_vec()).unwrap(),
+                                &Value::new(vec![0xff]).unwrap(),
+                            )
+                            .unwrap();
+                        drop(storage);
+                        let corrupt = fixture.validate(&inputs);
+                        assert_eq!(corrupt.check(CheckName::Ce).status, CheckStatus::Passed);
+                        assert_eq!(corrupt.check(CheckName::Bodies).status, CheckStatus::Failed);
+                        assert!(serde_json::to_value(&corrupt).unwrap()["body_structure"].is_null());
+                    }
+                }
+
+                #[test]
+                fn body_structure_observation_is_not_fabricated_when_unselected() {
+                    let fixture = AllFixture::new(2);
+                    let report = fixture.validate(&ValidationInputs {
+                        checks: "headers".into(),
+                        ..Default::default()
+                    });
+                    assert_eq!(
+                        report.check(CheckName::Bodies).status,
+                        CheckStatus::NotRequested
+                    );
+                    assert!(serde_json::to_value(&report).unwrap()["body_structure"].is_null());
+                }
+
                 #[derive(Clone, Copy, Debug)]
                 enum Damage {
                     None,
@@ -4534,6 +4625,202 @@ mod pin_authority {
                 use reth_ethereum::provider::db::{
                     database::Database, init_db, mdbx::DatabaseArguments, tables, transaction::DbTx,
                 };
+
+                #[test]
+                fn active_complete_receipt_requires_export_closure_without_retention_pin() {
+                    use crate::snapshot::tests::headers::fingerprint;
+                    use outbe_ocomp::{
+                        discovery_spool::DiscoverySpoolV1, export_receipt::ExportReceiptReader,
+                    };
+                    for version in [1, 2] {
+                        for damage in [
+                            "both",
+                            "catalog",
+                            "binding",
+                            "ack_only",
+                            "none",
+                            "unexported",
+                        ] {
+                            let identity = std::cell::Cell::new(None);
+                            crate::snapshot::tests::ocomp::with_canonical_frontiers(
+                                version,
+                                |layout| {
+                                    identity.set(Some((
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                    )));
+                                    write_source(layout);
+                                    let db = init_db(
+                                        layout.chain_root.join("db"),
+                                        DatabaseArguments::test(),
+                                    )
+                                    .unwrap();
+                                    let tx = db.tx().unwrap();
+                                    let request = tx
+                                        .get::<tables::Headers<OutbeHeader>>(100)
+                                        .unwrap()
+                                        .unwrap();
+                                    drop(tx);
+                                    drop(db);
+                                    let prepared = fixture_for_identity(
+                                        &request,
+                                        Phase::VotingOpen,
+                                        layout.chain.chain().id(),
+                                        layout.chain.genesis_hash(),
+                                        bind_source,
+                                    );
+                                    if damage == "unexported" {
+                                        return;
+                                    }
+                                    let export = write_export(&layout.ocomp_root, &prepared);
+                                    write_exported_pin(
+                                        &layout.consensus_root.join("ocomp_retention"),
+                                        &request,
+                                        &prepared.job,
+                                        export,
+                                    );
+                                    crate::snapshot::validation::ocomp::verify_export_inputs(
+                                        &layout.ocomp_root,
+                                        &prepared.job,
+                                        Some(export),
+                                        CAS_LIMITS,
+                                    )
+                                    .unwrap();
+                                    fs::remove_dir_all(
+                                        layout.consensus_root.join("ocomp_retention"),
+                                    )
+                                    .unwrap();
+                                    let job = &prepared.job;
+                                    let finalized = job.finalized.as_ref().unwrap();
+                                    let name = hex::encode(finalized.job_id);
+                                    if damage == "ack_only" {
+                                        let limits = poc_schema_limits();
+                                        let spec = FinalizedJobSpecV1 {
+                                            summary: FinalizedJobSummaryV1 {
+                                                cursor: job.intent_height,
+                                                job_id: finalized.job_id,
+                                                intent_id: job.intent.intent_id(&limits).unwrap(),
+                                                finalized_block_hash: finalized
+                                                    .finalized_request_block_hash,
+                                                finalized_state_root: finalized
+                                                    .finalized_request_state_root,
+                                                protocol_bundle_hash: job
+                                                    .intent
+                                                    .protocol_bundle_hash,
+                                                open_height: finalized.open_height,
+                                                deadline_height: finalized.deadline_height,
+                                            },
+                                            canonical_job_intent: BoundedBytes(
+                                                job.intent.encode_canonical(&limits).unwrap(),
+                                            ),
+                                        };
+                                        let spool = DiscoverySpoolV1::open(
+                                            layout
+                                                .ocomp_root
+                                                .join("exporter-v1/discovery")
+                                                .join(hex::encode(job.intent.protocol_bundle_hash)),
+                                            job.intent.chain_id,
+                                            job.intent.genesis_hash,
+                                            limits,
+                                        )
+                                        .unwrap();
+                                        let (offer, _) = spool
+                                            .put_offer(export.source_generation, &spec)
+                                            .unwrap();
+                                        let cas = FilesystemCasReader::open(
+                                            layout.ocomp_root.join("cas-v1"),
+                                            CAS_LIMITS,
+                                        )
+                                        .unwrap();
+                                        let receipt = ExportReceiptReader::open(
+                                            layout.ocomp_root.join("exporter-v1/receipts"),
+                                            finalized.job_id,
+                                            limits,
+                                        )
+                                        .unwrap()
+                                        .load_exact(&cas)
+                                        .unwrap();
+                                        spool.put_ack(&offer, &receipt, &prepared.bundle).unwrap();
+                                        drop(spool);
+                                    }
+                                    if matches!(damage, "catalog" | "both" | "ack_only") {
+                                        fs::remove_dir_all(
+                                            layout
+                                                .ocomp_root
+                                                .join("exporter-v1/input-refs")
+                                                .join(&name),
+                                        )
+                                        .unwrap();
+                                    }
+                                    if matches!(damage, "binding" | "both" | "ack_only") {
+                                        fs::remove_dir_all(
+                                            layout
+                                                .ocomp_root
+                                                .join("supervisor-v1/export-bindings")
+                                                .join(&name),
+                                        )
+                                        .unwrap();
+                                    }
+                                    if damage == "ack_only" {
+                                        fs::remove_dir_all(
+                                            layout
+                                                .ocomp_root
+                                                .join("exporter-v1/receipts")
+                                                .join(&name),
+                                        )
+                                        .unwrap();
+                                    }
+                                },
+                                |request| {
+                                    let (chain_id, genesis_hash) = identity.get().unwrap();
+                                    fixture_for_identity(
+                                        request,
+                                        Phase::VotingOpen,
+                                        chain_id,
+                                        genesis_hash,
+                                        bind_source,
+                                    )
+                                    .owner
+                                },
+                                |state, source, layout, scratch| {
+                                    assert!(!layout
+                                        .consensus_root
+                                        .join("ocomp_retention")
+                                        .exists());
+                                    assert!(!layout.ocomp_root.join("supervisor-v1/jobs").exists());
+                                    let before = fingerprint(&layout.ocomp_root);
+                                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                                    let result = verify_ocomp_relations(
+                                        state,
+                                        source,
+                                        layout,
+                                        scratch,
+                                        &mut report,
+                                    );
+                                    assert_eq!(fingerprint(&layout.ocomp_root), before);
+                                    if matches!(damage, "none" | "unexported") {
+                                        result.unwrap();
+                                        assert_eq!(report.active_ocomp.len(), 1);
+                                        assert_eq!(
+                                            report.active_ocomp[0].export_verified,
+                                            damage == "none"
+                                        );
+                                    } else {
+                                        let error = result.expect_err("active recorded export cannot lose required producer inputs with its pin");
+                                        assert!(
+                                            error.downcast_ref::<Incomplete>().is_some(),
+                                            "{damage}: {error:#}"
+                                        );
+                                        assert!(
+                                            format!("{error:#}").contains("export"),
+                                            "{damage}: {error:#}"
+                                        );
+                                    }
+                                },
+                            );
+                        }
+                    }
+                }
 
                 #[test]
                 fn final_join_accepts_real_exported_active_job_and_detects_deleted_required_catalog(

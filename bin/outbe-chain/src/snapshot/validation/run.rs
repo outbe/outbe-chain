@@ -894,15 +894,14 @@ fn run_native_checks(
             None
         }
     };
-    if report.check(Headers).status != CheckStatus::Passed {
+    let Some(headers) = headers else {
         for check in [Evm, Ce, Bodies, Ocomp] {
             block_on(report, check, Headers);
         }
         return;
-    }
-    let Some(headers) = headers else {
-        return;
     };
+    // Retained structure was verified. Missing anchors remain explicit in the
+    // header report; each independent check requires its own exact header.
     let mut verified = None;
     if selection.checks.contains(&Evm) {
         if let Some(scratch) = scratch {
@@ -1012,6 +1011,13 @@ fn audit_ce_and_bodies(
                 let mut retained = CountRetainedBodies(0);
                 projection.audit_retained(&work, &mut retained)?;
                 record_count(report, "retained_tribute_bodies", retained.0);
+                report.body_structure = Some(super::report::BodyStructureObservation {
+                    checkpoint: outbe_snapshot::manifest::BlockIdentity {
+                        number: body.checkpoint.block_number,
+                        hash: hex::encode(body.checkpoint.block_hash),
+                    },
+                    status: CheckStatus::Passed,
+                });
                 let equality = body.equality?;
                 record_count(report, "live_projection_bodies", equality.bodies);
                 report.retained_ranges.push(RetainedRange {
