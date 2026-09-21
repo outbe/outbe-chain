@@ -129,6 +129,7 @@ pub(crate) fn resolve_requested_layout(
         None
     };
     let mut protected = vec![
+        chain_root.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1),
         args.keys_dir
             .clone()
             .unwrap_or_else(|| chain_root.join("keys")),

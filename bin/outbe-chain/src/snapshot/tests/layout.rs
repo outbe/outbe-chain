@@ -82,6 +82,7 @@ fn native_defaults_and_toml_relative_primary_resolve_without_creating_stores() {
     for protected in [
         root.path().join("genesis.json"),
         d.join("keys"),
+        d.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1),
         d.join("discovery-secret"),
         d.join("jwt.hex"),
         d.join("reth.toml"),
@@ -308,4 +309,73 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
         fs::read_to_string(protected_layout.offchain_root.join("CURRENT")).unwrap(),
         "CURRENT"
     );
+}
+
+#[test]
+fn node_host_identity_is_protected_from_execution_root_overrides() {
+    use super::super::inventory::enumerate_native_files;
+    use outbe_snapshot::layout::{validate_layout, ResolvedDomain};
+    use outbe_tee::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_NOISE_KEY_V1};
+
+    for variant in ["root", "descendant", "parent_alias"] {
+        let root = tempfile::tempdir().unwrap();
+        let mut arguments = native_arguments(root.path());
+        let chain = root.path().join("chain");
+        let host = chain.join(NODE_HOST_DIRECTORY_V1);
+        let nested = host.join("authorization");
+        fs::create_dir_all(&nested).unwrap();
+        let sentinel = host.join(NODE_HOST_NOISE_KEY_V1);
+        fs::write(&sentinel, b"dummy private identity fixture").unwrap();
+        fs::write(nested.join("record"), b"dummy authorization fixture").unwrap();
+        let selected = match variant {
+            "root" => host.clone(),
+            "descendant" => nested,
+            "parent_alias" => {
+                let alias = root.path().join("chain-alias");
+                std::os::unix::fs::symlink(&chain, &alias).unwrap();
+                alias.join(NODE_HOST_DIRECTORY_V1)
+            }
+            _ => unreachable!(),
+        };
+        arguments.extend(["--datadir.rocksdb".into(), selected.into_os_string()]);
+        let inputs = parse_node_inputs(arguments).unwrap();
+        let layout = resolve_layout(&inputs).unwrap();
+        // Only inventory prerequisites: no databases or real key material are opened.
+        for required in [
+            layout.chain_root.join("db"),
+            layout.chain_root.join("compressed_entities/smt"),
+            layout.offchain_root.clone(),
+            layout
+                .ocomp_root
+                .join("exporter-v1/discovery/closure-checkpoint-v1"),
+        ] {
+            fs::create_dir_all(required).unwrap();
+        }
+        let error = enumerate_native_files(&layout).unwrap_err();
+        assert!(
+            error.to_string().contains("protected"),
+            "{variant}: {error:#}"
+        );
+        assert_eq!(
+            fs::read(&sentinel).unwrap(),
+            b"dummy private identity fixture"
+        );
+        assert!(layout.protected.0.contains(&host));
+
+        // An ancestor source is independently refused, without a second source
+        // causing an earlier source/source-overlap error and masking this boundary.
+        let error = validate_layout(
+            &[ResolvedDomain {
+                name: "ancestor".into(),
+                root: chain,
+            }],
+            &outbe_snapshot::layout::ProtectedPaths(vec![host.clone()]),
+            &[],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("protected"));
+        let error =
+            validate_layout(&[], &layout.protected, &[host.join("output.tar")]).unwrap_err();
+        assert!(error.to_string().contains("protected"));
+    }
 }
