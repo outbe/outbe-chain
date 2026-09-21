@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_schema};
+use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::types::{StorageKey, StorageSet};
 
@@ -7,6 +7,26 @@ use outbe_primitives::storage::types::{StorageKey, StorageSet};
 /// `IVaultRouter.StablesSource.Unknown == 0` and
 /// `IVaultRouter.StablesTarget.Unknown == 0`.
 pub const UNKNOWN: u8 = 0;
+
+/// One CCA-held liquidity reservation. A zero `asset` means the slot is empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = asset)]
+pub struct LiquidityReservation {
+    #[key]
+    pub id: U256,
+    #[attribute(order = 0)]
+    pub asset: Address,
+    #[attribute(order = 1)]
+    pub amount: U256,
+    #[attribute(order = 2)]
+    pub smart_account: Address,
+    #[attribute(order = 3)]
+    pub cca: Address,
+    #[attribute(order = 4)]
+    pub vault: Address,
+    #[attribute(order = 5)]
+    pub expires_at: u64,
+}
 
 /// EVM storage layout for the vaultrouter precompile.
 #[storage_schema]
@@ -107,6 +127,14 @@ pub struct VaultRouterContract {
     /// slot 25: vault -> ISO-4217 code captured at registration time.
     #[attribute(order = 22)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
+
+    /// slot 26: monotonic nonce mixed into reservation ids.
+    #[attribute(order = 23)]
+    pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// slot 27: CCA stables reservations keyed by id.
+    #[attribute(order = 24)]
+    pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

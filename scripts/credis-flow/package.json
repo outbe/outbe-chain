@@ -12,6 +12,7 @@
     "setup-native": "tsx src/0-setup-native.ts",
     "setup-erc20": "tsx src/0-setup-erc20.ts",
     "setup-gratis": "tsx src/0-setup-gratis.ts",
+    "reserve-stables": "tsx src/2.1-reserve-stables.ts",
     "pledge-gratis": "tsx src/1-pledge-gratis.ts",
     "unpledge-gratis": "tsx src/1.1-unpledge-gratis.ts",
     "top-up-sa": "tsx src/2-top-up-smart-account.ts",

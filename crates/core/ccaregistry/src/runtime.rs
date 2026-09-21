@@ -141,10 +141,8 @@ pub fn position_opened(
     gratis: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
+        crate::api::require_active_cca(storage, cca)?;
         let contract = CcaContract::new(storage.clone());
-        if contract.load(cca)?.state != ICcaRegistry::State::Active {
-            return Err(CcaError::NotActive.into());
-        }
         let key = address_day_key(cca, day);
         let deficit = contract.gratis_deficits_per_utc_day.read(&key)?;
         let offset = gratis.min(deficit);

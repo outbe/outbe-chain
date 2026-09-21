@@ -18,8 +18,9 @@ use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
+use crate::constants::RESERVATION_TTL_SECS;
 use crate::errors::VaultRouterError;
-use crate::schema::{VaultRouterContract, UNKNOWN};
+use crate::schema::{LiquidityReservation, VaultRouterContract, UNKNOWN};
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
 
@@ -403,6 +404,193 @@ pub(crate) fn withdraw(
 }
 
 // ---------------------------------------------------------------------------
+// reservations
+// ---------------------------------------------------------------------------
+
+/// `reserveStables`: redeem `amount` of `asset` from its origin vault into this
+/// router's custody for `smart_account`. Caller must be an active CCA.
+pub(crate) fn reserve_stables(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    smart_account: Address,
+    asset: Address,
+    amount: U256,
+) -> Result<U256> {
+    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
+    if smart_account.is_zero() || asset.is_zero() {
+        return Err(VaultRouterError::ZeroAddress.into());
+    }
+    if amount.is_zero() {
+        return Err(VaultRouterError::InvalidReservationAmount.into());
+    }
+
+    let now = now_secs(&storage)?;
+    let expires_at = now
+        .checked_add(RESERVATION_TTL_SECS)
+        .ok_or(VaultRouterError::TimestampOverflow)?;
+    let vault = first_vault(&storage, asset)?;
+    ensure_shares_cover(&storage, vault, amount)?;
+
+    storage.with_checkpoint(|| {
+        let contract = VaultRouterContract::new(storage.clone());
+        let nonce = contract
+            .reservation_nonce
+            .read()?
+            .checked_add(U256::from(1))
+            .ok_or(VaultRouterError::InvalidReservationAmount)?;
+        contract.reservation_nonce.write(nonce)?;
+        let id = nonce;
+        if contract.reservations.exists(id)? {
+            return Err(VaultRouterError::ReservationExists(id).into());
+        }
+
+        vault_withdraw(&storage, vault, amount, SELF, SELF)?;
+        contract.reservations.create(&LiquidityReservation {
+            id,
+            asset,
+            amount,
+            smart_account,
+            cca: caller,
+            vault,
+            expires_at,
+        })?;
+
+        let mut contract = VaultRouterContract::new(storage.clone());
+        contract.emit(IVaultRouter::ReservationCreated {
+            id,
+            smartAccount: smart_account,
+            cca: caller,
+            asset,
+            vault,
+            amount,
+            expiresAt: expires_at,
+        })?;
+        Ok(id)
+    })
+}
+
+/// `releaseReservation`: deliver `amount` of the hold under `id` to `receiver`
+/// and return any unused remainder to the origin vault.
+pub(crate) fn release_reservation(
+    storage: StorageHandle<'_>,
+    id: U256,
+    receiver: Address,
+    amount: U256,
+    target: IVaultRouter::StablesTarget,
+) -> Result<U256> {
+    if receiver.is_zero() {
+        return Err(VaultRouterError::ZeroAddress.into());
+    }
+    if matches!(target, IVaultRouter::StablesTarget::Unknown) {
+        return Err(VaultRouterError::InvalidLiquidityTarget.into());
+    }
+    if amount.is_zero() {
+        return Err(VaultRouterError::InvalidReservationAmount.into());
+    }
+
+    let now = now_secs(&storage)?;
+    storage.with_checkpoint(|| {
+        let record = take_reservation(&storage, id)?;
+        if now > record.expires_at {
+            return Err(VaultRouterError::ReservationExpired(id).into());
+        }
+        if receiver != record.smart_account {
+            return Err(VaultRouterError::ReservationAccountMismatch.into());
+        }
+        if amount > record.amount {
+            return Err(VaultRouterError::ReservationInsufficient {
+                available: record.amount,
+                required: amount,
+            }
+            .into());
+        }
+
+        erc20_approve(&storage, record.asset, receiver, amount)?;
+        token_bundle_top_up(&storage, receiver, SELF, record.asset, amount)?;
+
+        let excess = record.amount - amount;
+        let mut returned_shares = U256::ZERO;
+        if !excess.is_zero() {
+            returned_shares = vault_deposit(&storage, record.vault, excess, SELF)?;
+        }
+
+        let mut contract = VaultRouterContract::new(storage.clone());
+        contract.emit(IVaultRouter::ReservationReleased {
+            id,
+            asset: record.asset,
+            receiver,
+            amount,
+        })?;
+        if !excess.is_zero() {
+            contract.emit(IVaultRouter::ReservationReturned {
+                id,
+                asset: record.asset,
+                vault: record.vault,
+                amount: excess,
+                mintedShares: returned_shares,
+            })?;
+        }
+        Ok(amount)
+    })
+}
+
+/// `returnReservation`: deposit the assets held under `id` back into their origin
+/// vault. The originating CCA may unwind anytime; after expiry anyone may.
+/// Idempotent: an unknown id returns zero.
+pub(crate) fn return_reservation(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    id: U256,
+) -> Result<U256> {
+    let now = now_secs(&storage)?;
+    storage.with_checkpoint(|| {
+        let Some(record) = take_reservation_if_held(&storage, id)? else {
+            return Ok(U256::ZERO);
+        };
+        if caller != record.cca && now <= record.expires_at {
+            return Err(VaultRouterError::Unauthorized.into());
+        }
+
+        let minted_shares = vault_deposit(&storage, record.vault, record.amount, SELF)?;
+        let mut contract = VaultRouterContract::new(storage.clone());
+        contract.emit(IVaultRouter::ReservationReturned {
+            id,
+            asset: record.asset,
+            vault: record.vault,
+            amount: record.amount,
+            mintedShares: minted_shares,
+        })?;
+        Ok(minted_shares)
+    })
+}
+
+/// Reads and deletes the reservation under `id`, rejecting an unknown one.
+fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
+    take_reservation_if_held(storage, id)?
+        .ok_or_else(|| VaultRouterError::ReservationNotFound(id).into())
+}
+
+/// Reads and deletes the reservation under `id`, or `None` when nothing is held.
+fn take_reservation_if_held(
+    storage: &StorageHandle<'_>,
+    id: U256,
+) -> Result<Option<LiquidityReservation>> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let Some(record) = contract.reservations.get(id)? else {
+        return Ok(None);
+    };
+    contract.reservations.delete(id)?;
+    Ok(Some(record))
+}
+
+fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
+    storage
+        .timestamp()?
+        .try_into()
+        .map_err(|_| VaultRouterError::TimestampOverflow.into())
+}
+
+// ---------------------------------------------------------------------------
 // rebalance
 // ---------------------------------------------------------------------------
 
@@ -420,9 +608,7 @@ pub(crate) fn rebalance(
     amount: U256,
     max_amount_to: U256,
 ) -> Result<U256> {
-    if !outbe_ccaregistry::api::is_active(&storage, caller)? {
-        return Err(VaultRouterError::CcaNotActive(caller).into());
-    }
+    outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
     if vault_from == vault_to {
         return Err(VaultRouterError::SameVaultRebalance.into());
     }
@@ -571,6 +757,59 @@ fn rescale_decimals(amount: U256, from_decimals: u8, to_decimals: u8) -> Result<
 /// `sharesBalance`: vault shares currently held by this router.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
+}
+
+/// `reservationOf`: the reservation held under `id`, or a zeroed record when none.
+pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
+    let contract = VaultRouterContract::new(storage.clone());
+    Ok(contract
+        .reservations
+        .get(id)?
+        .unwrap_or(LiquidityReservation {
+            id,
+            asset: Address::ZERO,
+            amount: U256::ZERO,
+            smart_account: Address::ZERO,
+            cca: Address::ZERO,
+            vault: Address::ZERO,
+            expires_at: 0,
+        }))
+}
+
+/// `hasLiquidity`: whether `asset`'s vault could currently fund `amount`. An asset
+/// with no vault answers `false` rather than reverting.
+pub fn has_liquidity(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<bool> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let Some(vault) = contract.first_vault(asset)? else {
+        return Ok(false);
+    };
+    let (required, available) = withdraw_shares(storage, vault, amount)?;
+    Ok(available >= required)
+}
+
+/// Shares a withdrawal of `amount` from `vault` would burn, and the shares this
+/// router actually holds.
+fn withdraw_shares(
+    storage: &StorageHandle<'_>,
+    vault: Address,
+    amount: U256,
+) -> Result<(U256, U256)> {
+    let required = vault_preview_withdraw(storage, vault, amount)?;
+    let available = erc20_balance_of(storage, vault, SELF)?;
+    Ok((required, available))
+}
+
+/// Rejects a draw of `amount` the router's shares in `vault` cannot cover.
+fn ensure_shares_cover(storage: &StorageHandle<'_>, vault: Address, amount: U256) -> Result<()> {
+    let (required, available) = withdraw_shares(storage, vault, amount)?;
+    if available < required {
+        return Err(VaultRouterError::InsufficientSharesForWithdraw {
+            available,
+            required,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -731,7 +970,7 @@ fn token_bundle_top_up(
 ) -> Result<()> {
     // A CALL to a codeless account succeeds and returns empty in EVM, so topUp's
     // internal guards would be silently skipped if the bundle smart account is not
-    // deployed. Reject up front so requestCredis fails instead of half-completing.
+    // deployed. Reject up front so issueCredis fails instead of half-completing.
     if storage.with_account_info(receiver, |info| Ok(info.is_empty_code_hash()))? {
         return Err(VaultRouterError::ReceiverNotDeployed.into());
     }
