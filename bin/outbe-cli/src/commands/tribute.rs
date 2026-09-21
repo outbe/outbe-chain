@@ -104,8 +104,8 @@ pub enum TributeCmd {
         #[arg(long)]
         l2_chain_id: Option<u32>,
         /// Exact circuit version registered for `--l2-chain-id`. Defaults, when
-        /// `--zk-proof` is non-empty, to the newest active tribute circuit
-        /// registered for that chain.
+        /// `--zk-proof` is non-empty, to the one registered tribute circuit
+        /// whose proof length matches the supplied proof.
         #[arg(long)]
         circuit_version: Option<String>,
         /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
