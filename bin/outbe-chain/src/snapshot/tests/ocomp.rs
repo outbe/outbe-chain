@@ -712,6 +712,49 @@ mod active_inventory {
 }
 
 mod payout_inventory {
+    #[test]
+    fn full_canonical_composition_checks_payout_after_independent_inventory() {
+        use crate::snapshot::validation::{ocomp::verify_canonical_obligations, Incomplete};
+        let leaves = leaves();
+        let root = contributor_list_root(257, leaves.iter().map(encode_contributor_leaf)).unwrap();
+        let active = generation(root);
+        for version in [1, 2] {
+            for deleted in [false, true] {
+                super::with_canonical_frontiers(
+                    version,
+                    |layout| {
+                        write_payout(&layout.ocomp_root, active.job_id, &leaves);
+                        if deleted {
+                            fs::remove_dir_all(job_root(&layout.ocomp_root, active.job_id))
+                                .unwrap();
+                        }
+                    },
+                    |_| native_owner(&active, root),
+                    |state, source, layout, scratch| {
+                        let result = verify_canonical_obligations(
+                            state, source, layout, scratch, None, None,
+                        );
+                        if deleted {
+                            let error = result
+                                .err()
+                                .expect("whole missing certified payout job cannot pass");
+                            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                            assert!(
+                                error.to_string().contains("missing payout file"),
+                                "{error:#}"
+                            );
+                        } else {
+                            let audit = result.unwrap();
+                            assert_eq!(audit.bounds.unpaid_days, 1);
+                            assert_eq!(audit.payout_days, 1);
+                            assert_eq!(audit.bounds.active_intents, 0);
+                        }
+                    },
+                );
+            }
+        }
+    }
+
     use super::super::headers::fingerprint;
     use super::{payout_owner, with_owner_storage, CanonicalInventory, Incomplete, DAY};
     use alloy_primitives::{Address, B256, U256};
@@ -948,6 +991,58 @@ mod payout_inventory {
 }
 
 mod nod_inventory {
+    #[test]
+    fn full_canonical_composition_cannot_skip_an_entire_later_nod_job() {
+        use crate::snapshot::validation::{ocomp::verify_canonical_obligations, Incomplete};
+        use std::cell::RefCell;
+        for version in [1, 2] {
+            for deleted in [false, true] {
+                let fixtures = RefCell::new(None);
+                super::with_canonical_frontiers(
+                    version,
+                    |layout| {
+                        let first =
+                            fixture(&layout.ocomp_root, 0x30, WorldwideDay::new(20_260_725), 10);
+                        let second =
+                            fixture(&layout.ocomp_root, 0x40, WorldwideDay::new(20_260_726), 10);
+                        if deleted {
+                            fs::remove_dir_all(
+                                layout
+                                    .ocomp_root
+                                    .join("supervisor-v1/jobs")
+                                    .join(hex::encode(second.job_id)),
+                            )
+                            .unwrap();
+                        }
+                        *fixtures.borrow_mut() = Some((first, second));
+                    },
+                    |_| {
+                        let fixtures = fixtures.borrow();
+                        let (first, second) = fixtures.as_ref().unwrap();
+                        canonical_owner(&[(first, 0), (second, 0)], None)
+                    },
+                    |state, source, layout, scratch| {
+                        let result = verify_canonical_obligations(
+                            state, source, layout, scratch, None, None,
+                        );
+                        if deleted {
+                            let error = result
+                                .err()
+                                .expect("whole second canonical NOD job cannot pass");
+                            assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                            assert!(format!("{error:#}").contains("NOD"), "{error:#}");
+                        } else {
+                            let audit = result.unwrap();
+                            assert_eq!(audit.bounds.nod_entries, 2);
+                            assert_eq!(audit.nod.jobs, 2);
+                            assert_eq!(audit.nod.actions, 20);
+                        }
+                    },
+                );
+            }
+        }
+    }
+
     mod present_admissions {
         mod reference_membership {
             use super::*;
@@ -2857,7 +2952,6 @@ mod frames_inventory {
         }
         assert_eq!(fixture.check(1, Some(3)).unwrap(), (3, 3));
     }
-    // Insert this module inside frames_inventory; it reuses its private native fixture.
     mod closure_inventory {
         use super::*;
         use crate::snapshot::validation::ocomp::verify_closure;
@@ -3096,11 +3190,881 @@ mod frames_inventory {
 }
 // Append as a child module of snapshot::tests::ocomp.
 mod pin_authority {
-    // Insert inside tests::ocomp::pin_authority. This fixture is TEST SETUP ONLY.
+    mod present_discovery {
+        use super::*;
+        use crate::snapshot::{
+            tests::headers::fingerprint,
+            validation::{ocomp::verify_present_discovery, Incomplete},
+        };
+        use outbe_ocomp::discovery_spool::{DiscoverySpoolRecordV1, DiscoverySpoolV1};
+        use outbe_ocomp_protocol::{
+            common::BoundedBytes,
+            control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
+        };
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+        };
+
+        fn spec(job: &OcompJobRecordV1) -> FinalizedJobSpecV1 {
+            let finality = job.finalized.as_ref().unwrap();
+            FinalizedJobSpecV1 {
+                summary: FinalizedJobSummaryV1 {
+                    cursor: job.intent_height,
+                    job_id: finality.job_id,
+                    intent_id: job.intent.intent_id(&poc_schema_limits()).unwrap(),
+                    finalized_block_hash: finality.finalized_request_block_hash,
+                    finalized_state_root: finality.finalized_request_state_root,
+                    protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                    open_height: finality.open_height,
+                    deadline_height: finality.deadline_height,
+                },
+                canonical_job_intent: BoundedBytes(
+                    job.intent.encode_canonical(&poc_schema_limits()).unwrap(),
+                ),
+            }
+        }
+
+        fn write(root: &Path, view: &RethReadOnlyView, spec: &FinalizedJobSpecV1) -> PathBuf {
+            let parent = root.join("exporter-v1/discovery");
+            fs::create_dir_all(&parent).unwrap();
+            let path = parent.join(hex::encode(spec.summary.protocol_bundle_hash));
+            let writer = DiscoverySpoolV1::open(
+                &path,
+                view.chain.chain().id(),
+                view.chain.genesis_hash(),
+                poc_schema_limits(),
+            )
+            .unwrap();
+            writer.put_offer(1, spec).unwrap();
+            drop(writer);
+            path
+        }
+
+        #[test]
+        fn all_present_offers_bind_current_canonical_job_without_export_prerequisite() {
+            for version in [1, 2] {
+                with_job(version, true, true, |state, view, job| {
+                    let root = tempfile::tempdir().unwrap();
+                    write(root.path(), view, &spec(&job));
+                    let before = fingerprint(root.path());
+                    let mut offers = 0;
+                    let mut pending = 0;
+                    let audit = verify_present_discovery(
+                        state,
+                        view,
+                        root.path(),
+                        None,
+                        &mut |record, authority| {
+                            match record {
+                                DiscoverySpoolRecordV1::Offer(_) => {
+                                    assert_eq!(authority.as_ref(), Some(&job));
+                                    offers += 1;
+                                }
+                                DiscoverySpoolRecordV1::Pending { .. } => {
+                                    assert!(authority.is_none());
+                                    pending += 1;
+                                }
+                                _ => panic!("unexpected fixture record"),
+                            }
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!((audit.spools, audit.records, audit.offers), (1, 2, 1));
+                    assert_eq!((offers, pending), (1, 1));
+                    assert_eq!(fingerprint(root.path()), before);
+                    assert!(!root.path().join("supervisor-v1").exists());
+                });
+            }
+        }
+
+        #[test]
+        fn absent_retired_spools_are_optional_and_closure_is_not_a_bundle_spool() {
+            with_job(1, true, true, |state, view, _| {
+                let root = tempfile::tempdir().unwrap();
+                for present_closure in [false, true] {
+                    if present_closure {
+                        fs::create_dir_all(
+                            root.path()
+                                .join("exporter-v1/discovery/closure-checkpoint-v1"),
+                        )
+                        .unwrap();
+                    }
+                    let before = fingerprint(root.path());
+                    let audit =
+                        verify_present_discovery(state, view, root.path(), Some(0), &mut |_, _| {
+                            panic!("no records")
+                        })
+                        .unwrap();
+                    assert_eq!((audit.spools, audit.records, audit.offers), (0, 0, 0));
+                    assert_eq!(fingerprint(root.path()), before);
+                }
+            });
+        }
+
+        #[test]
+        fn native_valid_offer_cannot_replace_canonical_cursor_or_voting_window() {
+            with_job(1, true, true, |state, view, job| {
+                for field in 0..3 {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut offered = spec(&job);
+                    match field {
+                        0 => offered.summary.cursor += 1,
+                        1 => offered.summary.open_height += 1,
+                        _ => offered.summary.deadline_height += 1,
+                    };
+                    write(root.path(), view, &offered);
+                    let before = fingerprint(root.path());
+                    let error = verify_present_discovery(
+                        state,
+                        view,
+                        root.path(),
+                        None,
+                        &mut |_, _| Ok(()),
+                    )
+                    .unwrap_err();
+                    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                    assert_eq!(fingerprint(root.path()), before);
+                }
+            });
+        }
+
+        #[test]
+        fn complete_spool_walk_checks_bundle_location_and_later_native_records() {
+            with_job(2, true, true, |state, view, job| {
+                for fault in 0..2 {
+                    let root = tempfile::tempdir().unwrap();
+                    let path = write(root.path(), view, &spec(&job));
+                    if fault == 0 {
+                        fs::rename(
+                            &path,
+                            path.parent()
+                                .unwrap()
+                                .join(hex::encode(B256::repeat_byte(0xee))),
+                        )
+                        .unwrap();
+                    } else {
+                        let pending = fs::read_dir(path.join("pending"))
+                            .unwrap()
+                            .next()
+                            .unwrap()
+                            .unwrap()
+                            .path();
+                        fs::write(pending, b"corrupt").unwrap();
+                    }
+                    let before = fingerprint(root.path());
+                    assert!(verify_present_discovery(
+                        state,
+                        view,
+                        root.path(),
+                        None,
+                        &mut |_, _| Ok(())
+                    )
+                    .is_err());
+                    assert_eq!(fingerprint(root.path()), before);
+                }
+            });
+        }
+
+        #[test]
+        fn incomplete_budget_or_callback_cannot_be_replaced_by_partial_spool_success() {
+            with_job(1, true, true, |state, view, job| {
+                let root = tempfile::tempdir().unwrap();
+                write(root.path(), view, &spec(&job));
+                let before = fingerprint(root.path());
+                for budget in [0, 1] {
+                    let error = verify_present_discovery(
+                        state,
+                        view,
+                        root.path(),
+                        Some(budget),
+                        &mut |_, _| Ok(()),
+                    )
+                    .unwrap_err();
+                    assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                }
+                let error =
+                    verify_present_discovery(state, view, root.path(), None, &mut |_, _| {
+                        Err(Incomplete("callback evidence unavailable".into()).into())
+                    })
+                    .unwrap_err();
+                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                assert_eq!(fingerprint(root.path()), before);
+            });
+        }
+    }
+
+    // This fixture is test setup only.
     // It uses public Registry initialization and native WWD/model capabilities;
     // private Metadosis persistence codecs are reproduced only to seed source words.
     // Every constructed aggregate must pass the real public native getter.
     mod active_canonical {
+        mod exported_composition {
+            use super::*;
+            use crate::snapshot::validation::{
+                ocomp::{verify_canonical_obligations, CanonicalLocalPinStage},
+                Incomplete,
+            };
+            use alloy_primitives::{keccak256, B256};
+            use outbe_compressed_entities::encode_tribute_v1;
+            use outbe_node::ocomp::retention::{
+                inspect_retention_journal, CandidatePinV1, ExportAuthorityV1, PinRecordV1,
+                PinStateV1,
+            };
+            use outbe_ocomp::{
+                cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
+                export_binding::{ExportBindingCandidate, ExportedManifestBindingStore},
+                export_receipt::{ExportReceiptCandidate, ExportReceiptStore},
+                input_artifacts::derive_input_chunk_ref,
+                input_ref_catalog::VerifiedInputChunkRefCatalog,
+                supervisor::DiscoveryRecord,
+            };
+            use outbe_ocomp_protocol::{
+                common::BoundedBytes,
+                control::{FinalizedJobSpecV1, FinalizedJobSummaryV1, SnapshotHandoffV1},
+                input::{
+                    AuthenticatedInputChunkV1, CheckpointIdentityV1, Compression, InputChunkKind,
+                    InputManifestV1,
+                },
+                ListKind, ObjectKind, OrderedListLimits, SnapshotExportCommittedV1,
+            };
+            use std::{fs, path::Path};
+            const CAS_LIMITS: CasLimits = CasLimits {
+                max_object_bytes: 1_048_576,
+                max_total_bytes: u64::MAX,
+            };
+
+            // Actual native writers close the manifest, reference catalog, binding and receipt.
+            // This fixture exercises a Tribute-only closure, not worker opening-proof E2E.
+            fn write_export(root: &Path, prepared: &ActiveFixture) -> ExportAuthorityV1 {
+                let limits = poc_schema_limits();
+                let list_limits = OrderedListLimits::new(16, 4096, 4096);
+                let job = &prepared.job;
+                let intent = &job.intent;
+                let bundle = &prepared.bundle;
+                let finalized = job.finalized.as_ref().unwrap();
+                let spec = FinalizedJobSpecV1 {
+                    summary: FinalizedJobSummaryV1 {
+                        cursor: job.intent_height,
+                        job_id: finalized.job_id,
+                        intent_id: intent.intent_id(&limits).unwrap(),
+                        finalized_block_hash: finalized.finalized_request_block_hash,
+                        finalized_state_root: finalized.finalized_request_state_root,
+                        protocol_bundle_hash: intent.protocol_bundle_hash,
+                        open_height: finalized.open_height,
+                        deadline_height: finalized.deadline_height,
+                    },
+                    canonical_job_intent: BoundedBytes(intent.encode_canonical(&limits).unwrap()),
+                };
+                let cas_root = root.join("cas-v1");
+                let job_hex = hex::encode(spec.summary.job_id);
+                let binding_root = root.join("supervisor-v1/export-bindings").join(&job_hex);
+                let catalog_root = root.join("exporter-v1/input-refs").join(&job_hex);
+                let receipt_base = root.join("exporter-v1/receipts");
+                let bundles = root.join("protocol-bundles-v1");
+                fs::create_dir_all(&bundles).unwrap();
+                fs::write(
+                    bundles.join(format!(
+                        "{}.ocb1",
+                        hex::encode(spec.summary.protocol_bundle_hash)
+                    )),
+                    bundle.encode_canonical(&limits).unwrap(),
+                )
+                .unwrap();
+                let cas_limits = CAS_LIMITS;
+                let cas =
+                    FilesystemCas::open(&cas_root, CasWriterRole::SnapshotExporter, cas_limits)
+                        .unwrap();
+                let reader = FilesystemCasReader::open(&cas_root, cas_limits).unwrap();
+                let tribute = outbe_tribute::canonical_body(&super::source_body());
+                let chunk = AuthenticatedInputChunkV1 {
+                    protocol_bundle_hash: spec.summary.protocol_bundle_hash,
+                    job_id: spec.summary.job_id,
+                    kind: InputChunkKind::Tribute,
+                    ordinal: 0,
+                    canonical_records_or_openings: vec![BoundedBytes(
+                        encode_tribute_v1(&tribute).unwrap(),
+                    )],
+                };
+                let mut chunk_ref = cas
+                    .publish_bytes(&chunk.encode_canonical(&limits).unwrap())
+                    .unwrap();
+                chunk_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
+                let input_ref = derive_input_chunk_ref(
+                    &reader.read_verified(&chunk_ref).unwrap(),
+                    bundle,
+                    &limits,
+                )
+                .unwrap()
+                .reference;
+                let manifest = InputManifestV1 {
+                    protocol_bundle_hash: spec.summary.protocol_bundle_hash,
+                    job_id: spec.summary.job_id,
+                    attempt: intent.attempt,
+                    checkpoint: CheckpointIdentityV1 {
+                        finalized_block_number: spec.summary.cursor,
+                        finalized_block_hash: spec.summary.finalized_block_hash,
+                        finalized_state_root: spec.summary.finalized_state_root,
+                        finalized_ce_root: intent.ce_sealed_root,
+                        ce_schema_version: u16::try_from(
+                            outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                        )
+                        .unwrap(),
+                    },
+                    wwd: intent.wwd,
+                    sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
+                    sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
+                    tribute_count: intent.authenticated_day_count,
+                    tribute_nominal_total: intent.authenticated_day_nominal,
+                    input_chunk_count: 1,
+                    input_chunk_list_root: outbe_ocomp_protocol::ordered_list_root(
+                        ListKind::InputChunkReferences,
+                        &[input_ref.encode_canonical_record(&limits).unwrap()],
+                        list_limits,
+                    )
+                    .unwrap(),
+                    fidelity_opening_root: B256::repeat_byte(201),
+                    oracle_opening_root: B256::repeat_byte(202),
+                    exact_encoded_bytes: input_ref.encoded_bytes,
+                    exact_record_count: input_ref.record_count,
+                    body_codec_id: bundle.tribute_body_codec_id,
+                    opening_codec_registry_hash: bundle.opening_codec_registry_hash().unwrap(),
+                    compression: Compression::None,
+                };
+                let mut manifest_ref = cas
+                    .publish_bytes(&manifest.encode_canonical(&limits).unwrap())
+                    .unwrap();
+                manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
+                let mut catalog = VerifiedInputChunkRefCatalog::open(
+                    &catalog_root,
+                    &cas,
+                    &manifest_ref,
+                    limits,
+                    list_limits,
+                )
+                .unwrap();
+                catalog.admit(&input_ref).unwrap();
+                let committed = SnapshotExportCommittedV1 {
+                    job_id: spec.summary.job_id,
+                    pin_generation: 12,
+                    record_hash: B256::repeat_byte(203),
+                };
+                // Only the native producer uses the legacy discovery record. The offline
+                // consumer below retains the authenticated immutable spec, not this record.
+                let discovery = DiscoveryRecord {
+                    generation: 7,
+                    cursor: spec.summary.cursor,
+                    spec: spec.clone(),
+                };
+                let _binding_ref = {
+                    let mut store =
+                        ExportedManifestBindingStore::open(&binding_root, limits).unwrap();
+                    store
+                        .seal(
+                            &cas,
+                            &reader,
+                            ExportBindingCandidate {
+                                discovery: &discovery,
+                                job_id: spec.summary.job_id,
+                                source_pin_generation: 11,
+                                lease_generation: 17,
+                                checkpoint: &manifest.checkpoint,
+                                manifest_ref: &manifest_ref,
+                                committed: &committed,
+                                bundle,
+                                input_refs: &catalog,
+                            },
+                        )
+                        .unwrap()
+                        .1
+                        .binding_ref()
+                };
+                let receipt_source = 11;
+                let receipt_lease = 17;
+                let receipt_manifest = manifest.clone();
+                let receipt_manifest_ref = manifest_ref.clone();
+                let receipt_committed = committed.clone();
+                let handoff = SnapshotHandoffV1 {
+                    job_id: spec.summary.job_id,
+                    input_lease_id: intent.input_lease_id().unwrap(),
+                    pin_generation: receipt_source,
+                    lease_generation: receipt_lease,
+                    checkpoint: receipt_manifest.checkpoint.clone(),
+                    canonical_lease_offer: BoundedBytes(vec![1]),
+                };
+                let _receipt_ref = {
+                    let mut store =
+                        ExportReceiptStore::open(&receipt_base, spec.summary.job_id, limits)
+                            .unwrap();
+                    store
+                        .record(
+                            &cas,
+                            &reader,
+                            ExportReceiptCandidate {
+                                handoff: &handoff,
+                                manifest_ref: &receipt_manifest_ref,
+                                manifest_hash: receipt_manifest.manifest_hash(&limits).unwrap(),
+                                committed: &receipt_committed,
+                            },
+                        )
+                        .unwrap()
+                        .1
+                        .receipt_ref()
+                };
+
+                ExportAuthorityV1 {
+                    source_generation: 11,
+                    lease_generation: 17,
+                    manifest_hash: manifest.manifest_hash(&limits).unwrap(),
+                }
+            }
+            // The owner does not expose a public journal writer independent of live frame
+            // ingestion. Confine the exact native v6 fixture codec to test setup and decode
+            // it immediately through the owner's public read-only inspector.
+            fn write_exported_pin(
+                root: &Path,
+                request: &OutbeHeader,
+                job: &OcompJobRecordV1,
+                export: ExportAuthorityV1,
+            ) {
+                let finalized = job.finalized.as_ref().unwrap();
+                let candidate = CandidatePinV1 {
+                    block_number: request.inner.number,
+                    block_hash: request.hash_slow(),
+                    state_root: request.inner.state_root,
+                    intent_id: job.intent.intent_id(&poc_schema_limits()).unwrap(),
+                    wwd: job.intent.wwd,
+                    ce_sealed_root: job.intent.ce_sealed_root,
+                    protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                    input_lease_id: job.intent.input_lease_id().unwrap(),
+                };
+                let generation = 12_u64;
+                let record = PinRecordV1 {
+                    generation,
+                    state: PinStateV1::Exported {
+                        candidate,
+                        job_id: finalized.job_id,
+                        finality_recorded_height: finalized.finality_recorded_height,
+                        open_height: finalized.open_height,
+                        deadline_height: finalized.deadline_height,
+                        export,
+                    },
+                };
+                let mut bytes = b"OUTBPIN1".to_vec();
+                bytes.extend_from_slice(&6_u16.to_be_bytes());
+                bytes.extend_from_slice(&generation.to_be_bytes());
+                bytes.push(3);
+                bytes.extend_from_slice(&candidate.block_number.to_be_bytes());
+                bytes.extend_from_slice(candidate.block_hash.as_slice());
+                bytes.extend_from_slice(candidate.state_root.as_slice());
+                bytes.extend_from_slice(candidate.intent_id.as_slice());
+                bytes.extend_from_slice(&candidate.wwd.to_be_bytes());
+                bytes.extend_from_slice(candidate.ce_sealed_root.as_slice());
+                bytes.extend_from_slice(candidate.protocol_bundle_hash.as_slice());
+                bytes.extend_from_slice(candidate.input_lease_id.as_slice());
+                bytes.extend_from_slice(finalized.job_id.as_slice());
+                bytes.extend_from_slice(&finalized.finality_recorded_height.to_be_bytes());
+                bytes.extend_from_slice(&finalized.open_height.to_be_bytes());
+                bytes.extend_from_slice(&finalized.deadline_height.to_be_bytes());
+                bytes.extend_from_slice(&export.source_generation.to_be_bytes());
+                bytes.extend_from_slice(&export.lease_generation.to_be_bytes());
+                bytes.extend_from_slice(export.manifest_hash.as_slice());
+                bytes.extend_from_slice(keccak256(&bytes).as_slice());
+                let mut registry = b"OUTBPIN1".to_vec();
+                registry.extend_from_slice(&6_u16.to_be_bytes());
+                registry.extend_from_slice(&generation.to_be_bytes());
+                registry.extend_from_slice(candidate.block_hash.as_slice());
+                registry.extend_from_slice(&1_u16.to_be_bytes());
+                registry.extend_from_slice(candidate.block_hash.as_slice());
+                registry.extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_be_bytes());
+                registry.extend_from_slice(&bytes);
+                registry.extend_from_slice(keccak256(&registry).as_slice());
+                fs::create_dir_all(root).unwrap();
+                fs::write(root.join("pin.v1"), registry).unwrap();
+                let decoded = inspect_retention_journal(root).unwrap();
+                assert_eq!(decoded.records, vec![(candidate.block_hash, record)]);
+            }
+
+            #[test]
+            fn recorded_exported_requires_complete_native_export_even_when_entire_job_directory_disappears(
+            ) {
+                use reth_ethereum::provider::db::{
+                    database::Database, init_db, mdbx::DatabaseArguments, tables, transaction::DbTx,
+                };
+                for version in [1, 2] {
+                    for deleted in [
+                        None,
+                        Some("supervisor-v1/export-bindings"),
+                        Some("exporter-v1/receipts"),
+                        Some("exporter-v1/input-refs"),
+                    ] {
+                        super::super::super::with_canonical_frontiers(
+                            version,
+                            |layout| {
+                                write_source(layout);
+                                let db = init_db(
+                                    layout.chain_root.join("db"),
+                                    DatabaseArguments::test(),
+                                )
+                                .unwrap();
+                                let tx = db.tx().unwrap();
+                                let request = tx
+                                    .get::<tables::Headers<OutbeHeader>>(100)
+                                    .unwrap()
+                                    .unwrap();
+                                drop(tx);
+                                drop(db);
+                                let prepared = fixture(&request, Phase::VotingOpen, bind_source);
+                                let export = write_export(&layout.ocomp_root, &prepared);
+                                // Baseline is validated through the native read-only composition
+                                // before deleting any whole per-job public directory.
+                                crate::snapshot::validation::ocomp::verify_export_inputs(
+                                    &layout.ocomp_root,
+                                    &prepared.job,
+                                    Some(export),
+                                    CAS_LIMITS,
+                                )
+                                .unwrap();
+                                write_exported_pin(
+                                    &layout.consensus_root.join("ocomp_retention"),
+                                    &request,
+                                    &prepared.job,
+                                    export,
+                                );
+                                if let Some(prefix) = deleted {
+                                    let job_id = prepared.job.finalized.as_ref().unwrap().job_id;
+                                    fs::remove_dir_all(
+                                        layout.ocomp_root.join(prefix).join(hex::encode(job_id)),
+                                    )
+                                    .unwrap();
+                                }
+                            },
+                            |request| fixture(request, Phase::VotingOpen, bind_source).owner,
+                            |state, source, layout, scratch| {
+                                let result = verify_canonical_obligations(
+                                    state, source, layout, scratch, None, None,
+                                );
+                                if let Some(deleted) = deleted {
+                                    let error = result.err().expect("recorded exported obligation cannot disappear with its entire public directory");
+                                    assert!(
+                                        error.downcast_ref::<Incomplete>().is_some(),
+                                        "{deleted}: {error:#}"
+                                    );
+                                    assert!(format!("{error:#}").contains("export"), "must reach required export after complete source verification: {error:#}");
+                                } else {
+                                    let audit = result.unwrap();
+                                    assert_eq!(audit.bounds.active_intents, 1);
+                                    assert_eq!(audit.pins.len(), 1);
+                                    assert!(matches!(
+                                        audit.pins[0].record.state,
+                                        PinStateV1::Exported { .. }
+                                    ));
+                                    assert!(audit.pins[0].authority.export.is_some());
+                                    assert_eq!(audit.active.len(), 1);
+                                    assert_eq!(
+                                        audit.active[0].pin_stage,
+                                        CanonicalLocalPinStage::Exported
+                                    );
+                                    assert!(audit.active[0].source_verified);
+                                    assert!(audit.active[0].export_verified);
+                                    assert!(!audit.active[0].projection_before_request);
+                                    assert_eq!(
+                                        audit.source_leases, 1,
+                                        "pin and active authority share one source lease"
+                                    );
+                                    assert_eq!(
+                                        audit.complete_exports, 1,
+                                        "pin and active authority share one export"
+                                    );
+                                    assert_eq!(audit.input_chunks, 1);
+                                }
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        fn source_body() -> outbe_tribute::TributeData {
+            let owner = alloy_primitives::Address::repeat_byte(1);
+            outbe_tribute::TributeData {
+                tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(owner, DAY)
+                    .unwrap(),
+                owner,
+                worldwide_day: DAY,
+                issuance_amount_minor: U256::from(1000),
+                issuance_currency: 840,
+                nominal_amount_minor: U256::from(700),
+                reference_currency: 840,
+                tribute_price_minor: U256::from(2),
+                exclude_from_intex_issuance: false,
+            }
+        }
+
+        fn bind_source(intent: &mut JobIntentV1) {
+            use outbe_compressed_entities::{
+                body_commitment, encode_tribute_v1, partition_collection_key,
+                tribute_partition_root_from_leaves, PartitionRef, ACTIVE_COMMITMENT_SCHEME,
+                BODY_SCHEMA_V1,
+            };
+            let body = source_body();
+            let bytes = encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap();
+            let commitment = body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                BODY_SCHEMA_V1,
+                body.tribute_id,
+                &bytes,
+            )
+            .unwrap();
+            let root = tribute_partition_root_from_leaves(DAY, vec![(body.tribute_id, commitment)])
+                .unwrap();
+            let key = alloy_primitives::B256::from(
+                *partition_collection_key(PartitionRef::TributeWwd(DAY))
+                    .unwrap()
+                    .1
+                    .as_bytes(),
+            );
+            intent.sealed_tribute_collection_key = key;
+            intent.sealed_tribute_collection_root = root;
+            intent.authenticated_day_count = 1;
+            intent.authenticated_day_nominal = body.nominal_amount_minor;
+            let tribute = &mut intent.activation_preconditions.tribute;
+            tribute.collection_key = key;
+            tribute.sealed_collection_root = root;
+            tribute.exact_count = 1;
+            tribute.exact_nominal_total = body.nominal_amount_minor;
+            intent
+                .activation_preconditions
+                .contributors
+                .max_eligible_nominal_total = body.nominal_amount_minor;
+        }
+
+        fn write_source(layout: &crate::snapshot::config::RequestedLayout) {
+            use outbe_offchain_storage::{
+                RocksDbStorage, StorageReaderHandle, StorageWriterHandle,
+            };
+            let storage = std::sync::Arc::new(
+                RocksDbStorage::open(&layout.projection.as_ref().unwrap().root).unwrap(),
+            );
+            let reader: StorageReaderHandle = storage.clone();
+            let writer: StorageWriterHandle = storage;
+            outbe_tribute::TributeRepositoryWriter::new(reader, writer)
+                .put(&source_body())
+                .unwrap();
+        }
+
+        #[test]
+        fn source_complete_active_before_projection_request_passes_without_local_pin_or_export() {
+            use crate::snapshot::validation::ocomp::{
+                verify_canonical_obligations, CanonicalLocalPinStage,
+            };
+            use reth_ethereum::provider::db::{
+                database::Database,
+                init_db,
+                mdbx::DatabaseArguments,
+                models::StoredBlockBodyIndices,
+                tables,
+                transaction::{DbTx, DbTxMut},
+            };
+            for version in [1, 2] {
+                let request = std::cell::RefCell::new(None);
+                super::super::with_canonical_frontiers(
+                    version,
+                    |layout| {
+                        write_source(layout);
+                        let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test())
+                            .unwrap();
+                        let tx = db.tx_mut().unwrap();
+                        *request.borrow_mut() = Some(
+                            tx.get::<tables::Headers<OutbeHeader>>(101)
+                                .unwrap()
+                                .unwrap(),
+                        );
+                        tx.put::<tables::BlockBodyIndices>(
+                            101,
+                            StoredBlockBodyIndices {
+                                first_tx_num: 0,
+                                tx_count: 0,
+                            },
+                        )
+                        .unwrap();
+                        tx.commit().unwrap();
+                    },
+                    |_| {
+                        fixture(
+                            request.borrow().as_ref().unwrap(),
+                            Phase::AwaitingFinality,
+                            bind_source,
+                        )
+                        .owner
+                    },
+                    |state, source, layout, scratch| {
+                        let expected = fixture(
+                            request.borrow().as_ref().unwrap(),
+                            Phase::AwaitingFinality,
+                            bind_source,
+                        )
+                        .job;
+                        let audit = verify_canonical_obligations(
+                            state, source, layout, scratch, None, None,
+                        )
+                        .unwrap();
+                        assert_eq!(audit.projection.block_number, 100);
+                        assert_eq!(audit.closure.checkpoint.current.block_number, 100);
+                        assert_eq!(audit.bounds.active_intents, 1);
+                        assert_eq!(audit.active.len(), 1);
+                        let active = &audit.active[0];
+                        assert_eq!(
+                            active.intent_id,
+                            expected.intent.intent_id(&poc_schema_limits()).unwrap()
+                        );
+                        assert_eq!(active.job, expected);
+                        assert_eq!(active.job.intent_height, 101);
+                        assert_eq!(active.job.status, OcompJobStatus::AwaitingFinality);
+                        assert!(active.job.finalized.is_none());
+                        assert_eq!(active.pin_stage, CanonicalLocalPinStage::Absent);
+                        assert!(active.projection_before_request);
+                        assert!(active.source_verified);
+                        assert!(!active.export_verified);
+                        assert!(audit.pins.is_empty());
+                        assert_eq!(audit.source_leases, 1);
+                        assert_eq!(audit.complete_exports, 0);
+                        assert_eq!(audit.input_chunks, 0);
+                        assert_eq!(audit.nod.jobs, 0);
+                        assert_eq!(audit.payout_days, 0);
+                        assert!(!layout.consensus_root.join("ocomp_retention").exists());
+                        assert!(!layout.ocomp_root.join("supervisor-v1/jobs").exists());
+                    },
+                );
+            }
+        }
+
+        #[test]
+        fn active_report_preserves_identity_and_distinguishes_unverified_local_capabilities() {
+            use crate::snapshot::validation::{
+                ocomp::{CanonicalActiveAudit, CanonicalLocalPinStage},
+                report::{ActiveOcompObservation, CheckName, ValidationReport},
+            };
+            with_prepared_owner_storage(
+                1,
+                400,
+                |request| fixture(request, Phase::AwaitingFinality, |_| {}).owner,
+                |state, source| {
+                    let (intent_id, job) = state.live_ocomp_jobs().unwrap().pop().unwrap();
+                    let request_height = job.intent_height;
+                    let day = job.intent.wwd;
+                    assert!(job.finalized.is_none());
+                    let audit = CanonicalActiveAudit {
+                        intent_id,
+                        job,
+                        pin_stage: CanonicalLocalPinStage::Absent,
+                        projection_before_request: true,
+                        source_verified: false,
+                        export_verified: false,
+                    };
+                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                    report
+                        .active_ocomp
+                        .push(ActiveOcompObservation::from(&audit));
+                    let json = serde_json::to_value(report).unwrap();
+                    let observed = &json["active_ocomp"][0];
+                    assert_eq!(observed["intent_id"], hex::encode(intent_id));
+                    assert_eq!(observed["job_id"], serde_json::Value::Null);
+                    assert_eq!(observed["request_height"], request_height);
+                    assert_eq!(observed["worldwide_day"], day);
+                    assert_eq!(observed["canonical_status"], "AwaitingFinality");
+                    assert_eq!(observed["pin_stage"], "Absent");
+                    assert_eq!(observed["projection_before_request"], true);
+                    assert_eq!(observed["source_verified"], false);
+                    assert_eq!(observed["export_verified"], false);
+                    assert!(source.header(request_height).unwrap().is_some());
+                },
+            );
+        }
+
+        #[test]
+        fn full_canonical_composition_finds_active_obligation_without_any_local_pin_or_job() {
+            use crate::snapshot::validation::{
+                ocomp::verify_canonical_obligations,
+                report::{CheckName, ValidationReport},
+                Incomplete,
+            };
+            for version in [1, 2] {
+                for phase in [Phase::AwaitingFinality, Phase::VotingOpen] {
+                    super::super::with_canonical_frontiers(
+                        version,
+                        |_| {},
+                        |request| fixture(request, phase, |_| {}).owner,
+                        |state, source, layout, scratch| {
+                            assert!(!layout.consensus_root.join("ocomp_retention").exists());
+                            assert!(!layout.ocomp_root.join("supervisor-v1/jobs").exists());
+                            let mut report = ValidationReport::new([CheckName::Ocomp]);
+                            let error = verify_canonical_obligations(
+                                state,
+                                source,
+                                layout,
+                                scratch,
+                                None,
+                                Some(&mut report),
+                            )
+                            .err()
+                            .expect("missing body for independently found active job cannot pass");
+                            assert!(
+                                error.downcast_ref::<Incomplete>().is_some(),
+                                "{phase:?}: {error:#}"
+                            );
+                            assert!(
+                                format!("{error:#}").contains("Tribute"),
+                                "must reach active source requirement: {error:#}"
+                            );
+                            let (intent_id, job) = state.live_ocomp_jobs().unwrap().pop().unwrap();
+                            assert_eq!(report.active_ocomp.len(), 1);
+                            let observation = &report.active_ocomp[0];
+                            assert_eq!(observation.intent_id, hex::encode(intent_id));
+                            assert_eq!(
+                                observation.job_id,
+                                job.finalized.as_ref().map(|f| hex::encode(f.job_id))
+                            );
+                            assert_eq!(observation.request_height, job.intent_height);
+                            assert_eq!(observation.worldwide_day, job.intent.wwd);
+                            assert_eq!(observation.pin_stage, "Absent");
+                            assert!(!observation.source_verified);
+                            assert!(!observation.export_verified);
+                            assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
+                            assert_eq!(report.observed.c_current.as_ref().unwrap().number, 100);
+                            assert!(report
+                                .inventory_bounds
+                                .iter()
+                                .any(|b| b.name == "active_intents" && b.visited == 1));
+                            assert!(!report.success());
+                        },
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn canonical_active_budget_is_incomplete_before_missing_local_inputs() {
+            use crate::snapshot::validation::{ocomp::verify_canonical_obligations, Incomplete};
+            super::super::with_canonical_frontiers(
+                1,
+                |_| {},
+                |request| fixture(request, Phase::VotingOpen, |_| {}).owner,
+                |state, source, layout, scratch| {
+                    let error =
+                        verify_canonical_obligations(state, source, layout, scratch, Some(0), None)
+                            .err()
+                            .expect("active inventory cannot truncate to zero success");
+                    assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                    assert!(
+                        error.to_string().contains("active intent scan requires 1"),
+                        "{error:#}"
+                    );
+                },
+            );
+        }
+
         use super::super::{queued_owner, with_prepared_owner_storage, CanonicalInventory};
         use super::{canonical_job, DAY};
         use alloy_consensus::Sealable;
@@ -4442,9 +5406,9 @@ mod pin_authority {
             job_id,
             finalized_request_block_hash: request.hash_slow(),
             finalized_request_state_root: request.inner.state_root,
-            finality_recorded_height: 100,
-            open_height: 104,
-            deadline_height: 200,
+            finality_recorded_height: request.inner.number,
+            open_height: request.inner.number + 4,
+            deadline_height: request.inner.number + 100,
             quorum: None,
         };
         let terminal = if completed {
@@ -4452,7 +5416,7 @@ mod pin_authority {
                 member_count: 4,
                 quorum_threshold: 3,
                 result_digest: hash,
-                quorum_height: 105,
+                quorum_height: request.inner.number + 5,
                 signer_bitmap: vec![7],
                 evidence_hash: hash,
             };
@@ -4479,7 +5443,7 @@ mod pin_authority {
                 effect_commitment: hash_framed(HashDomain::Effects, &hash.as_slice().repeat(4))
                     .unwrap(),
                 event_summary_hash: hash,
-                activated_at_height: 105,
+                activated_at_height: request.inner.number + 5,
                 activated_at_time: 1_005,
             };
             let binding = OcompCompletedBindingV1 {
@@ -4496,7 +5460,7 @@ mod pin_authority {
             finalized.quorum = Some(quorum);
             Some(LysisTerminalV1 {
                 outcome: OcompTerminalOutcome::Completed,
-                terminal_height: 105,
+                terminal_height: request.inner.number + 5,
                 terminal_time: 1_005,
                 completed_binding: Some(binding),
             })
@@ -4505,7 +5469,7 @@ mod pin_authority {
         };
         let record = OcompJobRecordV1 {
             intent,
-            intent_height: 100,
+            intent_height: request.inner.number,
             status: if completed {
                 OcompJobStatus::Completed
             } else {
@@ -6038,5 +7002,192 @@ mod export_inventory {
         f.job = foreign;
         let error = f.check(None).unwrap_err();
         assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+    }
+}
+
+// The existing owner fixture supplies current-E root verification and
+// whole-source fingerprints.
+fn with_canonical_frontiers(
+    version: u32,
+    setup_public: impl FnOnce(&crate::snapshot::config::RequestedLayout),
+    prepare: impl FnOnce(&OutbeHeader) -> HashMapStorageProvider,
+    check: impl FnOnce(
+        &CanonicalState<'_>,
+        &RethReadOnlyView,
+        &crate::snapshot::config::RequestedLayout,
+        &std::path::Path,
+    ),
+) {
+    use crate::snapshot::config::{ProjectionLocation, RequestedLayout};
+    use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
+    use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
+    use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
+    use reth_ethereum::provider::db::models::StoredBlockBodyIndices;
+    use std::cell::RefCell;
+    let requested = RefCell::new(None);
+    with_prepared_owner_storage_setup(
+        version,
+        400,
+        |native| {
+            let layout = RequestedLayout {
+                chain: native.chain.clone(),
+                chain_root: native.chain_root.clone(),
+                consensus_root: native.consensus_root.clone(),
+                ocomp_root: native.ocomp_root.clone(),
+                static_files_root: native.static_files_root.clone(),
+                execution_rocksdb_root: native.execution_rocksdb_root.clone(),
+                projection: Some(ProjectionLocation {
+                    root: native.offchain_root.clone(),
+                    start_block: native.projection_start_block,
+                }),
+                protected: native.protected.clone(),
+            };
+            let db = init_db(native.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+            let tx = db.tx_mut().unwrap();
+            let header = tx
+                .get::<tables::Headers<OutbeHeader>>(100)
+                .unwrap()
+                .unwrap();
+            // Empty native frame: canonical active authority is read at E;
+            // this tests availability, not reconstructed execution history.
+            tx.put::<tables::BlockBodyIndices>(
+                100,
+                StoredBlockBodyIndices {
+                    first_tx_num: 0,
+                    tx_count: 0,
+                },
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            let point = ProjectionCheckpoint {
+                block_number: 100,
+                block_hash: header.hash_slow(),
+            };
+            let location = layout.projection.as_ref().unwrap();
+            let projection = RocksDbStorage::open(&location.root).unwrap();
+            let saved = ProjectionState {
+                chain_id: layout.chain.chain().id(),
+                genesis_hash: layout.chain.genesis_hash(),
+                storage_schema_version: STORAGE_SCHEMA_VERSION,
+                start_block: location.start_block,
+                checkpoint: Some(point),
+            };
+            projection
+                .put(
+                    Namespace::new("projection_state").unwrap(),
+                    &Key::new(b"offchain_data".to_vec()).unwrap(),
+                    &Value::new(postcard::to_stdvec(&saved).unwrap()).unwrap(),
+                )
+                .unwrap();
+            drop(projection);
+            let baseline = ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: layout.chain.genesis_hash(),
+            };
+            let root = layout
+                .ocomp_root
+                .join("exporter-v1/discovery/closure-checkpoint-v1");
+            let closure = ContiguousCheckpointStoreV1::open(&root, baseline).unwrap();
+            closure.compare_and_advance_to(baseline, point).unwrap();
+            drop(closure);
+            setup_public(&layout);
+            *requested.borrow_mut() = Some(layout);
+        },
+        prepare,
+        |state, source| {
+            let requested = requested.borrow();
+            let layout = requested.as_ref().unwrap();
+            let scratch = tempfile::tempdir().unwrap();
+            check(state, source, layout, scratch.path());
+            assert_eq!(
+                std::fs::read_dir(scratch.path()).unwrap().count(),
+                0,
+                "canonical composition must release its scratch on success and error"
+            );
+        },
+    );
+}
+
+mod canonical_composition {
+    use super::*;
+    use crate::snapshot::validation::ocomp::verify_canonical_obligations;
+
+    #[test]
+    fn empty_canonical_composition_needs_no_job_cas_or_payout_directories() {
+        for version in [1, 2] {
+            with_canonical_frontiers(
+                version,
+                |_| {},
+                |_| queued_owner(0),
+                |state, source, layout, scratch| {
+                    for maximum in [None, Some(0)] {
+                        let audit = verify_canonical_obligations(
+                            state, source, layout, scratch, maximum, None,
+                        )
+                        .unwrap();
+                        assert_eq!(audit.projection.block_number, 100);
+                        assert_eq!(audit.closure.checkpoint.current.block_number, 100);
+                        assert_eq!(audit.closure.replay.blocks, 0);
+                        assert_eq!(audit.bounds.active_intents, 0);
+                        assert_eq!(audit.bounds.nod_entries, 0);
+                        assert_eq!(audit.bounds.unpaid_days, 0);
+                        assert!(audit.active.is_empty());
+                        assert!(audit.pins.is_empty());
+                        assert_eq!(audit.source_leases, 0);
+                        assert_eq!(audit.complete_exports, 0);
+                        assert_eq!(audit.input_chunks, 0);
+                        assert_eq!(audit.nod.jobs, 0);
+                        assert_eq!(audit.payout_days, 0);
+                    }
+                    for absent in [
+                        "cas-v1",
+                        "supervisor-v1/jobs",
+                        "node-v1/local-results",
+                        "supervisor-v1/materialization-references",
+                    ] {
+                        assert!(!layout.ocomp_root.join(absent).exists());
+                    }
+                    assert!(!layout.consensus_root.join("ocomp_retention").exists());
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_inventory_failure_precedes_missing_projection_and_local_population() {
+        with_canonical_frontiers(
+            2,
+            |layout| {
+                std::fs::remove_dir_all(&layout.projection.as_ref().unwrap().root).unwrap();
+            },
+            |_| {
+                let mut owner = queued_owner(0);
+                // Exact corruption already exercised by active_inventory.
+                StorageHandle::enter(&mut owner, |storage| {
+                    outbe_primitives::storage::types::StorageBytes::new(
+                        U256::from(20),
+                        outbe_primitives::addresses::METADOSIS_ADDRESS,
+                        storage,
+                    )
+                    .write(&[0; 8])
+                    .unwrap();
+                });
+                owner
+            },
+            |state, source, layout, scratch| {
+                let error =
+                    verify_canonical_obligations(state, source, layout, scratch, None, None)
+                        .err()
+                        .expect("invalid canonical inventory cannot be skipped");
+                assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("OCOMP live index magic/version mismatch"),
+                    "{error:#}"
+                );
+            },
+        );
     }
 }

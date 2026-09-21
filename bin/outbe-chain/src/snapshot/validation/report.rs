@@ -99,6 +99,21 @@ pub(crate) struct ProvenanceObservation {
     pub(crate) expected_signer_match: Option<bool>,
 }
 
+/// One independently discovered active intent and the local capabilities actually
+/// established for it. A missing finalized JobId or local pin is an observation.
+#[derive(Debug, Serialize)]
+pub(crate) struct ActiveOcompObservation {
+    pub(crate) intent_id: String,
+    pub(crate) job_id: Option<String>,
+    pub(crate) request_height: u64,
+    pub(crate) worldwide_day: u32,
+    pub(crate) canonical_status: String,
+    pub(crate) pin_stage: String,
+    pub(crate) projection_before_request: Option<bool>,
+    pub(crate) source_verified: bool,
+    pub(crate) export_verified: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidationReport {
     checks: BTreeMap<CheckName, CheckReport>,
@@ -107,6 +122,7 @@ pub(crate) struct ValidationReport {
     pub(crate) required_missing: Vec<RequiredHeight>,
     pub(crate) inventory_bounds: Vec<InventoryBounds>,
     pub(crate) provenance: ProvenanceObservation,
+    pub(crate) active_ocomp: Vec<ActiveOcompObservation>,
 }
 
 impl ValidationReport {
@@ -138,6 +154,7 @@ impl ValidationReport {
             required_missing: Vec::new(),
             inventory_bounds: Vec::new(),
             provenance: ProvenanceObservation::default(),
+            active_ocomp: Vec::new(),
         }
     }
 
