@@ -4,6 +4,13 @@ Frozen baseline: `e5d545cedc872c0e579fd3535e7638d883d5b1f5` (`main`).
 Frozen implementation HEAD: `66ed773393dd175f9fcf8f363f5f4aaeb129004d`.
 Review date: 2026-09-21. Tracking: `outbe-chain-2nvp`.
 
+PR #447 subsequently required Conventional Commit messages. The
+[reword mapping](commit-reword-map.tsv) maps every changed commit ID below to its
+replacement, including descendants whose IDs changed only through their parents.
+Every mapped commit retains the exact original Git tree, author and timestamps.
+The audit and execution evidence below refer to the original, frozen IDs; rewording
+does not imply a new test run. Tracking: `outbe-chain-44sm`.
+
 This report audits all **62 implementation-branch commits**, in their exact Git
 order. Its later documentation commit is outside the frozen implementation range.
 The user requested necessity of every commit, unrelated work, and missing required
