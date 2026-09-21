@@ -17,6 +17,7 @@ import {
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
+import { type DecodedDataUri, parseDataUri } from "../format.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
@@ -219,11 +220,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     metaCache.set(n.name, meta);
     return meta;
   }
-  /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
+  /** Per-token NFT metadata documents for a series; undefined when the chain has no NFT deployed. */
   async function seriesMetadata(
     n: Network,
     series: Hex,
-  ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
+  ): Promise<{ collection: DecodedDataUri; issued: DecodedDataUri; settled: DecodedDataUri } | undefined> {
     try {
       const nft = addr(n, "nft");
       const [issuedId, settledId] = (await n.client.readContract({
@@ -237,7 +238,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [issuedId] }),
         n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [settledId] }),
       ])) as [string, string, string];
-      return { collection, issued, settled };
+      return {
+        collection: parseDataUri(collection),
+        issued: parseDataUri(issued),
+        settled: parseDataUri(settled),
+      };
     } catch {
       return undefined;
     }

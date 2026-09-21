@@ -39,6 +39,8 @@
 //! `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget; a currency whose COEN pair
 //! is unregistered or has no VWAP for that day is settled for the day.
 
+use std::collections::BTreeSet;
+
 use alloy_primitives::U256;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap};
@@ -152,6 +154,8 @@ pub fn run_qualify_slice(
     let start = currency_position(&currencies, nod.qualify_currency_cursor.read()?);
     let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
     let mut inspected_total = 0_u32;
+    let mut qualified_days = BTreeSet::new();
+    let mut unfinished = None;
 
     // One pass down the list, as in the Called sweep, so every sweep ends.
     for &iso_code in currencies.iter().skip(start) {
@@ -177,20 +181,26 @@ pub fn run_qualify_slice(
                         true
                     }
                     Ok(_) => {
-                        let (inspected, finished) = qualify_with_rate(
+                        let (inspected, finished, days) = qualify_with_rate(
                             ctx, scope, parent, iso_code, vwap, pinned_day, budget,
                         )?;
                         budget = budget.saturating_sub(inspected);
                         inspected_total = inspected_total.saturating_add(inspected);
+                        qualified_days.extend(days);
                         finished
                     }
                 },
             }
         };
         if !finished {
-            nod.qualify_currency_cursor.write(u32::from(iso_code))?;
-            return Ok(inspected_total);
+            unfinished = Some(iso_code);
+            break;
         }
+    }
+    nod.emit_days_metadata_update(&qualified_days)?;
+    if let Some(iso_code) = unfinished {
+        nod.qualify_currency_cursor.write(u32::from(iso_code))?;
+        return Ok(inspected_total);
     }
 
     // The next day starts on the next block, so no slice mixes two days' prices.
@@ -249,7 +259,8 @@ pub fn qualify_buckets_with_rate(
     day: u32,
     budget: u32,
 ) -> Result<u32> {
-    let (inspected, _) = qualify_with_rate(ctx, scope, parent, iso_code, rate, day, budget)?;
+    let (inspected, _, days) = qualify_with_rate(ctx, scope, parent, iso_code, rate, day, budget)?;
+    NodContract::new(ctx.storage.clone()).emit_days_metadata_update(&days)?;
     Ok(inspected)
 }
 
@@ -261,8 +272,9 @@ fn held_in_full(issued_at: u64, day: u32) -> bool {
 }
 
 /// Drains the floor-bins crossed by one currency's `rate` on `day`, inspecting
-/// at most `budget` buckets. Returns how many it inspected and whether the
-/// eligible range was walked to the end. Buckets whose sealed `issued_at` has
+/// at most `budget` buckets. Returns how many it inspected, whether the
+/// eligible range was walked to the end, and the Worldwide Days of the buckets
+/// it qualified. Buckets whose sealed `issued_at` has
 /// not yet reached `first_full_day` of `day` stay in the trie for a later sweep.
 fn qualify_with_rate(
     ctx: &BlockRuntimeContext,
@@ -272,18 +284,19 @@ fn qualify_with_rate(
     rate: U256,
     day: u32,
     budget: u32,
-) -> Result<(u32, bool)> {
+) -> Result<(u32, bool, BTreeSet<u32>)> {
     if budget == 0 {
-        return Ok((0, false));
+        return Ok((0, false, BTreeSet::new()));
     }
     let r_bin = NodContract::price_to_bin(rate)?;
     let mut nod = NodContract::new(ctx.storage.clone());
     let mut bin_cursor = nod.qualify_scan_cursor.read(&iso_code)?;
     let mut inspected = 0_u32;
+    let mut qualified_days = BTreeSet::new();
     loop {
         if inspected == budget {
             nod.qualify_scan_cursor.write(&iso_code, bin_cursor)?;
-            return Ok((inspected, false));
+            return Ok((inspected, false, qualified_days));
         }
         let next = match tree_math::find_first_left_inclusive(
             &CurrencyBins(&nod, iso_code),
@@ -292,7 +305,7 @@ fn qualify_with_rate(
             Some(bin) if bin <= r_bin => bin,
             _ => {
                 nod.qualify_scan_cursor.write(&iso_code, 0)?;
-                return Ok((inspected, true));
+                return Ok((inspected, true, qualified_days));
             }
         };
         let scoped = NodContract::scoped(iso_code, next);
@@ -347,6 +360,7 @@ fn qualify_with_rate(
                 continue;
             }
             nod.qualify_bucket_loaded(scope, loaded)?;
+            qualified_days.insert(worldwide_day.value());
             let last = count.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod bin {iso_code}:{next} count underflow"
@@ -385,14 +399,14 @@ fn qualify_with_rate(
             tree_math::remove(&CurrencyBins(&nod, iso_code), next)?;
         } else if index < count {
             nod.qualify_scan_cursor.write(&iso_code, next)?;
-            return Ok((inspected, false));
+            return Ok((inspected, false, qualified_days));
         }
 
         bin_cursor = match next.checked_add(1) {
             Some(next) if next <= MAX_BIN_ID => next,
             _ => {
                 nod.qualify_scan_cursor.write(&iso_code, 0)?;
-                return Ok((inspected, true));
+                return Ok((inspected, true, qualified_days));
             }
         };
     }

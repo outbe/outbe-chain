@@ -1,5 +1,14 @@
 //! Module-local protocol constants for credis positions.
 
+pub const TOKEN_NAME: &str = "Credis";
+pub const TOKEN_SYMBOL: &str = "CREDIS";
+pub const TOKEN_DESCRIPTION: &str = concat!(
+    "Credis is a position on the Outbe network, owned by a smart account and backed by pledged ",
+    "Gratis. Its owner repays it directly in the original asset, interest first, and each repayment ",
+    "returns pledged Gratis in proportion to the principal it covers. A called Credis must be ",
+    "settled by its settlement deadline, otherwise it is forfeited."
+);
+
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 

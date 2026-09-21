@@ -98,6 +98,7 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
         [
             INod::NodBodyStored::SIGNATURE_HASH,
             INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::Transfer::SIGNATURE_HASH,
         ]
     );
 }
