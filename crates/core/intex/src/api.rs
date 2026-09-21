@@ -2,7 +2,7 @@
 //!
 //! This is the only surface IntexFactory uses to read and write the registry.
 //! The lifecycle gates mirror the Origin `IntexNFT1155` state machine
-//! (`markQualified` / `markCalled`). There is no precompile dispatch for writes
+//! (`markCalled`). There is no precompile dispatch for writes
 //! and access is Rust-to-Rust only, so no trusted-caller checks are needed.
 //!
 //! The legacy registry remains a thin ledger whose record validation is the
@@ -70,21 +70,6 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         worldwide_day: params.worldwide_day,
     };
     registry.create_series_record(&record)
-}
-
-/// `Issued -> Qualified`. Mirrors `markQualified`.
-pub fn mark_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    let mut record = registry.load_series(series_id)?;
-    if record.lifecycle_state()? != IntexState::Issued {
-        return Err(IntexError::InvalidState {
-            expected: IntexState::Issued as u8,
-            actual: record.state,
-        }
-        .into());
-    }
-    record.state = IntexState::Qualified as u8;
-    registry.update_series_record(&record)
 }
 
 /// `Issued | Qualified -> Called`. Mirrors `markCalled`. `called_at` is the

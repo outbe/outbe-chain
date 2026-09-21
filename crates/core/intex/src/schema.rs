@@ -11,12 +11,13 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Qualified -> Called -> Expired`, where
-/// `Expired` means the call window closed, not that anything burned.
+/// Series lifecycle state. `Issued -> Called -> Expired`, where `Expired` means
+/// the call window closed, not that anything burned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
+    /// Never written: qualification is derived from daily VWAPs. Kept so records that carry it decode.
     Qualified = 1,
     Called = 2,
     Expired = 3,
