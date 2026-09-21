@@ -665,6 +665,88 @@ pub(crate) struct FrameAvailability {
     pub transactions: u64,
 }
 
+#[derive(Debug)]
+pub(crate) struct ClosureAudit {
+    pub checkpoint: outbe_ocomp::discovery_spool::ClosureCheckpointInspectionV1,
+    pub replay: FrameAvailability,
+}
+
+/// Observe the native closure positions without opening its writable store.
+/// Historical previous may be sparse; only the saved identities are required.
+pub(crate) fn verify_closure(
+    view: &super::super::native::RethReadOnlyView,
+    root: &Path,
+    projection: Option<outbe_primitives::projection::ProjectionCheckpoint>,
+    maximum_transactions: Option<u64>,
+) -> eyre::Result<ClosureAudit> {
+    use alloy_consensus::Sealable;
+    use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
+    use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
+    use reth_ethereum::provider::db::tables;
+    use reth_provider::{BlockHashReader, HeaderProvider};
+
+    let baseline = ProjectionCheckpoint {
+        block_number: 0,
+        block_hash: view.chain.genesis_hash(),
+    };
+    let checkpoint = inspect_closure_checkpoint(root, baseline).map_err(|error| {
+        if missing_native_input(&error) {
+            eyre::Report::new(error).wrap_err(Incomplete(format!(
+                "missing native closure checkpoint at {}",
+                root.display()
+            )))
+        } else {
+            error.into()
+        }
+    })?;
+    let tx = view.read_transaction()?;
+    for (name, point) in [
+        ("baseline", checkpoint.baseline),
+        ("previous", checkpoint.previous),
+        ("current", checkpoint.current),
+    ] {
+        let number = point.block_number;
+        let header = match tx.get::<tables::Headers<OutbeHeader>>(number)? {
+            Some(header) => Some(header),
+            None => view.static_files.header_by_number(number)?,
+        }
+        .ok_or_else(|| Incomplete(format!("missing closure {name} header at {number}")))?;
+        let hash = match tx.get::<tables::CanonicalHeaders>(number)? {
+            Some(hash) => Some(hash),
+            None => view.static_files.block_hash(number)?,
+        }
+        .ok_or_else(|| Incomplete(format!("missing closure {name} canonical hash at {number}")))?;
+        ensure!(
+            header.inner.number == number && header.hash_slow() == hash && point.block_hash == hash,
+            "closure {name} differs from canonical header at {number}"
+        );
+    }
+    match projection {
+        Some(projected) => ensure!(
+            projected.block_number >= checkpoint.current.block_number
+                && (projected.block_number != checkpoint.current.block_number
+                    || projected.block_hash == checkpoint.current.block_hash),
+            "closure checkpoint is ahead of or conflicts with durable projection"
+        ),
+        None => ensure!(
+            checkpoint.current.block_number == 0,
+            "nonzero closure checkpoint exists without durable projection"
+        ),
+    }
+    let replay = if checkpoint.current.block_number < view.progress.finalized.number {
+        // The strict comparison proves addition cannot overflow, even at MAX.
+        verify_retained_frames(
+            view,
+            checkpoint.current.block_number + 1,
+            view.progress.finalized.clone(),
+            maximum_transactions,
+        )?
+    } else {
+        FrameAvailability::default()
+    };
+    Ok(ClosureAudit { checkpoint, replay })
+}
+
 /// Check the retained inputs used by ordinary OCOMP replay, one transaction and
 /// receipt at a time. This is availability/identity validation, not EVM replay.
 pub(crate) fn verify_retained_frames(
