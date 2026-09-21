@@ -3,7 +3,6 @@ pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
-import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
 import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
@@ -398,9 +397,11 @@ library TargetInbound {
             uint32 worldwideDay,
             uint16 chunkIndex,
             uint16 totalChunks,
-            address[] memory bidders,
-            uint128[] memory refundedAmounts,
-            uint128[] memory paidAmounts
+            uint64 clearingRate,
+            uint128 basis,
+            address[] memory winners,
+            uint16 partialIndex,
+            uint16 partialWon
         ) = BridgeMsgCodec.decodeRefundInstructions(message);
 
         bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
@@ -421,15 +422,6 @@ library TargetInbound {
             return;
         }
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions =
-            new IEscrowAdapter.FinalizationInstruction[](bidders.length);
-
-        for (uint256 i = 0; i < bidders.length; i++) {
-            instructions[i] = IEscrowAdapter.FinalizationInstruction({
-                bidder: bidders[i], refundedAmount: refundedAmounts[i], paidAmount: paidAmounts[i]
-            });
-        }
-
         // Counted before settling: the escrow refuses instructions once the day is closed.
         $.refundChunksApplied[worldwideDay] |= bit;
         uint16 seen = progress.chunksSeen + 1;
@@ -437,7 +429,10 @@ library TargetInbound {
         // accrued in this contract with nothing left to release them.
         bool completesDay = seen >= totalChunks;
 
-        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, receiveId, instructions, completesDay);
+        uint128 totalPaid = $.escrowAdapter
+            .finalizeAuction(
+                worldwideDay, receiveId, winners, partialIndex, partialWon, clearingRate, basis, completesDay
+            );
         uint128 accrued = progress.proceedsAccrued + totalPaid;
 
         // One transfer per day: the origin counts a chain paid on the first delivery.
@@ -448,7 +443,7 @@ library TargetInbound {
             _routeOrParkProceeds($, worldwideDay, proceeds);
         }
 
-        emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, bidders.length);
+        emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, winners.length);
     }
 
     /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that

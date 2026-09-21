@@ -26,6 +26,8 @@
 //! bucket's sealed `issued_at`, so delayed materialization cannot inherit
 //! pre-issuance days and a partial issuance UTC day does not count.
 
+use std::collections::BTreeSet;
+
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
@@ -185,7 +187,16 @@ pub fn run_call_slice(
     let mut visits: u32 = 0;
     let mut mutated: u32 = 0;
     if nod.call_currency_cursor.read()? != CALL_ARM_DONE {
-        let (called, finished) = call_arm(ctx, &mut nod, &oracle, pinned_day, &mut visits)?;
+        let mut called_days = BTreeSet::new();
+        let (called, finished) = call_arm(
+            ctx,
+            &mut nod,
+            &oracle,
+            pinned_day,
+            &mut visits,
+            &mut called_days,
+        )?;
+        nod.emit_days_metadata_update(&called_days)?;
         mutated = mutated.saturating_add(called);
         if !finished {
             return Ok(mutated);
@@ -208,6 +219,7 @@ fn call_arm(
     oracle: &OracleContract<'_>,
     pinned_day: u32,
     visits: &mut u32,
+    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let currencies = get_all_reference_currencies(ctx)?;
     let start = currency_position(&currencies, nod.call_currency_cursor.read()?);
@@ -243,7 +255,8 @@ fn call_arm(
                 continue;
             }
         };
-        let (calls, finished) = call_currency(ctx, nod, iso_code, window, ceiling, visits)?;
+        let (calls, finished) =
+            call_currency(ctx, nod, iso_code, window, ceiling, visits, called_days)?;
         called = called.saturating_add(calls);
         if !finished {
             nod.call_currency_cursor.write(u32::from(iso_code))?;
@@ -256,7 +269,7 @@ fn call_arm(
 /// Walks one currency's bins from the lowest up to `ceiling`, each from its top entry
 /// down: a called bucket swap-pops the bin's tail into its place, and the tail is
 /// already behind the walk. Returns the buckets called and whether the eligible range
-/// was walked to the end.
+/// was walked to the end; the Worldwide Days of the called buckets go to `called_days`.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
@@ -264,6 +277,7 @@ pub(crate) fn call_currency(
     window: &[(u32, Option<U256>)],
     ceiling: u32,
     visits: &mut u32,
+    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let now = ctx.block.timestamp;
     let (mut from_bin, mut remaining) = unpack_cursor(nod.call_bin_cursor.read(&iso_code)?);
@@ -298,6 +312,7 @@ pub(crate) fn call_currency(
                 .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
             if try_call(ctx, nod, window, bucket_key, now)? {
                 called = called.saturating_add(1);
+                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
             }
         }
         from_bin = match bin_id.checked_add(1) {

@@ -1,6 +1,10 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::erc::{
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
+};
 use outbe_primitives::error::Result;
 
 use crate::errors::GemError;
@@ -10,6 +14,14 @@ use crate::schema::{GemContract, GemData};
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
+const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
+    ERC165_INTERFACE_ID,
+    ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
+    ERC721_ENUMERABLE_INTERFACE_ID,
+    ERC4906_INTERFACE_ID,
+];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -75,6 +87,9 @@ pub fn dispatch(
         let gem = GemContract::new(storage.clone());
         use IGem::IGemCalls::*;
         match call {
+            supportsInterface(c) => {
+                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            }
             name(_) => metadata::<IGem::nameCall>(|| Ok(GemContract::name().to_string())),
             symbol(_) => metadata::<IGem::symbolCall>(|| Ok(GemContract::symbol().to_string())),
             totalSupply(_) => {
@@ -83,6 +98,10 @@ pub fn dispatch(
             balanceOf(c) => view(c, |c| gem.balance_of(c.owner).map(U256::from)),
             ownerOf(c) => view(c, |c| gem.owner_of(c.gemId)),
             tokenURI(c) => view(c, |c| gem.token_uri(c.gemId)),
+            tokenByIndex(c) => view(c, |c| {
+                let idx = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
+                gem.token_by_index(idx)
+            }),
             tokenOfOwnerByIndex(c) => view(c, |c| {
                 let idx = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
                 gem.token_of_owner_by_index(c.owner, idx)
@@ -96,9 +115,11 @@ pub fn dispatch(
                 crate::api::is_qualified(&storage, &item)
             }),
 
-            transferFrom(_) | safeTransferFrom(_) | approve(_) | setApprovalForAll(_) => {
-                Err(GemError::NonTransferable.into())
-            }
+            transferFrom(_)
+            | safeTransferFrom_0(_)
+            | safeTransferFrom_1(_)
+            | approve(_)
+            | setApprovalForAll(_) => Err(GemError::NonTransferable.into()),
 
             getApproved(_) => view(IGem::getApprovedCall { gemId: U256::ZERO }, |_| {
                 Ok(Address::ZERO)

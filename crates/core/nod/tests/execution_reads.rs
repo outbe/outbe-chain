@@ -95,6 +95,7 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
         [
             INod::NodBodyStored::SIGNATURE_HASH,
             INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::Transfer::SIGNATURE_HASH,
         ]
     );
 }
@@ -146,7 +147,7 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
         assert!(api::is_qualified(&storage, &bucket()).unwrap());
         assert!(!bucket().is_qualified, "nothing is stored");
     });
-    // Only issuance wrote bodies: qualifying rewrites none.
+    // Only issuance logged: qualifying writes nothing.
     let signatures: Vec<_> = provider
         .get_events(NOD_ADDRESS)
         .iter()
@@ -157,6 +158,7 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
         [
             INod::NodBodyStored::SIGNATURE_HASH,
             INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::Transfer::SIGNATURE_HASH,
         ]
     );
 }

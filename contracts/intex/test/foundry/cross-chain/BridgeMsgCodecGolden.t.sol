@@ -201,37 +201,35 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_RefundInstructions_AllFields() public view {
-        address[] memory bidders = new address[](2);
-        bidders[0] = address(0xA11CE);
-        bidders[1] = address(0xB0B);
-        uint128[] memory refunded = new uint128[](2);
-        refunded[0] = 0x1111111111111111;
-        refunded[1] = 0x2222222222222222;
-        uint128[] memory paid = new uint128[](2);
-        paid[0] = 0x3333333333333333;
-        paid[1] = 0x4444444444444444;
+        address[] memory winners = new address[](2);
+        winners[0] = address(0xA11CE);
+        winners[1] = address(0xB0B);
 
         (
             uint32 worldwideDay,
             uint16 chunkIndex,
             uint16 totalChunks,
-            address[] memory dBidders,
-            uint128[] memory dRefunded,
-            uint128[] memory dPaid
+            uint64 clearingRate,
+            uint128 basis,
+            address[] memory dWinners,
+            uint16 partialIndex,
+            uint16 partialWon
         ) = this.exposedDecodeRefundInstructions(
-            BridgeMsgCodec.encodeRefundInstructions(0x77665544, 0, 1, bidders, refunded, paid)
+            BridgeMsgCodec.encodeRefundInstructions(
+                0x77665544, 2, 3, 0x0102030405060708, 0x1112131415161718191A1B1C1D1E1F20, winners, 1, 0x2345
+            )
         );
 
-        assertEq(chunkIndex, 0, "chunkIndex");
-        assertEq(totalChunks, 1, "totalChunks");
-
         assertEq(worldwideDay, 0x77665544, "worldwideDay");
-        assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
-        assertEq(dBidders[1], address(0xB0B), "bidders[1]");
-        assertEq(dRefunded[0], 0x1111111111111111, "refunded[0]");
-        assertEq(dRefunded[1], 0x2222222222222222, "refunded[1]");
-        assertEq(dPaid[0], 0x3333333333333333, "paid[0]");
-        assertEq(dPaid[1], 0x4444444444444444, "paid[1]");
+        assertEq(chunkIndex, 2, "chunkIndex");
+        assertEq(totalChunks, 3, "totalChunks");
+        assertEq(clearingRate, 0x0102030405060708, "clearingRate");
+        assertEq(basis, 0x1112131415161718191A1B1C1D1E1F20, "basis");
+        assertEq(dWinners.length, 2, "winners.length");
+        assertEq(dWinners[0], address(0xA11CE), "winners[0]");
+        assertEq(dWinners[1], address(0xB0B), "winners[1]");
+        assertEq(partialIndex, 1, "partialIndex");
+        assertEq(partialWon, 0x2345, "partialWon");
     }
 
     function test_RoundTrip_IssuanceInstructions_AllFields() public view {
@@ -324,7 +322,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, uint64, uint128, address[] memory, uint16, uint16)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }

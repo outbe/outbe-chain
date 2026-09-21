@@ -69,11 +69,17 @@ library IntexGas {
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
 
-    /// @dev 3.68M for 64 bidders against the canonical Compact over a mainnet fork, 5.9k per bidder over the
-    ///      `MockTheCompact` the suite runs on - do not recalibrate from the stand. The chunk closing a day
-    ///      also routes the paid wCOEN home, which lands on the base.
-    uint256 internal constant REFUND_BASE = 560_000;
-    uint256 internal constant REFUND_PER_ITEM = 78_500;
+    /// @dev A refund chunk costs three separable things, measured against the canonical Compact with the
+    ///      proceeds leg wired to our own token bridge and ERC-7786 hub: any chunk 159k, a chunk that carries
+    ///      winners 83k more (the day's clearing snapshot, one Compact withdrawal, one transfer to the router)
+    ///      plus 7.1k a winner, and the chunk that routes the day's proceeds 82k more. The mailbox's own
+    ///      dispatch is outside that reading (it needs a fork): `ClearingRelayMailboxGas.t.sol` prices a send
+    ///      at ~157k against the canonical mailbox and production runs one hub hop more, so the routing part
+    ///      carries 170k for it. Every part then takes a 1.3x margin.
+    uint256 internal constant REFUND_BASE = 207_000;
+    uint256 internal constant REFUND_SETTLE_BASE = 110_000;
+    uint256 internal constant REFUND_PER_ITEM = 9_250;
+    uint256 internal constant REFUND_PROCEEDS_ROUTE = 330_000;
 
     /// @dev Cut from the failure path: 2.06M for a fully rejected batch against 664k for one that all lands.
     uint256 internal constant NFT_MINT_BASE = 225_000;
@@ -99,8 +105,11 @@ library IntexGas {
         return DAILY_VWAP_BASE + rowCount * DAILY_VWAP_PER_ROW;
     }
 
-    function refund(uint256 bidderCount) internal pure returns (uint256) {
-        return REFUND_BASE + bidderCount * REFUND_PER_ITEM;
+    /// @param winnerCount Winners the chunk carries; zero for the chunk that only closes a day.
+    /// @param routesProceeds Whether this chunk sends the day's proceeds home.
+    function refund(uint256 winnerCount, bool routesProceeds) internal pure returns (uint256) {
+        return REFUND_BASE + (winnerCount == 0 ? 0 : REFUND_SETTLE_BASE + winnerCount * REFUND_PER_ITEM)
+            + (routesProceeds ? REFUND_PROCEEDS_ROUTE : 0);
     }
 
     function nftMint(uint256 itemCount) internal pure returns (uint256) {

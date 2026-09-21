@@ -593,6 +593,14 @@ sol! {
         function balanceOf(address account) external view returns (uint256);
     }
 }
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IRefundClaim {
+        function getClaimableRefund(uint32 worldwideDay, address bidder)
+            external view returns (uint128 amount, uint32 claimableAt);
+        function claimRefund(uint32 worldwideDay, address bidder) external;
+    }
+}
 /// The series the target chain was told to issue, read back from its own log so
 /// the identifier comes from the chain rather than from a rebuilt guess.
 #[cfg(feature = "ocomp-integration")]

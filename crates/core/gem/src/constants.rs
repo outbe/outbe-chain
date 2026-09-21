@@ -1,7 +1,11 @@
 pub const TOKEN_NAME: &str = "Gem";
 pub const TOKEN_SYMBOL: &str = "GEM";
-pub const TOKEN_DESCRIPTION: &str = "Outbe Gem";
-pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/gem/image/";
+pub const TOKEN_DESCRIPTION: &str = concat!(
+    "Gem is a mining right on the Outbe network. Once qualified, its owner pays the settlement cost ",
+    "at the fixed entry price, and the settled right is exercised to mine its Promis load. ",
+    "A called Gem must be settled by its settlement deadline, otherwise it is forfeited. ",
+    "A Gem is never transferable."
+);
 
 pub const BIN_STEP_BP: u16 = 25;
 

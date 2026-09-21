@@ -61,6 +61,16 @@ library BridgeMsgCodec {
     /// @notice Numeric fixed-point scale for bid/clearing rates (`1e6` = 100%).
     uint32 internal constant SCALE_1E6 = 1_000_000;
 
+    /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
+    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
+
+    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment units: the lock a bid
+    ///         takes and the payment a winner makes. Mirrors the clearing side's `rate_lock` bit for bit - the
+    ///         six-decimal product is floored before it is scaled.
+    function escrowAmount(uint256 quantity, uint256 basis, uint256 rate) internal pure returns (uint256) {
+        return quantity * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    }
+
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;
@@ -88,8 +98,8 @@ library BridgeMsgCodec {
     // dynamic arrays being empty:
     //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
     //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9x32 = 288
-    //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
-    //     3 static head words + 3 dynamic offsets + 3 empty length words = 9x32 = 288
+    //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
+    //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
     //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 13 static + 2 dynamic fields):
     //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 13 static
     //     + 2 inner offsets + 2 empty length words = 23x32 = 736
@@ -127,11 +137,10 @@ library BridgeMsgCodec {
     /// @param got The malformed `bytes32` slot.
     error MalformedAddress(bytes32 got);
 
-    /// @notice REFUND_INSTRUCTIONS parallel arrays decoded to unequal lengths.
-    /// @param bidders Length of the bidders array.
-    /// @param refundedAmounts Length of the refunded-amounts array.
-    /// @param paidAmounts Length of the paid-amounts array.
-    error RefundArrayLengthMismatch(uint256 bidders, uint256 refundedAmounts, uint256 paidAmounts);
+    /// @notice REFUND_INSTRUCTIONS names a partially filled winner outside its own winners.
+    /// @param partialIndex Index the partial fill points at.
+    /// @param winners Winners the chunk carries.
+    error InvalidRefundPartial(uint16 partialIndex, uint256 winners);
 
     /// @notice Inbound BIDS_BATCH exceeds the per-message entry cap.
     /// @param count Decoded number of bidders.
@@ -531,32 +540,40 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Encodes one chunk of a day's REFUND_INSTRUCTIONS.
-    /// @dev Reverts `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    /// @notice Encodes one chunk of a day's REFUND_INSTRUCTIONS: the chain's winners and the day's clearing
+    ///         terms, from which the target works out what each of them paid.
+    /// @dev Reverts `PayloadArrayTooLong` above `MAX_PAYLOAD_ARRAY_LEN`. An empty chunk closes a day with no
+    ///      winners on the chain.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
-    /// @param _bidders The bidder addresses (parallel with `_refundedAmounts` and `_paidAmounts`).
-    /// @param _refundedAmounts The amount refunded to each bidder.
-    /// @param _paidAmounts The amount paid by each bidder.
+    /// @param _clearingRate The day's clearing rate (`1e6` fixed-point).
+    /// @param _basis The day's escrow basis (`promisLoadMinor`).
+    /// @param _winners Winners on the chain in this chunk.
+    /// @param _partialIndex Index of the partially filled winner; read only when `_partialWon` is non-zero.
+    /// @param _partialWon Units the partially filled winner received; zero when the chunk has none.
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
         uint32 _worldwideDay,
         uint16 _chunkIndex,
         uint16 _totalChunks,
-        address[] memory _bidders,
-        uint128[] memory _refundedAmounts,
-        uint128[] memory _paidAmounts
+        uint64 _clearingRate,
+        uint128 _basis,
+        address[] memory _winners,
+        uint16 _partialIndex,
+        uint16 _partialWon
     ) internal pure returns (bytes memory) {
-        if (_bidders.length != _refundedAmounts.length || _bidders.length != _paidAmounts.length) {
-            revert RefundArrayLengthMismatch(_bidders.length, _refundedAmounts.length, _paidAmounts.length);
-        }
-        requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
+        requireMaxArrayLen(_winners.length, MAX_PAYLOAD_ARRAY_LEN);
         if (_totalChunks == 0 || _totalChunks > MAX_CHUNKS || _chunkIndex >= _totalChunks) {
             revert InvalidRefundChunk(_chunkIndex, _totalChunks);
+        }
+        if (_partialWon != 0 && _partialIndex >= _winners.length) {
+            revert InvalidRefundPartial(_partialIndex, _winners.length);
         }
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_REFUND_INSTRUCTIONS,
-            abi.encode(_worldwideDay, _chunkIndex, _totalChunks, _bidders, _refundedAmounts, _paidAmounts)
+            abi.encode(
+                _worldwideDay, _chunkIndex, _totalChunks, _clearingRate, _basis, _winners, _partialIndex, _partialWon
+            )
         );
     }
 
@@ -843,15 +860,16 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes REFUND_INSTRUCTIONS message.
-    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte and
-    ///      `RefundArrayLengthMismatch` if the three parallel arrays differ in length.
+    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return chunkIndex Position of this chunk in the chain-day's run of refunds.
     /// @return totalChunks How many chunks the chain-day's refunds span.
-    /// @return bidders The bidder addresses (parallel with `refundedAmounts` and `paidAmounts`).
-    /// @return refundedAmounts The amount refunded to each bidder.
-    /// @return paidAmounts The amount paid by each bidder.
+    /// @return clearingRate The day's clearing rate (`1e6` fixed-point).
+    /// @return basis The day's escrow basis.
+    /// @return winners Winners on the chain in this chunk.
+    /// @return partialIndex Index of the partially filled winner; meaningful only when `partialWon` is non-zero.
+    /// @return partialWon Units the partially filled winner received; zero when the chunk has none.
     function decodeRefundInstructions(bytes calldata _msg)
         external
         pure
@@ -859,30 +877,29 @@ library BridgeMsgCodec {
             uint32 worldwideDay,
             uint16 chunkIndex,
             uint16 totalChunks,
-            address[] memory bidders,
-            uint128[] memory refundedAmounts,
-            uint128[] memory paidAmounts
+            uint64 clearingRate,
+            uint128 basis,
+            address[] memory winners,
+            uint16 partialIndex,
+            uint16 partialWon
         )
     {
         if (_msg.length < HEADER_LEN) {
             revert InvalidPayloadLength(MSG_REFUND_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts) =
-            abi.decode(_msg[2:], (uint32, uint16, uint16, address[], uint128[], uint128[]));
+        (worldwideDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon) =
+            abi.decode(_msg[2:], (uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16));
         if (totalChunks == 0 || totalChunks > MAX_CHUNKS || chunkIndex >= totalChunks) {
             revert InvalidRefundChunk(chunkIndex, totalChunks);
         }
-        // The three arrays are indexed in lockstep downstream; unequal lengths would index
-        // out of bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (bidders.length != refundedAmounts.length || bidders.length != paidAmounts.length) {
-            revert RefundArrayLengthMismatch(bidders.length, refundedAmounts.length, paidAmounts.length);
+        // A peer compromise or a future encoder change could deliver an over-cap REFUND that exhausts the
+        // receiver's gas in the per-winner loop. The drop-don't-block handler catches this typed revert.
+        if (winners.length > MAX_PAYLOAD_ARRAY_LEN) {
+            revert RefundBatchTooLarge(winners.length, MAX_PAYLOAD_ARRAY_LEN);
         }
-        // Symmetric with the BIDS and ISSUANCE inbound caps: a peer compromise or a future encoder
-        // change could deliver an over-cap REFUND that exhausts the receiver's gas in the
-        // per-bidder loop. The drop-don't-block handler catches this typed revert.
-        if (bidders.length > MAX_PAYLOAD_ARRAY_LEN) {
-            revert RefundBatchTooLarge(bidders.length, MAX_PAYLOAD_ARRAY_LEN);
+        if (partialWon != 0 && partialIndex >= winners.length) {
+            revert InvalidRefundPartial(partialIndex, winners.length);
         }
     }
 

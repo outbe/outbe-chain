@@ -99,8 +99,8 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     function test_TM_ShortRefundInstructions_RevertsInvalidPayloadLength() public {
-        // REFUND_INSTRUCTIONS carries three ABI-encoded arrays; its minimum (HEADER_LEN + 224)
-        // pins the empty-arrays floor. Send one byte under it to trip the per-type length check.
+        // REFUND_INSTRUCTIONS carries one ABI-encoded array; its minimum (HEADER_LEN + 288)
+        // pins the empty-array floor. Send one byte under it to trip the per-type length check.
         uint256 minLen = BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS;
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, new bytes(minLen - 3)
@@ -131,26 +131,19 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
-    function test_TM_RefundArrayLengthMismatch_Reverts() public {
-        // REFUND_INSTRUCTIONS with parallel arrays of unequal length must revert a typed error,
-        // not panic out-of-bounds inside the handler.
-        address[] memory bidders = new address[](2);
-        bidders[0] = address(0xB1);
-        bidders[1] = address(0xB2);
-        uint64[] memory refundedAmounts = new uint64[](1); // mismatch: 1 vs 2
-        refundedAmounts[0] = 1;
-        uint64[] memory paidAmounts = new uint64[](2);
+    function test_TM_RefundPartialOutsideWinners_Reverts() public {
+        // REFUND_INSTRUCTIONS naming a partial fill past its winners must revert a typed error,
+        // not index out of bounds inside the handler.
+        address[] memory winners = new address[](2);
+        winners[0] = address(0xB1);
+        winners[1] = address(0xB2);
 
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(2), uint16(1))
         );
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 

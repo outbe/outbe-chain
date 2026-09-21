@@ -128,7 +128,8 @@ jobs:
     concurrency:
       group: rust-cache-${{ github.workflow }}-test-${{ github.ref }}
       cancel-in-progress: false
-    timeout-minutes: 90
+    # Include a cold coverage build and the bounded native-database test suite.
+    timeout-minutes: 180
     env:
       CARGO_INCREMENTAL: "0"
       # Native snapshot fixtures open multiple large MDBX/CE stores. Bound

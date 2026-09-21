@@ -66,12 +66,13 @@ contract GasAttributeTest is CrossChainTest {
         _assertRefundGas(1);
         _assertRefundGas(5);
         // Sizing is strictly increasing in the item count.
-        assertGt(IntexGas.refund(5), IntexGas.refund(1), "gas must grow with item count");
+        assertGt(IntexGas.refund(5, true), IntexGas.refund(1, true), "gas must grow with item count");
     }
 
     function _assertRefundGas(uint256 n) internal {
         vm.prank(desis);
-        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
-        _assertLastGas(IntexGas.refund(n));
+        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, 1, 1, new address[](n), 0, 0);
+        // The chain's only chunk carries its winners, so it is the one that routes the day's proceeds.
+        _assertLastGas(IntexGas.refund(n, n != 0));
     }
 }

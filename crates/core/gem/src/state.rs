@@ -1,5 +1,4 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use base64::Engine;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
     reference_price,
@@ -7,8 +6,9 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{BIN_STEP_BP, TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
+    precompile::IGem,
     schema::{GemContract, GemData, GemState},
 };
 
@@ -48,6 +48,12 @@ impl GemContract<'_> {
         self.gem_items.get(gem_id)
     }
 
+    pub fn token_by_index(&self, index: u32) -> Result<U256> {
+        self.all_gem_ids
+            .get(index)?
+            .ok_or_else(|| GemError::IndexOutOfBounds.into())
+    }
+
     pub fn token_of_owner_by_index(&self, owner: Address, index: u32) -> Result<U256> {
         let count = self.owner_gem_counts.read(&owner)?;
         if index >= count {
@@ -59,25 +65,8 @@ impl GemContract<'_> {
 
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        let gem_id_str = gem_id.to_string();
-        // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
-        let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"promis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
-            gem_id,
-            TOKEN_DESCRIPTION,
-            TOKEN_IMAGE_BASE,
-            gem_id_str,
-            gem_id,
-            item.gem_type,
-            item.state,
-            item.promis_load_minor,
-            item.entry_price_minor,
-            item.floor_price_minor,
-            item.issuance_currency,
-            item.reference_currency,
-        );
-        let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        Ok(format!("data:application/json;base64,{}", encoded))
+        let qualified = is_callable(item.state) && crate::api::is_qualified(&self.storage, &item)?;
+        Ok(crate::metadata::token_uri(&item, qualified))
     }
 
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
@@ -119,7 +108,11 @@ impl GemContract<'_> {
                 .write(&item.reference_currency, item.call_window_seconds)?;
         }
 
-        Ok(())
+        self.emit(IGem::Transfer {
+            from: Address::ZERO,
+            to: item.owner,
+            tokenId: item.gem_id,
+        })
     }
 
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
@@ -152,7 +145,11 @@ impl GemContract<'_> {
         if supply > 0 {
             self.total_supply.write(supply - 1)?;
         }
-        Ok(())
+        self.emit(IGem::Transfer {
+            from: item.owner,
+            to: Address::ZERO,
+            tokenId: item.gem_id,
+        })
     }
 
     pub(crate) fn set_state(&mut self, gem_id: U256, new_state: GemState) -> Result<()> {
@@ -176,7 +173,7 @@ impl GemContract<'_> {
 
         item.state = new_state as u8;
         self.gem_items.update(&item)?;
-        Ok(())
+        self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
     pub(crate) fn insert_call_bin(
@@ -280,7 +277,8 @@ impl GemContract<'_> {
         self.push_called(
             gem_id,
             called_at + u64::from(item.call_notice_period_seconds),
-        )
+        )?;
+        self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {

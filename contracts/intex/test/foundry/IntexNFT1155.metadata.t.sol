@@ -58,10 +58,36 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(json.contains(bytes(needle)), needle);
     }
 
+    /// @dev Rows are laid out by a cursor, so the y is what a reordering breaks.
+    function _assertRowAt(bytes memory svg, string memory label, uint256 y) internal view {
+        assertTrue(
+            svg.contains(
+                bytes(
+                    string.concat(
+                        "<text x=\"60\" y=\"",
+                        vm.toString(y),
+                        "\" font-family=\"sans-serif\" font-size=\"20\" fill=\"#999\">",
+                        label,
+                        "</text>"
+                    )
+                )
+            ),
+            label
+        );
+    }
+
+    function test_nameAndSymbol_NameTheCollection() public view {
+        assertEq(token.name(), "Intex");
+        assertEq(token.symbol(), "INTEX");
+    }
+
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
-        _assertContains(json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), "\","));
-        _assertContains(json, string.concat("\"description\":\"", IntexMetadata.DESCRIPTION, "\""));
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
+        _assertContains(
+            json,
+            "\"description\":\"Unsettled units of Intex series 20260622-USD-U from the Worldwide Day 20260622 auction."
+        );
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
@@ -110,7 +136,9 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("CALLED"), "badge text");
         assertTrue(svg.contains("#f97316"), "badge color");
         // calledAt == 1, deadline == 1 + 14 days == 1970-01-15 00:00:01 UTC.
-        assertTrue(svg.contains("Call Deadline"), "deadline row");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Price", 355);
+        _assertRowAt(svg, "Call Deadline", 400);
         assertTrue(svg.contains("15.01.1970 00:00 UTC"), "deadline date formatting");
     }
 
@@ -129,6 +157,8 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("EXPIRED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Deadline", 400);
     }
 
     function test_uri_SettledToken_SuffixAndNoLifecycle() public {
@@ -136,24 +166,22 @@ contract IntexNFT1155MetadataTest is Test {
         token.settleIntex(SERIES_ID, user, user2, 3);
 
         bytes memory json = _json(sTok);
-        _assertContains(
-            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
-        );
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
+        _assertContains(json, "\"description\":\"Settled units of Intex series 20260622-USD-U.");
         assertFalse(json.contains("Series State"), "lifecycle is final for the Settled class");
         assertFalse(json.contains("\"Called At\""), "no call rows on Settled");
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("SETTLED"), "badge text");
         assertTrue(svg.contains("#a855f7"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
     }
 
     function test_uri_SettledToken_RendersBeforeAnySettle() public view {
         bytes memory json = _json(sTok);
-        _assertContains(
-            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
-        );
+        _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), " - Settled\","));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
     }
 
@@ -177,23 +205,29 @@ contract IntexNFT1155MetadataTest is Test {
         data.referenceCurrency = 840;
         data.issuedAt = 1;
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data));
-        _assertContains(json, "\"name\":\"Intex Series 20260622-949-U\",");
+        _assertContains(json, "\"name\":\"Intex 20260622-949-U\",");
     }
 
     function test_contractURI_CollectionDocument() public view {
         bytes memory json = MetadataTestLib.decodeJsonDataUri(token.contractURI());
         assertEq(
-            string(json), string.concat("{\"name\":\"Intex\",\"description\":\"", IntexMetadata.DESCRIPTION, "\"}")
+            string(json),
+            string.concat("{\"name\":\"Intex\",\"description\":\"", IntexMetadata.COLLECTION_DESCRIPTION, "\"}")
         );
     }
 
     function test_svg_FormatsHumanValues() public view {
         bytes memory svg = _json(iTok).decodeSvg();
-        assertTrue(svg.contains("INTEX SERIES"), "header");
+        assertTrue(svg.contains(">INTEX</text>"), "header");
         assertTrue(svg.contains(bytes(abi.encodePacked(SERIES_ID))), "composite id");
         assertTrue(svg.contains(">1</text>"), "entry price");
         assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
+        assertTrue(svg.contains(">1.08</text>"), "floor price while issued");
+        _assertRowAt(svg, "Promis Load", 265);
+        _assertRowAt(svg, "Entry Price", 310);
+        _assertRowAt(svg, "Floor Price", 355);
+        _assertRowAt(svg, "Call Price", 400);
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 

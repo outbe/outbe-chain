@@ -8335,7 +8335,9 @@ name = "outbe-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "base64 0.22.1",
  "ring",
+ "serde_json",
 ]
 
 [[package]]
@@ -8418,9 +8420,12 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8838,10 +8843,12 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
+ "outbe-common",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9081,6 +9088,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "mongodb",
+ "outbe-common",
  "outbe-compressed-entities",
  "outbe-macros",
  "outbe-ocomp-protocol",
@@ -9089,6 +9097,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
