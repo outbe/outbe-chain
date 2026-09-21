@@ -29,10 +29,10 @@ use outbe_tee::protocol::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// Fixed canary identity: a marker owner address and a fixed worldwide day so
-/// the payload (and its Poseidon `token_id`) is identical on every tick and
-/// every validator. The offer is never submitted as a transaction - it exists
-/// only inside the probe request.
+/// Fixed canary identity: a marker owner address, a fixed worldwide day and a
+/// fixed ZK context so the payload (and its Poseidon `token_id`) is identical
+/// on every tick and every validator. The offer is never submitted as a
+/// transaction - it exists only inside the probe request.
 const CANARY_OWNER: Address = Address::repeat_byte(0xCA);
 const CANARY_DAY: u32 = 20250115;
 const CANARY_EPH_SK: [u8; 32] = [0xC5; 32];
@@ -246,7 +246,7 @@ pub fn run_canary_probe(
         issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_scurve_minor: U256::ZERO,
-        zk_context: None,
+        zk_context: Some(outbe_tee::offer_encrypt::canary_zk_context()),
     }];
     let started = SystemTime::now();
     let response = requester.request(&EnclaveRequest::ProcessTributeOfferBatch {

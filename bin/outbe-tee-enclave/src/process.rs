@@ -275,6 +275,19 @@ mod tests {
         );
     }
 
+    /// The node's canary sends exactly this plaintext with exactly this
+    /// context every tick, and reports the enclave unhealthy if the offer is
+    /// rejected. So the canary payload must derive its expected hashes here.
+    #[test]
+    fn canary_offer_with_its_zk_context_is_created_with_expected_hashes() {
+        let json = outbe_tee::offer_encrypt::canary_offer_json(20250115);
+        let mut offer = make_tribute_offer(Address::repeat_byte(0xCA), &json);
+        offer.zk_context = Some(outbe_tee::offer_encrypt::canary_zk_context());
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert_eq!(results[0].status, TributeOfferStatus::Created);
+        assert!(results[0].zk_expected_hashes.is_some());
+    }
+
     #[test]
     fn zk_and_non_zk_share_one_canonical_base_micro_contract() {
         let plain = make_tribute_offer(Address::repeat_byte(0x31), BASE_AND_MICRO_JSON);

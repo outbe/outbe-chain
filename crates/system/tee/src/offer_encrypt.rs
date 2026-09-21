@@ -9,6 +9,7 @@
 //! key - no enclave-resident secret material is involved (the crate rule that
 //! secret-bearing cryptography lives only in `bin/outbe-tee-enclave` holds).
 
+use crate::protocol::TributeZkContext;
 use crate::OFFER_HKDF_SALT;
 
 /// HKDF info string binding the derived key to the tribute-offer domain.
@@ -67,6 +68,21 @@ pub fn canary_offer_json(worldwide_day: u32) -> String {
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
 }}"#
     )
+}
+
+/// The ZK context the canary offer carries, so the canary's canonical-inputs
+/// digest covers the context branch of the preimage - the part a real proof
+/// offer hashes - and not only the "no context" byte. Constants, not the
+/// node's real chain ids: the enclave only folds them into the expected
+/// hashes, and a fixed value keeps every tick and every validator identical.
+/// The owner is a small field element: the enclave folds it into the claim
+/// and rejects a word at or above the BN254 modulus, as it would any proof's.
+pub fn canary_zk_context() -> TributeZkContext {
+    TributeZkContext {
+        owner: alloy_primitives::B256::from(alloy_primitives::U256::from(0xC7u64)),
+        chain_id: 0xCA,
+        l2_chain_id: 0xCB,
+    }
 }
 
 /// HKDF-SHA256 extract+expand to 32 bytes (matches the enclave).
