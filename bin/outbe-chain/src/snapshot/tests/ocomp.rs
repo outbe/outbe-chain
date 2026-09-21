@@ -8920,6 +8920,50 @@ mod present_join {
     }
 
     #[test]
+    fn exporter_work_directory_is_not_a_public_input_catalog() {
+        for populated in [false, true] {
+            with_canonical_frontiers(
+                2,
+                |layout| {
+                    let root = layout.ocomp_root.join("exporter-v1/input-refs");
+                    let job = hex::encode(B256::repeat_byte(71));
+                    fs::create_dir_all(root.join(&job)).unwrap();
+                    fs::create_dir_all(root.join(".work")).unwrap();
+                    if populated {
+                        // The exporter retains its working inventory/openings after export.
+                        let working = root.join(".work").join(&job);
+                        fs::create_dir_all(working.join("inventory")).unwrap();
+                        fs::create_dir_all(working.join("openings")).unwrap();
+                        fs::write(working.join("inventory/tributes.spool"), b"working bytes")
+                            .unwrap();
+                        fs::write(
+                            working.join("openings/opening-stage.complete"),
+                            b"stage bytes",
+                        )
+                        .unwrap();
+                    }
+                },
+                |_| queued_owner(0),
+                |state, source, layout, scratch| {
+                    let before = crate::snapshot::tests::headers::fingerprint(&layout.ocomp_root);
+                    let mut report = ValidationReport::new([CheckName::Ocomp]);
+                    verify_ocomp_relations(state, source, layout, scratch, &mut report).unwrap();
+                    let inputs = report
+                        .inventory_bounds
+                        .iter()
+                        .find(|bound| bound.name == "input_job_directories")
+                        .unwrap();
+                    assert_eq!(inputs.visited, 1, ".work is not a public JobId");
+                    assert_eq!(
+                        crate::snapshot::tests::headers::fingerprint(&layout.ocomp_root),
+                        before
+                    );
+                },
+            );
+        }
+    }
+
+    #[test]
     fn every_present_population_is_enumerated_even_without_live_canonical_jobs() {
         for prefix in [
             "exporter-v1/receipts",

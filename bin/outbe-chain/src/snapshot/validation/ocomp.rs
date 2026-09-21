@@ -2828,6 +2828,10 @@ fn scan_present_jobs(root: &Path, flag: u8, work: &PresentJobUnion) -> eyre::Res
         let name = name
             .to_str()
             .ok_or_else(|| eyre::eyre!("invalid present job locator"))?;
+        // The exporter retains inventory/opening work beside published input catalogs.
+        if flag == PRESENT_INPUTS && name == ".work" {
+            continue;
+        }
         let mut bytes = [0; 32];
         hex::decode_to_slice(name, &mut bytes)?;
         let job = B256::from(bytes);
