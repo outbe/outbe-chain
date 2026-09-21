@@ -158,8 +158,7 @@ fn validate_tribute_offer_batch_response(
     // Before blaming the enclave, rule out the boring explanation: the two
     // sides hashed different layouts. An enclave is a measured image on its
     // own release cadence, so this is what a rollout that moved only one side
-    // looks like, and every offer in the batch would fail. An image built
-    // before the version field existed reports 0.
+    // looks like, and every offer in the batch would fail.
     let version = outbe_tee::protocol::INPUTS_CANONICAL_HASH_VERSION;
     if inputs_canonical_hash_version != version {
         return Err(PrecompileError::Fatal(format!(
@@ -302,8 +301,8 @@ mod tests {
     }
 
     /// An enclave hashing a different preimage layout is a rollout that moved
-    /// one side only, not a faulty enclave, and the error must say so. `0` is
-    /// what an image built before the version field existed reports.
+    /// one side only, not a faulty enclave, and the error must say so, for a
+    /// version below ours as well as above.
     #[test]
     fn validate_names_a_preimage_version_skew() {
         let offers = vec![sample_tribute_offer()];

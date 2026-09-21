@@ -1283,11 +1283,12 @@ pub enum EnclaveResponse {
         /// Diagnostic hash of canonical inputs (incl. price/day/currency);
         /// host compares it to detect enclave non-determinism, then discards.
         inputs_canonical_hash: B256,
-        /// The [`INPUTS_CANONICAL_HASH_VERSION`] the enclave hashed under.
-        /// An enclave built before this field existed omits it and it decodes
-        /// as `0`, which is exactly how the host tells version skew from real
-        /// non-determinism instead of blaming the wrong thing.
-        #[serde(default)]
+        /// The [`INPUTS_CANONICAL_HASH_VERSION`] the enclave hashed under, so
+        /// the host tells version skew from real non-determinism instead of
+        /// blaming the wrong thing. The wire codec is postcard, which is
+        /// positional: an image from before this field existed does not speak
+        /// this response shape at all and fails at the codec, so the check
+        /// covers every layout bump from version 2 on, not the one before it.
         inputs_canonical_hash_version: u16,
         /// Local-only attestation tag; host verifies against its enclave's
         /// attestation key, then discards. Never written to state.

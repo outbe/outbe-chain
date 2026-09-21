@@ -2,8 +2,8 @@
 //!
 //! The harness plays the L2 network: it registers the operator's EOA through
 //! validator governance under a deterministic fixture key, and every offer must
-//! carry a real tribute proof under the circuit version enabled for the
-//! registered L2 chain whose root is signed with exactly that registered key.
+//! carry a real tribute proof under a circuit version registered for the
+//! L2 chain whose root is signed with exactly that registered key.
 
 use alloy_primitives::{Address, B256};
 use cucumber::{then, when};
