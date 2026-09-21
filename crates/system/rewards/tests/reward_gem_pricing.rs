@@ -1,4 +1,4 @@
-//! A validator reward Gem is priced by the day it rewards, and no day can lose one.
+//! A validator reward Gem is priced by the UTC day before its delivery, not the day it rewards.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
@@ -12,6 +12,7 @@ use outbe_rewards::api::{
 const CHAIN_ID: u64 = 1;
 const GENESIS_TS: u64 = 1_704_067_200;
 const REWARD_DAY: u32 = 20_240_101;
+const DELIVERY_PREVIOUS_DAY: u32 = 20_240_103;
 const VOTER: Address = Address::repeat_byte(0x5a);
 const LOAD: u64 = 90;
 
@@ -19,9 +20,8 @@ fn one_coen840() -> U256 {
     U256::from(1_000_000u64)
 }
 
-/// Registers COEN/840, publishes `live_quote` on it and closes days up to
-/// `last_finalized_day`.
-fn seed_oracle(ctx: &BlockRuntimeContext, live_quote: U256, last_finalized_day: u32) {
+/// Registers COEN/840 and publishes `live_quote` on it.
+fn seed_oracle(ctx: &BlockRuntimeContext, live_quote: U256) {
     outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
         .unwrap();
     outbe_oracle::api::set_exchange_rate(
@@ -33,11 +33,9 @@ fn seed_oracle(ctx: &BlockRuntimeContext, live_quote: U256, last_finalized_day: 
         ctx.block.timestamp,
     )
     .unwrap();
-    let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
-    oracle.reference_currencies.push(840u16).unwrap();
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(last_finalized_day)
+    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
+        .reference_currencies
+        .push(840u16)
         .unwrap();
 }
 
@@ -67,52 +65,51 @@ fn delivered_entry_price(ctx: &BlockRuntimeContext) -> U256 {
         .entry_price_minor
 }
 
+/// Anchors genesis on the reward day, then runs `f` in a block three days later.
 fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle| {
-        let ctx = BlockRuntimeContext::new(
+        let genesis = BlockRuntimeContext::new(
             BlockContext::new(1, GENESIS_TS + 60, CHAIN_ID, Address::ZERO, Vec::new()),
+            handle.clone(),
+        );
+        outbe_rewards::runtime::ensure_genesis_anchor(&genesis).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::new(
+                2,
+                GENESIS_TS + 3 * 86_400 + 60,
+                CHAIN_ID,
+                Address::ZERO,
+                Vec::new(),
+            ),
             handle,
         );
-        outbe_rewards::runtime::ensure_genesis_anchor(&ctx).unwrap();
         f(&ctx)
     })
 }
 
 #[test]
-fn a_batch_prices_off_the_day_it_rewards() {
+fn a_batch_prices_off_the_day_before_its_delivery() {
     with_ctx(|ctx| {
-        // The live quote and the day's VWAP differ, so only the reward day's own
-        // price satisfies the assertion.
-        seed_oracle(ctx, U256::from(9u64) * one_coen840(), REWARD_DAY);
+        // The reward day, the day before delivery and the live quote all differ,
+        // so only the day before delivery satisfies the assertion.
+        seed_oracle(ctx, U256::from(9u64) * one_coen840());
         seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
+        seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::from(5u64) * one_coen840());
 
         prepare(ctx);
         deliver_oldest_reward_gem_batch(ctx).unwrap();
 
-        assert_eq!(delivered_entry_price(ctx), U256::from(2u64) * one_coen840());
+        assert_eq!(delivered_entry_price(ctx), U256::from(5u64) * one_coen840());
     });
 }
 
 #[test]
-fn a_day_closed_without_a_price_falls_back_to_the_live_quote() {
+fn a_batch_waits_while_the_day_before_its_delivery_has_no_vwap() {
     with_ctx(|ctx| {
-        // No day carries a VWAP, so the reward must not be lost to that.
-        seed_oracle(ctx, U256::from(9u64) * one_coen840(), REWARD_DAY);
-
-        prepare(ctx);
-        deliver_oldest_reward_gem_batch(ctx).unwrap();
-
-        assert_eq!(delivered_entry_price(ctx), U256::from(9u64) * one_coen840());
-    });
-}
-
-#[test]
-fn a_batch_waits_while_its_day_is_not_closed() {
-    with_ctx(|ctx| {
-        // An unclosed day is not an unpriced one: wait for it rather than reach
-        // past it to the live quote.
-        seed_oracle(ctx, U256::from(9u64) * one_coen840(), REWARD_DAY - 1);
+        // The live quote is no fallback.
+        seed_oracle(ctx, U256::from(9u64) * one_coen840());
+        seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
 
         prepare(ctx);
         assert!(matches!(
