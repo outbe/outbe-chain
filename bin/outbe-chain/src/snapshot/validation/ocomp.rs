@@ -43,6 +43,115 @@ pub(crate) struct NodInputsAudit {
     pub actions: u64,
 }
 
+#[derive(Debug)]
+pub(crate) struct ExportInputsAudit {
+    pub receipt: outbe_ocomp::export_receipt::VerifiedExportReceipt,
+    pub binding: outbe_ocomp::export_binding::VerifiedExportedManifestBinding,
+    pub input_chunks: u64,
+}
+
+/// Check a complete public export against an already authenticated canonical
+/// job. This compares saved authorities; it never replays an export operation.
+pub(crate) fn verify_export_inputs(
+    ocomp_root: &Path,
+    job: &OcompJobRecordV1,
+    expected_export: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
+    cas_limits: CasLimits,
+) -> eyre::Result<ExportInputsAudit> {
+    use outbe_ocomp::{
+        export_binding::ExportedManifestBindingReader,
+        export_receipt::{ExportReceiptError, ExportReceiptReader},
+    };
+    use outbe_ocomp_protocol::{
+        common::BoundedBytes,
+        control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
+        input::CheckpointIdentityV1,
+    };
+    let check = || -> eyre::Result<ExportInputsAudit> {
+        let limits = poc_schema_limits();
+        let finalized = job.finalized.as_ref().ok_or_else(|| {
+            eyre::eyre!("complete export lacks canonical finalized job authority")
+        })?;
+        let spec = FinalizedJobSpecV1 {
+            summary: FinalizedJobSummaryV1 {
+                cursor: job.intent_height,
+                job_id: finalized.job_id,
+                intent_id: job.intent.intent_id(&limits)?,
+                finalized_block_hash: finalized.finalized_request_block_hash,
+                finalized_state_root: finalized.finalized_request_state_root,
+                protocol_bundle_hash: job.intent.protocol_bundle_hash,
+                open_height: finalized.open_height,
+                deadline_height: finalized.deadline_height,
+            },
+            canonical_job_intent: BoundedBytes(job.intent.encode_canonical(&limits)?),
+        };
+        spec.encode_body(&limits)?;
+        let job_hex = hex::encode(finalized.job_id);
+        let cas = FilesystemCasReader::open(ocomp_root.join("cas-v1"), cas_limits)?;
+        let bundle = read_pinned_bundle(ocomp_root, job.intent.protocol_bundle_hash)?;
+        let receipt = ExportReceiptReader::try_open(
+            ocomp_root.join("exporter-v1/receipts"),
+            finalized.job_id,
+            limits,
+        )?
+        .ok_or(ExportReceiptError::MissingReceipt)?
+        .load_exact(&cas)?;
+        let inputs = VerifiedInputChunkRefCatalog::reopen(
+            ocomp_root.join("exporter-v1/input-refs").join(&job_hex),
+            &cas,
+            limits,
+            poc_input_list_limits(),
+        )?;
+        let binding = ExportedManifestBindingReader::open_existing(
+            ocomp_root
+                .join("supervisor-v1/export-bindings")
+                .join(&job_hex),
+            limits,
+        )?
+        .load_exact(&cas, &spec, bundle.bundle(), &inputs)?;
+        let checkpoint = CheckpointIdentityV1 {
+            finalized_block_number: job.intent_height,
+            finalized_block_hash: finalized.finalized_request_block_hash,
+            finalized_state_root: finalized.finalized_request_state_root,
+            finalized_ce_root: job.intent.ce_sealed_root,
+            ce_schema_version: u16::try_from(
+                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+            )?,
+        };
+        ensure!(
+            receipt.checkpoint() == &checkpoint && binding.manifest().checkpoint == checkpoint,
+            "export checkpoint differs from canonical request or CE schema"
+        );
+        ensure!(
+            binding.commit_replay_request() == receipt.commit_replay_request(),
+            "receipt and binding describe different export authorities"
+        );
+        binding.require_exact_node_replay(&receipt.committed())?;
+        if let Some(expected) = expected_export {
+            ensure!(
+                expected.source_generation == receipt.source_pin_generation()
+                    && expected.lease_generation == receipt.lease_generation()
+                    && expected.manifest_hash == receipt.manifest_hash(),
+                "saved pin export differs from receipt authority"
+            );
+        }
+        // load_exact already consumes the native exact verified input cursor.
+        let input_chunks = u64::from(binding.manifest().input_chunk_count);
+        Ok(ExportInputsAudit {
+            receipt,
+            binding,
+            input_chunks,
+        })
+    };
+    check().map_err(|error| {
+        if missing_native_input(error.as_ref()) {
+            error.wrap_err(Incomplete("missing required OCOMP export input".into()))
+        } else {
+            error.wrap_err("OCOMP export inputs")
+        }
+    })
+}
+
 pub(crate) struct VerifiedPin {
     pub candidate: outbe_node::ocomp::retention::CandidatePinV1,
     pub job: OcompJobRecordV1,
@@ -738,6 +847,8 @@ fn classify_nod_input_error(error: eyre::Report, job: B256) -> eyre::Report {
 fn missing_native_input(error: &(dyn std::error::Error + 'static)) -> bool {
     use outbe_ocomp::{
         admission_catalog::AdmissionCatalogError as Admission,
+        export_binding::ExportBindingError as Binding,
+        export_receipt::ExportReceiptError as Receipt,
         input_artifacts::InputArtifactError as Input,
         input_ref_catalog::InputRefCatalogError as Refs,
         lysis_plan_audit::ExactLysisPlanError as Plan,
@@ -746,6 +857,23 @@ fn missing_native_input(error: &(dyn std::error::Error + 'static)) -> bool {
     };
     if let Some(error) = error.downcast_ref::<std::io::Error>() {
         return error.kind() == std::io::ErrorKind::NotFound;
+    }
+    if let Some(error) = error.downcast_ref::<Binding>() {
+        return match error {
+            Binding::MissingBinding => true,
+            Binding::Cas(error) => missing_native_input(error),
+            Binding::InputCatalog(error) => missing_native_input(error),
+            Binding::Io { source, .. } => missing_native_input(source),
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<Receipt>() {
+        return match error {
+            Receipt::MissingReceipt | Receipt::MissingPreparation => true,
+            Receipt::Cas(error) => missing_native_input(error),
+            Receipt::Io { source, .. } => missing_native_input(source),
+            _ => false,
+        };
     }
     if let Some(error) = error.downcast_ref::<Admission>() {
         return match error {
