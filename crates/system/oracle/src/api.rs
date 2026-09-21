@@ -456,6 +456,38 @@ pub fn get_utc_day_vwap(
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
+/// Whether `COEN/<iso_code>` closed a finalized UTC day strictly above `floor_minor`
+/// on or after `from_utc_day`. Walks back from the newest finalized day; days without data never count.
+pub fn crossed_floor(
+    storage: StorageHandle,
+    iso_code: u16,
+    floor_minor: U256,
+    from_utc_day: u32,
+) -> Result<bool> {
+    if from_utc_day == 0 {
+        return Ok(false);
+    }
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(false);
+    }
+    let mut day = oracle.utc_day_vwap_last_finalized.read()?;
+    while day >= from_utc_day {
+        if oracle
+            .get_utc_day_vwap_for_pair(day, index)?
+            .is_some_and(|vwap| vwap > floor_minor)
+        {
+            return Ok(true);
+        }
+        match previous_date_key(day) {
+            previous if previous < day => day = previous,
+            _ => break,
+        }
+    }
+    Ok(false)
+}
+
 pub fn get_max_active_scurve_value(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
