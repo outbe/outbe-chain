@@ -1900,6 +1900,58 @@ pub(super) mod copied_native {
         #[test]
         fn copied_rocksdb_shared_live_lease_survives_first_release_and_collects_after_last_job_at_k(
         ) {
+            exercise_shared_lease_copy(false);
+        }
+
+        #[test]
+        fn copied_pruned_released_pin_stays_absent_while_shared_lease_remains_live() {
+            exercise_shared_lease_copy(true);
+        }
+
+        // Construct an already-compacted native image, not a pressure-compaction
+        // execution. Keep every surviving record byte and the latest generation.
+        fn remove_old_released_frame(root: &Path, key: B256) {
+            let mut expected = inspect_retention_journal(journal(root)).unwrap();
+            assert_ne!(expected.last_updated, key);
+            let removed = expected
+                .records
+                .iter()
+                .find(|(id, _)| *id == key)
+                .unwrap()
+                .1;
+            assert!(matches!(removed.state, PinStateV1::Released { .. }));
+            expected.records.retain(|(id, _)| *id != key);
+            assert!(!expected.records.is_empty());
+            let path = journal(root).join("pin.v1");
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(&bytes[..8], b"OUTBPIN1");
+            assert_eq!(u16::from_be_bytes(bytes[8..10].try_into().unwrap()), 6);
+            let count = u16::from_be_bytes(bytes[50..52].try_into().unwrap());
+            let mut output = bytes[..50].to_vec();
+            output.extend_from_slice(&(count - 1).to_be_bytes());
+            let mut offset = 52;
+            let mut removed_count = 0;
+            for _ in 0..count {
+                let id = B256::from_slice(&bytes[offset..offset + 32]);
+                let len = u16::from_be_bytes(bytes[offset + 32..offset + 34].try_into().unwrap())
+                    as usize;
+                let end = offset + 34 + len;
+                if id == key {
+                    removed_count += 1;
+                } else {
+                    output.extend_from_slice(&bytes[offset..end]);
+                }
+                offset = end;
+            }
+            assert_eq!(removed_count, 1);
+            assert_eq!(offset, bytes.len() - 32);
+            let checksum = alloy_primitives::keccak256(&output);
+            output.extend_from_slice(checksum.as_slice());
+            fs::write(path, output).unwrap();
+            assert_eq!(inspect_retention_journal(journal(root)).unwrap(), expected);
+        }
+
+        fn exercise_shared_lease_copy(pruned: bool) {
             let donor = tempfile::tempdir().unwrap();
             let receiver = tempfile::tempdir().unwrap();
             let first = intent(1);
@@ -1943,6 +1995,24 @@ pub(super) mod copied_native {
                 PinStateV1::Finalized { .. }
             ));
             assert_eq!(remaining(donor.path(), &records[1]), 1);
+            let retired_key = records[0]
+                .finalized
+                .as_ref()
+                .unwrap()
+                .finalized_request_block_hash;
+            let closed = if pruned {
+                // A later ordinary transition preserves a live lease and makes
+                // the old Released entry eligible for an absent-record fixture.
+                write_frames(donor.path(), H + 1, 180);
+                expire(&mut records[1]);
+                write_records(donor.path(), &records);
+                reconcile_tip(donor.path(), 180);
+                let point = close_through(donor.path(), 180);
+                remove_old_released_frame(donor.path(), retired_key);
+                point
+            } else {
+                closed
+            };
             copy_tree(donor.path(), receiver.path());
             donor.close().unwrap();
             assert_c(receiver.path(), closed);
@@ -1956,11 +2026,19 @@ pub(super) mod copied_native {
                     .is_none());
             }
             assert_eq!(remaining(receiver.path(), &records[1]), 1);
-            write_frames(receiver.path(), H + 1, 180);
-            expire(&mut records[1]);
-            write_records(receiver.path(), &records);
-            reconcile_tip(receiver.path(), 180);
-            close_through(receiver.path(), 180);
+            if !pruned {
+                write_frames(receiver.path(), H + 1, 180);
+                expire(&mut records[1]);
+                write_records(receiver.path(), &records);
+                reconcile_tip(receiver.path(), 180);
+                close_through(receiver.path(), 180);
+            } else {
+                assert!(inspect_retention_journal(journal(receiver.path()))
+                    .unwrap()
+                    .records
+                    .iter()
+                    .all(|(key, _)| *key != retired_key));
+            }
             assert!(matches!(
                 durable_record(receiver.path(), &records[1]).state,
                 PinStateV1::Terminal {
@@ -1983,11 +2061,18 @@ pub(super) mod copied_native {
                 let coordinator = owner(receiver.path(), storage.clone(), storage);
                 assert!(coordinator.release_due(k.block_number).unwrap().is_none());
             }
-            for record in &records {
+            for record in &records[usize::from(pruned)..] {
                 assert!(matches!(
                     durable_record(receiver.path(), record).state,
                     PinStateV1::Released { .. }
                 ));
+            }
+            if pruned {
+                assert!(inspect_retention_journal(journal(receiver.path()))
+                    .unwrap()
+                    .records
+                    .iter()
+                    .all(|(key, _)| *key != retired_key));
             }
             assert_eq!(remaining(receiver.path(), &records[1]), 0);
         }
