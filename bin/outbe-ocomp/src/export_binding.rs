@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::{
+    control::FinalizedJobSpecV1,
     input::{CheckpointIdentityV1, InputManifestV1},
     intent::JobIntentV1,
     profile::ProtocolBundleV1,
@@ -265,37 +266,15 @@ impl ExportedManifestBindingStore {
     ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
         self.require_active()?;
         inspect_known_entries(&self.root)?;
-        let locator_path = self.root.join(LOCATOR_FILE);
-        if !path_exists(&locator_path)? {
-            return Err(ExportBindingError::MissingBinding);
-        }
-        let binding_ref = decode_locator(&read_bounded(&locator_path, LOCATOR_FIXED_BYTES)?)?;
-        let binding_object = reader.read_verified(&binding_ref)?;
-        let binding = decode_binding(binding_object.bytes())?;
-        require(
-            encode_binding(&binding) == binding_object.bytes(),
-            "canonical export binding encoding",
-        )?;
-        let manifest_object = reader.read_verified(&binding.manifest_ref)?;
-        require(
-            binding.manifest_ref.expected_ocb1_kind == Some(ObjectKind::InputManifestV1.tag()),
-            "typed input manifest reference",
-        )?;
-        let manifest = InputManifestV1::decode_canonical(manifest_object.bytes(), &self.limits)?;
-        manifest.validate_against_bundle(bundle, &self.limits)?;
-        validate_binding_authority(&binding, discovery, &manifest, &self.limits)?;
-        validate_closed_input_catalog(
-            input_refs,
+        load_binding(
+            &self.root,
+            &self.limits,
             reader,
+            &discovery.spec,
+            discovery.cursor,
             bundle,
-            &binding.manifest_ref,
-            &manifest,
-        )?;
-        Ok(VerifiedExportedManifestBinding {
-            binding_ref,
-            binding,
-            manifest,
-        })
+            input_refs,
+        )
     }
 
     fn require_active(&self) -> Result<(), ExportBindingError> {
@@ -323,6 +302,109 @@ impl ExportedManifestBindingStore {
         self.abstained = true;
         Ok(())
     }
+}
+
+/// Read-only inspection of a stopped source's native exported-manifest binding.
+///
+/// Opening never creates directories, changes permissions, acquires a writer
+/// lock, repairs temporary state, or publishes CAS objects. A legacy lock file
+/// may be absent. The caller must keep the source quiescent throughout the audit.
+pub struct ExportedManifestBindingReader {
+    root: PathBuf,
+    limits: SchemaLimits,
+}
+
+impl ExportedManifestBindingReader {
+    pub fn open_existing(
+        root: impl AsRef<Path>,
+        limits: SchemaLimits,
+    ) -> Result<Self, ExportBindingError> {
+        let root = root.as_ref().to_path_buf();
+        inspect_existing_binding(&root)?;
+        Ok(Self { root, limits })
+    }
+
+    /// Check the exact native binding against the caller-authenticated immutable
+    /// finalized job specification. The caller obtains that specification from
+    /// current canonical job/finality state and its retained request checkpoint;
+    /// a surviving discovery spool record is not required.
+    ///
+    /// This retains the native owner's comparisons. Full checkpoint height and
+    /// schema checks against canonical state remain the caller's responsibility.
+    pub fn load_exact(
+        &self,
+        reader: &FilesystemCasReader,
+        spec: &FinalizedJobSpecV1,
+        bundle: &ProtocolBundleV1,
+        input_refs: &VerifiedInputChunkRefCatalog,
+    ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
+        inspect_existing_binding(&self.root)?;
+        load_binding(
+            &self.root,
+            &self.limits,
+            reader,
+            spec,
+            spec.summary.cursor,
+            bundle,
+            input_refs,
+        )
+    }
+}
+
+fn inspect_existing_binding(root: &Path) -> Result<(), ExportBindingError> {
+    let metadata =
+        fs::symlink_metadata(root).map_err(|source| io_error("inspect directory", root, source))?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(ExportBindingError::UnsafePath(root.to_path_buf()));
+    }
+    if path_exists(&root.join(LOCATOR_TEMP_FILE))? {
+        return Err(ExportBindingError::AmbiguousTemporary(
+            root.join(LOCATOR_TEMP_FILE),
+        ));
+    }
+    inspect_known_entries(root)?;
+    if path_exists(&root.join(CONFLICT_FILE))? {
+        return Err(ExportBindingError::Abstained);
+    }
+    Ok(())
+}
+
+// Keep the explicit cursor so runtime DiscoveryRecord validation still rejects
+// disagreement between its outer cursor and the immutable spec's cursor.
+fn load_binding(
+    root: &Path,
+    limits: &SchemaLimits,
+    reader: &FilesystemCasReader,
+    spec: &FinalizedJobSpecV1,
+    cursor: u64,
+    bundle: &ProtocolBundleV1,
+    input_refs: &VerifiedInputChunkRefCatalog,
+) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
+    let locator_path = root.join(LOCATOR_FILE);
+    if !path_exists(&locator_path)? {
+        return Err(ExportBindingError::MissingBinding);
+    }
+    let binding_ref = decode_locator(&read_bounded(&locator_path, LOCATOR_FIXED_BYTES)?)?;
+    let binding_object = reader.read_verified(&binding_ref)?;
+    let binding = decode_binding(binding_object.bytes())?;
+    require(
+        encode_binding(&binding) == binding_object.bytes(),
+        "canonical export binding encoding",
+    )?;
+    let manifest_object = reader.read_verified(&binding.manifest_ref)?;
+    require(
+        binding.manifest_ref.expected_ocb1_kind == Some(ObjectKind::InputManifestV1.tag()),
+        "typed input manifest reference",
+    )?;
+    let manifest = InputManifestV1::decode_canonical(manifest_object.bytes(), limits)?;
+    manifest.validate_against_bundle(bundle, limits)?;
+    validate_binding_authority(&binding, spec, cursor, &manifest, limits)?;
+    validate_closed_input_catalog(input_refs, reader, bundle, &binding.manifest_ref, &manifest)?;
+    Ok(VerifiedExportedManifestBinding {
+        binding_ref,
+        binding,
+        manifest,
+    })
 }
 
 fn derive_binding(
@@ -394,22 +476,20 @@ fn derive_binding(
 
 fn validate_binding_authority(
     binding: &ExportedManifestBindingV1,
-    discovery: &DiscoveryRecord,
+    spec: &FinalizedJobSpecV1,
+    cursor: u64,
     manifest: &InputManifestV1,
     limits: &SchemaLimits,
 ) -> Result<(), ExportBindingError> {
-    let intent = JobIntentV1::decode_canonical(&discovery.spec.canonical_job_intent.0, limits)?;
+    let intent = JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, limits)?;
     // `discovery_generation` belongs to the legacy single-current local
     // journal. It is retained for decoding old local artifacts, but it is not
     // authority in the embedded multi-job path. The exact finalized cursor and
     // full spec hash below bind this receipt more strongly and independently of
     // local discovery order.
+    require(binding.finalized_cursor == cursor, "finalized cursor")?;
     require(
-        binding.finalized_cursor == discovery.cursor,
-        "finalized cursor",
-    )?;
-    require(
-        binding.finalized_job_spec_hash == keccak256(discovery.spec.encode_body(limits)?),
+        binding.finalized_job_spec_hash == keccak256(spec.encode_body(limits)?),
         "finalized job spec hash",
     )?;
     require(binding.job_id == manifest.job_id, "binding manifest job id")?;
@@ -441,7 +521,7 @@ fn validate_binding_authority(
             && !binding.export_record_hash.is_zero(),
         "binding export generations and record",
     )?;
-    validate_manifest_job_fields(discovery, &intent, manifest)
+    validate_manifest_job_fields(spec, cursor, &intent, manifest)
 }
 
 fn validate_manifest_job_authority(
@@ -465,16 +545,17 @@ fn validate_manifest_job_authority(
         checkpoint == &manifest.checkpoint,
         "snapshot handoff checkpoint",
     )?;
-    validate_manifest_job_fields(discovery, intent, manifest)
+    validate_manifest_job_fields(&discovery.spec, discovery.cursor, intent, manifest)
 }
 
 fn validate_manifest_job_fields(
-    discovery: &DiscoveryRecord,
+    spec: &FinalizedJobSpecV1,
+    cursor: u64,
     intent: &JobIntentV1,
     manifest: &InputManifestV1,
 ) -> Result<(), ExportBindingError> {
-    let summary = &discovery.spec.summary;
-    require(discovery.cursor == summary.cursor, "discovery cursor")?;
+    let summary = &spec.summary;
+    require(cursor == summary.cursor, "discovery cursor")?;
     require(manifest.job_id == summary.job_id, "manifest job id")?;
     require(
         manifest.protocol_bundle_hash == summary.protocol_bundle_hash
@@ -672,7 +753,13 @@ fn read_bounded(path: &Path, cap: usize) -> Result<Vec<u8>, ExportBindingError> 
         return Err(ExportBindingError::InvalidEnvelope);
     }
     let mut encoded = Vec::with_capacity(len);
-    file.read_to_end(&mut encoded)
+    let read_limit = u64::try_from(len)
+        .ok()
+        .and_then(|len| len.checked_add(1))
+        .ok_or(ExportBindingError::InvalidEnvelope)?;
+    (&mut file)
+        .take(read_limit)
+        .read_to_end(&mut encoded)
         .map_err(|source| io_error("read file", path, source))?;
     if encoded.len() != len {
         return Err(ExportBindingError::InvalidEnvelope);

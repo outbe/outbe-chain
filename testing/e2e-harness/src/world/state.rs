@@ -402,6 +402,11 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) offline_snapshot: Option<OfflineSnapshotEvidence>,
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) offline_snapshot_worker_inventory:
+        Option<crate::features::ocomp::SnapshotWorkerBeforeRequest>,
     pub(crate) tee_observability: Option<crate::features::tee_observability::TeeObservation>,
     pub tee_lease: TeeLeaseEvidenceV1,
     /// Public restart measurements saved before process teardown.
@@ -696,6 +701,10 @@ pub struct StablecoinFixture {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "ocomp-integration")]
+            offline_snapshot: None,
+            #[cfg(feature = "ocomp-integration")]
+            offline_snapshot_worker_inventory: None,
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
             tee_observability: None,
@@ -892,5 +901,256 @@ impl FixtureState {
             full_node_mismatch_job_id: self.ocomp_full_node_mismatch_job_id,
             full_node_mismatch_evidence_files: self.ocomp_full_node_mismatch_evidence_files.clone(),
         }
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+pub(crate) use snapshot::*;
+
+#[cfg(feature = "ocomp-integration")]
+mod snapshot {
+    // Time fields are Unix milliseconds, matching existing owned-process records.
+    // They are observed bounds, never inferred exact internal execution timestamps.
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub(crate) struct SnapshotBlock {
+        pub number: u64,
+        /// Native manifest/report spelling: lowercase 64 hex digits, no 0x.
+        pub hash: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub(crate) struct SnapshotUnwind {
+        pub finish_block_number: u64,
+        pub partial_state_trie: u64,
+    }
+
+    /// Exact public NativeProgress field names; no normalization and no DB reader.
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub(crate) struct SnapshotNativeProgress {
+        pub finalized: SnapshotBlock,
+        pub execution: SnapshotBlock,
+        pub execution_stage: Option<u64>,
+        pub finish_stage: Option<u64>,
+        pub partial_state_trie: Option<u64>,
+        pub unwind: Option<SnapshotUnwind>,
+        pub storage_version: u32,
+        pub ce: SnapshotBlock,
+        pub projection: SnapshotBlock,
+        pub ocomp_baseline: SnapshotBlock,
+        pub ocomp_previous: SnapshotBlock,
+        pub ocomp_current: SnapshotBlock,
+    }
+
+    /// Deserialized projection of signed manifest bytes, NOT manifest validation.
+    #[derive(Clone, Debug, serde::Deserialize)]
+    pub(crate) struct SnapshotManifestObservation {
+        pub version: u32,
+        pub chain_id: u64,
+        pub progress: SnapshotNativeProgress,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotCommandObservation {
+        pub argv: Vec<String>,
+        pub started: u64,
+        pub ended: u64,
+        pub exit_code: Option<i32>,
+        pub signal: Option<i32>,
+        pub stdout: Vec<u8>,
+        pub stderr: Vec<u8>,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotNativeObservation {
+        /// Collect while all native writers are stopped; never RPC head alone.
+        pub progress: SnapshotNativeProgress,
+        pub sources: Vec<std::path::PathBuf>,
+        pub observed: u64,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotPlacementObservation {
+        pub completed: u64,
+        pub native: SnapshotNativeObservation,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+    pub(crate) struct SnapshotFingerprint {
+        pub sha256: String,
+        pub mode: u32,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) enum SnapshotValidationObservation {
+        /// Variant choice is backed by the complete placement's command history.
+        NotRun,
+        /// Preserve raw stdout JSON even for a nonzero validation exit.
+        Run(SnapshotCommandObservation),
+    }
+
+    /// Bytes from an incarnation-bounded LaunchLog or auxiliary worker log.
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotLogSlice {
+        pub path: std::path::PathBuf,
+        pub device: u64,
+        pub inode: u64,
+        pub start: u64,
+        pub end: u64,
+        pub bytes: Vec<u8>,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotRecoveryObservation {
+        pub pid: u32,
+        pub incarnation_started: u64,
+        pub observed: u64,
+        pub log: SnapshotLogSlice,
+        /// Parsed from the existing certified follower startup recovery barrier record.
+        pub marshal_processed: u64,
+        pub anchor: SnapshotBlock,
+        pub ce_marker_height: u64,
+        /// provider.last_block_number(), NOT the exact Execution-stage frontier.
+        pub last_execution_height: u64,
+        /// Independent canonical upstream identity at the emitted anchor height.
+        pub canonical: SnapshotBlock,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotLaunchObservation {
+        pub slot: u8,
+        pub started: u64,
+        pub pid: u32,
+        pub argv: Vec<String>,
+        /// Independently read with all writers stopped; all handles dropped before spawn.
+        pub before_launch: SnapshotNativeObservation,
+        pub recovery: SnapshotRecoveryObservation,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotExitObservation {
+        pub pid: u32,
+        pub reaped: u64,
+        pub code: Option<i32>,
+        pub signal: Option<i32>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+    pub(crate) struct SnapshotResultObservation {
+        pub job_id: String,
+        pub digest: String,
+    }
+
+    /// Existing process record plus its configured observability endpoint/bundle lane.
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+    pub(crate) struct SnapshotWorkerOwner {
+        pub process: crate::world::ocomp::OcompProcessRecordV1,
+        pub endpoint: String,
+        /// Actual configured bundle-lane inbox, shared by this lane's workers.
+        pub inbox_root: std::path::PathBuf,
+        pub bundle_hash: alloy_primitives::B256,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotWorkerHttpObservation {
+        pub owner: SnapshotWorkerOwner,
+        pub observed: u64,
+        /// Actual successful HTTP response body, unmodified (status JSON or metrics).
+        pub body: Vec<u8>,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotFileRead {
+        pub path: std::path::PathBuf,
+        pub observed: u64,
+        /// None is an actual NotFound observation; permission/IO errors must fail collection.
+        pub bytes: Option<Vec<u8>>,
+    }
+
+    /// Raw relative names from a complete bounded traversal of this exact owned root.
+    /// An absent root is represented by the collector's actual NotFound result as an empty listing.
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotDirectoryListing {
+        pub root: std::path::PathBuf,
+        /// Actual (device, inode); None only for a root observed as NotFound.
+        pub directory_identity: Option<(u64, u64)>,
+        pub started: u64,
+        pub completed: u64,
+        pub entries: Vec<std::path::PathBuf>,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) enum SnapshotPriorFileObservation {
+        /// Normal new-job route: the future JobId/UnitId need not be known yet.
+        DirectoryListing(SnapshotDirectoryListing),
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) enum SnapshotWorkerAttribution {
+        /// Complete owned-worker history for this interval, including stopped processes.
+        /// The collector must retain every overlapping writer in this shared bundle inbox.
+        SingleOwnedProducer {
+            inventory_from: u64,
+            inventory_through: u64,
+            workers: Vec<SnapshotWorkerOwner>,
+        },
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotWorkerExecution {
+        pub owner: SnapshotWorkerOwner,
+        pub before: SnapshotWorkerHttpObservation,
+        pub after: SnapshotWorkerHttpObservation,
+        pub attribution: SnapshotWorkerAttribution,
+        pub artifact_before: SnapshotPriorFileObservation,
+        pub artifact_after: SnapshotFileRead,
+        /// Read from THIS job's independent admission catalog/verified CAS.
+        pub admission_catalog: std::path::PathBuf,
+        pub canonical_unit_spec: Vec<u8>,
+        pub admitted_artifact_len: u64,
+        pub admitted_artifact_keccak256: alloy_primitives::B256,
+        /// Auxiliary only: successful workers may produce no log bytes.
+        pub log: Option<SnapshotLogSlice>,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct SnapshotNewJobObservation {
+        pub requested: u64,
+        pub request: SnapshotBlock,
+        pub job_id: String,
+        pub worker: SnapshotWorkerExecution,
+        pub local_before: SnapshotPriorFileObservation,
+        pub local_after: SnapshotFileRead,
+        pub local_result_root: std::path::PathBuf,
+        /// Checked against raw canonical local bytes and the independent public result.
+        pub local_result: SnapshotResultObservation,
+        pub canonical_result: SnapshotResultObservation,
+        pub canonical_result_at: SnapshotBlock,
+    }
+
+    #[derive(Clone, Debug, serde::Serialize)]
+    pub(crate) struct OfflineSnapshotEvidence {
+        pub create: Option<SnapshotCommandObservation>,
+        /// Exact bytes retained before native runtime mutations; not reserialized.
+        pub manifest_bytes: Vec<u8>,
+        pub archive_sha256: String,
+        pub transferred_archive_sha256: String,
+        pub transfer: Option<SnapshotCommandObservation>,
+        pub placement: Option<SnapshotPlacementObservation>,
+        pub validation: SnapshotValidationObservation,
+        /// Independent upstream finalized identity at the stopped cut.
+        pub cut_canonical: SnapshotBlock,
+        /// Complete predeclared protected path inventory, independently collected each time.
+        pub identity_before: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
+        pub identity_placed: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
+        pub identity_at_k: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
+        pub identity_restarted: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
+        pub first_start: Option<SnapshotLaunchObservation>,
+        pub copied_result: SnapshotResultObservation,
+        pub new_job: Option<SnapshotNewJobObservation>,
+        pub before_restart: Option<SnapshotNativeObservation>,
+        pub k_canonical: Option<SnapshotBlock>,
+        pub first_exit: Option<SnapshotExitObservation>,
+        pub second_start: Option<SnapshotLaunchObservation>,
     }
 }

@@ -241,3 +241,27 @@ Feature: Off-chain computation and Metadosis
     And the three stopped workers restart and form the remaining quorum
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
+
+  @offline-snapshot @price-oracle
+  Scenario: A new FullNode starts from signed native files after Lysis and continues ordinary work
+    Given a fresh four-validator OCOMP offline-snapshot localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
+    When a fresh snapshot recipient provisions its own identity without syncing
+    And all 257 capacity owners submit one encrypted Tribute each
+    Then all validators observe exactly 257 public Tributes for the capacity day
+    When the committee logical clock reaches the public capacity processing time
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then three matching validator domains atomically certify the Lysis generation
+    When a stopped post-Lysis donor creates the signed native snapshot
+    And the signed files start fresh FullNode placements with and without offline validation
+    Then the snapshot FullNode preserves the copied Lysis result and canonical state
+    And the certified generation is materialized through at least two bounded transactions
+    And five deterministic capacity owners enumerate ordinary NODs with matching nodData
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
+    And the snapshot FullNode observes the same completed public actions without submitting them
+    When the snapshot FullNode executes a fresh next-day OCOMP job and restarts at current progress
+    Then the offline snapshot workflow evidence is complete

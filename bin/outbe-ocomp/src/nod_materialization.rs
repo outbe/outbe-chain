@@ -329,6 +329,122 @@ pub struct MaterializationReferenceStoreV1 {
     root: PathBuf,
 }
 
+/// Existing public reference files, addressed by their native job/ordinal path.
+/// Ordinals are retained locators, not assertions about the current chain cursor.
+pub struct MaterializationReferenceReaderV1 {
+    root: PathBuf,
+}
+
+impl MaterializationReferenceReaderV1 {
+    pub fn open_existing(root: impl AsRef<Path>) -> Result<Self, MaterializationReferenceErrorV1> {
+        let root = root.as_ref().to_path_buf();
+        inspect_reference_directory(&root)?;
+        Ok(Self { root })
+    }
+
+    pub fn load_exact(
+        &self,
+        job_id: B256,
+        ordinal: u32,
+    ) -> Result<Option<Vec<CasObjectRefV1>>, MaterializationReferenceErrorV1> {
+        if job_id.is_zero() {
+            return Err(MaterializationReferenceErrorV1::InvalidRecord);
+        }
+        inspect_reference_directory(&self.root)?;
+        let job = self.root.join(hex::encode(job_id));
+        let directory = job.join(ordinal.to_string());
+        for path in [&job, &directory] {
+            match inspect_reference_directory(path) {
+                Err(MaterializationReferenceErrorV1::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(None)
+                }
+                result => result?,
+            }
+        }
+        // Reuse the owner's exact path and codec without its creating constructor.
+        MaterializationReferenceStoreV1 { root: directory }.load_exact(job_id)
+    }
+
+    /// Stream every surviving nested record. Empty directories left by native
+    /// release are valid. Observations are provisional until the walk succeeds.
+    pub fn visit_references(
+        &self,
+        visitor: &mut impl FnMut(
+            B256,
+            u32,
+            Vec<CasObjectRefV1>,
+        ) -> Result<(), MaterializationReferenceErrorV1>,
+    ) -> Result<(), MaterializationReferenceErrorV1> {
+        inspect_reference_directory(&self.root)?;
+        for job in fs::read_dir(&self.root).map_err(|source| io_error(&self.root, source))? {
+            let job = job.map_err(|source| io_error(&self.root, source))?;
+            let path = job.path();
+            inspect_reference_directory(&path)?;
+            let name = job.file_name();
+            let name = name
+                .to_str()
+                .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
+            let mut bytes = [0; 32];
+            hex::decode_to_slice(name, &mut bytes)
+                .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
+            let job_id = B256::from(bytes);
+            if job_id.is_zero() || name != hex::encode(job_id) {
+                return Err(MaterializationReferenceErrorV1::InvalidRecord);
+            }
+            for ordinal in fs::read_dir(&path).map_err(|source| io_error(&path, source))? {
+                let ordinal = ordinal.map_err(|source| io_error(&path, source))?;
+                let directory = ordinal.path();
+                inspect_reference_directory(&directory)?;
+                let name = ordinal.file_name();
+                let name = name
+                    .to_str()
+                    .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
+                let ordinal: u32 = name
+                    .parse()
+                    .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
+                if name != ordinal.to_string() {
+                    return Err(MaterializationReferenceErrorV1::InvalidRecord);
+                }
+                let codec = MaterializationReferenceStoreV1 {
+                    root: directory.clone(),
+                };
+                let expected = codec.path(job_id);
+                for entry in
+                    fs::read_dir(&directory).map_err(|source| io_error(&directory, source))?
+                {
+                    let path = entry.map_err(|source| io_error(&directory, source))?.path();
+                    if path != expected {
+                        return Err(
+                            if path.extension().is_some_and(|extension| extension == "tmp") {
+                                MaterializationReferenceErrorV1::AmbiguousTemp(path)
+                            } else {
+                                MaterializationReferenceErrorV1::InvalidRecord
+                            },
+                        );
+                    }
+                    let references = codec
+                        .load_exact(job_id)?
+                        .ok_or(MaterializationReferenceErrorV1::Missing)?;
+                    visitor(job_id, ordinal, references)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn inspect_reference_directory(path: &Path) -> Result<(), MaterializationReferenceErrorV1> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| io_error(path, source))?;
+    if !metadata.is_dir() {
+        return Err(MaterializationReferenceErrorV1::UnsafePath(
+            path.to_path_buf(),
+        ));
+    }
+    Ok(())
+}
+
 impl MaterializationReferenceStoreV1 {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, MaterializationReferenceErrorV1> {
         let root = root.as_ref().to_path_buf();
@@ -484,9 +600,25 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, MaterializationReferenceErrorV1>
             path.to_path_buf(),
         ));
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
+    read_reference_bytes(&mut file, path, metadata.len())
+}
+
+fn read_reference_bytes(
+    reader: &mut impl std::io::Read,
+    path: &Path,
+    length: u64,
+) -> Result<Vec<u8>, MaterializationReferenceErrorV1> {
+    let limit = length
+        .checked_add(1)
+        .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
+    let mut bytes = Vec::with_capacity(length as usize);
+    reader
+        .take(limit)
+        .read_to_end(&mut bytes)
         .map_err(|source| io_error(path, source))?;
+    if bytes.len() as u64 != length {
+        return Err(MaterializationReferenceErrorV1::InvalidRecord);
+    }
     Ok(bytes)
 }
 
@@ -549,4 +681,27 @@ pub enum MaterializationReferenceErrorV1 {
         #[source]
         source: std::io::Error,
     },
+}
+
+#[cfg(test)]
+mod reference_reader_bounds_tests {
+    use super::*;
+
+    #[test]
+    fn growing_reference_stops_after_observed_length_plus_one() {
+        let mut source = std::io::Cursor::new(vec![7; 100]);
+        assert!(read_reference_bytes(&mut source, Path::new("record.json"), 2).is_err());
+        assert_eq!(source.position(), 3);
+    }
+
+    #[test]
+    fn stable_reference_is_exact_and_shortened_reference_is_rejected() {
+        let mut source = std::io::Cursor::new(vec![1, 2, 3]);
+        assert_eq!(
+            read_reference_bytes(&mut source, Path::new("record.json"), 3).unwrap(),
+            vec![1, 2, 3]
+        );
+        let mut source = std::io::Cursor::new(vec![1, 2]);
+        assert!(read_reference_bytes(&mut source, Path::new("record.json"), 3).is_err());
+    }
 }

@@ -13,8 +13,9 @@ pub use repository::{
     TributeRepositoryReader, TributeRepositoryWriter,
 };
 pub use retention::{
-    RetainedTributeCursor, RetainedTributePage, RetainedTributePin, RetainedTributeReader,
-    RetainedTributeRef, RetainedTributeWriter, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
+    RetainedTributeAuditEntry, RetainedTributeAuditVisitor, RetainedTributeCursor,
+    RetainedTributePage, RetainedTributePin, RetainedTributeReader, RetainedTributeRef,
+    RetainedTributeWriter, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
     OCOMP_RETAINED_TRIBUTES_NAMESPACE,
 };
 pub use runtime::LoadedTribute;

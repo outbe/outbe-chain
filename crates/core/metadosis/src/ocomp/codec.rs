@@ -13,10 +13,11 @@ const SCHEDULER_MAGIC: [u8; 4] = *b"OMJS";
 const SCHEDULER_VERSION: u16 = 1;
 const SCHEDULER_PHASE_READY: u8 = 1;
 const SCHEDULER_PHASE_PENDING: u8 = 2;
-const SCHEDULER_ENCODED_LEN: usize = 4 + 2 + 1 + 4 + 8 + 8 + 32 + 8 + 8 + 1 + 8 + 32 + 32;
+pub(super) const SCHEDULER_ENCODED_LEN: usize =
+    4 + 2 + 1 + 4 + 8 + 8 + 32 + 8 + 8 + 1 + 8 + 32 + 32;
 const LIVE_INDEX_MAGIC: [u8; 4] = *b"OMLI";
 const LIVE_INDEX_VERSION: u16 = 1;
-const LIVE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
+pub(super) const LIVE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
 
 pub(super) struct FixedReader<'a> {
     encoded: &'a [u8],

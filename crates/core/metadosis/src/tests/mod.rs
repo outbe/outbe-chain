@@ -219,6 +219,7 @@ mod lysis_ingress;
 mod ocomp_limits;
 mod ocomp_request;
 mod ocomp_semantic_migrations;
+mod ocomp_snapshot_views;
 mod ocomp_storage;
 mod pre_admission;
 mod reducer;
