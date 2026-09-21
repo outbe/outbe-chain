@@ -151,7 +151,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 39] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 40] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -202,6 +202,9 @@ pub mod marker_addresses {
         // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
         // preservation path (reth22-1 class).
         L2_REGISTRY_ADDRESS,
+        // Hyperlane controller (router + domain->ISM table). Not genesis-seeded,
+        // so the runtime 0xEF marker is its only EIP-161 preservation path.
+        HYPERLANE_CONTROLLER_ADDRESS,
         // OCOMP authority and lineage registry. Fresh genesis initializes it
         // at height 32; the marker preserves successor/refcount state.
         OCOMP_REGISTRY_ADDRESS,

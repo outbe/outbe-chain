@@ -8715,6 +8715,7 @@ dependencies = [
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
+ "outbe-hyperlanecontroller",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-l2registry",
@@ -8908,6 +8909,21 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-hyperlanecontroller"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-vote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

@@ -248,6 +248,18 @@ pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000
 /// `outbe.emit.mint@1.5.0` UltraHonkKeccak proof. See `outbe-emit`.
 pub const EMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE13");
 
+/// HyperlaneController precompile address (stateful).
+///
+/// Governance-owned controller of the Hyperlane bridge: owner of the Outbe
+/// Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter and the
+/// storage multisig ISM, and (through its Interchain Account) of the same
+/// contracts on remote chains. Stores only the local ISM / router addresses
+/// and the `domain -> remote ISM` table; validator sets live in the ISMs.
+/// `fund` is the only payable selector (float that pays ICA fees). Every
+/// mutation is applied by the validator vote target. See `outbe-hyperlanecontroller`.
+pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE14");
+
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
 

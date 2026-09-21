@@ -395,6 +395,7 @@ define_exact_routes! {
     EMIT_ADDRESS => (DispatchAdapter::Basic(outbe_emit::precompile::dispatch), outbe_emit::precompile::base_gas, ValuePolicy::Payable, outbe_emit::precompile::PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::v1_precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
+    HYPERLANE_CONTROLLER_ADDRESS => (DispatchAdapter::Basic(outbe_hyperlanecontroller::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
     STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
     RADICLE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_radicleregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
