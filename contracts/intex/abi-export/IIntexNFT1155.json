@@ -351,19 +351,6 @@
     },
     {
       "type": "function",
-      "name": "markQualified",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "ownerBalances",
       "inputs": [
         {
@@ -1177,17 +1164,6 @@
         },
         {
           "name": "actual",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidStateForSettle",
-      "inputs": [
-        {
-          "name": "state",
           "type": "uint8",
           "internalType": "uint8"
         }

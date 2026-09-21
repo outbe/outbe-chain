@@ -85,19 +85,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
     }
 
-    function test_uri_Qualified_ReflectsState() public {
-        vm.prank(bridger);
-        token.markQualified(SERIES_ID);
-        bytes memory json = _json(iTok);
-        _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Qualified\"}");
-        bytes memory svg = json.decodeSvg();
-        assertTrue(svg.contains("QUALIFIED"), "badge text");
-        assertTrue(svg.contains("#16a34a"), "badge color");
-    }
-
     function test_uri_Called_AddsCallTimestamps() public {
-        vm.prank(bridger);
-        token.markQualified(SERIES_ID);
         vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 calledAt = block.timestamp;
@@ -128,8 +116,6 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_Expired_DerivedFromClock() public {
         vm.prank(bridger);
-        token.markQualified(SERIES_ID);
-        vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
 
@@ -146,8 +132,6 @@ contract IntexNFT1155MetadataTest is Test {
     }
 
     function test_uri_SettledToken_SuffixAndNoLifecycle() public {
-        vm.prank(bridger);
-        token.markQualified(SERIES_ID);
         vm.prank(bridger);
         token.settleIntex(SERIES_ID, user, user2, 3);
 

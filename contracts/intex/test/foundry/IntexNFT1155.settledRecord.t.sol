@@ -62,8 +62,6 @@ contract IntexNFT1155SettledRecordTest is Test {
         string memory before = nft.uri(sTok);
 
         vm.prank(bridger);
-        nft.markQualified(SERIES_ID);
-        vm.prank(bridger);
         nft.markCalled(SERIES_ID, uint32(block.timestamp));
 
         assertEq(nft.uri(sTok), before, "a closed position is not moved by later transitions");

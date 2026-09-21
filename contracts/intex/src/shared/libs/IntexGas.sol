@@ -23,12 +23,9 @@ library IntexGas {
     /// @dev 147k.
     uint256 internal constant AUCTION_RESULT = 225_000;
 
-    /// @dev Cut from slotting, the dearer path: Called 114k at one series and 322k at eight, Qualified 122k
-    ///      and 323k.
+    /// @dev Cut from slotting, the dearer path: 114k at one series and 322k at eight.
     uint256 internal constant MARK_CALLED_BASE = 130_000;
     uint256 internal constant MARK_CALLED_PER_SERIES = 45_000;
-    uint256 internal constant MARK_QUALIFIED_BASE = 145_000;
-    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 43_000;
 
     /// @notice Per-series ceiling: uncapped, a runaway series takes 63/64 of the message's gas and starves
     ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
@@ -96,10 +93,6 @@ library IntexGas {
 
     function markCalled(uint256 seriesCount) internal pure returns (uint256) {
         return MARK_CALLED_BASE + seriesCount * MARK_CALLED_PER_SERIES;
-    }
-
-    function markQualified(uint256 seriesCount) internal pure returns (uint256) {
-        return MARK_QUALIFIED_BASE + seriesCount * MARK_QUALIFIED_PER_SERIES;
     }
 
     function dailyVwap(uint256 rowCount) internal pure returns (uint256) {

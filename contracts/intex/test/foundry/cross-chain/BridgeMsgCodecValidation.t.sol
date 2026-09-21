@@ -107,7 +107,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedEncodeMarkCalled(20260212, empty);
     }
 
-    function test_MarkQualified_OverSizedBatch_Reverts() public {
+    function test_MarkCalled_OverSizedBatch_Reverts() public {
         uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_MARK + 1;
         bytes14[] memory batch = MarkBatchLib.sized("20260212-TRY-U", tooMany);
         vm.expectRevert(
@@ -115,7 +115,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MarkBatchTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_MARK
             )
         );
-        this.exposedEncodeMarkQualified(20260212, batch);
+        this.exposedEncodeMarkCalled(20260212, batch);
     }
 
     function test_MarkCalled_ShortBody_Reverts() public {
@@ -159,13 +159,6 @@ contract BridgeMsgCodecValidationTest is Test {
             ),
             bytes14("20260212-TRY-U"),
             "markCalled"
-        );
-        assertEq(
-            this.exposedDecodeMarkQualified(
-                BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U"))
-            ),
-            bytes14("20260212-TRY-U"),
-            "markQualified"
         );
     }
 
@@ -293,10 +286,6 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
     }
 
-    function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkQualified(day, ids);
-    }
-
     /// @dev The arrival set a receiver keeps for a day is one word wide, so a claimed count past
     ///      `MAX_CHUNKS` has no slot to land in. Refunds bound this on both sides of the wire; issuance
     ///      has to bound it the same way.
@@ -326,11 +315,6 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
-        return seriesIds[0];
-    }
-
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(p);
         return seriesIds[0];
     }
 

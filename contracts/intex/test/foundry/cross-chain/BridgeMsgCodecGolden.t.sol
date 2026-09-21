@@ -65,13 +65,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
     }
 
-    function test_Golden_MarkQualified() public pure {
-        assertEq(
-            BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U")),
-            abi.encodePacked(hex"0109", abi.encode(uint32(20260212), MarkBatchLib.one("20260212-TRY-U")))
-        );
-    }
-
     function test_Golden_BidsDone() public pure {
         // [ver=01][type=02][wwd=11223344][srcChain=00000061][gen=00000002][totalBatches=0003][totalBids=000000c8]
         assertEq(
@@ -299,12 +292,6 @@ contract BridgeMsgCodecGoldenTest is Test {
             ),
             bytes14("20260212-TRY-U")
         );
-        assertEq(
-            this.exposedDecodeMarkQualified(
-                BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U"))
-            ),
-            bytes14("20260212-TRY-U")
-        );
     }
 
     // External calldata wrappers for the internal decoders.
@@ -319,11 +306,6 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
-        return seriesIds[0];
-    }
-
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(p);
         return seriesIds[0];
     }
 

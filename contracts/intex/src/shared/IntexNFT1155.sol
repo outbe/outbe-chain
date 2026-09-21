@@ -17,7 +17,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
- * @dev Series lifecycle: Issued -> Qualified -> Called.
+ * @dev Series lifecycle: Issued -> Called. Qualification is derived from daily VWAPs, never stored.
  *      Expiry is not an on-chain state: it is derived from `calledAt + callNoticePeriod`
  *      against the clock (settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint112(seriesId)`,
@@ -221,33 +221,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markQualified(bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
-        uint256 tokenId = _issuedTokenId(seriesId);
-        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.issuedAt == 0) {
-            revert NonexistentToken(tokenId);
-        }
-        if (data.state != IIntexNFT1155.IntexState.Issued) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Issued), uint8(data.state));
-        }
-
-        IIntexNFT1155.IntexState previousState = data.state;
-        data.state = IIntexNFT1155.IntexState.Qualified;
-
-        emit IntexStatusUpdated(
-            msg.sender, tokenId, previousState, IIntexNFT1155.IntexState.Qualified, uint32(block.timestamp), 0
-        );
-        emit MetadataUpdate(tokenId);
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function markCalled(bytes14 seriesId, uint32 calledAt) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
-        // Allow Issued -> Called and Qualified -> Called; the relayer drives the qualification oracle.
+        // Allow Issued -> Called and Qualified -> Called.
         if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
         }
@@ -353,10 +333,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IIntexNFT1155.SeriesData storage data = $.seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
-        if (data.state != IIntexNFT1155.IntexState.Qualified && data.state != IIntexNFT1155.IntexState.Called) {
-            revert InvalidStateForSettle(uint8(data.state));
-        }
-
+        // Qualification is derived by the factory before it calls; a called series settles until its deadline.
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
             uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
@@ -390,18 +367,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Series must exist; we look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
 
-        // Stored state on purpose, not `_effectiveState`: settled units stay exercisable
-        // after the series expires, so routing this gate through the derived state would
-        // close mining at the deadline.
-        // Mirror `settleIntex`'s precondition: Settled balances only exist after a settle, which
-        // is only permitted from Qualified or Called. Making the gate explicit (instead of
-        // relying on `_burn`'s zero-balance revert) keeps a future change that pre-mints
-        // Settled tokens - e.g. an airdrop variant - from accidentally opening an early-burn
-        // window. The gate is `state in {Qualified, Called}`, not a fictional Settled state value.
-        if (iData.state != IIntexNFT1155.IntexState.Qualified && iData.state != IIntexNFT1155.IntexState.Called) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(iData.state));
-        }
-
+        // Settled units stay exercisable in every state, expired included: only a settle mints them.
         uint256 sTok = _settledTokenId(seriesId);
         // CEI ok: write before _burn for symmetry with mint; _burn fires no acceptance callback
         // (to == address(0)), so no read-only-reentrancy surface here.

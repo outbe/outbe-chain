@@ -28,9 +28,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is read-only:
-    ///      storage keeps `Called` so the transfer and bridge freezes, which compare the
-    ///      stored field, keep applying.
+    /// @dev Lifecycle: Issued -> Called -> Expired. `Qualified` is derived from daily VWAPs, never stored by
+    ///      this version. `Expired` is read-only: storage keeps `Called` so the transfer and bridge freezes,
+    ///      which compare the stored field, keep applying.
     enum IntexState {
         Issued,
         Qualified,
@@ -160,8 +160,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroAmount();
     /// @notice A mint or crosschainMint quantity exceeds the range its packed storage field can hold.
     error QuantityTooLarge(uint256 quantity);
-    /// @notice Settle attempted in a series state that does not allow it.
-    error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
     /// @notice Owner-to-owner transfer attempted while the series is Called.
@@ -211,17 +209,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     function issue(address to, uint256 quantity, bytes14 seriesId) external;
 
-    /// @notice Mark a series as Qualified (Issued -> Qualified).
-    /// @param seriesId Series identifier.
-    function markQualified(bytes14 seriesId) external;
-
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
+    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification; a Called
+    ///      series settles only until its deadline.
     /// @param seriesId Series identifier.
     /// @param from Owner whose Issued tokens are burned.
     /// @param to Recipient of the newly minted Settled tokens.

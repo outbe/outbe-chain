@@ -84,7 +84,7 @@ contract TargetRouter is
         return _ts().auction;
     }
 
-    /// @notice IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
+    /// @notice IntexNFT1155 contract that issuance and mark-called messages apply to.
     function intex() external view returns (IIntexNFT1155) {
         return _ts().intex;
     }
@@ -243,8 +243,6 @@ contract TargetRouter is
             TargetInbound.handleRefundInstructions(_ts(), srcChainId, receiveId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             TargetInbound.handleMarkCalled(_ts(), srcChainId, message);
-        } else if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            TargetInbound.handleMarkQualified(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_DAILY_VWAP) {
             TargetInbound.handleDailyVwap(_ts(), srcChainId, message);
         } else {
@@ -422,34 +420,26 @@ contract TargetRouter is
         emit ParkedIssuanceApplied(idx, p.seriesId);
     }
 
-    /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
+    /// @notice Self-call shim around one Called mark; isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
-    /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
-    /// @param calledAt Origin's call timestamp; ignored for MARK_QUALIFIED.
-    function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external {
+    /// @param calledAt Origin's call timestamp.
+    function applyMarkOne(bytes14 seriesId, uint32 calledAt) external {
         if (msg.sender != address(this)) revert NotSelf();
-        if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            _ts().intex.markQualified(seriesId);
-            return;
-        }
         _ts().intex.markCalled(seriesId, calledAt);
     }
 
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
-    ///         series still will not take it, leaving the slot in place.
+    ///         series still will not take it, leaving the slot in place. A slot holding anything but a Called
+    ///         mark is cleared without effect.
     /// @param seriesId Series whose slotted mark to apply.
     function applyParkedMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
         ParkedMark memory waiting = $.parkedMarks[seriesId];
         uint8 msgType = waiting.msgType;
         if (msgType == 0) revert NoParkedMark(seriesId);
-        uint32 calledAt = waiting.calledAt;
         delete $.parkedMarks[seriesId];
-        if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            $.intex.markQualified(seriesId);
-        } else {
-            $.intex.markCalled(seriesId, calledAt);
-        }
+        if (msgType != BridgeMsgCodec.MSG_MARK_CALLED) return;
+        $.intex.markCalled(seriesId, waiting.calledAt);
         emit ParkedMarkApplied(seriesId, msgType);
     }
 

@@ -62,7 +62,6 @@ contract DuplicateProtectionTest is CrossChainTest {
 
     function _seedSeries(IntexNFT1155 intex) internal {
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
-        intex.markQualified(SERIES_ID);
     }
 
     function _batchSendParam(address to) internal view returns (BatchSendParam memory) {
