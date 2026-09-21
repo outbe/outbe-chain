@@ -293,3 +293,316 @@ mod selection {
         }
     }
 }
+
+mod artifact {
+    use crate::snapshot::validation::{
+        run::{audit_artifact, ArtifactAudit, ValidationInputs},
+        Incomplete,
+    };
+    use outbe_snapshot::{
+        archive::write_archive,
+        manifest::manifest_digest,
+        provenance::{signing_digest, SignatureEnvelope},
+    };
+    use std::{fs, io::Write, path::Path};
+
+    fn manifest() -> Vec<u8> {
+        let block = |n| serde_json::json!({"number":n,"hash":"11".repeat(32)});
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version":1,"chain_id":54322345,"genesis_hash":"22".repeat(32),
+            "created_at_unix":1789940000_u64,"creator":null,"source":null,
+            "progress":{"finalized":block(100),"execution":block(101),"execution_stage":101,
+                "finish_stage":101,"partial_state_trie":null,"unwind":null,"storage_version":2,
+                "ce":block(100),"projection":block(98),"ocomp_baseline":block(0),
+                "ocomp_previous":block(90),"ocomp_current":block(97)},
+            "domains":[{"id":"native","kind":"execution-db","native_root":"chain",
+                "native_path":"db","mode":448,"entries":[{"path":"data","kind":"file",
+                "size":4,"sha256":hex::encode(manifest_digest(b"data")),"mode":384}]}],
+            "file_count":1,"total_bytes":4
+        }))
+        .unwrap()
+    }
+
+    fn sign(raw: &[u8], seed: u8) -> SignatureEnvelope {
+        let key = k256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
+        let (signature, recovery) = key.sign_prehash_recoverable(&signing_digest(raw)).unwrap();
+        let mut bytes = [0; 65];
+        bytes[..64].copy_from_slice(&signature.to_bytes());
+        bytes[64] = recovery.to_byte();
+        SignatureEnvelope::from_signature(raw, bytes).unwrap()
+    }
+
+    fn archive(root: &Path, raw: &[u8], payload: &[u8]) -> ValidationInputs {
+        let path = root.join("snapshot.tar");
+        write_archive(
+            fs::File::create(&path).unwrap(),
+            raw,
+            &sign(raw, 7),
+            |tar| {
+                for (name, bytes, directory, mode) in [
+                    ("payload/native", &[][..], true, 0o700),
+                    ("payload/native/data", payload, false, 0o600),
+                ] {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(bytes.len() as u64);
+                    header.set_mode(mode);
+                    header.set_entry_type(if directory {
+                        tar::EntryType::Directory
+                    } else {
+                        tar::EntryType::Regular
+                    });
+                    header.set_cksum();
+                    tar.append_data(&mut header, name, bytes)?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        ValidationInputs {
+            archive: Some(path),
+            ..Default::default()
+        }
+    }
+
+    fn detached(root: &Path, raw: &[u8]) -> ValidationInputs {
+        let manifest = root.join("manifest.json");
+        let signature = root.join("signature.json");
+        fs::write(&manifest, raw).unwrap();
+        fs::write(&signature, serde_json::to_vec(&sign(raw, 7)).unwrap()).unwrap();
+        ValidationInputs {
+            manifest: Some(manifest),
+            signature: Some(signature),
+            ..Default::default()
+        }
+    }
+
+    fn audit(root: &Path, inputs: &ValidationInputs, files: bool) -> ArtifactAudit {
+        let before = super::super::headers::fingerprint(root);
+        let audit = audit_artifact(inputs, files);
+        assert_eq!(super::super::headers::fingerprint(root), before);
+        audit
+    }
+
+    fn incomplete(result: &eyre::Result<()>) {
+        let error = result.as_ref().unwrap_err();
+        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+    }
+
+    #[test]
+    fn valid_signature_and_damaged_payload_have_independent_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let inputs = archive(root.path(), &manifest(), b"BAD!");
+        let result = audit(root.path(), &inputs, true);
+        assert!(result.metadata.is_ok());
+        assert!(result.provenance_result.is_ok());
+        assert_eq!(result.provenance.signature_valid, Some(true));
+        assert_eq!(result.provenance.expected_signer_match, None);
+        assert!(result.archive_result.unwrap().is_err());
+    }
+
+    #[test]
+    fn untrusted_signer_does_not_erase_crypto_validity_or_fail_valid_archive() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = manifest();
+        let mut inputs = archive(root.path(), &raw, b"data");
+        inputs.expected_signer = Some(sign(&raw, 8).verify(&raw, None).unwrap());
+        let result = audit(root.path(), &inputs, true);
+        assert!(result.provenance_result.is_err());
+        assert_eq!(result.provenance.signature_valid, Some(true));
+        assert_eq!(result.provenance.expected_signer_match, Some(false));
+        assert_eq!(result.provenance.signer, Some(sign(&raw, 7).public_key));
+        assert!(result.archive_result.unwrap().is_ok());
+    }
+
+    #[test]
+    fn provenance_only_never_traverses_malformed_payload_header() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = manifest();
+        let inputs = archive(root.path(), &raw, b"data");
+        let path = inputs.archive.as_ref().unwrap();
+        let mut bytes = fs::read(path).unwrap();
+        let offset = bytes
+            .windows(b"payload/native".len())
+            .position(|w| w == b"payload/native")
+            .unwrap();
+        bytes[offset..].fill(0xff);
+        fs::write(path, bytes).unwrap();
+        let result = audit(root.path(), &inputs, false);
+        assert!(result.metadata.is_ok());
+        assert!(result.provenance_result.is_ok());
+        assert!(result.archive_result.is_none());
+        assert!(audit(root.path(), &inputs, true)
+            .archive_result
+            .unwrap()
+            .is_err());
+    }
+
+    #[test]
+    fn raw_whitespace_is_authenticated_and_simultaneous_sidecars_must_agree() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = manifest();
+        let mut inputs = archive(root.path(), &raw, b"data");
+        let sides = detached(root.path(), &raw);
+        inputs.manifest = sides.manifest;
+        inputs.signature = sides.signature;
+        let result = audit(root.path(), &inputs, true);
+        assert!(result.metadata.is_ok());
+        assert!(result.provenance_result.is_ok());
+        assert!(result.archive_result.unwrap().is_ok());
+        let normalized =
+            serde_json::to_vec(&serde_json::from_slice::<serde_json::Value>(&raw).unwrap())
+                .unwrap();
+        assert_ne!(normalized, raw);
+        fs::write(inputs.manifest.as_ref().unwrap(), normalized).unwrap();
+        let result = audit(root.path(), &inputs, false);
+        assert!(result.metadata.is_err());
+        let error = result.provenance_result.unwrap_err();
+        assert!(error.downcast_ref::<Incomplete>().is_none());
+    }
+
+    #[test]
+    fn supplied_signature_cannot_silently_replace_the_archive_signer() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = manifest();
+        let mut inputs = archive(root.path(), &raw, b"data");
+        let signature = root.path().join("side-signature.json");
+        fs::write(&signature, serde_json::to_vec(&sign(&raw, 8)).unwrap()).unwrap();
+        inputs.signature = Some(signature);
+        let result = audit(root.path(), &inputs, false);
+        assert!(result.provenance_result.is_err());
+        assert_eq!(result.provenance.signature_valid, Some(true));
+        assert_eq!(result.provenance.signer, Some(sign(&raw, 7).public_key));
+    }
+
+    #[test]
+    fn signed_malformed_schema_does_not_erase_valid_crypto_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = br#"{"version":987}"#;
+        let inputs = archive(root.path(), raw, b"data");
+        let result = audit(root.path(), &inputs, true);
+        assert!(result.metadata.is_err());
+        assert!(result.provenance_result.is_ok());
+        assert_eq!(result.provenance.signature_valid, Some(true));
+        assert!(result.archive_result.unwrap().is_err());
+    }
+
+    #[test]
+    fn metadata_caps_reject_oversize_sidecars_and_archive_headers() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, cap) in [
+            ("manifest.json", 256_u64 * 1024 * 1024),
+            ("signature.json", 64_u64 * 1024),
+        ] {
+            let inputs = detached(root.path(), &manifest());
+            fs::File::create(root.path().join(name))
+                .unwrap()
+                .set_len(cap + 1)
+                .unwrap();
+            let result = audit_artifact(&inputs, false);
+            assert!(result.provenance_result.is_err());
+            let path = root.path().join("oversize.tar");
+            let mut file = fs::File::create(&path).unwrap();
+            if name == "signature.json" {
+                let raw = manifest();
+                let mut header = tar::Header::new_gnu();
+                header.set_path("manifest.json").unwrap();
+                header.set_size(raw.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                file.write_all(header.as_bytes()).unwrap();
+                file.write_all(&raw).unwrap();
+                file.write_all(&vec![0; (512 - raw.len() % 512) % 512])
+                    .unwrap();
+            }
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_size(cap + 1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            file.write_all(header.as_bytes()).unwrap();
+            drop(file);
+            let result = audit_artifact(
+                &ValidationInputs {
+                    archive: Some(path),
+                    ..Default::default()
+                },
+                false,
+            );
+            let error = result.provenance_result.unwrap_err();
+            assert!(
+                error.downcast_ref::<Incomplete>().is_none(),
+                "oversize is malformed: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_metadata_is_incomplete_and_existing_manifest_is_still_parseable() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(ValidationInputs::default().checks, "all");
+        let result = audit(root.path(), &ValidationInputs::default(), true);
+        incomplete(&result.provenance_result);
+        assert!(result
+            .metadata
+            .unwrap_err()
+            .downcast_ref::<Incomplete>()
+            .is_some());
+        assert!(result.archive_result.is_none());
+        let inputs = detached(root.path(), &manifest());
+        fs::remove_file(inputs.signature.as_ref().unwrap()).unwrap();
+        let result = audit(root.path(), &inputs, false);
+        assert!(result.metadata.is_ok());
+        incomplete(&result.provenance_result);
+        assert_eq!(result.provenance.signature_valid, None);
+        let inputs = ValidationInputs {
+            archive: Some(root.path().join("absent.tar")),
+            ..Default::default()
+        };
+        let result = audit(root.path(), &inputs, true);
+        incomplete(&result.provenance_result);
+        incomplete(result.archive_result.as_ref().unwrap());
+        assert_eq!(result.provenance.signature_valid, None);
+
+        let path = root.path().join("manifest-only.tar");
+        let mut archive = tar::Builder::new(fs::File::create(&path).unwrap());
+        let raw = manifest();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(raw.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "manifest.json", raw.as_slice())
+            .unwrap();
+        archive.finish().unwrap();
+        drop(archive);
+        let result = audit(
+            root.path(),
+            &ValidationInputs {
+                archive: Some(path),
+                ..Default::default()
+            },
+            true,
+        );
+        assert!(result.metadata.is_ok());
+        incomplete(&result.provenance_result);
+        incomplete(result.archive_result.as_ref().unwrap());
+    }
+
+    #[test]
+    fn detached_bad_signature_fails_without_claiming_an_authenticated_signer() {
+        let root = tempfile::tempdir().unwrap();
+        let inputs = detached(root.path(), &manifest());
+        let wrong = sign(b"different raw bytes", 7);
+        fs::write(
+            inputs.signature.as_ref().unwrap(),
+            serde_json::to_vec(&wrong).unwrap(),
+        )
+        .unwrap();
+        let result = audit(root.path(), &inputs, false);
+        assert!(result.metadata.is_ok());
+        assert!(result.provenance_result.is_err());
+        assert_eq!(result.provenance.signature_valid, Some(false));
+        assert_eq!(result.provenance.signer, None);
+        assert_eq!(result.provenance.expected_signer_match, None);
+    }
+}

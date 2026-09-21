@@ -8288,6 +8288,7 @@ dependencies = [
  "reth-rpc-server-types",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-util",

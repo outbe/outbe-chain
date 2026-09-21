@@ -74,6 +74,7 @@ tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
 tempfile.workspace = true
+tar.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
