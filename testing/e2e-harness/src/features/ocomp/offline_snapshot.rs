@@ -3284,10 +3284,34 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
     )
     .value();
     let primary = world.validators.primary_port();
-    let schedule = world
-        .rpc
-        .metadosis_wwd_state_on(primary, day)
-        .ok_or_else(|| eyre!("next WWD schedule unavailable"))?;
+    let mut schedule = world.rpc.metadosis_wwd_state_on(primary, day);
+    if schedule.is_none() {
+        // The native ProtocolCycle creates a day only after its forming start.
+        // Read phase boundaries from that created state, never fabricate them.
+        let creation =
+            first_protocol_cycle_at_or_after(world, WorldwideDay::new(day).start_timestamp());
+        let height = world
+            .rpc
+            .head(primary)
+            .ok_or_else(|| eyre!("head before next WWD"))?;
+        let timestamp = world
+            .rpc
+            .block_timestamp(primary, height)
+            .ok_or_else(|| eyre!("timestamp before next WWD"))?;
+        if timestamp < creation {
+            let _ = restart_committee_at_logical_time(world, creation);
+        }
+        let deadline = Instant::now() + Duration::from_secs(180);
+        while schedule.is_none() {
+            ensure!(
+                Instant::now() < deadline,
+                "next WWD was not created by native ProtocolCycle"
+            );
+            std::thread::sleep(Duration::from_millis(200));
+            schedule = world.rpc.metadosis_wwd_state_on(primary, day);
+        }
+    }
+    let schedule = schedule.ok_or_else(|| eyre!("next WWD schedule unavailable"))?;
     ensure!(schedule.status <= 2, "next-day offering already passed");
     if schedule.status < 2 {
         let _ = restart_committee_at_logical_time(world, schedule.lookback_end + 1);
