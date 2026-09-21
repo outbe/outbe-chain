@@ -131,6 +131,7 @@ mod lifecycle;
 mod parked;
 mod scans;
 mod settlement;
+mod vwap_push;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;

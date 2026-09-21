@@ -178,6 +178,9 @@ pub struct IntexFactoryContract {
     /// As `parked_message_cursor`, for the proceeds the factory refused.
     #[attribute(order = 46)]
     pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    /// Newest finalized UTC day (yyyymmdd) sent to the target registries; 0 before the first send.
+    #[attribute(order = 47)]
+    pub vwap_sent_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {

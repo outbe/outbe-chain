@@ -45,6 +45,16 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 /// Consecutive failures that end a parked pass: an empty relay float fails every entry alike.
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
+/// Days a fresh VWAP sender backfills: a series reads prices from issuance until its call notice runs
+/// out, at most the call window plus the notice.
+pub const INITIAL_BACKFILL_DAYS: u32 = 35;
+
+/// Days one `intex_vwap_push` firing may walk; each priced day is one cross-chain send per target.
+pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
+
+/// Rows one DAILY_VWAP message may carry. Mirrors the codec's `MAX_REFERENCE_PRICES`.
+pub const MAX_VWAP_ROWS: usize = 6;
+
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 
