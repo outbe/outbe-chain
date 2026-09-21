@@ -43,6 +43,130 @@ pub(crate) struct NodInputsAudit {
     pub actions: u64,
 }
 
+pub(crate) struct VerifiedPin {
+    pub candidate: outbe_node::ocomp::retention::CandidatePinV1,
+    pub job: OcompJobRecordV1,
+    /// Retention required by this local pin only. A false value cannot waive
+    /// independent canonical active-job or shared-lease obligations.
+    pub requires_source: bool,
+    pub export: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
+}
+
+/// Bind a natively decoded journal record to immutable current-E authority.
+/// Local lifecycle progress may lag canonical completion; it is not a claim
+/// that the donor executed, exported or materialized the completed job.
+pub(crate) fn verify_pin_authority(
+    state: &CanonicalState<'_>,
+    view: &super::super::native::RethReadOnlyView,
+    key: B256,
+    record: &outbe_node::ocomp::retention::PinRecordV1,
+) -> eyre::Result<VerifiedPin> {
+    use alloy_consensus::Sealable;
+    use outbe_node::ocomp::retention::PinStateV1;
+    let candidate = match record.state {
+        PinStateV1::AwaitingJobFinalization { candidate }
+        | PinStateV1::Finalized { candidate, .. }
+        | PinStateV1::Exported { candidate, .. }
+        | PinStateV1::Terminal { candidate, .. }
+        | PinStateV1::GcPending { candidate, .. }
+        | PinStateV1::Released { candidate, .. } => candidate,
+    };
+    ensure!(
+        key == candidate.block_hash,
+        "retention journal key differs from request block hash"
+    );
+    let expected_job = match record.state {
+        PinStateV1::AwaitingJobFinalization { .. } => None,
+        PinStateV1::Finalized { job_id, .. }
+        | PinStateV1::Exported { job_id, .. }
+        | PinStateV1::Terminal { job_id, .. }
+        | PinStateV1::GcPending { job_id, .. }
+        | PinStateV1::Released { job_id, .. } => Some(job_id),
+    };
+    let job = state.metadosis_job(
+        candidate.intent_id,
+        WorldwideDay::new(candidate.wwd),
+        expected_job,
+    )?;
+    ensure!(
+        job.intent_height == candidate.block_number
+            && job.intent.ce_sealed_root == candidate.ce_sealed_root
+            && job.intent.protocol_bundle_hash == candidate.protocol_bundle_hash
+            && job.intent.input_lease_id()? == candidate.input_lease_id,
+        "retained candidate differs from canonical request or input lease"
+    );
+    // The canonical getter validates finalized B bindings. Awaiting pins also
+    // need the retained request header even before canonical finality exists.
+    let number = candidate.block_number;
+    let header = view
+        .header(number)?
+        .ok_or_else(|| Incomplete(format!("missing retained pin request header B={number}")))?;
+    let canonical_hash = view
+        .canonical_hash(number)?
+        .ok_or_else(|| Incomplete(format!("missing canonical pin request hash B={number}")))?;
+    ensure!(
+        header.inner.number == number
+            && header.hash_slow() == canonical_hash
+            && canonical_hash == candidate.block_hash
+            && header.inner.state_root == candidate.state_root,
+        "retained candidate differs from canonical request header B={number}"
+    );
+    match record.state {
+        PinStateV1::Finalized {
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            ..
+        }
+        | PinStateV1::Exported {
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            ..
+        }
+        | PinStateV1::Terminal {
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            ..
+        }
+        | PinStateV1::GcPending {
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            ..
+        } => {
+            let finalized = job
+                .finalized
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("retained finalized pin lacks canonical finality"))?;
+            ensure!(
+                finalized.finality_recorded_height == finality_recorded_height
+                    && finalized.open_height == open_height
+                    && finalized.deadline_height == deadline_height,
+                "retained pin finality window differs from canonical finality"
+            );
+        }
+        PinStateV1::AwaitingJobFinalization { .. } | PinStateV1::Released { .. } => {}
+    }
+    let export = match record.state {
+        PinStateV1::Exported { export, .. } => Some(export),
+        PinStateV1::Terminal { export, .. }
+        | PinStateV1::GcPending { export, .. }
+        | PinStateV1::Released { export, .. } => export,
+        _ => None,
+    };
+    Ok(VerifiedPin {
+        candidate,
+        job,
+        requires_source: !matches!(
+            record.state,
+            PinStateV1::GcPending { .. } | PinStateV1::Released { .. }
+        ),
+        export,
+    })
+}
+
 /// Scratch-only sets avoid retaining the permanent series index in RAM.
 #[derive(Debug)]
 struct InventoryRows;
