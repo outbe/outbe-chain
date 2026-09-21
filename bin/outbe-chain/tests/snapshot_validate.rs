@@ -397,8 +397,27 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
             b"independent recipient authority"
         );
 
-        // A valid signature check needs no native layout and ignores irrelevant
-        // native parser failures. It remains independent of EVM corruption.
+        // A stdout-only signature check needs no native layout and ignores
+        // irrelevant native parser failures, independently of EVM corruption.
+        let stdout_only = successful(
+            binary()
+                .args([
+                    "snapshot",
+                    "validate",
+                    "--checks",
+                    "provenance",
+                    "--archive",
+                ])
+                .arg(&transferred)
+                .args(["--", "--intentionally-invalid-native-option"]),
+        );
+        let stdout_report: Value = serde_json::from_slice(&stdout_only.stdout).unwrap();
+        assert_eq!(status(&stdout_report, "provenance"), "passed");
+        assert!(!transcript(&stdout_only).contains("unexpected argument"));
+
+        // An artifact-only external report also needs no native configuration
+        // when no native arguments were supplied. Invalid supplied arguments
+        // prevent report publication; the dedicated report-path test covers it.
         let provenance_report = receiver.path().join("provenance-only.json");
         successful(
             binary()
@@ -411,8 +430,7 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
                 ])
                 .arg(&transferred)
                 .arg("--report")
-                .arg(&provenance_report)
-                .args(["--", "--intentionally-invalid-native-option"]),
+                .arg(&provenance_report),
         );
         assert_eq!(
             status(&read_report(&provenance_report), "provenance"),
