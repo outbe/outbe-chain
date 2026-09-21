@@ -4,7 +4,7 @@ use std::{
     collections::BTreeMap,
     fs,
     hash::Hasher,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -37,23 +37,44 @@ pub(crate) fn binary() -> Command {
 }
 
 pub(crate) fn run(command: &mut Command) -> Output {
+    // These real MDBX fixtures contain a 4 GiB CE file. Debug hashing may exceed
+    // the small CLI fixture timeout; this watchdog is test-only, not a node limit.
+    // File-backed output avoids blocking a child while waiting for a large report.
+    let mut stdout = tempfile::tempfile().unwrap();
+    let mut stderr = tempfile::tempfile().unwrap();
     let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(stdout.try_clone().unwrap()))
+        .stderr(Stdio::from(stderr.try_clone().unwrap()))
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        if child.try_wait().unwrap().is_some() {
-            return child.wait_with_output().unwrap();
+    let started = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let output = child.wait_with_output().unwrap();
-            panic!("offline CLI did not exit: {}", transcript(&output));
+        if started.elapsed() >= Duration::from_secs(600) {
+            timed_out = true;
+            child.kill().unwrap();
+            break child.wait().unwrap();
         }
         std::thread::sleep(Duration::from_millis(10));
-    }
+    };
+    stdout.seek(SeekFrom::Start(0)).unwrap();
+    stderr.seek(SeekFrom::Start(0)).unwrap();
+    let mut output = Output {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
+    stdout.read_to_end(&mut output.stdout).unwrap();
+    stderr.read_to_end(&mut output.stderr).unwrap();
+    assert!(
+        !timed_out,
+        "offline command timed out: {command:?}\n{}",
+        transcript(&output)
+    );
+    output
 }
 
 pub(crate) fn transcript(output: &Output) -> String {

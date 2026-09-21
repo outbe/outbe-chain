@@ -7,11 +7,9 @@
 
 use std::{
     fs,
-    io::{Read, Seek, SeekFrom},
     os::unix::fs::{symlink, PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    time::{Duration, Instant},
+    process::{Command, Output},
 };
 
 use alloy_consensus::Sealable;
@@ -36,50 +34,9 @@ type StageCheckpoint = <tables::StageCheckpoints as Table>::Value;
 
 #[path = "common/snapshot.rs"]
 mod snapshot;
-use snapshot::{binary, fingerprint, stopped_fixture, transcript, StoppedFixture};
+use snapshot::{binary, fingerprint, run, stopped_fixture, transcript, StoppedFixture};
 
 const OTHER_SIGNER: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-
-fn run(command: &mut Command) -> Output {
-    // These real MDBX fixtures contain a 4 GiB CE file. Debug hashing may exceed
-    // the small CLI fixture timeout; this watchdog is test-only, not a node limit.
-    // File-backed output avoids blocking a child while waiting for a large report.
-    let mut stdout = tempfile::tempfile().unwrap();
-    let mut stderr = tempfile::tempfile().unwrap();
-    let mut child = command
-        .stdout(Stdio::from(stdout.try_clone().unwrap()))
-        .stderr(Stdio::from(stderr.try_clone().unwrap()))
-        .spawn()
-        .unwrap();
-    let started = Instant::now();
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if started.elapsed() >= Duration::from_secs(600) {
-            timed_out = true;
-            child.kill().unwrap();
-            break child.wait().unwrap();
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    stdout.seek(SeekFrom::Start(0)).unwrap();
-    stderr.seek(SeekFrom::Start(0)).unwrap();
-    let mut output = Output {
-        status,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-    };
-    stdout.read_to_end(&mut output.stdout).unwrap();
-    stderr.read_to_end(&mut output.stderr).unwrap();
-    assert!(
-        !timed_out,
-        "offline command timed out: {command:?}\n{}",
-        transcript(&output)
-    );
-    output
-}
 
 fn successful(command: &mut Command) -> Output {
     let output = run(command);

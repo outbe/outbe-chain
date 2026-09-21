@@ -244,7 +244,7 @@ Feature: Off-chain computation and Metadosis
 
   @offline-snapshot @price-oracle
   Scenario: A new FullNode starts from signed native files after Lysis and continues ordinary work
-    Given a fresh four-validator OCOMP public capacity localnet
+    Given a fresh four-validator OCOMP offline-snapshot localnet
     Then the controlled COEN USD quote is finalized through the real price feeder
     When a fresh snapshot recipient provisions its own identity without syncing
     And all 257 capacity owners submit one encrypted Tribute each
