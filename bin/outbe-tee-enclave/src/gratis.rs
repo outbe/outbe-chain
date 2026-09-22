@@ -15,6 +15,7 @@
 use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
 
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, PledgeTerms};
 
 use crate::confidential::{FIELD_BALANCE, GRATIS};
@@ -33,9 +34,8 @@ const FIELD_EOA: u8 = 2;
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
-/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry_rate(32) || entry_price(32)`
-/// = 168 bytes.
-const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32 + 32;
+/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry_price(32)` = 136 bytes.
+const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32;
 
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
 
@@ -181,7 +181,6 @@ struct PledgeLockTicket {
     owner: Address,
     gratis_amount: U256,
     asset: Address,
-    entry_rate: U256,
     entry_price: U256,
 }
 
@@ -192,7 +191,6 @@ impl PledgeLockTicket {
         b.extend_from_slice(self.owner.as_slice());
         b.extend_from_slice(&self.gratis_amount.to_be_bytes::<32>());
         b.extend_from_slice(self.asset.as_slice());
-        b.extend_from_slice(&self.entry_rate.to_be_bytes::<32>());
         b.extend_from_slice(&self.entry_price.to_be_bytes::<32>());
         b
     }
@@ -206,8 +204,7 @@ impl PledgeLockTicket {
             owner: Address::from_slice(&b[32..52]),
             gratis_amount: U256::from_be_slice(&b[52..84]),
             asset: Address::from_slice(&b[84..104]),
-            entry_rate: U256::from_be_slice(&b[104..136]),
-            entry_price: U256::from_be_slice(&b[136..168]),
+            entry_price: U256::from_be_slice(&b[104..136]),
         })
     }
 
@@ -216,7 +213,6 @@ impl PledgeLockTicket {
             stables_amount: self.stables_amount,
             gratis_amount: self.gratis_amount,
             asset: self.asset,
-            entry_rate: self.entry_rate,
             entry_price: self.entry_price,
         }
     }
@@ -440,10 +436,13 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             if terms.asset.is_zero() {
                 return Ok(reject("pledge asset must not be zero"));
             }
-            match PledgeTerms::entry_price_for(terms.stables_amount, terms.gratis_amount) {
-                Some(price) if price == terms.entry_price => {}
-                Some(_) => return Ok(reject("pledge entry price does not match the collateral")),
-                None => return Ok(reject("pledge entry price rounds to zero")),
+            // `entry_price` is the COEN rate that sized the gratis. Recompute that
+            // debit and reject a ticket whose price does not produce it.
+            let Some(scaled) = terms.stables_amount.checked_mul(SCALE_1E6_U256) else {
+                return Ok(reject("pledge entry price overflow"));
+            };
+            if terms.entry_price.is_zero() || scaled / terms.entry_price != terms.gratis_amount {
+                return Ok(reject("pledge entry price does not match the collateral"));
             }
             if balance < terms.gratis_amount {
                 return Ok(reject("insufficient balance"));
@@ -455,7 +454,6 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 owner: req.account,
                 gratis_amount: terms.gratis_amount,
                 asset: terms.asset,
-                entry_rate: terms.entry_rate,
                 entry_price: terms.entry_price,
             };
             r.new_balance = write_amount(
@@ -680,8 +678,7 @@ mod tests {
             stables_amount: stables,
             gratis_amount: gratis,
             asset: asset(),
-            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
-            entry_price: PledgeTerms::entry_price_for(stables, gratis).expect("test ratio"),
+            entry_price: stables.checked_mul(SCALE_1E6_U256).unwrap() / gratis,
         }
     }
 
@@ -907,9 +904,7 @@ mod tests {
             owner: alice(),
             gratis_amount: U256::from(1000u64),
             asset: asset(),
-            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
-            entry_price: PledgeTerms::entry_price_for(U256::from(500u64), U256::from(1000u64))
-                .expect("test ratio"),
+            entry_price: U256::from(500u64) * SCALE_1E6_U256 / U256::from(1000u64),
         };
         let encoded = ticket.encode();
         assert_eq!(encoded.len(), RECORD_PLAINTEXT_LEN);

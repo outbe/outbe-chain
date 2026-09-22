@@ -16,7 +16,6 @@
 //! secret-bearing parts to the enclave without decrypting them.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::units::SCALE_1E6_U256;
 
 pub use outbe_primitives::time::WorldwideDay;
 
@@ -246,26 +245,8 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/ISO rate (scale 1e6) used to size `gratis_amount`. Not the position's
-    /// entry price: that ratio is [`Self::entry_price`].
-    pub entry_rate: U256,
-    /// `stables_amount * 1e6 / gratis_amount`, floored. Issuance copies this
-    /// onto the Credis position and does not recompute it.
+    /// COEN/ISO rate (scale 1e6) used to size `gratis_amount`.
     pub entry_price: U256,
-}
-
-impl PledgeTerms {
-    /// Six-decimal issuance-currency units per COEN-equivalent.
-    ///
-    /// `None` when `gratis_amount` is zero, the product overflows, or the ratio
-    /// rounds to zero.
-    pub fn entry_price_for(stables_amount: U256, gratis_amount: U256) -> Option<U256> {
-        if gratis_amount.is_zero() {
-            return None;
-        }
-        let price = stables_amount.checked_mul(SCALE_1E6_U256)? / gratis_amount;
-        (!price.is_zero()).then_some(price)
-    }
 }
 
 /// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
@@ -1384,7 +1365,6 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
             buf.extend_from_slice(&t.stables_amount.to_be_bytes::<32>());
             buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
             buf.extend_from_slice(t.asset.as_slice());
-            buf.extend_from_slice(&t.entry_rate.to_be_bytes::<32>());
             buf.extend_from_slice(&t.entry_price.to_be_bytes::<32>());
         }
         None => buf.push(0),
