@@ -567,7 +567,6 @@ fn deliver_oldest_reward_gem_batch_inner(
     })
 }
 
-/// The previous UTC day's VWAP at delivery, not the day the batch rewards.
 fn resolve_reward_entry_price(
     ctx: &BlockRuntimeContext,
     reference_currency: u16,
@@ -703,7 +702,6 @@ mod tests {
         // Register ISO 840 (USD) so issue_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
-        // Delivery prices off the UTC day before the block, at the same rate.
         let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),

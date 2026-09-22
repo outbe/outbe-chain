@@ -1,4 +1,4 @@
-//! A validator reward Gem is priced by the UTC day before its delivery, not the day it rewards.
+//! A validator reward Gem is priced by the UTC day before its delivery.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
@@ -91,7 +91,6 @@ fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
 #[test]
 fn a_batch_prices_off_the_day_before_its_delivery() {
     with_ctx(|ctx| {
-        // Only the day before delivery matches the assertion.
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
         seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
         seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::from(5u64) * one_coen840());
@@ -106,7 +105,6 @@ fn a_batch_prices_off_the_day_before_its_delivery() {
 #[test]
 fn a_batch_waits_while_the_day_before_its_delivery_has_no_vwap() {
     with_ctx(|ctx| {
-        // The live quote is no fallback.
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
         seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
 

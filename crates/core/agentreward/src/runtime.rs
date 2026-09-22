@@ -223,7 +223,6 @@ impl AgentRewardContract<'_> {
     }
 }
 
-/// The previous UTC day's VWAP at claim time, not the day the reward accrued.
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
     let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
     else {

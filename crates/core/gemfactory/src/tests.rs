@@ -201,7 +201,6 @@ fn issue_genesis_pays_like_agents_but_born_qualified() {
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        // Genesis pays and is called like other agent gems, with a zero floor.
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()

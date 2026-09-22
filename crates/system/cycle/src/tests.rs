@@ -138,7 +138,6 @@ fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         .utc_day_vwap_last_finalized
         .write(29_991_231)
         .unwrap();
-    // Delivery prices off the UTC day before the block.
     let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
