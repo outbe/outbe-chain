@@ -34,7 +34,7 @@ pub fn effective_state(
     }
 }
 
-/// A zero `issued_at` stamp is unsealed, not epoch midnight, and never qualifies.
+/// A zero `issued_at` stamp is unsealed and never qualifies.
 pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
     let issued_at = NodContract::new(storage.clone())
         .callable_bucket_issued_at

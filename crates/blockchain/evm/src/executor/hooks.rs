@@ -95,7 +95,7 @@ fn run_outbe_pre_execution_hooks_inner(
     <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Nod forfeits mutate compressed bodies, so the Nod sweep runs inside the
-    // CycleTick system transaction, not here.
+    // CycleTick system transaction.
     let _ = readers;
 
     // GEM: carry on the daily call sweep the Cycle trigger opened, pinned to a

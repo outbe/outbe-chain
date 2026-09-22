@@ -12,7 +12,7 @@ use std::fmt;
 use crate::errors::IntexError;
 
 /// Series lifecycle state. `Issued -> Called -> Expired`, where `Expired` means
-/// the call window closed, not that anything burned.
+/// the call window closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {

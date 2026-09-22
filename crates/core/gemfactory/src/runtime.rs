@@ -114,7 +114,7 @@ pub fn issue_gem_position(
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
 
-    // A currency the daily call scan does not walk would leave every gem uncallable.
+    // The daily call scan walks only listed reference currencies.
     outbe_oracle::api::check_reference_currency_with_storage(
         storage.clone(),
         series.reference_currency,

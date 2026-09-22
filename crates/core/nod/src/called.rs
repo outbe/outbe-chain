@@ -319,7 +319,7 @@ fn try_call(
     {
         return Ok(false);
     }
-    // Zero predates the stamp; read as epoch midnight it would count every day.
+    // A zero stamp predates sealing and never counts.
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     if issued_at == 0 {
         return Ok(false);

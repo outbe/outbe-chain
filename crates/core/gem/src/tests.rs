@@ -264,7 +264,6 @@ fn settling_an_issued_gem_takes_it_out_of_the_call_bin() {
     });
 }
 
-/// A gem the index never held is left alone rather than failing its caller.
 #[test]
 fn removing_a_gem_its_bin_does_not_hold_is_a_no_op() {
     with_storage(|storage| {
@@ -368,7 +367,6 @@ fn a_gem_is_qualified_by_its_reference_currency_not_its_issuance_one() {
         let floor = sample_params(ALICE).floor_price_minor;
 
         // The issuance currency is well above the floor, the reference one below.
-        // Reading the wrong code would qualify this gem.
         seed_day_price(storage, 840, Some(floor - U256::from(1u64)));
         seed_day_price(storage, EUR, Some(floor + U256::from(1u64)));
 

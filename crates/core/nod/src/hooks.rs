@@ -1,6 +1,6 @@
 //! Daily Nod call and forfeit hook.
 //!
-//! Qualification is not swept: it is derived when read (`api::is_qualified`).
+//! Qualification is derived when read (`api::is_qualified`).
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
