@@ -211,7 +211,9 @@ async function main() {
   console.log(`  collateral:        ${position.collateral}`);
   console.log(`  policyRate:        ${position.policyRate}`);
   console.log(`  entryPrice:        ${position.entryPrice}`);
+  console.log(`  callAnchorPrice:   ${position.callAnchorPrice}`);
   console.log(`  callPrice:         ${position.callPrice}`);
+  console.log(`  issuedAt:          ${position.issuedAt}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
   console.log(`  referenceCurrency: ${position.referenceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);

@@ -45,7 +45,8 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 /// Convert canonical six-decimal stablecoin raw units to six-decimal GRATIS,
 /// rounded down in the user's favor (C34).
 /// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
-/// Returns `(gratis_cost, rate)`.
+/// Returns `(gratis_cost, entry_price)`, where `entry_price` is the COEN rate
+/// that sized the gratis.
 fn convert_stables_to_gratis(
     storage: StorageHandle<'_>,
     amount_stables: U256,
@@ -83,7 +84,7 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
-    let (gratis_amount, entry_rate) =
+    let (gratis_amount, entry_price) =
         convert_stables_to_gratis(storage.clone(), stables_amount, asset)?;
     if gratis_amount.is_zero() {
         return Err(GratisFactoryError::InvalidAmount.into());
@@ -95,7 +96,7 @@ pub fn pledge_gratis(
         stables_amount,
         gratis_amount,
         asset,
-        entry_rate,
+        entry_price,
     };
 
     // Fold a read-only league probe into the pledge round-trip (no separate
