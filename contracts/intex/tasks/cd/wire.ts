@@ -650,9 +650,8 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   const intexFactoryRole = await router.read.INTEX_FACTORY_ROLE();
   const relayerRole = await intex.read.RELAYER_ROLE();
 
-  // Begin-block caller: auction stage sends (DESIS_ROLE), call marks and daily
-  // VWAPs to BNB (INTEX_FACTORY_ROLE on OriginRouter), and the local NFT
-  // markCalled (RELAYER_ROLE) - all run from begin-block.
+  // Begin-block caller: auction stage sends (DESIS_ROLE), call marks and daily VWAPs
+  // (INTEX_FACTORY_ROLE on OriginRouter) and the local NFT markCalled (RELAYER_ROLE).
   await grantOnRouter("DESIS_ROLE", desisRole, systemAddress);
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);

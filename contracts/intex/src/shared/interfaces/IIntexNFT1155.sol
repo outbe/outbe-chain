@@ -28,9 +28,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Called -> Expired. `Qualified` is derived from daily VWAPs, never stored by
-    ///      this version. `Expired` is read-only: storage keeps `Called` so the transfer and bridge freezes,
-    ///      which compare the stored field, keep applying.
+    /// @dev Issued -> Called -> Expired; `Qualified` is derived, never stored. `Expired` is read-only: storage
+    ///      keeps `Called`, so the freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
         Qualified,
@@ -136,8 +135,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens burned.
     event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
-    /// @notice Emitted when the admin points the metadata at a daily VWAP source.
-    /// @param source The new source; zero renders every uncalled series as Issued.
     event VwapSourceSet(address indexed source);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
@@ -244,13 +241,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The amount of burned tokens.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
-    /// @notice Set the daily VWAP source the metadata derives qualification from. Admin only.
-    /// @param source The source; zero unsets it.
+    /// @notice Zero renders every uncalled series as Issued.
     function setVwapSource(address source) external;
 
     // --- Reads ---
 
-    /// @notice The daily VWAP source the metadata derives qualification from; zero when unset.
     function vwapSource() external view returns (address);
 
     /// @notice Whether the series has been created here.

@@ -119,8 +119,7 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // Retired with the qualify sweep, like every `retired_*` field below: never read,
-    // declared only so the fields after it keep their slots. Not to be reused.
+    // Retired with the qualify sweep, as is every `retired_*` below: kept only to hold slots.
     #[attribute(order = 6)]
     pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 7)]
@@ -132,8 +131,7 @@ pub struct GemContract {
     #[attribute(order = 10)]
     pub retired_unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Call-price bin index the daily Called scan walks; a gem enters it at issuance.
-    // Every column is namespaced by ISO code, so each currency walks its own trie.
+    // --- Call-price bin index, one trie per reference currency; a gem enters it at issuance.
     #[attribute(order = 11)]
     pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 

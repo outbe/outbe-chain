@@ -98,8 +98,7 @@ contract DailyVwapWireTest is CrossChainTest {
         outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
     }
 
-    /// @dev A target with no registry has nowhere to record the day; it acknowledges it rather than
-    ///      holding the delivery in redelivery.
+    /// @dev Acknowledged rather than held in redelivery.
     function test_ATargetWithoutARegistryAcknowledgesTheDay() public {
         TargetRouter bare = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         bare.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));

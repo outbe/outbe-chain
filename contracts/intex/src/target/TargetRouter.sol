@@ -104,7 +104,6 @@ contract TargetRouter is
         return _ts().originRouter;
     }
 
-    /// @notice Registry the daily VWAPs from Outbe are recorded in.
     function vwapRegistry() external view returns (IVwapRegistry) {
         return _ts().vwapRegistry;
     }

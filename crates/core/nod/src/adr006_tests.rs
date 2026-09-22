@@ -316,7 +316,6 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.retired_qualify_scan_cursor.base_slot(), U256::from(47));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(48));
         assert_eq!(nod.call_pending_day.slot(), U256::from(49));
-        // Call-price bin index and the called list, appended after the sweep days.
         assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(50));
         assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(51));
         assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(52));
@@ -516,9 +515,7 @@ fn is_qualified(
     api::is_qualified(storage, &bucket).unwrap()
 }
 
-/// A reference currency whose COEN pair was never registered qualifies nothing,
-/// and the read does not fail — the registry lists currencies independently of
-/// whether their pair has been priced.
+/// A currency whose COEN pair was never registered qualifies nothing, without an error.
 #[test]
 fn an_unregistered_reference_pair_qualifies_nothing() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
@@ -773,10 +770,7 @@ fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
     });
 }
 
-/// A bucket denominated in a currency without a priced pair is never qualified
-/// against another currency's rate, and stays parked in its own call bin. This
-/// is the accepted consequence of not validating `reference_currency` against
-/// mutable oracle state at issue time.
+/// A bucket in a currency without a priced pair is never qualified by another currency's rate.
 #[test]
 fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

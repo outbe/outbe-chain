@@ -794,8 +794,7 @@ fn settle(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    // Settle is allowed once called (forced, until the deadline) or once qualified
-    // (voluntary). The call check is one read; the qualification walk goes last.
+    // The call check is one read; the qualification walk goes last.
     match series.lifecycle_state()? {
         IntexState::Called => {
             let now = storage.timestamp()?.to::<u64>();

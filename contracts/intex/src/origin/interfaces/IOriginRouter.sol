@@ -87,10 +87,7 @@ interface IOriginRouter {
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
-    /// @notice Emitted when a finalized day's VWAPs are sent to a target chain.
-    /// @param sendId Bridge send identifier (0 when the leg parked).
-    /// @param dstChainId Destination chainId.
-    /// @param utcDay Finalized UTC day (yyyymmdd).
+    /// @notice `sendId` is 0 when the leg parked.
     event DailyVwapSent(bytes32 indexed sendId, uint32 indexed dstChainId, uint32 indexed utcDay);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
@@ -319,11 +316,7 @@ interface IOriginRouter {
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
 
-    /// @notice Broadcast one finalized UTC day's VWAPs to every registered target but this chain, whose NFT
-    ///         reads the Oracle directly. With no other target it sends nothing. Restricted to
-    ///         `INTEX_FACTORY_ROLE`.
-    /// @param utcDay Finalized UTC day (yyyymmdd).
-    /// @param rows One VWAP per priced reference currency.
+    /// @notice Sends one finalized day to every registered target but this chain.
     function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.

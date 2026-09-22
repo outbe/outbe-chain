@@ -456,8 +456,7 @@ pub fn get_utc_day_vwap(
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
-/// Whether `COEN/<iso_code>` closed a finalized UTC day strictly above `floor_minor`
-/// on or after `from_utc_day`. Walks back from the newest finalized day; days without data never count.
+/// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly above `floor_minor`.
 pub fn crossed_floor(
     storage: StorageHandle,
     iso_code: u16,

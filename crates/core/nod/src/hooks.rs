@@ -1,9 +1,6 @@
 //! Daily Nod call and forfeit hook.
 //!
-//! Each closed UTC day is pinned when the `NodDaily` trigger opens a sweep.
-//! Later CycleTicks continue the same day with the same prices, so a later UTC
-//! rollover cannot reprice the remainder. Qualification is not swept: it is
-//! derived from finalized daily VWAPs when it is read (`api::is_qualified`).
+//! Qualification is not swept: it is derived when read (`api::is_qualified`).
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -19,9 +16,7 @@ pub fn run_daily(
     Ok(())
 }
 
-/// Advance an in-flight call sweep by one slice. Runs from CycleTick on every
-/// block, before the daily trigger can queue a newer day, so an unfinished walk
-/// keeps the prices it opened with.
+/// Runs from CycleTick every block, before the daily trigger can queue a newer day.
 pub fn continue_sweeps(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,

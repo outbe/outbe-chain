@@ -189,8 +189,7 @@ fn settle(
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
-    // Settle is allowed once called (forced, until the deadline) or once qualified
-    // (voluntary). The call check is one read; the qualification walk goes last.
+    // The call check is one read; the qualification walk goes last.
     match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
         0 if !nod_api::is_qualified(storage, bucket.body())? => {
             return Err(NodFactoryError::NodNotQualified.into());

@@ -82,10 +82,8 @@ struct TargetRouterStorage {
     ///      because the origin marks a chain paid on first delivery and a partial sum would close the
     ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
-    /// @dev Called mark waiting for its series to land here (codec msgType, 0 = none). Applied when ISSUANCE
-    ///      creates the series, or via `applyParkedMark`. Carries the origin's call time so a slot applied later
-    ///      still derives the deadline settlement honours rather than one from its own arrival. Five bytes, so
-    ///      the pair shares a slot and is cleared in one write.
+    /// @dev Called mark waiting for its series to land here (0 = none). It carries the origin's call time, so a
+    ///      slot applied later derives the same deadline.
     mapping(bytes14 seriesId => ParkedMark) parkedMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;

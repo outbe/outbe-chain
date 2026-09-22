@@ -10,8 +10,7 @@ interface INod {
 
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906: emitted per Worldwide Day when the call pass calls its buckets. Qualification is derived and
-    /// announces nothing.
+    /// ERC-4906: emitted per Worldwide Day when the call pass calls its buckets.
     /// The range is the ids of that day, whose top four bytes are the day.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
@@ -64,8 +63,7 @@ interface INod {
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
         /// at six-decimal precision; payment in an asset is quoted separately.
         uint256 settlementCostMinor;
-        /// A finalized daily VWAP in referenceCurrency closed above the floor on the
-        /// first full UTC day after the bucket's issuance or later. Derived, never stored.
+        /// Derived from finalized daily VWAPs, never stored.
         bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;

@@ -371,8 +371,7 @@ fn both_series_qualify(world: &mut World) {
     }
 }
 
-/// The origin pushes each finalized day to the target registry, which the target collection
-/// derives qualification from.
+/// The origin pushes each finalized day to the target registry.
 #[then("the target chain holds a closing price above every series floor")]
 fn target_holds_the_qualifying_day(world: &mut World) {
     let url = target_rpc_url(world);

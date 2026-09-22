@@ -455,8 +455,7 @@ library TargetInbound {
         }
     }
 
-    /// @notice Decode DAILY_VWAP and record the day in the VWAP registry. Without a registry wired there is
-    ///         nowhere to record it, and the day is acknowledged without effect.
+    /// @notice Without a registry the day is acknowledged without effect.
     function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
         if (address($.vwapRegistry) == address(0)) {
@@ -467,9 +466,8 @@ library TargetInbound {
         emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
-    /// @dev Apply one Called mark through its self-call shim. A series this chain has not seen keeps the mark in
-    ///      its slot; a series already called is acknowledged without effect; any other failure slots the mark
-    ///      for `applyParkedMark`.
+    /// @dev An unseen series keeps the mark in its slot; an already called one is acknowledged; any other
+    ///      failure slots it for `applyParkedMark`.
     function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint32 calledAt) private {
         if (!$.intex.seriesExists(seriesId)) {
             _slotMark($, seriesId, calledAt);

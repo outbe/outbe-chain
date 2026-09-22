@@ -261,9 +261,7 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    /// `Issued | Qualified -> Called`. Records the call timestamp used to enforce the
-    /// notice-period settlement deadline, and moves the gem from the bin index to the
-    /// expiry queue.
+    /// `Issued | Qualified -> Called`: stamps the call and moves the gem to the expiry queue.
     pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if !is_callable(item.state) {
@@ -469,8 +467,7 @@ impl BinTreeStorage for ExpiryDayTree<'_, '_> {
     }
 }
 
-/// The call-price trie of one reference currency. The trait functions take `&self`:
-/// storage writes go through the DSL's interior-mutable `StorageHandle`.
+/// The call-price trie of one reference currency.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
 impl BinTreeStorage for CallBins<'_, '_> {

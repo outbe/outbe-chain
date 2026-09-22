@@ -401,8 +401,7 @@ impl NodContract<'_> {
         })
     }
 
-    /// Whether an unpaid member may settle: its bucket is called and the deadline has
-    /// not passed, or the bucket has qualified. A lapsed call is refused by the caller.
+    /// Called and inside the deadline, or qualified; the caller refuses a lapsed call.
     fn settlement_open(&self, bucket: &NodBucketState) -> Result<bool> {
         let storage = self.storage_handle();
         let deadline = crate::api::settlement_deadline(&storage, bucket.bucket_key)?;
@@ -467,8 +466,7 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Parks a new bucket in the bin of the call price it sealed at issuance and
-    /// marks the bin non-empty in its currency's bitmap trie.
+    /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
         let bin_id = Self::price_to_bin(self.callable_bucket_call_price.read(&bucket_key)?)?;
@@ -488,8 +486,7 @@ impl NodContract<'_> {
         Ok(())
     }
 
-    /// Swap-removes a bucket from its call-price bin, clearing the bin's trie bit once
-    /// it empties. No-op for a bucket the trie does not hold.
+    /// No-op for a bucket the trie does not hold.
     pub(crate) fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let packed = self.call_bucket_bin.read(&bucket_key)?;
         if packed == 0 {
@@ -691,9 +688,7 @@ impl NodContract<'_> {
         self.called_bucket_index.clear(&bucket_key)
     }
 
-    /// Drops a bucket from whichever part of the call index holds it and clears its
-    /// call state. No-op for a bucket it never held, so the removal funnel can call
-    /// it unconditionally.
+    /// No-op for a bucket the call index never held, so the removal funnel can call it unconditionally.
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called_bucket(bucket_key)?;
@@ -727,7 +722,6 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
-/// A bucket's place in the call-price trie: its bin, and its index there plus one.
 const fn pack_bin_slot(bin_id: u32, index: u32) -> u64 {
     ((bin_id as u64) << 32) | (index as u64 + 1)
 }
@@ -736,9 +730,7 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
 }
 
-/// The call-price trie of one reference currency, like `outbe_gem::state::CallBins`.
-/// The trait functions take `&self`: storage writes go through the DSL's
-/// interior-mutable `StorageHandle`.
+/// One currency's call-price trie, like `outbe_gem::state::CallBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
 impl BinTreeStorage for CallBins<'_, '_> {

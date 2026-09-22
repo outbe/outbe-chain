@@ -15,7 +15,7 @@ import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 /// @title DeployTarget
 /// @author Outbe
 /// @notice Deploy the auction target stack on one chain: the NFT collection + bridge, EscrowAdapter,
-///         IntexAuction, TargetRouter and, off the origin, the VwapRegistry. Uniform for every target - including the origin chain as a
+///         IntexAuction and TargetRouter. Uniform for every target - including the origin chain as a
 ///         loopback target (origin==target): the shared NFT/bridge fall out of idempotent CREATE3
 ///         deploy, and the bridge meshes only with OTHER targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
@@ -75,7 +75,7 @@ contract DeployTarget is BaseScript {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
-        // Daily VWAPs land in a registry on a remote target; the origin chain has the oracle itself.
+        // The origin has the oracle itself.
         address vwapRegistry;
         if (local != originChainId) {
             vwapRegistry = deployProxy(

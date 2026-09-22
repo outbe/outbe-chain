@@ -1,16 +1,8 @@
-//! Daily call scan: force-calls Nod buckets off the Oracle's finalized per-UTC-day
-//! VWAPs, then forfeit-burns the Nods of a called bucket whose notice period
-//! lapsed. The Cycle daily trigger pins the closed UTC day and runs the first
-//! slice; later CycleTicks continue the same day.
+//! Daily call scan: calls Nod buckets off finalized daily VWAPs and forfeit-burns the Nods of a
+//! called bucket whose notice lapsed; later CycleTicks continue the pinned day.
 //!
-//! A slice runs two arms on one visit budget:
-//!
-//! - the call arm walks each currency's call-price trie up to the bin of the
-//!   window's highest price, and calls a bucket whose reference price exceeded
-//!   its call price on at least its `call_threshold` of the trailing
-//!   `call_window`;
-//! - the forfeit arm then walks the called buckets and burns the unpaid Nods of
-//!   one whose `call_notice_period` has lapsed.
+//! A slice calls off each currency's call-price trie, then forfeits among the
+//! called buckets, on one visit budget.
 //!
 //! All four terms are sealed onto the bucket at issuance and read back from it
 //! here, so retuning a constant leaves every issued bucket on the terms it was
@@ -22,9 +14,7 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Calls read finalized UTC-day VWAPs and stop at `first_full_day` of the
-//! bucket's sealed `issued_at`, so delayed materialization cannot inherit
-//! pre-issuance days and a partial issuance UTC day does not count.
+//! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
 
 use std::collections::BTreeSet;
 
@@ -51,7 +41,6 @@ use crate::{
     state::CallBins,
 };
 
-/// `call_currency_cursor` once the call arm has walked every currency of the day.
 pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
 
 /// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
@@ -103,7 +92,6 @@ pub fn scan_and_call(
     }
 }
 
-/// Whether any bucket waits for a call or a forfeit.
 fn has_call_work(ctx: &BlockRuntimeContext, nod: &NodContract) -> Result<bool> {
     if nod.called_buckets.len()? != 0 {
         return Ok(true);
@@ -211,8 +199,7 @@ pub fn run_call_slice(
     Ok(mutated)
 }
 
-/// Walks each currency's call-price trie once per sweep, resuming where the budget
-/// gave out. Returns the buckets called and whether every currency was walked.
+/// Returns the buckets called and whether every currency was walked.
 fn call_arm(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
@@ -223,7 +210,6 @@ fn call_arm(
 ) -> Result<(u32, bool)> {
     let currencies = get_all_reference_currencies(ctx)?;
     let start = currency_position(&currencies, nod.call_currency_cursor.read()?);
-    // A handful of registry codes, so a linear probe beats a map.
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
     let mut called: u32 = 0;
     for &iso_code in currencies.iter().skip(start) {
@@ -266,10 +252,7 @@ fn call_arm(
     Ok((called, true))
 }
 
-/// Walks one currency's bins from the lowest up to `ceiling`, each from its top entry
-/// down: a called bucket swap-pops the bin's tail into its place, and the tail is
-/// already behind the walk. Returns the buckets called and whether the eligible range
-/// was walked to the end; the Worldwide Days of the called buckets go to `called_days`.
+/// Each bin is walked from the top, so a call's swap-pop only moves an entry already visited.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
@@ -325,7 +308,6 @@ pub(crate) fn call_currency(
     }
 }
 
-/// Calls the bucket if its window breached enough. Returns whether it was called.
 fn try_call(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
@@ -333,15 +315,11 @@ fn try_call(
     bucket_key: B256,
     now: u64,
 ) -> Result<bool> {
-    // Paid entitlements retain their bucket terms, but cannot be called, and a
-    // called bucket waits on the called list rather than here.
     if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
     {
         return Ok(false);
     }
-    // Sealed at first issuance. Zero means the bucket predates the stamp: skip
-    // rather than treat epoch-midnight as a full day, which would count every
-    // observation.
+    // Zero predates the stamp; read as epoch midnight it would count every day.
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     if issued_at == 0 {
         return Ok(false);
@@ -350,16 +328,14 @@ fn try_call(
     if !breached_enough(window, &terms, first_full_day(issued_at)) {
         return Ok(false);
     }
-    // Isolate per-bucket: a deterministic Err rolls back this bucket's checkpoint
-    // and is skipped, so one bad bucket never halts the daily scan.
+    // A failing bucket rolls back alone, so it never halts the scan.
     Ok(ctx
         .storage
         .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
         .is_ok())
 }
 
-/// Walks the called buckets from the top, burning the unpaid Nods of one whose notice
-/// lapsed. Returns the Nods burned and whether the walk reached the bottom.
+/// Returns the Nods burned and whether the walk reached the bottom.
 fn forfeit_arm(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -483,8 +459,7 @@ fn notice_period(nod: &NodContract<'_>, bucket_key: B256) -> Result<u32> {
     nod.callable_bucket_call_notice_period.read(&bucket_key)
 }
 
-/// Stamps the call, moves the bucket from its bin to the called list and opens the
-/// settlement window the bucket sealed.
+/// Stamps the call and opens the settlement window the bucket sealed.
 fn mark_called(
     nod: &mut NodContract<'_>,
     bucket_key: B256,

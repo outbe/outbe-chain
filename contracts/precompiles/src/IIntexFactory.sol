@@ -41,9 +41,7 @@ interface IIntexFactory {
         view
         returns (uint16 settlementCurrency, uint256 payableUnits);
 
-    /// @notice Whether `seriesId` has qualified: a finalized daily VWAP in its reference
-    ///         currency closed above its floor on the first full UTC day after issuance
-    ///         or later. Derived on every call, never stored.
+    /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by

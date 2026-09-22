@@ -335,8 +335,7 @@ fn settle(
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
-    // Settlement is allowed once called (forced, until the notice period lapses) or
-    // once qualified (voluntary). The qualification walk goes last.
+    // The qualification walk goes last.
     match item.state {
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();

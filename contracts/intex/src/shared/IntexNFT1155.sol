@@ -526,8 +526,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return IntexMetadata.tokenURI(data);
     }
 
-    /// @dev Whether a finalized day from the first one the series held in full closed above its floor. A missing
-    ///      or failing source reads as not yet, so `uri` never reverts on it.
+    /// @dev A missing or failing source reads as not qualified, so `uri` never reverts on it.
     function _crossedFloor(IIntexNFT1155.SeriesData memory data) private view returns (bool) {
         address source = _s().vwapSource;
         if (source == address(0)) return false;

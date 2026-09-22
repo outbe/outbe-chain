@@ -46,9 +46,7 @@ interface IGem {
 
     // outbe-specific views
     function getGemStatus(uint256 gemId) external view returns (GemData memory);
-    /// @notice Whether the gem has qualified: born Qualified (Genesis), or a finalized
-    ///         daily VWAP in its reference currency closed above its floor on the first
-    ///         full UTC day after issuance or later. Derived on every call, never stored.
+    /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs; never stored.
     function isQualified(uint256 gemId) external view returns (bool);
 
     // --- Events ---

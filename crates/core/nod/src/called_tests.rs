@@ -120,8 +120,7 @@ fn nod_item_issued(
     }
 }
 
-/// Registers `COEN/<iso>` and lists `iso` as a reference currency, which the call
-/// scan walks.
+/// Registers `COEN/<iso>` and lists `iso` as a reference currency.
 fn register(storage: &StorageHandle<'_>, iso: u16) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
@@ -1082,8 +1081,7 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
 fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
     harness(|storage, scope, parent| {
         let at = START + 30 * DAY;
-        // One day's entry price, so one call bin. The last bucket was issued five
-        // days before the scan: too young to hold the threshold, it stays behind.
+        // One call bin; the last bucket is too young to hold the threshold.
         let items: Vec<NodItemState> = [
             (11u64, 0x11u8, START),
             (22, 0x22, START),

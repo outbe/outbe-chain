@@ -65,8 +65,7 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
     gem.set_state(gem_id, new_state)
 }
 
-/// Whether the gem has qualified: born Qualified (Genesis), or a finalized daily VWAP in
-/// its reference currency closed above its floor on its first full day or later.
+/// Born Qualified (Genesis), or derived from finalized daily VWAPs.
 pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
     if item.state == GemState::Qualified as u8 {
         return Ok(true);

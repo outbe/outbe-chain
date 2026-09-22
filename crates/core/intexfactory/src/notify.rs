@@ -1,5 +1,4 @@
-//! The queue of Called notices the `intex_drain_notices` trigger sends: the scans
-//! run in a block hook, which cannot call contracts.
+//! Queue of Called notices, sent by the `intex_drain_notices` trigger.
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
@@ -10,8 +9,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 use crate::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use crate::schema::IntexFactoryContract;
 
-/// A notice carrying one Called series, which its group no longer holds. It is the only kind
-/// sent; an entry of any other kind is dropped.
+/// A notice carrying one Called series, which its group no longer holds. Any other kind is dropped.
 pub const NOTICE_CALLED: u8 = 1;
 
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves

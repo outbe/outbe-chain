@@ -1370,9 +1370,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                     U256::from(450_000_000u64),
                 )
                 .expect("seed compact Nod scheduling state");
-                // The daily Nod trigger forfeits the unpaid Nod of a called bucket
-                // whose notice has lapsed, deleting both bodies in the CycleTick. It
-                // opens its sweep once the previous UTC day's VWAP is finalized.
+                // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
                 let nod = NodContract::new(storage.clone());
                 nod.bucket_called_at.write(&bucket_key, 1).unwrap();
                 nod.called_bucket_index.write(&bucket_key, 0).unwrap();

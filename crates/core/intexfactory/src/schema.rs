@@ -41,8 +41,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Retired with the qualify sweep, like every `retired_*` field below: never read,
-    // declared only so the fields after it keep their slots. Not to be reused.
+    // Retired with the qualify sweep, as is every `retired_*` below: kept only to hold slots.
     #[attribute(order = 2)]
     pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 3)]

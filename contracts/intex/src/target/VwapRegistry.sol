@@ -11,9 +11,7 @@ import {DateKey} from "../shared/libs/DateKey.sol";
 
 /// @title VwapRegistry
 /// @author Outbe
-/// @notice Target-chain record of the Oracle's finalized daily VWAPs. The Intex metadata reads a series'
-///         qualification off it, as the origin's reads it off the Oracle.
-/// @dev UUPS upgradeable behind an ERC1967 proxy. Knows prices only; what qualifies is the reader's rule.
+/// @notice Target-chain record of the Oracle's finalized daily VWAPs.
 contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeable {
     /// @custom:storage-location erc7201:outbe.intex.VwapRegistry
     struct VwapRegistryStorage {
@@ -37,9 +35,6 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         _disableInitializers();
     }
 
-    /// @notice Initializes the proxy.
-    /// @param admin Receiver of `DEFAULT_ADMIN_ROLE`.
-    /// @param router_ Router allowed to record days.
     function initialize(address admin, address router_) external initializer {
         if (admin == address(0)) revert ZeroAddress("admin");
         __AccessControl_init();
@@ -47,7 +42,6 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         _setRouter(router_);
     }
 
-    /// @dev Upgrades are gated by the admin role.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
@@ -90,7 +84,6 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
     }
 
     /// @inheritdoc IVwapSource
-    /// @dev Walks back from the newest recorded day; a day that never arrived counts as no price.
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256 max) {
         if (fromUtcDay == 0) return 0;
         VwapRegistryStorage storage $ = _vs();
@@ -100,7 +93,6 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         }
     }
 
-    /// @notice ERC-165 support check: `IVwapSource` plus the AccessControl interface ids.
     function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
         return interfaceId == type(IVwapSource).interfaceId || super.supportsInterface(interfaceId);
     }

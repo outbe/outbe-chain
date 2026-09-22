@@ -3,9 +3,8 @@ pragma solidity 0.8.30;
 
 /// @title DateKey
 /// @author Outbe
-/// @notice Calendar arithmetic on yyyymmdd UTC day keys, the unit the Oracle finalizes daily VWAPs in.
+/// @notice Calendar arithmetic on yyyymmdd UTC day keys.
 library DateKey {
-    /// @notice The UTC day before `key`.
     function previousDateKey(uint32 key) internal pure returns (uint32) {
         uint32 year = key / 10_000;
         uint32 month = (key / 100) % 100;
@@ -14,13 +13,12 @@ library DateKey {
         return (year - 1) * 10_000 + 1231;
     }
 
-    /// @notice The first UTC day a right issued at `timestamp` holds in full: its own day at exact midnight,
-    ///         the next one otherwise.
+    /// @notice Its own day at exact midnight, the next one otherwise.
     function firstFullDay(uint256 timestamp) internal pure returns (uint32) {
         return _fromDays((timestamp + 1 days - 1) / 1 days);
     }
 
-    /// @dev yyyymmdd of the day `z` days after 1970-01-01 (Hinnant's civil_from_days).
+    /// @dev Hinnant's civil_from_days.
     function _fromDays(uint256 z) private pure returns (uint32) {
         z += 719_468;
         uint256 era = z / 146_097;

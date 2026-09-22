@@ -26,10 +26,10 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
     uint8 internal constant MSG_MARK_CALLED = 8;
-    // 9 was MARK_QUALIFIED: qualification is derived now. Not to be reused.
+    // 9 was MARK_QUALIFIED; not to be reused.
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 10;
-    /// @dev Origin -> target: one finalized UTC day's VWAPs, recorded in the target's VWAP registry.
+    /// @dev Origin -> target: one finalized UTC day's VWAPs.
     uint8 internal constant MSG_DAILY_VWAP = 11;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
@@ -51,8 +51,7 @@ library BridgeMsgCodec {
     ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
     uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 24;
 
-    /// @notice Series one MARK_CALLED message may carry. A batch is one day's series that were called
-    ///         at the same moment, so it is short.
+    /// @notice Series one MARK_CALLED message may carry; a batch is one day's series called together.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
@@ -89,9 +88,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
-    // Fixed head of DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)]; the rows follow it.
+    // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
     uint16 internal constant MIN_LEN_DAILY_VWAP = 7;
-    /// @notice Bytes per daily VWAP row: [iso(2)][vwap(8)].
     uint16 internal constant DAILY_VWAP_LEN = 10;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
@@ -176,7 +174,6 @@ library BridgeMsgCodec {
     error RefundBatchTooLarge(uint256 count, uint256 max);
     /// @notice A live day was encoded without a single reference price to bid against.
     error MissingReferencePrices();
-    /// @notice A DAILY_VWAP message carries no currency.
     error EmptyDailyVwap();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
     error EmptyIssuanceBatch();
@@ -601,13 +598,7 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Encodes DAILY_VWAP: the Oracle's finalized VWAP of one UTC day per reference currency.
-    /// @dev encodePacked layout, 7 bytes of head plus 10 per currency:
-    ///      [bodyVersion(1)][msgType(1)][utcDay(4)][rowCount(1)] then [isoCode(2)][vwapMinor(8)] per currency.
-    ///      Kept `external`, like the decoder, so the row loop stays off the router's runtime size.
-    /// @param _utcDay The finalized UTC day (yyyymmdd).
-    /// @param _rows One VWAP per priced currency, 1..`MAX_REFERENCE_PRICES` of them.
-    /// @return message The wire-encoded DAILY_VWAP message.
+    /// @dev External, like the decoder, so the row loop stays off the router's runtime size.
     function encodeDailyVwap(uint32 _utcDay, IOriginRouter.DailyVwap[] calldata _rows)
         external
         pure
@@ -620,11 +611,6 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Decodes DAILY_VWAP.
-    /// @dev Kept `external` so the row array is built in the linked library, off the router's runtime size.
-    /// @param _msg The wire-encoded DAILY_VWAP message.
-    /// @return utcDay The finalized UTC day (yyyymmdd).
-    /// @return rows One VWAP per priced currency.
     function decodeDailyVwap(bytes calldata _msg)
         external
         pure
@@ -646,7 +632,6 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @dev A day carries at least one currency and no more than the reference list holds.
     function _assertDailyVwapRows(uint256 _count) private pure {
         if (_count == 0) revert EmptyDailyVwap();
         if (_count > MAX_REFERENCE_PRICES) revert PayloadArrayTooLong(_count, MAX_REFERENCE_PRICES);

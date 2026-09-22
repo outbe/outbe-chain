@@ -34,9 +34,7 @@ pub fn effective_state(
     }
 }
 
-/// Whether the bucket has qualified: a finalized daily VWAP in its reference currency
-/// closed above its floor on a UTC day it held in full. A zero `issued_at` stamp is
-/// unsealed, not epoch-midnight, and never qualifies.
+/// A zero `issued_at` stamp is unsealed, not epoch midnight, and never qualifies.
 pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
     let issued_at = NodContract::new(storage.clone())
         .callable_bucket_issued_at
