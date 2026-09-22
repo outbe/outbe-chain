@@ -4129,7 +4129,7 @@ mod pin_authority {
                             .activation_preconditions_hash(&poc_schema_limits())
                             .unwrap(),
                     };
-                    let receipts = vec![OutbeReceipt {
+                    let receipts = [OutbeReceipt {
                         success: true,
                         cumulative_gas_used: 21_000,
                         logs: vec![Log {
@@ -6358,7 +6358,7 @@ mod pin_authority {
                 address: METADOSIS_ADDRESS,
                 data: event.encode_log_data(),
             };
-            let mut receipts = vec![
+            let mut receipts = [
                 OutbeReceipt {
                     success: true,
                     cumulative_gas_used: 21_000,
