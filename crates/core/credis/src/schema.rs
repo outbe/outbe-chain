@@ -37,7 +37,7 @@ impl CredisState {
     }
 }
 
-/// Position record. Keyed by `position_id = keccak256(pledge_handle || smart_account)`.
+/// Position record. Keyed by `position_id = keccak256(pledge_note || smart_account)`.
 ///
 /// Every term - both currency codes included - is sealed at opening and never
 /// changes afterwards; only `outstanding`, `collateral_locked`,
@@ -224,7 +224,7 @@ pub struct CredisContract {
 }
 
 impl CredisContract<'_> {
-    /// position_id derivation: `keccak256(pledge_handle || smart_account)`.
+    /// position_id derivation: `keccak256(pledge_note || smart_account)`.
     pub fn position_id(handle_id: U256, smart_account: Address) -> U256 {
         let mut buf = [0u8; 52];
         buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());

@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+import {ExecutionDelayPolicy} from "src/ExecutionDelayPolicy.sol";
 import {Test} from "forge-std/Test.sol";
 import {SmartAccountFactory} from "src/SmartAccountFactory.sol";
-import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
-import {CallerHook} from "src/kernel/CallerHook.sol";
-import {SudoPolicy} from "src/kernel/SudoPolicy.sol";
-import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
-import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
 import {ECDSASigner} from "src/kernel/ECDSASigner.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
-import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockCcaRegistry} from "src/mocks/MockCcaRegistry.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 import {EntryPointLib} from "./utils/EntryPointLib.sol";
@@ -44,14 +39,9 @@ abstract contract BaseAATest is Test {
     IEntryPoint entrypoint;
     SmartAccountFactory factory;
 
-    // plugin contracts
-    BundleModulePlugin bundlePlugin;
-    CallerHook bundleCallerHook;
-    SudoPolicy sudoPolicy;
-    BundleSpendProtectorHook bundleSpendProtectorHook;
+    ExecutionDelayPolicy delayPolicy;
     WithdrawalLimitPolicy withdrawalLimitPolicy;
     ECDSASigner ecdsaSigner;
-    BundleWithdrawHook bundleWithdrawHook;
 
     // token
     MockUSD token;
@@ -72,24 +62,11 @@ abstract contract BaseAATest is Test {
         KernelImmutableECDSA immutableEcdsa = new KernelImmutableECDSA(entrypoint);
         KernelFactory kf = new KernelFactory(uups, immutableEcdsa);
 
-        sudoPolicy = new SudoPolicy();
-        bundlePlugin = new BundleModulePlugin(address(this));
-        bundleCallerHook = new CallerHook();
-        bundleSpendProtectorHook = new BundleSpendProtectorHook(address(bundlePlugin));
+        delayPolicy = new ExecutionDelayPolicy();
         withdrawalLimitPolicy = new WithdrawalLimitPolicy();
         ecdsaSigner = new ECDSASigner();
-        bundleWithdrawHook = new BundleWithdrawHook(address(bundlePlugin));
-        bundlePlugin.setWithdrawHook(address(bundleWithdrawHook));
-
         factory = new SmartAccountFactory(
-            address(kf),
-            address(sudoPolicy),
-            address(bundlePlugin),
-            address(bundleCallerHook),
-            address(bundleSpendProtectorHook),
-            address(withdrawalLimitPolicy),
-            address(ecdsaSigner),
-            address(bundleWithdrawHook)
+            address(kf), address(delayPolicy), address(withdrawalLimitPolicy), address(ecdsaSigner)
         );
 
         token = new MockUSD();
@@ -122,25 +99,16 @@ abstract contract BaseAATest is Test {
         vault = makeAddr("vault");
     }
 
-    function _topUp(address smartAccount, uint256 amount) internal {
-        // Pre-fund smart account with user's own funds (required by topUp check)
-        token.mint(smartAccount, amount);
-        // Vault tops up matching amount
+    function _fund(address smartAccount, uint256 amount) internal {
         token.mint(vault, amount);
-        vm.startPrank(vault);
-        token.approve(smartAccount, amount);
-        ITokenBundle(smartAccount).topUp(vault, address(token), amount);
-        vm.stopPrank();
+        vm.prank(vault);
+        token.transfer(smartAccount, amount);
     }
 
     function _deployAccount() internal returns (address) {
-        address[] memory bundleTokens = new address[](1);
-        bundleTokens[0] = address(token);
-
-        address[] memory bundleSenders = new address[](1);
-        bundleSenders[0] = vault;
-
-        return factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 0);
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(token);
+        return factory.createAccount(user.addr, cca.addr, tokens, 0);
     }
 
     function _ownerPermId() internal pure returns (PermissionId) {
@@ -163,7 +131,7 @@ abstract contract BaseAATest is Test {
     function _permSignature(bytes32 userOpHash, uint256 signerKey) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, ECDSA.toEthSignedMessageHash(userOpHash));
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = ""; // single policy slice (SudoPolicy / WithdrawalLimitPolicy ignore it)
+        sigs[0] = ""; // single policy slice (ExecutionDelayPolicy / WithdrawalLimitPolicy ignore it)
         sigs[1] = abi.encodePacked(r, s, v);
         return abi.encode(sigs);
     }
@@ -178,7 +146,7 @@ abstract contract BaseAATest is Test {
         bytes memory innerExecute = abi.encodeWithSelector(
             Kernel.execute.selector, execMode, abi.encodePacked(address(token), uint256(0), transferCall)
         );
-        bytes memory callData = abi.encodePacked(Kernel.executeUserOp.selector, innerExecute);
+        bytes memory callData = innerExecute;
         return _buildCcaUserOpRaw(smartAccount, callData, address(token));
     }
 
@@ -214,7 +182,7 @@ abstract contract BaseAATest is Test {
         bytes memory transferCall = abi.encodeWithSelector(MockUSD(tok).transfer.selector, to, amount);
         bytes memory innerExecute =
             abi.encodeWithSelector(Kernel.execute.selector, execMode, abi.encodePacked(tok, uint256(0), transferCall));
-        bytes memory callData = abi.encodePacked(Kernel.executeUserOp.selector, innerExecute);
+        bytes memory callData = innerExecute;
 
         PackedUserOperation memory op = _buildCcaUserOpRaw(smartAccount, callData, tok);
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
@@ -222,10 +190,7 @@ abstract contract BaseAATest is Test {
         _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
     }
 
-    /// @dev Owner-signed UserOp. The owner is a permission (SudoPolicy + ECDSASigner), so it uses
-    ///      the permission nonce/signature encoding. When bundle tokens are configured the owner
-    ///      permission carries BundleSpendProtectorHook and `callData` must be executeUserOp-wrapped;
-    ///      the caller builds the appropriate `callData` shape.
+    /// @dev Owner permission operations use the execution-hook wrapper.
     function _buildUserOp(address sender, bytes memory callData, uint256 signerKey)
         internal
         view

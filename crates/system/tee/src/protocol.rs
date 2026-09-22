@@ -235,7 +235,7 @@ pub enum GratisOp {
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
     /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
-    /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
+    /// With `pledge_note = Some(handle)` the blob in `current_pledge_record` is a live
     /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
     /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
     /// (used at settlement/void to recover the EOA that keys the pledged ledger).
@@ -307,8 +307,8 @@ pub struct GratisOpRequest {
     /// Modify-key authorization (required for Mint/Burn/Pledge/Unpledge; ignored for
     /// the credis-driven `ConsumePledge`/`ReleaseToEoa`/`BurnPledged`).
     pub modify_auth: ModifyAuth,
-    /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
-    pub pledge_handle: Option<B256>,
+    /// Pledge note identifying the ticket (set for `Unpledge`/`ConsumePledge`).
+    pub pledge_note: Option<B256>,
     /// Destination smart account (set for `ConsumePledge`).
     pub smart_account: Option<Address>,
     /// Spend authorization binding the pledge to `smart_account`
@@ -419,8 +419,8 @@ pub struct GratisOpResult {
     /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
     /// ticket slot). Empty and untouched for all other ops.
     pub new_pledge_record: Vec<u8>,
-    /// Deterministic pledge handle for a `Pledge` (zero otherwise).
-    pub pledge_handle: B256,
+    /// Deterministic pledge note for a `Pledge` (zero otherwise).
+    pub pledge_note: B256,
     /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
     /// The loan terms sealed in the consumed ticket (`ConsumePledge`); `None`
@@ -432,7 +432,7 @@ pub struct GratisOpResult {
     pub revealed_owner: Address,
     /// Self-contained sealed EOA blob (`nonce(12) || ChaCha20Poly1305(owner 20B)` under the
     /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
-    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_handle = None`).
+    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_note = None`).
     pub eoa_ct: Vec<u8>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
@@ -1364,7 +1364,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
     // Optional linkage fields: length/flag-prefixed so presence is unambiguous.
-    match req.pledge_handle {
+    match req.pledge_note {
         Some(h) => {
             buf.push(1);
             buf.extend_from_slice(h.as_slice());

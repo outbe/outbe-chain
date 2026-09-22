@@ -193,6 +193,9 @@ fn dispatch_local(
                 runtime::reserve_stables(storage.clone(), sender, c.smartAccount, c.asset, c.amount)
             }),
             releaseReservation(c) => mutate(c, caller, |sender, c| {
+                if sender != outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS {
+                    return Err(crate::errors::VaultRouterError::Unauthorized.into());
+                }
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
                 runtime::release_reservation(storage.clone(), c.id, c.receiver, c.amount, target)
             }),

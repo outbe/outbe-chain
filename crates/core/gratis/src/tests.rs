@@ -25,7 +25,7 @@ fn chain_b256() -> B256 {
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
-fn bundle() -> Address {
+fn smart_account() -> Address {
     address!("0x2222222222222222222222222222222222222222")
 }
 fn asset() -> Address {
@@ -225,13 +225,13 @@ fn pledge_consume_and_settle_flow() {
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
 
         // requestCredis from a distinct smart account: alice derives the pledge
-        // secret from her modify key + the public handle and binds it to `bundle`.
+        // secret from her modify key + the public handle and binds it to `smart_account`.
         // The collateral is credited into alice's OWN pledged ledger (no escrow) and
         // the ticket is deleted; pledged_total is unchanged.
         let mk = derive_modify_key(&sk, alice()).unwrap();
-        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
+        let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
         let (consumed_terms, eoa_ct) =
-            api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
+            api::consume_pledge(storage.clone(), handle, smart_account(), spend).unwrap();
         assert_eq!(
             consumed_terms,
             terms(stables, amount),
@@ -247,7 +247,7 @@ fn pledge_consume_and_settle_flow() {
         );
 
         // Re-consuming the now-deleted ticket is rejected.
-        assert!(api::consume_pledge(storage.clone(), handle, bundle(), spend).is_err());
+        assert!(api::consume_pledge(storage.clone(), handle, smart_account(), spend).is_err());
 
         // Ten settlements: each releases 1/10 from alice's pledged ledger back to
         // her balance.
@@ -288,8 +288,8 @@ fn burn_pledged_reduces_supply_and_pledged() {
         )
         .unwrap();
         let mk = derive_modify_key(&sk, alice()).unwrap();
-        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
+        let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
+        api::consume_pledge(storage.clone(), handle, smart_account(), spend).unwrap();
 
         // Release across 3 settlements (300), leaving 700 outstanding, then burn it.
         let per = amount / U256::from(10u64);
@@ -353,8 +353,8 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
 
         // The deleted ticket can no longer be consumed for credis.
         let mk = derive_modify_key(&sk, alice()).unwrap();
-        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        assert!(api::consume_pledge(storage.clone(), handle, bundle(), spend).is_err());
+        let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
+        assert!(api::consume_pledge(storage.clone(), handle, smart_account(), spend).is_err());
     });
 }
 
@@ -382,7 +382,7 @@ fn metadata_uses_six_decimal_gratis_units() {
 fn precompile_transfer_reverts() {
     let call = Bytes::from(
         IGratis::IGratisCalls::transfer(IGratis::transferCall {
-            to: bundle(),
+            to: smart_account(),
             amount: U256::from(1u64),
         })
         .abi_encode(),

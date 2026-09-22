@@ -5,7 +5,6 @@ import {
   IFidelity__factory,
   SmartAccountFactory__factory,
   IERC20__factory,
-  ITokenBundle__factory,
   IVaultRouter__factory,
 } from "./contracts/index.js";
 import {
@@ -52,7 +51,6 @@ const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CR
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const fidelityAddress = process.env["FIDELITY_ADDRESS"] || DEFAULT_FIDELITY_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
-const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
 const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
@@ -69,7 +67,6 @@ async function main() {
   const fidelity = IFidelity__factory.connect(fidelityAddress, provider);
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const token = IERC20__factory.connect(erc20Address, provider);
-  const bundlePlugin = ITokenBundle__factory.connect(bundleModulePluginAddress, provider);
   const vaultRouter = IVaultRouter__factory.connect(vaultRouterAddress, provider);
 
   console.log("=== Credis Info ===");
@@ -80,7 +77,6 @@ async function main() {
   console.log(`CredisFactory:    ${credisFactoryAddress}`);
   console.log(`Credis:           ${credisAddress}`);
   console.log(`SA Factory:       ${smartAccountFactoryAddress}`);
-  console.log(`Bundle Plugin:    ${bundleModulePluginAddress}`);
   console.log(`ERC20:            ${erc20Address}  TotalSupply: ${(await token.totalSupply()).toString()} ${await token.name()}`);
   console.log(`Vault Router:   ${vaultRouterAddress}`);
 
@@ -107,12 +103,11 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultRouterAddress],
     SALT,
   );
 
   await printUserInfo(provider, gratis, token, fidelity, gratisMeta, erc20Meta, userKeys, userWallet);
-  await printSmartAccountInfo(provider, token, bundlePlugin, smartAccountAddr, erc20Meta);
+  await printSmartAccountInfo(provider, token, smartAccountAddr, erc20Meta);
   await printCredisInfo(credis, smartAccountAddr, erc20Meta);
   await printCcaInfo(provider, token, erc20Meta);
   await printVaultRouterInfo(vaultRouter, token, erc20Address, erc20Meta);
@@ -223,7 +218,6 @@ async function fetchFidelity(
 async function printSmartAccountInfo(
   provider: ethers.JsonRpcProvider,
   token: ReturnType<typeof IERC20__factory.connect>,
-  bundlePlugin: ReturnType<typeof ITokenBundle__factory.connect>,
   smartAccountAddr: string,
   erc20Meta: TokenMeta,
 ) {
@@ -235,18 +229,13 @@ async function printSmartAccountInfo(
 
   if (!deployed) return;
 
-  const [nativeBalance, erc20Balance, bundleBalance] = await Promise.all([
+  const [nativeBalance, erc20Balance] = await Promise.all([
     provider.getBalance(smartAccountAddr),
     token.balanceOf(smartAccountAddr),
-    bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
   ]);
 
-  const bundleBalance2 = bundleBalance / toBigInt(2);
-  const personalBalance = erc20Balance - bundleBalance;
   console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
   console.log(`  ERC20 balance (total):   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
-  console.log(`     Bundle:               ${formatTokenMeta(bundleBalance, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);
-  console.log(`     Personal:             ${formatTokenMeta(personalBalance, erc20Meta)}`);
 }
 
 /// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.

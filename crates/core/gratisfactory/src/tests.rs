@@ -187,7 +187,7 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
         )
         .unwrap();
         let handle = IGratisFactory::pledgeGratisCall::abi_decode_returns(&out).unwrap();
-        assert_ne!(handle, B256::ZERO, "a pledge handle is returned");
+        assert_ne!(handle, B256::ZERO, "a pledge note is returned");
 
         // `pledge_cost()` gratis left the balance and is parked in the pending ticket
         // (NOT yet in the per-account pledged ledger); the aggregate - gratis, not
@@ -439,7 +439,7 @@ fn unpledge_returns_collateral_to_pledger() {
             IGratisFactory::IGratisFactoryCalls::unpledgeGratis(
                 IGratisFactory::unpledgeGratisCall {
                     amountStables: pledge_stables(),
-                    pledgeHandle: handle,
+                    pledgeNote: handle,
                     mac: FixedBytes(auth(GratisOp::Unpledge, alice(), pledge_stables(), 2).mac),
                     opNonce: 2,
                 },

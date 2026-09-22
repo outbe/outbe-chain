@@ -1,4 +1,4 @@
-# Credis User-Flow Demo (`examples/credis-flow`)
+# Credis User-Flow Demo (`scripts/credis-flow`)
 
 End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. Each
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
@@ -19,7 +19,7 @@ holder, client-side) can read them.
   decrypt it with the view key. `opNonceOf(account)` returns the write counter.
 - **Writes** carry `(mac, opNonce)`:
   `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` returns a
-  `pledgeHandle`; `unpledgeGratis(amountStables, handle, mac, opNonce)`;
+  `pledgeNote`; `unpledgeGratis(amountStables, pledgeNote, mac, opNonce)`;
   `mineCoen(amount, mac, opNonce)`. Its input `amount` is protocol-6 GRATIS; its
   return value and `CoenMined.amount` are native-18 COEN. `mac = HMAC(modifyKey,
   op || amount || opNonce || chainId)` and `opNonce` must equal
@@ -34,13 +34,16 @@ holder, client-side) can read them.
 - **Credis.** The CCA first calls `IVaultRouter.reserveStables(smartAccount, asset, amount)`
   to lock vault liquidity for 15 minutes. The user then pledges Gratis. After the
   user hands over the spend path, the CCA calls
-  `issueCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency, reservationId)`
-  (payable - the CCA attaches COEN equal to the pledged collateral). The user hands
-  it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it to the bundle
-  with `spendAuth = HMAC(pledgeSecret, "credis-bind" || bundle)`. Neither the asset
-  nor the amount is calldata - both are read back out of the ticket, so the loan is
-  issued at the price the user accepted rather than a fresh quote. Unused reservation
-  remainder returns to the origin vault.
+  `issueCredis(smartAccount, pledgeNote, spendAuth, referenceCurrency, reservationId)`
+  (payable: native COEN equals pledged GRATIS after the existing 6-to-18 decimal conversion).
+  The user shares the note, designated smart account and recipient-bound `spendAuth`.
+  The account receives COEN; the issuing CCA receives the sealed stablecoin principal
+  **to cover COEN delivered to the user's smart account**. Account stablecoins stay unchanged.
+  Neither the asset nor principal is caller-selected at issuance; both remain sealed in the note.
+  The client requires existing account stablecoins covering principal and verifies the live
+  CCA signer, token policy, cap, selector access, owner delay and reservation before issuance.
+  These checks are off-chain. Excess reservation funds return to the originating vault.
+  The originating CCA can return a reservation anytime; anyone can return it strictly after expiry.
   `settle(positionId, amount)` applies a payment interest first and principal
   second, and **automatically** releases the collateral share proportional to the
   principal it covered back to the pledger's encrypted balance - no reclaim note,
@@ -82,3 +85,45 @@ CLI argument (default: `local-reth`):
 All scripts accept `[envName]` as an optional last positional argument. Each prints
 state before / after and a `CHANGES` summary.
 See all available scripts and their order in the `package.json`.
+
+
+## Fresh deployment workflow
+
+Existing accounts are not migrated. Redeploy the smart-account stack and use its new
+factory address; the simplified factory changes predicted account addresses.
+Kernel v4 and its pinned dependencies remain unchanged.
+
+```bash
+npm run setup-native -- local-reth
+npm run setup-erc20 -- local-reth
+npm run setup-gratis -- local-reth
+npm run setup-account -- local-reth     # deploy and fund through ordinary ERC20 transfer
+npm run reserve-stables -- 1 local-reth
+npm run pledge-gratis -- 1 local-reth
+npm run request-credis -- local-reth
+npm run cca-simulate-purchase -- 1 local-reth
+npm run user-sa-withdraw -- 1 local-reth # schedules; repeat after 300 seconds to execute
+npm run user-settles -- <positionId> <fixed-amount-in-minor-units> local-reth
+# Repeat the identical settlement command after 300 seconds.
+```
+
+CCA withdrawals are immediate canonical single-token transfers, capped at `1000e6`
+minor units per token per day. Validation debits the cap even when execution fails;
+issuance's direct router payout does not use this cap.
+
+Owner transfers, approvals, batches and security changes require scheduling and a
+300-second delay. Only standalone zero-value scheduling/cancellation calls are exempt.
+Requests bind chain, account, installation generation and exact execution calldata;
+they never expire automatically. Cancellation followed by rescheduling starts a new delay.
+Execution consumes a request, while a reverted execution restores it. ERC-1271 and
+signature-based module enablement are disabled. ROOT-mode operations are rejected
+because pinned Kernel v4 deliberately bypasses hooks for ROOT; use the owner permission.
+A delayed root/policy replacement permits departure from this configuration.
+
+`Scheduled`, `Cancelled` and `Executed` events support CCA monitoring. The issuance
+client stops for changed configuration or pending owner calls it cannot establish are
+ordinary configured-token transfers. This conservatively includes arbitrary calls and batches.
+Owner commands save exact requests and transaction hashes under gitignored `tickets/`;
+reruns recover receipts, check readiness and retry failed execution. EntryPoint deposits
+remain separate from account funding. Never share view/modify keys or the full local
+ticket: share only `pledgeNote`, `smartAccount` and `spendAuth` with the CCA.

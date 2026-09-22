@@ -307,30 +307,30 @@ export function findPowNonce(id: bigint): bigint {
 
 /**
  * The per-pledge spend secret the EOA derives from its modify key + the public
- * pledge handle, then hands to the CCA off-chain: `HMAC(modify_key, handle)`.
+ * pledge note: `HMAC(modify_key, pledgeNote)`. This secret stays with the user.
  */
-export function pledgeSecret(modifyKey: Uint8Array, handleHex: string): Uint8Array {
-  const handle = ethers.getBytes(handleHex);
-  if (handle.length !== 32) throw new Error("pledgeSecret: handle must be 32 bytes");
-  return hmacSha256(modifyKey, handle);
+export function pledgeSecret(modifyKey: Uint8Array, pledgeNoteHex: string): Uint8Array {
+  const pledgeNote = ethers.getBytes(pledgeNoteHex);
+  if (pledgeNote.length !== 32) throw new Error("pledgeSecret: pledgeNote must be 32 bytes");
+  return hmacSha256(modifyKey, pledgeNote);
 }
 
 /**
  * The spend authorization binding a pledge to a destination smart account:
- * `HMAC(pledge_secret, "credis-bind" || bundle)`. Prevents a mempool observer of
- * `requestCredis(handle, spendAuth)` from redirecting the loan.
+ * `HMAC(pledge_secret, "credis-bind" || smartAccount)`. Prevents a mempool observer of
+ * `issueCredis(smartAccount, pledgeNote, spendAuth, ...)` from redirecting the loan.
  */
-export function spendAuth(secret: Uint8Array, bundle: string): string {
-  return ethers.hexlify(hmacSha256(secret, concat(SPEND_BIND_TAG, addressBytes(bundle))));
+export function spendAuth(secret: Uint8Array, smartAccount: string): string {
+  return ethers.hexlify(hmacSha256(secret, concat(SPEND_BIND_TAG, addressBytes(smartAccount))));
 }
 
 // ---------------------------------------------------------------------------
-// Position id - keccak256(handle || smartAccount), matches CredisContract
+// Position id - keccak256(pledgeNote || smartAccount), matches CredisContract
 // ---------------------------------------------------------------------------
 
-/** `position_id = keccak256(pledge_handle(32) || smart_account(20))` as uint256. */
-export function positionId(handleHex: string, smartAccount: string): bigint {
-  const handle = ethers.getBytes(handleHex);
-  if (handle.length !== 32) throw new Error("positionId: handle must be 32 bytes");
-  return BigInt(ethers.keccak256(concat(handle, addressBytes(smartAccount))));
+/** `position_id = keccak256(pledge_note(32) || smart_account(20))` as uint256. */
+export function positionId(pledgeNoteHex: string, smartAccount: string): bigint {
+  const pledgeNote = ethers.getBytes(pledgeNoteHex);
+  if (pledgeNote.length !== 32) throw new Error("positionId: pledgeNote must be 32 bytes");
+  return BigInt(ethers.keccak256(concat(pledgeNote, addressBytes(smartAccount))));
 }

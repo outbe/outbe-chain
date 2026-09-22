@@ -13,7 +13,7 @@ run = '''
 echo 'Exporting ABI for smart contracts'
 mkdir -p ./abi-export
 rm -rf ./abi-export/*.json
-for contract in IERC20 IEntryPoint SmartAccountFactory ITokenBundle; do
+for contract in IERC20 IEntryPoint SmartAccountFactory ExecutionDelayPolicy WithdrawalLimitPolicy; do
   cat ./out/${contract}.sol/${contract}.json | jq -r '.abi' > ./abi-export/${contract}.json
 done
 '''

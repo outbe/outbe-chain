@@ -10,7 +10,6 @@ import {KernelImmutableECDSA} from "@zerodev/kernel/KernelImmutableECDSA.sol";
 import {KernelFactory} from "@zerodev/kernel/KernelFactory.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {EntryPointLib, ENTRYPOINT_0_9} from "../test/utils/EntryPointLib.sol";
-import {CallerHook} from "src/kernel/CallerHook.sol";
 import {ECDSASigner} from "src/kernel/ECDSASigner.sol";
 
 /// @title DeployKernelStack
@@ -25,7 +24,6 @@ contract DeployKernelStack is BaseScript {
     KernelUUPS public kernelUUPS;
     KernelImmutableECDSA public kernelImmutableECDSA;
     KernelFactory public kernelFactory;
-    CallerHook public callerHook;
     ECDSASigner public ecdsaSigner;
 
     function run() public {
@@ -47,9 +45,6 @@ contract DeployKernelStack is BaseScript {
         console.log("");
 
         _deployKernelFactory();
-        console.log("");
-
-        _deployCallerHook();
         console.log("");
 
         _deployECDSASigner();
@@ -140,25 +135,6 @@ contract DeployKernelStack is BaseScript {
 
         kernelFactory = KernelFactory(predicted);
         printAndWrite(exportLine("KERNEL_FACTORY_ADDRESS", vm.toString(predicted)));
-    }
-
-    function _deployCallerHook() internal {
-        console.log("=== Deploying CallerHook ===");
-
-        bytes32 salt = generateSalt("CallerHook");
-        bytes memory creationCode = type(CallerHook).creationCode;
-        address predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
-
-        if (predicted.code.length > 0) {
-            console.log("WARNING: CallerHook already deployed at:", predicted);
-        } else {
-            address deployed = Create2.deploy(0, salt, creationCode);
-            require(deployed == predicted, "CallerHook address mismatch");
-            console.log("CallerHook deployed:", deployed);
-        }
-
-        callerHook = CallerHook(predicted);
-        printAndWrite(exportLine("CALLER_HOOK_ADDRESS", vm.toString(predicted)));
     }
 
     function _deployECDSASigner() internal {

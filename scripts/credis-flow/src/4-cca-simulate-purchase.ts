@@ -2,7 +2,6 @@ import { ethers, Wallet } from "ethers";
 import {
   SmartAccountFactory__factory,
   IERC20__factory,
-  ITokenBundle__factory,
   IEntryPoint__factory,
 } from "./contracts/index.js";
 import {
@@ -34,7 +33,6 @@ const userAddress = requireEnv("USER_ADDRESS", envPath);
 const ccaPrivateKey = requireEnv("CCA_PRIVATE_KEY", envPath);
 const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
-const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
 const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
@@ -45,7 +43,6 @@ async function main() {
 
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const token = IERC20__factory.connect(erc20Address, provider);
-  const bundlePlugin = ITokenBundle__factory.connect(bundleModulePluginAddress, provider);
 
   const erc20Meta = await fetchTokenMeta(token);
 
@@ -54,7 +51,6 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultRouterAddress],
     SALT,
   );
 
@@ -71,22 +67,21 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run setup-account` first.");
     process.exit(1);
   }
 
   // State before
-  const [bundleBalBefore, accountBalBefore, ccaBalBefore] = await Promise.all([
-    bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
+  const [accountBalBefore, ccaBalBefore] = await Promise.all([
     token.balanceOf(smartAccountAddr),
     token.balanceOf(ccaAddress),
   ]);
 
   console.log("\n=== State BEFORE ===");
-  printBalances(smartAccountAddr, accountBalBefore, bundleBalBefore, ccaBalBefore, erc20Meta);
+  printBalances(smartAccountAddr, accountBalBefore, ccaBalBefore, erc20Meta);
 
-  if (bundleBalBefore < WITHDRAW_AMOUNT) {
-    console.error(`Insufficient bundle balance: have ${formatTokenMeta(bundleBalBefore, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
+  if (accountBalBefore < WITHDRAW_AMOUNT) {
+    console.error(`Insufficient account balance: have ${formatTokenMeta(accountBalBefore, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
     process.exit(1);
   }
 
@@ -108,7 +103,7 @@ async function main() {
     console.log(`  Deposited ${formatCoen(ENTRYPOINT_TOPUP)} COEN into EntryPoint`);
   }
 
-  // callData = executeUserOp.selector || execute(execMode, encodeSingle(token, 0, transfer(cca, amount)))
+  // CCA has no execution hook: call execute directly under its restrictive policy.
   const erc20Iface = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]);
   const transferCalldata = erc20Iface.encodeFunctionData("transfer", [ccaAddress, WITHDRAW_AMOUNT]);
   const executionCalldata = ethers.solidityPacked(
@@ -120,8 +115,7 @@ async function main() {
     "function execute(bytes32 mode, bytes calldata executionCalldata)",
   ]);
   const innerExecute = kernelIface.encodeFunctionData("execute", [execModeBytes32, executionCalldata]);
-  const executeUserOpSel = "0x8dd7712f";
-  const callData = ethers.concat([executeUserOpSel, innerExecute]);
+  const callData = innerExecute;
 
   const accountGasLimits = ethers.solidityPacked(["uint128", "uint128"], [2_000_000n, 2_000_000n]);
   const gasFees = ethers.solidityPacked(["uint128", "uint128"], [1n, 1n]);
@@ -149,26 +143,27 @@ async function main() {
 
   const tx = await entryPoint.handleOps([op], ccaWallet.address);
   const receipt = await tx.wait();
+  const result = receipt?.logs.filter(log => log.address.toLowerCase() === entryPointAddress.toLowerCase())
+    .map(log => { try { return entryPoint.interface.parseLog(log); } catch { return null; } })
+    .find(log => log?.name === "UserOperationEvent" && log.args.userOpHash === userOpHash);
+  if (!result?.args.success) throw new Error("CCA withdrawal execution failed");
   console.log(`  TX hash:    ${receipt!.hash}`);
   console.log(`  Block:      ${receipt!.blockNumber}`);
   console.log(`  Gas used:   ${receipt!.gasUsed}`);
 
   // -- State after -----------------------------------------------------------
 
-  const [bundleBalAfter, accountBalAfter, ccaBalAfter] = await Promise.all([
-    bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
+  const [accountBalAfter, ccaBalAfter] = await Promise.all([
     token.balanceOf(smartAccountAddr),
     token.balanceOf(ccaAddress),
   ]);
 
   console.log("\n=== State AFTER ===");
-  printBalances(smartAccountAddr, accountBalAfter, bundleBalAfter, ccaBalAfter, erc20Meta);
+  printBalances(smartAccountAddr, accountBalAfter, ccaBalAfter, erc20Meta);
 
   console.log("\n=== CHANGES ===");
-  const bundleDiff = bundleBalAfter - bundleBalBefore;
   const accountDiff = accountBalAfter - accountBalBefore;
   const ccaDiff = ccaBalAfter - ccaBalBefore;
-  console.log(`  SA bundle:    ${bundleDiff >= 0n ? "+" : ""}${formatTokenMeta(bundleDiff, erc20Meta)}`);
   console.log(`  SA total:     ${accountDiff >= 0n ? "+" : ""}${formatTokenMeta(accountDiff, erc20Meta)}`);
   console.log(`  CCA ERC20:    ${ccaDiff >= 0n ? "+" : ""}${formatTokenMeta(ccaDiff, erc20Meta)}`);
 }
@@ -176,16 +171,11 @@ async function main() {
 function printBalances(
   smartAccountAddr: string,
   accountBal: bigint,
-  bundleBal: bigint,
   ccaBal: bigint,
   erc20Meta: TokenMeta,
 ) {
-  const personalBal = accountBal - bundleBal;
-  const bundleBalance2 = bundleBal / 2n;
   console.log(`  smart account (${smartAccountAddr}):`);
   console.log(`    ERC20 total:   ${formatTokenMeta(accountBal, erc20Meta)}`);
-  console.log(`     Bundle:       ${formatTokenMeta(bundleBal, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);
-  console.log(`    Personal:      ${formatTokenMeta(personalBal, erc20Meta)}`);
   console.log(`  CCA (${ccaAddress}):`);
   console.log(`    ERC20 balance: ${formatTokenMeta(ccaBal, erc20Meta)}`);
 }
