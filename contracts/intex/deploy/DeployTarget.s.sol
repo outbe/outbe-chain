@@ -86,6 +86,7 @@ contract DeployTarget is BaseScript {
                 abi.encodeCall(VwapRegistry.initialize, (admin, router))
             );
             TargetRouter(payable(router)).setVwapRegistry(vwapRegistry);
+            IntexNFT1155(nft).setVwapSource(vwapRegistry);
         }
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).

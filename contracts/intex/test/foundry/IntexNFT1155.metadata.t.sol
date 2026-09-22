@@ -8,6 +8,8 @@ import {IntexMetadata} from "@contracts/shared/libs/IntexMetadata.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
+import {DateKey} from "@contracts/shared/libs/DateKey.sol";
+import {MockVwapSource} from "@test-mocks/MockVwapSource.sol";
 
 /// @notice Per-token on-chain metadata: JSON document, attributes, and embedded SVG.
 contract IntexNFT1155MetadataTest is Test {
@@ -109,6 +111,65 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Issued At"), "worldwide day carries the date semantics");
         assertFalse(json.contains("Series ID"), "composite id lives in the name");
         assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
+    }
+
+    /// @dev Prices the series' first full day only, so a read from any other day finds nothing.
+    function _pointAtSource(uint256 price) internal returns (MockVwapSource source) {
+        source = new MockVwapSource();
+        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), price);
+        vm.prank(admin);
+        token.setVwapSource(address(source));
+    }
+
+    function test_uri_Qualified_OnceADayClosesAboveTheFloor() public {
+        _pointAtSource(FLOOR_PRICE + 1);
+        bytes memory json = _json(iTok);
+        _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Qualified\"}");
+        bytes memory svg = json.decodeSvg();
+        assertTrue(svg.contains("QUALIFIED"), "badge text");
+        assertTrue(svg.contains("#16a34a"), "badge color");
+        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
+        _assertRowAt(svg, "Call Price", 355);
+    }
+
+    function test_uri_Issued_WhileNoDayClosedAboveTheFloor() public {
+        _pointAtSource(FLOOR_PRICE);
+        _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
+    }
+
+    function test_uri_Issued_WhenTheSourceFailsOrIsUnset() public {
+        string memory issued = "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}";
+        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
+        source.setReverts(true);
+        _assertContains(_json(iTok), issued);
+
+        vm.prank(admin);
+        token.setVwapSource(makeAddr("no code"));
+        _assertContains(_json(iTok), issued);
+
+        vm.prank(admin);
+        token.setVwapSource(address(0));
+        _assertContains(_json(iTok), issued);
+    }
+
+    function test_uri_Called_WhateverTheSourceSays() public {
+        _pointAtSource(FLOOR_PRICE + 1);
+        vm.prank(bridger);
+        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
+    }
+
+    function test_setVwapSource_OnlyAdmin() public {
+        address source = makeAddr("source");
+        vm.expectRevert();
+        vm.prank(user);
+        token.setVwapSource(source);
+
+        vm.expectEmit(address(token));
+        emit IIntexNFT1155.VwapSourceSet(source);
+        vm.prank(admin);
+        token.setVwapSource(source);
+        assertEq(token.vwapSource(), source);
     }
 
     function test_uri_Called_AddsCallTimestamps() public {

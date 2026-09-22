@@ -8,6 +8,8 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {IntexMetadata} from "./libs/IntexMetadata.sol";
+import {DateKey} from "./libs/DateKey.sol";
+import {IVwapSource} from "./interfaces/IVwapSource.sol";
 
 /**
  * @title IntexNFT1155
@@ -53,6 +55,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
+        /// @dev Daily VWAPs the metadata derives qualification from; zero renders uncalled series as Issued.
+        address vwapSource;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -85,6 +89,17 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param newImplementation Address of the implementation the proxy switches to.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /// @inheritdoc IIntexNFT1155
+    function setVwapSource(address source) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _s().vwapSource = source;
+        emit VwapSourceSet(source);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function vwapSource() external view returns (address) {
+        return _s().vwapSource;
+    }
 
     /// @notice Series-level data, stored per token id. Flattened to match the original
     ///         public-mapping getter ABI, with the call-trigger returned as its struct (collapsing
@@ -504,8 +519,24 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             data.totalSupply = _s().settledSupply[tokenId];
         } else {
             data.state = _effectiveState(data);
+            if (data.state == IIntexNFT1155.IntexState.Issued && _crossedFloor(data)) {
+                data.state = IIntexNFT1155.IntexState.Qualified;
+            }
         }
         return IntexMetadata.tokenURI(data);
+    }
+
+    /// @dev Whether a finalized day from the first one the series held in full closed above its floor. A missing
+    ///      or failing source reads as not yet, so `uri` never reverts on it.
+    function _crossedFloor(IIntexNFT1155.SeriesData memory data) private view returns (bool) {
+        address source = _s().vwapSource;
+        if (source == address(0)) return false;
+        (bool ok, bytes memory ret) = source.staticcall(
+            abi.encodeCall(
+                IVwapSource.maxUtcDayVwapSince, (data.referenceCurrency, DateKey.firstFullDay(data.issuedAt))
+            )
+        );
+        return ok && ret.length >= 32 && abi.decode(ret, (uint256)) > data.floorPriceMinor;
     }
 
     /// @inheritdoc IIntexNFT1155

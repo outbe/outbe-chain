@@ -157,6 +157,15 @@ contract DateKeyTest is Test {
         assertEq(DateKey.previousDateKey(20260101), 20251231);
     }
 
+    function test_FirstFullDay_IsTheIssuanceDayOnlyAtExactMidnight() public pure {
+        assertEq(DateKey.firstFullDay(1_772_323_200), 20260301, "2026-03-01 00:00:00");
+        assertEq(DateKey.firstFullDay(1_772_323_201), 20260302);
+        assertEq(DateKey.firstFullDay(1_772_323_199), 20260301, "one second before midnight");
+        assertEq(DateKey.firstFullDay(1_709_164_800), 20240229, "a leap day");
+        assertEq(DateKey.firstFullDay(1_767_139_201), 20260101, "across a year");
+        assertEq(DateKey.firstFullDay(0), 19700101);
+    }
+
     function test_PreviousDateKey_AcrossFebruary() public pure {
         assertEq(DateKey.previousDateKey(20260301), 20260228);
         assertEq(DateKey.previousDateKey(20240301), 20240229);
