@@ -37,6 +37,7 @@ where
     DB: StateDB,
     DB::Error: std::fmt::Display,
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
+    E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
     fn expected_begin_input(&self, ordinal: usize) -> Result<SystemTxInputV2, BlockExecutionError> {

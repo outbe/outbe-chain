@@ -1,6 +1,6 @@
 {
   "git": {
-    "sha1": "aa16b156595d7de8d25c31fc0c346e608fa7eb9c"
+    "sha1": "ba6f83b80aba8cf005175f4d776d8b90796c72d9"
   },
   "path_in_vcs": "crates/evm"
 }

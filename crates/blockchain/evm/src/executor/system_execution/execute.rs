@@ -57,6 +57,7 @@ where
     DB: StateDB,
     DB::Error: std::fmt::Display,
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
+    E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
     /// Commits an Outbe begin-zone system transaction with separate internal
