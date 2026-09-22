@@ -128,9 +128,14 @@ jobs:
     concurrency:
       group: rust-cache-${{ github.workflow }}-test-${{ github.ref }}
       cancel-in-progress: false
-    timeout-minutes: 45
+    # Include a cold coverage build and the bounded native-database test suite.
+    timeout-minutes: 180
     env:
       CARGO_INCREMENTAL: "0"
+      # Native snapshot fixtures open multiple large MDBX/CE stores. Bound
+      # concurrent fixtures and their Rayon pools to avoid allocation failures.
+      RUST_TEST_THREADS: "2"
+      RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v6
       - name: Set up persistent local Rust cache

@@ -9,10 +9,11 @@ import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev Burn-instead-of-vault recovery paths: an undistributable winning portion (the series was
-///      already routed on Outbe) is sent to the canonical dead address, terminally and in a
-///      single transaction - no parked state, no vault dependency.
+/// @dev A split recorded before refunds became claims still pays its refund portion, and its winning remainder,
+///      whose proceeds were already routed on Outbe, goes to the canonical dead address in the same transaction.
 contract EscrowAdapterBurnTest is Test {
+    bytes32 internal constant STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
+
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockWCOEN paymentToken;
@@ -48,28 +49,25 @@ contract EscrowAdapterBurnTest is Test {
         return IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
     }
 
-    /// @dev Strand bidder1 at finalize with a valid refund/paid split recorded.
-    function _strandWithSplit(uint128 refundPortion, uint128 paidPortion) internal {
+    /// @dev Lock bidder1 with a split recorded the way the escrow once did, then close its day.
+    function _strandWithSplit(uint128 refundPortion) internal {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
-        compact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
-        });
+        bytes32 dayMap = keccak256(abi.encode(uint256(worldwideDay1), uint256(STORAGE_SLOT) + 5));
+        bytes32 splitWord = bytes32(uint256(keccak256(abi.encode(bidder1, dayMap))) + 1);
+        vm.store(address(escrow), splitWord, bytes32(uint256(refundPortion) | (uint256(1) << 128)));
+
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
-        compact.setForcedWithdrawalShouldFail(false);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, new address[](0), 0, 0, 0, 0, true);
     }
 
     function test_ClaimRefund_PostFinalize_RefundsBidderAndBurnsRemainder_OneTx() public {
         uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
         uint128 paidPortion = LOCK_AMOUNT - refundPortion;
-        _strandWithSplit(refundPortion, paidPortion);
+        _strandWithSplit(refundPortion);
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
 
         vm.expectEmit(true, true, true, true, address(escrow));
         emit IEscrowAdapter.FundsRefunded(bytes32(0), worldwideDay1, bidder1, refundPortion);
@@ -82,33 +80,29 @@ contract EscrowAdapterBurnTest is Test {
         // nothing left parked in the escrow accounting or The Compact.
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion, "bidder refunded");
         assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), paidPortion, "remainder burned");
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, 0, "no parked state survives");
         assertEq(_liveCompactBalance(), 0, "Compact drained");
     }
 
     function test_ClaimRefund_PostFinalize_FullRefundSplit_BurnsNothing() public {
-        _strandWithSplit(LOCK_AMOUNT, 0);
+        _strandWithSplit(LOCK_AMOUNT);
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
         escrow.claimRefund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT, "full principal refunded");
         assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), 0, "nothing to burn");
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
+        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
     }
 
     /// @dev Token conservation with the dead address as a sink: every minted token is either with
     ///      the bidder, the proceeds recipient, pooled in The Compact, or burned.
     function test_Conservation_BurnAddressIsTheOnlySink() public {
         uint256 minted = paymentToken.balanceOf(bidder1);
-        uint128 refundPortion = LOCK_AMOUNT / 4;
-        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
-        _strandWithSplit(refundPortion, paidPortion);
+        _strandWithSplit(LOCK_AMOUNT / 4);
 
-        vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
         escrow.claimRefund(worldwideDay1, bidder1);
 
         uint256 sum = paymentToken.balanceOf(bidder1) + paymentToken.balanceOf(proceedsRecipient)

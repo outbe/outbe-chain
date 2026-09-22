@@ -413,6 +413,15 @@ pub struct IdPage {
     pub next_after: Option<WwdEntityId>,
 }
 
+/// Bounded primary-body page, independent of secondary index membership.
+/// Identities are strictly ascending after the request's exclusive cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredBodyPage {
+    pub entries: Vec<(WwdEntityId, StoredBody)>,
+    /// Last returned identity when another page exists.
+    pub next_after: Option<WwdEntityId>,
+}
+
 /// Consumer-owned finalized-parent body/index seam.
 pub trait ParentBodySource {
     fn get(

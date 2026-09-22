@@ -207,13 +207,14 @@ contract IntexAuctionBondTest is Test {
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_RedDay_SkipsTimeGate() public {
+    function test_ClaimCommitBond_RedDay_HasNoBond() public {
         uint32 redSeries = worldwideDay + 7;
         vm.prank(bridger);
         auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND));
 
-        // Cancelled short-circuits the penalty window; with no bond the escrow reverts NotFound
-        // instead of CommitBondNotYetClaimable.
+        // A red day is cancelled before anyone can commit, so its penalty window passes with no bond
+        // for the escrow to release.
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
         auction.claimCommitBond(redSeries, iba1);

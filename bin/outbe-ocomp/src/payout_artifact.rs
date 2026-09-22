@@ -4,12 +4,19 @@
 //! it, so a torn or stale file fails closed.
 
 use std::fs;
-use std::io::{BufWriter, Write};
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::io::{BufWriter, Read, Write};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::U256;
-use outbe_intex::payout::{encode_contributor_leaf, ContributorLeafData};
+use alloy_primitives::{B256, U256};
+use outbe_intex::{
+    payout::{
+        decode_contributor_leaf, encode_contributor_leaf, ContributorLeafData,
+        CONTRIBUTOR_LEAF_BYTES,
+    },
+    CertifiedContributorGenerationProjection,
+};
+use outbe_ocomp_protocol::{ListKind, ProtocolError, StreamingOrderedListRoot};
 use thiserror::Error;
 
 use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
@@ -34,10 +41,159 @@ pub enum PayoutArtifactError {
     CountOverflow,
     #[error("result catalog ended before its completion marker")]
     IncompleteCatalog,
+    #[error("invalid certified contributor generation: {0}")]
+    InvalidCertifiedGeneration(&'static str),
+    #[error("payout artifact is not a regular file")]
+    NotRegularFile,
+    #[error("payout artifact length mismatch: expected {expected} bytes, found {actual}")]
+    LengthMismatch { expected: u64, actual: u64 },
+    #[error("payout artifact nominal total overflows U256")]
+    NominalOverflow,
+    #[error("payout artifact root mismatch: expected {expected}, found {actual}")]
+    RootMismatch { expected: B256, actual: B256 },
+    #[error("payout artifact nominal total mismatch: expected {expected}, found {actual}")]
+    TotalMismatch { expected: U256, actual: U256 },
+    #[error("payout artifact changed while being read")]
+    SourceChanged,
+    #[error("payout artifact ordered-list commitment: {0}")]
+    Protocol(#[from] ProtocolError),
 }
 
 fn io_error(context: &'static str, source: std::io::Error) -> PayoutArtifactError {
     PayoutArtifactError::Io { context, source }
+}
+
+/// Observed native contributor population matching the supplied certification.
+/// Canonical day/job selection remains the caller's responsibility.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedPayoutArtifactV1 {
+    pub contributor_count: u32,
+    pub contributor_root: B256,
+    pub eligible_nominal_total: U256,
+}
+
+/// Verifies the public payout file without opening intermediate catalogs or writers.
+///
+/// The caller obtains certification from verified canonical state and derives the
+/// canonical job path separately: the certified projection does not contain a JobId.
+/// Reads retain one 84-byte record and the native fixed-size ordered-list frontier.
+pub fn verify_contributor_payout_artifact(
+    path: &Path,
+    certified: &CertifiedContributorGenerationProjection,
+) -> Result<VerifiedPayoutArtifactV1, PayoutArtifactError> {
+    if certified.contributor_root.is_zero() {
+        return Err(PayoutArtifactError::InvalidCertifiedGeneration(
+            "missing certified root",
+        ));
+    }
+    if !matches!(certified.series_version, 1 | 2) {
+        return Err(PayoutArtifactError::InvalidCertifiedGeneration(
+            "invalid series version",
+        ));
+    }
+    if (certified.contributor_count == 0) != certified.eligible_nominal_total.is_zero() {
+        return Err(PayoutArtifactError::InvalidCertifiedGeneration(
+            "count/total presence mismatch",
+        ));
+    }
+    // NONBLOCK prevents a replaced FIFO/device from blocking before the regular
+    // file check; it does not change regular-file read behavior.
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|source| io_error("open for verification", source))?;
+    let initial = file
+        .metadata()
+        .map_err(|source| io_error("stat for verification", source))?;
+    if !initial.is_file() {
+        return Err(PayoutArtifactError::NotRegularFile);
+    }
+    let expected = u64::from(certified.contributor_count)
+        .checked_mul(CONTRIBUTOR_LEAF_BYTES as u64)
+        .ok_or(PayoutArtifactError::CountOverflow)?;
+    if initial.len() != expected {
+        return Err(PayoutArtifactError::LengthMismatch {
+            expected,
+            actual: initial.len(),
+        });
+    }
+    verify_payout_source_unchanged(path, &file, &initial)?;
+    let mut root =
+        StreamingOrderedListRoot::new(ListKind::ContributorActions, certified.contributor_count)?;
+    let mut total = U256::ZERO;
+    let mut record = [0; CONTRIBUTOR_LEAF_BYTES];
+    for _ in 0..certified.contributor_count {
+        file.read_exact(&mut record).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::UnexpectedEof {
+                PayoutArtifactError::SourceChanged
+            } else {
+                io_error("read contributor record", source)
+            }
+        })?;
+        let leaf = decode_contributor_leaf(&record);
+        total = total
+            .checked_add(leaf.nominal)
+            .ok_or(PayoutArtifactError::NominalOverflow)?;
+        root.push(&record, CONTRIBUTOR_LEAF_BYTES)?;
+    }
+    if file
+        .read(&mut [0; 1])
+        .map_err(|source| io_error("check artifact EOF", source))?
+        != 0
+    {
+        return Err(PayoutArtifactError::SourceChanged);
+    }
+    let contributor_root = root.finish()?;
+    verify_payout_source_unchanged(path, &file, &initial)?;
+    if contributor_root != certified.contributor_root {
+        return Err(PayoutArtifactError::RootMismatch {
+            expected: certified.contributor_root,
+            actual: contributor_root,
+        });
+    }
+    if total != certified.eligible_nominal_total {
+        return Err(PayoutArtifactError::TotalMismatch {
+            expected: certified.eligible_nominal_total,
+            actual: total,
+        });
+    }
+    Ok(VerifiedPayoutArtifactV1 {
+        contributor_count: certified.contributor_count,
+        contributor_root,
+        eligible_nominal_total: total,
+    })
+}
+
+fn verify_payout_source_unchanged(
+    path: &Path,
+    file: &fs::File,
+    initial: &fs::Metadata,
+) -> Result<(), PayoutArtifactError> {
+    let opened = file
+        .metadata()
+        .map_err(|source| io_error("restat payout descriptor", source))?;
+    let current = fs::symlink_metadata(path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            PayoutArtifactError::SourceChanged
+        } else {
+            io_error("restat payout path", source)
+        }
+    })?;
+    let unchanged = |metadata: &fs::Metadata| {
+        metadata.is_file()
+            && metadata.dev() == initial.dev()
+            && metadata.ino() == initial.ino()
+            && metadata.len() == initial.len()
+            && metadata.mtime() == initial.mtime()
+            && metadata.mtime_nsec() == initial.mtime_nsec()
+            && metadata.ctime() == initial.ctime()
+            && metadata.ctime_nsec() == initial.ctime_nsec()
+    };
+    if !unchanged(&opened) || !unchanged(&current) {
+        return Err(PayoutArtifactError::SourceChanged);
+    }
+    Ok(())
 }
 
 /// Streams records into a temp file; the final name appears only on `commit`.
@@ -170,5 +326,34 @@ mod tests {
         writer.push(&leaf(7)).unwrap();
         drop(writer);
         assert!(!dir.path().join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE).exists());
+    }
+
+    #[test]
+    fn payout_source_identity_rejects_same_size_rewrite_and_path_replacement() {
+        use std::fs::FileTimes;
+        use std::time::{Duration, SystemTime};
+
+        for replace in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE);
+            fs::write(&path, encode_contributor_leaf(&leaf(1))).unwrap();
+            let file = fs::File::open(&path).unwrap();
+            file.set_times(
+                FileTimes::new().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1)),
+            )
+            .unwrap();
+            let initial = file.metadata().unwrap();
+            if replace {
+                let replacement = dir.path().join("replacement");
+                fs::write(&replacement, encode_contributor_leaf(&leaf(1))).unwrap();
+                fs::rename(replacement, &path).unwrap();
+            } else {
+                fs::write(&path, encode_contributor_leaf(&leaf(2))).unwrap();
+            }
+            assert!(matches!(
+                verify_payout_source_unchanged(&path, &file, &initial),
+                Err(PayoutArtifactError::SourceChanged)
+            ));
+        }
     }
 }

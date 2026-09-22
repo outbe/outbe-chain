@@ -33,6 +33,9 @@ pub enum NodError {
     InvalidEntryPriceSnapshot,
     #[error("missing nod entry price for reference currency {0}")]
     MissingEntryPrice(u16),
+
+    #[error("nod is non-transferable")]
+    NonTransferable,
 }
 
 impl From<NodError> for PrecompileError {

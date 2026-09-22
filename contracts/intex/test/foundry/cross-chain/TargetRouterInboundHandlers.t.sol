@@ -273,30 +273,24 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.applyParkedIssuance(0);
     }
 
-    // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---
+    // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; the winner's lock flips Won ---
     function test_handleRefundInstructions_finalizesEscrow() public {
-        // Lock funds for the bidder so finalizeAuction's per-bidder branch can land.
-        uint64 lockedAmount = 1000e6;
-        vm.prank(admin);
+        // Lock funds for the bidder so finalizeAuction's per-winner branch can land.
+        paymentToken.mint(bidder, 1e18);
+        vm.startPrank(admin);
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
-        vm.prank(admin);
-        escrow.lockFunds(WORLDWIDE_DAY, bidder, lockedAmount);
+        escrow.setProceedsRecipient(address(bnbRouter));
+        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e18, 1_000_000, 1);
+        vm.stopPrank();
 
-        address[] memory bidders = new address[](1);
-        bidders[0] = bidder;
-        uint128[] memory refundedAmounts = new uint128[](1);
-        refundedAmounts[0] = lockedAmount;
-        uint128[] memory paidAmounts = new uint128[](1);
-        paidAmounts[0] = 0;
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
 
-        bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts);
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, 500_000, 1e6, winners, 0, 0);
         _deliver(packet);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(WORLDWIDE_DAY, bidder);
-        assertEq(
-            uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Finalized), "lock advanced to Finalized via handler"
-        );
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
     // --- _handleMarkQualified: pure status flip on the local IntexNFT1155 ---

@@ -9,11 +9,14 @@ import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
 /// @dev External linked library: deployed once and delegatecalled, keeping the renderer's
 ///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure - the caller
-///      passes a SeriesData snapshot plus the current timestamp (drives the derived Expired
-///      display; expiry is not an on-chain state).
+///      passes a SeriesData snapshot whose state already carries the derived Expired.
 library IntexMetadata {
-    string internal constant DESCRIPTION =
-        "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
+    string internal constant COLLECTION_DESCRIPTION =
+        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Unsettled units stay transferable until the series is called; settled units move to a separate Settled token class that stays exercisable.";
+
+    /// @dev First row baseline of the card and the step between rows.
+    uint256 private constant ROW_TOP = 265;
+    uint256 private constant ROW_STEP = 45;
 
     /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
     uint8 private constant PRICE_DECIMALS = 6;
@@ -33,11 +36,11 @@ library IntexMetadata {
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
-            "{\"name\":\"Intex Series ",
+            "{\"name\":\"Intex ",
             displayId,
             settled ? " - Settled" : "",
             "\",\"description\":\"",
-            DESCRIPTION,
+            _tokenDescription(data, displayId, settled),
             "\",\"image\":\"data:image/svg+xml;base64,",
             Base64.encode(bytes(_generateSVG(data, displayId, settled))),
             "\",\"attributes\":",
@@ -56,7 +59,31 @@ library IntexMetadata {
     function _collectionURI() private pure returns (string memory) {
         return string.concat(
             "data:application/json;base64,",
-            Base64.encode(bytes(string.concat("{\"name\":\"Intex\",\"description\":\"", DESCRIPTION, "\"}")))
+            Base64.encode(bytes(string.concat("{\"name\":\"Intex\",\"description\":\"", COLLECTION_DESCRIPTION, "\"}")))
+        );
+    }
+
+    /// @dev Unsettled classes share one text; the settled class has no auction or deadline to name.
+    function _tokenDescription(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
+        private
+        pure
+        returns (string memory)
+    {
+        if (settled) {
+            return string.concat(
+                "Settled units of Intex series ",
+                displayId,
+                ". Settled units are never transferable and stay exercisable with no deadline;",
+                " exercising one mines its Promis load."
+            );
+        }
+        return string.concat(
+            "Unsettled units of Intex series ",
+            displayId,
+            " from the Worldwide Day ",
+            Strings.toString(data.worldwideDay),
+            " auction. A unit is a mining right: its owner pays the settlement cost at the series'",
+            " fixed entry price. Unsettled units stay transferable until the series is called."
         );
     }
 
@@ -151,7 +178,7 @@ library IntexMetadata {
             "<svg width=\"600\" height=\"600\" xmlns=\"http://www.w3.org/2000/svg\">",
             "<rect width=\"600\" height=\"600\" fill=\"#1a1a1a\" rx=\"20\"/>",
             "<rect x=\"15\" y=\"15\" width=\"570\" height=\"570\" fill=\"none\" stroke=\"#444\" stroke-width=\"2\" rx=\"15\"/>",
-            "<text x=\"300\" y=\"70\" font-family=\"sans-serif\" font-size=\"32\" font-weight=\"bold\" fill=\"#fff\" text-anchor=\"middle\">INTEX SERIES</text>",
+            "<text x=\"300\" y=\"70\" font-family=\"sans-serif\" font-size=\"32\" font-weight=\"bold\" fill=\"#fff\" text-anchor=\"middle\">INTEX</text>",
             "<text x=\"300\" y=\"110\" font-family=\"sans-serif\" font-size=\"24\" font-weight=\"600\" fill=\"#cbd5f5\" text-anchor=\"middle\">",
             displayId,
             "</text>",
@@ -170,15 +197,27 @@ library IntexMetadata {
     }
 
     function _svgData(IIntexNFT1155.SeriesData memory data, bool settled) private pure returns (string memory) {
-        string memory rows = string.concat(
-            _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 265),
-            _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
-            _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 355),
-            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), 400)
+        uint256 y = ROW_TOP;
+        string memory rows = _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), y);
+        y += ROW_STEP;
+        rows = string.concat(
+            rows, _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
         );
+        y += ROW_STEP;
+        if (!settled && data.state == IIntexNFT1155.IntexState.Issued) {
+            rows = string.concat(
+                rows,
+                _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
+            );
+            y += ROW_STEP;
+        }
+        rows = string.concat(
+            rows, _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
+        );
+        y += ROW_STEP;
         if (!settled && data.calledAt != 0) {
             uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
-            rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), 445));
+            rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), y));
         }
         return rows;
     }

@@ -354,8 +354,8 @@ pub(super) fn assert_clearing(
                     height,
                 )
                 .expect("settled bid lock");
-                assert_eq!(U256::from(lock.lockedAmount), allocation.locked);
-                assert_eq!(lock.status, 2, "bid finalized");
+                assert_eq!(lock.lockedAmount, 0, "claimed lock deleted");
+                assert_eq!(lock.status, 0, "claimed lock deleted");
                 assert_eq!(lock.failedRefund, 0);
                 assert!(!lock.splitRecorded);
                 let refund = logs(

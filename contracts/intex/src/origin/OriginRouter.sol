@@ -348,22 +348,27 @@ contract OriginRouter is
         uint32 worldwideDay,
         uint16 chunkIndex,
         uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
+        uint64 clearingRate,
+        uint128 basis,
+        address[] calldata winners,
+        uint16 partialIndex,
+        uint16 partialWon
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
-        uint256 len = bidders.length;
-        if (len == 0) revert EmptyArray();
-        if (len != refundedAmounts.length || len != paidAmounts.length) revert ArrayLengthMismatch();
         _requireSeriesTarget(worldwideDay, dstChainId);
         sendId = _sendOrPark(
             dstChainId,
             BridgeMsgCodec.encodeRefundInstructions(
-                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+                worldwideDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon
             ),
-            IntexGas.refund(len)
+            IntexGas.refund(winners.length, _routesProceeds(totalChunks, winners.length))
         );
-        emit RefundInstructionsSent(sendId, worldwideDay, len);
+        emit RefundInstructionsSent(sendId, worldwideDay, winners.length);
+    }
+
+    /// @dev A chain's proceeds leave with whichever of its chunks lands last, and chunks land in any order, so
+    ///      every chunk of a chain with winners carries the leg. A run longer than one always has winners.
+    function _routesProceeds(uint16 totalChunks, uint256 winners) private pure returns (bool) {
+        return totalChunks > 1 || winners != 0;
     }
 
     /// @inheritdoc IOriginRouter

@@ -380,6 +380,11 @@ mod tests {
 
     #[test]
     fn dcap_genesis_accepts_mainnet_and_preserves_its_identity() {
+        if !crate::test_utils::in_isolated_process(
+            "tee_genesis::tests::dcap_genesis_accepts_mainnet_and_preserves_its_identity",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("mainnet-base.json");
         let output = root.path().join("mainnet.json");

@@ -14,6 +14,7 @@ members = [
     "crates/blockchain/offchain-storage",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
+    "crates/blockchain/snapshot",
     # system
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -119,6 +120,7 @@ outbe-node = { path = "crates/blockchain/node" }
 outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
 outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
+outbe-snapshot = { path = "crates/blockchain/snapshot" }
 # Internal - system
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }
@@ -277,6 +279,7 @@ ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 
 # Serialization
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

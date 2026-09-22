@@ -32,8 +32,8 @@ pub use api::{
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
     CeWorkConfig, EntityRef, ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow,
     FinalLeafMutation, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceRef, PartitionRef,
-    QueryRef, RetirementOutcome, SealedCollectionRoot, VerifiedBody, VerifiedBodyPage,
-    VerifiedPayload, MAX_ID_PAGE_LIMIT,
+    QueryRef, RetirementOutcome, SealedCollectionRoot, StoredBodyPage, VerifiedBody,
+    VerifiedBodyPage, VerifiedPayload, MAX_ID_PAGE_LIMIT,
 };
 
 pub use collection::{
@@ -60,10 +60,11 @@ pub use lifecycle::{
 };
 pub use outbe_primitives::wwd_entity_id::WwdEntityId;
 pub use persistence::{
-    classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
+    classify_restart, ApplyOutcome, CeAuditError, CeAuditLimits, CeAuditReport, CeAuditVisitor,
+    CeAuditWork, CeBodyAudit, CeBodyAuditReport, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
     DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,
-    FinalizedMarker, PersistenceError, RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH,
-    LOCAL_STORAGE_SCHEMA_VERSION,
+    FinalizedMarker, LeafValue, PersistenceError, RestartClassification, TreeKey, TreeNamespace,
+    CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 pub use proof::{
     verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1, PointProofCommonV1,

@@ -44,6 +44,44 @@ pub struct LocalLysisResultStore {
     lock: Mutex<()>,
 }
 
+/// Nonmutating view of existing local results on an operator-stopped dataset.
+/// Pending publication is reported, never reconciled by this reader.
+pub struct LocalLysisResultReader {
+    inner: LocalLysisResultStore,
+}
+
+impl LocalLysisResultReader {
+    pub fn open_existing(
+        root: impl AsRef<Path>,
+        limits: SchemaLimits,
+    ) -> Result<Self, LocalLysisResultError> {
+        let root = root.as_ref().to_path_buf();
+        let owner_uid = validate_directory(&root)?;
+        let max_record_bytes = limits
+            .codec
+            .max_body_bytes
+            .checked_add(OCB1_HEADER_LEN)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(LocalLysisResultError::InvalidLimits)?;
+        let inner = LocalLysisResultStore {
+            root,
+            owner_uid,
+            limits,
+            max_record_bytes,
+            lock: Mutex::new(()),
+        };
+        inner.validate_existing_records()?;
+        Ok(Self { inner })
+    }
+
+    pub fn load(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<LoadedLocalLysisResultV1>, LocalLysisResultError> {
+        self.inner.load(job_id)
+    }
+}
+
 impl LocalLysisResultStore {
     pub fn open(
         root: impl AsRef<Path>,
@@ -234,6 +272,10 @@ impl LocalLysisResultStore {
             }
         }
 
+        self.validate_existing_records()
+    }
+
+    fn validate_existing_records(&self) -> Result<(), LocalLysisResultError> {
         for entry in fs::read_dir(&self.root)
             .map_err(|source| self.io("rescan local result directory", &self.root, source))?
         {

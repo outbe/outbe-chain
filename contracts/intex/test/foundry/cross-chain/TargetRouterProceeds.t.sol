@@ -5,7 +5,6 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
-import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -24,7 +23,7 @@ contract MockEscrowAdapter {
         totalPaidToReturn = v;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata, bool)
+    function finalizeAuction(uint32, bytes32, address[] calldata, uint16, uint16, uint64, uint128, bool)
         external
         view
         returns (uint128)
@@ -105,13 +104,9 @@ contract TargetRouterProceedsTest is CrossChainTest {
     }
 
     function _deliverRefund(uint32 worldwideDay) internal {
-        address[] memory bidders = new address[](1);
-        uint128[] memory refunded = new uint128[](1);
-        uint128[] memory paid = new uint128[](1);
-        bidders[0] = bidder;
-        refunded[0] = 0;
-        paid[0] = AMOUNT;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, 0, 1, bidders, refunded, paid);
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, 0, 1, 600_000, 1e6, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 

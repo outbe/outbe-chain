@@ -28,6 +28,19 @@ pub struct CeMdbxReadOnly {
 }
 
 impl CeMdbxReadOnly {
+    /// Exhaustively verify one stopped native image in a single immutable
+    /// transaction. All reconstruction writes go to the caller's audit scratch.
+    pub fn audit_exact(
+        &self,
+        required: ExactParentIdentity,
+        work: &super::audit::CeAuditWork,
+        visitor: &mut impl super::audit::CeAuditVisitor,
+    ) -> Result<super::audit::CeAuditReport, super::audit::CeAuditError> {
+        let mut tx = self.tx()?;
+        tx.disable_long_read_transaction_safety();
+        super::audit::audit(&tx, &self.path, &self.identity, required, work, visitor)
+    }
+
     /// Opens the service-manager-configured CE environment without creating a
     /// directory, table or record.
     pub fn open(
