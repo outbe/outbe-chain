@@ -5,10 +5,14 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, OpenPositionParams};
-use outbe_oracle::api::{fresh_coen_rate_for, get_policy_rate};
+use outbe_oracle::api::{
+    coen_pair_index_opt, fresh_coen_rate_for, get_policy_rate, get_utc_day_vwap,
+};
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::checked_protocol_to_native;
 
 use crate::errors::CredisFactoryError;
@@ -27,18 +31,16 @@ use crate::sol_ext::IERC20;
 /// collateral release / void burn, and delivers the stablecoin loan via the
 /// vault sub-call.
 ///
-/// The loan is not priced here: the disbursed amount, the asset and the collateral were
-/// quoted and sealed into the pledge ticket by `pledgeGratis`, so the borrower gets the
-/// terms they accepted rather than whatever the oracle reads now.
+/// The loan is not priced here: the disbursed amount, the asset, the collateral and the
+/// entry price were quoted and sealed into the pledge ticket by `pledgeGratis`, so the
+/// borrower gets the terms they accepted rather than whatever the oracle reads now.
 ///
-/// The threshold geometry is priced here, and only it. `reference_currency` is elected at
-/// this call and pinned for the position's life; `entry_price` is the COEN quote in that
-/// currency and the call price derives from it. Anchoring to the issuance currency reuses
-/// the rate sealed into the ticket, so nothing about such a position moves between pledge
-/// and origination; a cross-currency anchor has no sealed quote and is read now, which
-/// means a delayed `issueCredis` moves its call threshold, though never its loan. The
-/// policy rate is pinned here too, off the ISSUANCE currency - it belongs to the debt, not
-/// to the threshold.
+/// The call threshold is priced here, and only it. `reference_currency` is elected at
+/// this call and pinned for the position's life. The call anchor is the higher of that
+/// pair's previous closed UTC-day VWAP and its current price; the call price is the
+/// anchor times 1.64. Neither input is derived from the entry price. A missing previous-day
+/// VWAP or a missing or stale current price rejects the issuance. The policy rate is
+/// pinned here too, off the issuance currency.
 ///
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
 /// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position -
@@ -130,11 +132,13 @@ pub fn issue_credis(
 
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
-    let entry_price = if reference_currency == issuance_currency {
-        terms.entry_rate
-    } else {
-        fresh_coen_rate_for(storage.clone(), reference_currency)?
-    };
+    // Entry price was sealed on the pledge. The call anchor is a different
+    // pair: COEN in the elected reference currency, not a conversion of the entry.
+    let entry_price = terms.entry_price;
+    let previous_day_vwap =
+        previous_closed_day_vwap(storage.clone(), reference_currency, current_time)?;
+    let current_price = fresh_coen_rate_for(storage.clone(), reference_currency)?;
+    let call_anchor_price = previous_day_vwap.max(current_price);
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
     // can address the right confidential pledged ledger. The `handle_id`
@@ -151,8 +155,9 @@ pub fn issue_credis(
         policy_rate,
         principal: terms.stables_amount,
         entry_price,
+        call_anchor_price,
         collateral: terms.gratis_amount,
-        originated_at: current_time,
+        issued_at: current_time,
     })?;
 
     // The stake is the borrower's from here on: the boundary credited it to this
@@ -181,6 +186,31 @@ pub fn issue_credis(
     )?;
 
     Ok((position_id, terms.stables_amount))
+}
+
+/// Finalized VWAP of COEN/`reference_currency` on the previous closed UTC day.
+///
+/// A day that is not finalized yet, and a finalized day with no price for this
+/// pair, both refuse issuance. The current price is not a substitute.
+fn previous_closed_day_vwap(
+    storage: StorageHandle<'_>,
+    reference_currency: u16,
+    now: u64,
+) -> Result<U256> {
+    let day = previous_date_key(timestamp_to_date_key(now));
+    let finalized = OracleContract::new(storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
+    if finalized < day {
+        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
+    }
+    let Some(index) = coen_pair_index_opt(storage.clone(), reference_currency)? else {
+        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
+    };
+    match get_utc_day_vwap(storage, day, index)? {
+        Some(vwap) if !vwap.is_zero() => Ok(vwap),
+        _ => Err(CredisFactoryError::PreviousDayVwapUnavailable.into()),
+    }
 }
 
 /// The currency's official annual policy rate, scaled by the policy-rate factor.

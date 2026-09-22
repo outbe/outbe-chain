@@ -91,11 +91,15 @@ pub fn pledge_gratis(
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }
+    // The ratio the pledger accepted. Issuance copies it and does not divide again.
+    let entry_price = PledgeTerms::entry_price_for(stables_amount, gratis_amount)
+        .ok_or(GratisFactoryError::EntryPriceZero)?;
     let terms = PledgeTerms {
         stables_amount,
         gratis_amount,
         asset,
         entry_rate,
+        entry_price,
     };
 
     // Fold a read-only league probe into the pledge round-trip (no separate

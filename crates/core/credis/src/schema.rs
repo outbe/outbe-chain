@@ -97,21 +97,23 @@ pub struct Position {
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
-    /// `P0` - COEN price in the position's **reference** currency (scale `1e6`),
-    /// snapshotted at origination. The threshold geometry is measured here, not
-    /// in the issuance currency the position is denominated in.
+    /// Principal / Gratis, in the issuance currency (scale `1e6`). Sealed on the
+    /// pledge and copied here. Not an oracle quote and not the call anchor.
     #[attribute(order = 10)]
     pub entry_price: U256,
 
-    /// `P0 + 64%`. The price whose sustained breach on the
-    /// COEN/`reference_currency` daily series triggers the call.
+    /// `call_anchor_price * 164 / 100`, in the reference currency (scale `1e6`).
+    /// The daily scan calls the position when 21 of the last 28 finalized
+    /// COEN/`reference_currency` VWAPs are strictly above this price. Immutable.
     #[attribute(order = 11)]
     pub call_price: U256,
 
+    /// Issuance timestamp. The interest anchor starts here, and the call scan
+    /// ignores daily VWAPs from before this instant's UTC day.
     #[attribute(order = 12)]
-    pub originated_at: u64,
+    pub issued_at: u64,
 
-    /// Start of the current accrual period. Equals `originated_at` until the
+    /// Start of the current accrual period. Equals `issued_at` until the
     /// first settlement, then advances by the whole days each settlement
     /// charges - not to the settlement timestamp, so a sub-day remainder
     /// carries forward instead of being discarded.
@@ -126,11 +128,10 @@ pub struct Position {
     #[attribute(order = 15)]
     pub state: u8,
 
-    /// ISO 4217 numeric code of the reference currency elected at origination
-    /// and fixed for the position's life. Its sole function is to anchor the
-    /// threshold: `entry_price` / `call_price` are quoted here and the daily
-    /// breach scan reads the COEN/`reference_currency` series. It does not
-    /// denominate the position and carries no FX exposure.
+    /// ISO 4217 numeric code of the reference currency elected at issuance
+    /// and fixed for the position's life. `call_anchor_price` and `call_price`
+    /// are quoted here, and the daily breach scan reads the
+    /// COEN/`reference_currency` series. It does not denominate `entry_price`.
     #[attribute(order = 16)]
     pub reference_currency: u16,
 
@@ -140,8 +141,8 @@ pub struct Position {
     #[attribute(order = 17, default = 0)]
     pub call_notice_period: u32,
 
-    /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at opening);
-    /// `call_price = entry_price * (100 + call_rate) / 100` (64 => 1.64x).
+    /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
+    /// Applied to `call_anchor_price`, not to `entry_price` (64 => 1.64x).
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
@@ -155,6 +156,12 @@ pub struct Position {
     /// opening); divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
     pub call_threshold: u32,
+
+    /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
+    /// the higher of the previous closed UTC-day VWAP and the current price.
+    /// Immutable. `call_price` is this value times 1.64.
+    #[attribute(order = 21)]
+    pub call_anchor_price: U256,
 }
 
 impl Position {

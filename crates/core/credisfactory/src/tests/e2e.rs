@@ -10,7 +10,9 @@ use crate::precompile::ICredisFactory;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_protocol_to_native;
 use outbe_promislimit::PromisLimitContract;
+use outbe_tee::protocol::GratisOp;
 
 use crate::runtime;
 use crate::tests::common::*;
@@ -61,18 +63,19 @@ fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(position.outstanding, amount_stables);
         assert_eq!(position.collateral, pledge_cost());
         assert_eq!(position.collateral_locked, pledge_cost());
-        // The entry price is the COEN quote in the ELECTED reference currency, read at
-        // origination; the call price derives from it. Both legs are seeded at the same
-        // rate here, so this fixture cannot tell them apart - see
-        // `the_entry_price_is_struck_from_the_reference_leg` for the case that can.
+        // Entry price is principal / gratis, sealed on the pledge (2.00 here).
+        // The call anchor is max(previous-day VWAP, current price); both are
+        // seeded at 2.00, so the call price is 3.28. See
+        // `entry_price_stays_on_the_pledge_when_the_reference_price_moves`.
         assert_eq!(position.entry_price, oracle_rate());
+        assert_eq!(position.call_anchor_price, oracle_rate());
         assert_eq!(position.call_price, U256::from(3_280_000u64));
         assert_eq!(position.policy_rate, policy_rate());
         // Both codes are sealed, and the policy rate follows the ISSUANCE one.
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.reference_currency, REFERENCE_ISO);
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
-        assert_eq!(position.last_settled_at, position.originated_at);
+        assert_eq!(position.last_settled_at, position.issued_at);
     });
     teardown();
 }
@@ -86,6 +89,9 @@ fn settle_runs_immediately_after_opening() {
 
         // No price condition gates settlement: a position is settleable the
         // moment it exists, and stays Open until a sustained breach calls it.
+        let sealed = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
         settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
         settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
 
@@ -94,6 +100,11 @@ fn settle_runs_immediately_after_opening() {
             .unwrap();
         assert_eq!(position.outstanding, U256::from(1_000_000u64));
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
+        // Settlement does not reprice a live position.
+        assert_eq!(position.entry_price, sealed.entry_price);
+        assert_eq!(position.call_anchor_price, sealed.call_anchor_price);
+        assert_eq!(position.call_price, sealed.call_price);
+        assert_eq!(position.issued_at, sealed.issued_at);
     });
     teardown();
 }
@@ -762,18 +773,17 @@ fn issue_credis_rejects_an_undeployed_smart_account() {
     teardown();
 }
 
-/// The threshold is struck from the reference leg, not from the rate the pledge was
-/// quoted at. Proven by moving the two legs apart after the pledge is parked: the
-/// loan still follows the sealed quote, the call price follows the reference.
+/// Moving the reference current price after the pledge does not reprice the entry.
+/// The call anchor does follow max(previous-day VWAP, that current price).
 #[test]
-fn the_entry_price_is_struck_from_the_reference_leg() {
+fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        // Priced and sealed at COEN/840 = 2.0.
+        // Pledged at COEN/840 = 2.0, so entry = principal / gratis = 2.0.
         let (handle, reservation_id) = pledge(&storage, alice(), 1);
 
-        // The reference leg moves to 3.0 before the CCA presents the ticket.
+        // The reference current price moves to 3.0. Yesterday's VWAP stays 2.0.
         set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
 
         let spend = credis_spend_auth(alice(), handle, alice());
@@ -790,16 +800,15 @@ fn the_entry_price_is_struck_from_the_reference_leg() {
         )
         .unwrap();
 
-        // The loan is untouched by the move - it was sealed into the ticket.
         assert_eq!(amount_stables, pledge_stables());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.collateral, pledge_cost());
-        // 3.0, the reference leg - not 2.0, the pledge quote.
-        assert_eq!(position.entry_price, U256::from(3_000_000u64));
-        // 3.0 + 64% = 4.92.
+        assert_eq!(position.entry_price, oracle_rate());
+        // max(2.0, 3.0) = 3.0; 3.0 * 1.64 = 4.92.
+        assert_eq!(position.call_anchor_price, U256::from(3_000_000u64));
         assert_eq!(position.call_price, U256::from(4_920_000u64));
     });
     teardown();
@@ -836,23 +845,19 @@ fn issue_credis_rejects_an_unregistered_reference_currency() {
     teardown();
 }
 
-/// Anchoring to the issuance currency reuses the rate sealed into the pledge ticket
-/// instead of re-reading the oracle, so the threshold cannot drift between pledge and
-/// origination. Proven by moving the COEN/840 spot away after the pledge is parked:
-/// the position must ignore the move.
+/// The previous day's VWAP outranks a lower current price. Entry price still
+/// comes from the pledge, in the issuance currency.
 #[test]
-fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
+fn call_anchor_uses_the_previous_day_vwap_when_it_is_higher() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        // Admit the issuance currency as an anchor; its COEN pair is already seeded.
-        register_reference_pair(&storage, ISSUANCE_ISO);
-
-        // Priced and sealed at COEN/840 = 2.0.
         let (handle, reservation_id) = pledge(&storage, alice(), 1);
-
-        // The spot moves before the CCA presents the ticket. A re-quote would seal 3.0.
-        set_coen_rate_for(&storage, ISSUANCE_ISO, U256::from(3_000_000u64));
+        set_vwap(
+            &storage,
+            last_closed_day(now_of(&storage)),
+            U256::from(2_500_000u64),
+        );
 
         let spend = credis_spend_auth(alice(), handle, alice());
         fund_stake(&storage, pledge_stake());
@@ -862,7 +867,7 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
             alice(),
             handle,
             spend,
-            ISSUANCE_ISO,
+            REFERENCE_ISO,
             reservation_id,
             pledge_stake(),
         )
@@ -871,11 +876,124 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert_eq!(position.reference_currency, ISSUANCE_ISO);
-        // 2.0, the sealed quote - not 3.0, the rate the oracle reads now.
         assert_eq!(position.entry_price, oracle_rate());
-        // 2.0 + 64% = 3.28.
-        assert_eq!(position.call_price, U256::from(3_280_000u64));
+        // max(2.50, 2.00) = 2.50; 2.50 * 1.64 = 4.10.
+        assert_eq!(position.call_anchor_price, U256::from(2_500_000u64));
+        assert_eq!(position.call_price, U256::from(4_100_000u64));
+    });
+    teardown();
+}
+
+/// principal 1,000 USD, gratis 500, previous-day COEN/EUR VWAP 1.80, current
+/// price 1.90. Entry stays 2.00 USD; the call is 3.116 EUR.
+#[test]
+fn worked_example_keeps_entry_and_call_in_different_currencies() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let principal = U256::from(1_000_000_000u64);
+        let gratis = U256::from(500_000_000u64);
+        bootstrap(&storage, gratis);
+        let reservation_id = seed_reservation(&storage, alice(), principal);
+        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            principal,
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), principal, 1),
+        )
+        .unwrap();
+        assert_eq!(gratis_cost, gratis);
+
+        set_vwap(
+            &storage,
+            last_closed_day(now_of(&storage)),
+            U256::from(1_800_000u64),
+        );
+        set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(1_900_000u64));
+
+        let stake = checked_protocol_to_native(gratis).unwrap();
+        fund_stake(&storage, stake);
+        let (position_id, _) = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            credis_spend_auth(alice(), handle, alice()),
+            REFERENCE_ISO,
+            reservation_id,
+            stake,
+        )
+        .unwrap();
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(position.entry_price, U256::from(2_000_000u64));
+        assert_eq!(position.call_anchor_price, U256::from(1_900_000u64));
+        assert_eq!(position.call_price, U256::from(3_116_000u64));
+        assert_eq!(position.issuance_currency, ISSUANCE_ISO);
+        assert_eq!(position.reference_currency, REFERENCE_ISO);
+    });
+    teardown();
+}
+
+#[test]
+fn issue_credis_rejects_a_missing_previous_day_vwap() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
+        set_vwap(&storage, last_closed_day(now_of(&storage)), U256::ZERO);
+        fund_stake(&storage, pledge_stake());
+        let err = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            credis_spend_auth(alice(), handle, alice()),
+            REFERENCE_ISO,
+            reservation_id,
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("previous closed UTC-day VWAP"),
+            "got: {err}"
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn issue_credis_rejects_a_stale_current_price() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let (handle, reservation_id) = pledge(&storage, alice(), 1);
+        let now = now_of(&storage);
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO),
+            oracle_rate(),
+            1,
+            now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+        )
+        .unwrap();
+        fund_stake(&storage, pledge_stake());
+        let err = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            credis_spend_auth(alice(), handle, alice()),
+            REFERENCE_ISO,
+            reservation_id,
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("stale"), "got: {err}");
     });
     teardown();
 }

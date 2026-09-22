@@ -75,19 +75,23 @@ interface ICredis {
         uint256 collateralLocked;
         /// r - the annual policy rate of the currency, scale 1e6, fixed at opening.
         uint256 policyRate;
-        /// P_0 - the COEN price in the position's REFERENCE currency, snapshotted
-        /// at origination.
+        /// Principal / Gratis in the issuance currency, scale 1e6. Sealed on the
+        /// pledge. Not the call anchor.
         uint256 entryPrice;
-        /// P_0 + 64%. A sustained breach of the COEN/<reference> daily series
-        /// triggers the call.
+        /// callAnchorPrice * 1.64, in the reference currency. A sustained breach
+        /// of the COEN/<reference> daily series triggers the call.
         uint256 callPrice;
-        uint64 originatedAt;
+        /// Issuance timestamp. Fixed.
+        uint64 issuedAt;
         /// Anchor of the interest day count: origination until the first settlement.
         uint64 lastSettledAt;
         /// 0 until the position is called.
         uint64 calledAt;
         /// See {State}.
         uint8 state;
+        /// max(previous closed UTC-day COEN/reference VWAP, current price),
+        /// scale 1e6, sealed at issuance.
+        uint256 callAnchorPrice;
     }
 
     function name() external view returns (string memory);

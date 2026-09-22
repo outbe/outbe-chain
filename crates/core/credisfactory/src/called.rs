@@ -263,10 +263,10 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
     if window_days == 0 || threshold_days == 0 {
         return false;
     }
-    let originated_day = timestamp_to_date_key(position.originated_at);
+    let issued_day = timestamp_to_date_key(position.issued_at);
     let mut breaches: u32 = 0;
     for (day, vwap) in window.iter().take(window_days as usize) {
-        if *day < originated_day {
+        if *day < issued_day {
             break;
         }
         if vwap.is_some_and(|value| value > position.call_price) {
