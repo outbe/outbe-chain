@@ -14,8 +14,6 @@ contracts/*
 !contracts/intex/**
 !contracts/precompiles
 !contracts/precompiles/**
-!contracts/smart-account
-!contracts/smart-account/**
 !contracts/tokens
 !contracts/tokens/**
 .serena

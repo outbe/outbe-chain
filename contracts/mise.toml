@@ -5,10 +5,10 @@
 
 [env]
 # Self-contained Forge sub-projects (soldeer deps, forge toolchain).
-FORGE_PROJECTS = "intent tokens crosschain smart-account precompiles"
+FORGE_PROJECTS = "intent tokens crosschain precompiles"
 # Sub-projects that export ABIs (intex uses yarn, handled separately).
 # crosschain is absent: it has no export-abi task.
-ABI_PROJECTS = "intent smart-account precompiles tokens"
+ABI_PROJECTS = "intent precompiles tokens"
 
 [tasks.install]
 description = "Install dependencies using soldeer"
