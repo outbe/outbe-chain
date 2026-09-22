@@ -83,6 +83,27 @@ mod tests {
     }
 
     #[test]
+    fn immediate_persistence_disables_reth_state_masking() {
+        // Reth 2.6 enables partial persistence by default. The settings
+        // accepted by our CE barrier must still persist the full state.
+        let engine = reth_node_core::args::EngineArgs {
+            persistence_threshold: 0,
+            memory_block_buffer_target: Some(0),
+            num_state_masking_blocks: 30,
+            ..Default::default()
+        };
+        let mut config = valid();
+        config.persistence_threshold = engine.persistence_threshold;
+        config.memory_block_buffer_target = engine.memory_block_buffer_target();
+        validate_compressed_storage_runtime_config(config).unwrap();
+
+        let tree = engine.tree_config();
+        assert_eq!(tree.persistence_threshold(), 0);
+        assert_eq!(tree.memory_block_buffer_target(), 0);
+        assert_eq!(tree.num_state_masking_blocks(), 0);
+    }
+
+    #[test]
     fn every_incompatible_durability_setting_fails_startup() {
         let mut cases = Vec::new();
 

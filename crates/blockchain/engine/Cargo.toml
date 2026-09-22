@@ -48,6 +48,8 @@ reth-node-builder.workspace = true
 reth-provider.workspace = true
 reth-chain-state.workspace = true
 reth-storage-api.workspace = true
+reth-storage-overlay.workspace = true
+reth-stages-types.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -76,6 +78,10 @@ thiserror.workspace = true
 jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }
 
 [dev-dependencies]
+reth-chain-state = { workspace = true, features = ["test-utils"] }
+reth-db.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-engine.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }

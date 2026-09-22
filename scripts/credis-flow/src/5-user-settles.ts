@@ -189,7 +189,7 @@ async function main() {
 
   // Fetch position to validate it exists
   const position = await credis.getPosition(positionId);
-  if (position.originatedAt === 0n) {
+  if (position.issuedAt === 0n) {
     console.error(`Position ${positionId} does not exist.`);
     process.exit(1);
   }
@@ -205,7 +205,7 @@ async function main() {
   console.log(`  Principal:     ${formatTokenMeta(position.principal, erc20Meta)}`);
   console.log(`  Outstanding:   ${formatTokenMeta(position.outstanding, erc20Meta)}`);
   console.log(`  Interest due:  ${formatTokenMeta(interest, erc20Meta)}`);
-  console.log(`  Originated:    ${formatDate(position.originatedAt)}`);
+  console.log(`  Issued:        ${formatDate(position.issuedAt)}`);
 
   if (position.outstanding === 0n) {
     console.error("Position is fully settled. Nothing outstanding.");

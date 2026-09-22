@@ -180,12 +180,17 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -366,12 +371,17 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -482,12 +492,17 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },

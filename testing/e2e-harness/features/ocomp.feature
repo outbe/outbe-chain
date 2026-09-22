@@ -36,7 +36,7 @@ Feature: Off-chain computation and Metadosis
     Then three matching validator domains atomically apply Lysis and create the Nod
     And every validator independently verifies the V1 Nod commitment encoding
     And the one-league Nod fields and root match the public input arithmetic on every validator
-    And Lysis and OCOMP use the independently frozen rolling entry price
+    And Lysis and OCOMP use the independently frozen previous-day entry price
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent

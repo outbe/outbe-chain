@@ -1,7 +1,7 @@
 //! Business logic for the Credis contract.
 //!
 //! A position lives on the COEN price path, not on a calendar. Nothing here is
-//! scheduled off `originated_at`: the only time-driven quantity is the interest
+//! scheduled off `issued_at`: the only time-driven quantity is the interest
 //! day count, and even that is evaluated lazily at settlement rather than
 //! accrued per block.
 
@@ -38,20 +38,22 @@ pub struct OpenPositionParams {
     /// Sealed pledger EOA, opaque here.
     pub eoa_ct: Vec<u8>,
     pub asset: Address,
-    /// ISO 4217 code of `asset`; denominates the position and keys the policy rate.
+    /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
-    /// ISO 4217 code of the elected threshold anchor. `entry_price` must be a
-    /// COEN quote in THIS currency - the call is measured on its daily series.
+    /// ISO 4217 numeric code of the reference currency elected at origination
+    /// and fixed for the position's life.
     pub reference_currency: u16,
-    /// `r`, 1e18 scaled, already multiplied by the policy-rate factor.
+    /// `r`, 1e6 scaled, already multiplied by the policy-rate factor.
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// `P0` - COEN price in the position's `reference_currency`, 1e6 oracle scale.
+    /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
     pub entry_price: U256,
+    /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
+    pub call_anchor_price: U256,
     /// `G` - pledged Gratis collateral.
     pub collateral: U256,
-    pub originated_at: u64,
+    pub issued_at: u64,
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
@@ -142,14 +144,19 @@ impl CredisContract<'_> {
     /// `position_id = keccak256(handle_id || smart_account)`.
     ///
     /// Everything the position will ever need is sealed here: the call price
-    /// derives from `entry_price`, `policy_rate` is pinned, and the four call
-    /// terms are snapshotted so a later retune of the constants cannot re-term a
-    /// live position. Collateral starts fully locked and the interest anchor
-    /// starts at origination.
+    /// derives from `call_anchor_price`, `policy_rate` is pinned, and the four
+    /// call terms are snapshotted so a later retune of the constants cannot
+    /// re-term a live position. Collateral starts fully locked and the interest
+    /// anchor starts at issuance. Entry price, call anchor, and call price are
+    /// not written again.
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if params.principal.is_zero() || params.collateral.is_zero() {
+            if params.principal.is_zero()
+                || params.collateral.is_zero()
+                || params.entry_price.is_zero()
+                || params.call_anchor_price.is_zero()
+            {
                 return Err(CredisError::InvalidAmount.into());
             }
 
@@ -172,15 +179,16 @@ impl CredisContract<'_> {
                 collateral_locked: params.collateral,
                 policy_rate: params.policy_rate,
                 entry_price: params.entry_price,
-                call_price: calc_call_price(params.entry_price)?,
-                originated_at: params.originated_at,
-                last_settled_at: params.originated_at,
+                call_price: calc_call_price(params.call_anchor_price)?,
+                issued_at: params.issued_at,
+                last_settled_at: params.issued_at,
                 called_at: 0,
                 state: CredisState::Open as u8,
                 call_notice_period: CALL_NOTICE_PERIOD,
                 call_rate: CALL_RATE_PCT,
                 call_window: CALL_WINDOW,
                 call_threshold: CALL_THRESHOLD,
+                call_anchor_price: params.call_anchor_price,
             };
             outbe_ccaregistry::api::position_opened(
                 &self.storage,

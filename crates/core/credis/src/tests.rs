@@ -31,9 +31,14 @@ const PRINCIPAL: u64 = 1_000_000_000;
 fn collateral() -> U256 {
     U256::from(2_000u64) * SCALE_1E6_U256
 }
-/// P0 = $0.50, scale 1e6.
+/// P0 = $0.50, scale 1e6. Issuance-currency entry, independent of the call anchor.
 fn entry_price() -> U256 {
     U256::from(500_000u64)
+}
+
+/// Call anchor in the reference currency, deliberately not the entry price.
+fn call_anchor_price() -> U256 {
+    U256::from(1_000_000u64)
 }
 /// r = 4% annual, scale 1e6.
 fn policy_rate() -> U256 {
@@ -99,8 +104,9 @@ fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
         policy_rate: policy_rate(),
         principal: U256::from(PRINCIPAL),
         entry_price: entry_price(),
+        call_anchor_price: call_anchor_price(),
         collateral: collateral(),
-        originated_at: ORIGINATED_AT,
+        issued_at: ORIGINATED_AT,
     }
 }
 
@@ -144,15 +150,18 @@ fn position_id_matches_keccak() {
 }
 
 #[test]
-fn open_position_seals_the_call_price_from_the_reference_entry_price() {
+fn open_position_seals_the_call_price_from_the_call_anchor() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.open_position(params(handle(1), alice())).unwrap();
         let p = credis.get_position(id).unwrap();
 
-        // $0.50 + 64% = $0.82.
-        assert_eq!(p.call_price, U256::from(820_000u64));
-        assert_eq!(p.call_price, calc_call_price(entry_price()).unwrap());
+        // Entry stays 0.50. The anchor is 1.00, and 1.00 * 1.64 = 1.64.
+        assert_eq!(p.entry_price, entry_price());
+        assert_eq!(p.call_anchor_price, call_anchor_price());
+        assert_eq!(p.call_price, U256::from(1_640_000u64));
+        assert_eq!(p.call_price, calc_call_price(call_anchor_price()).unwrap());
+        assert_ne!(p.call_price, calc_call_price(entry_price()).unwrap());
 
         // Both codes are sealed, and they are distinct: the threshold anchor is
         // the reference currency, never the issuance one the position is
@@ -163,7 +172,7 @@ fn open_position_seals_the_call_price_from_the_reference_entry_price() {
         // Collateral starts fully locked; accrual anchors at origination.
         assert_eq!(p.outstanding, p.principal);
         assert_eq!(p.collateral_locked, p.collateral);
-        assert_eq!(p.last_settled_at, p.originated_at);
+        assert_eq!(p.last_settled_at, p.issued_at);
         assert_eq!(p.called_at, 0);
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Open);
         assert_eq!(p.cca, cca());
@@ -1090,7 +1099,9 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.principal, U256::from(PRINCIPAL));
         assert_eq!(decoded.collateral, collateral());
         assert_eq!(decoded.entryPrice, entry_price());
-        assert_eq!(decoded.callPrice, U256::from(820_000u64));
+        assert_eq!(decoded.callAnchorPrice, call_anchor_price());
+        assert_eq!(decoded.callPrice, U256::from(1_640_000u64));
+        assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Open as u8);
         assert_eq!(decoded.eoaCiphertext.to_vec(), eoa_ct());
@@ -1294,7 +1305,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         let void_day = timestamp_to_date_key(deadline);
         storage.set_block_timestamp(U256::from(deadline)).unwrap();
         let mut next = params(handle(2), alice());
-        next.originated_at = deadline;
+        next.issued_at = deadline;
         credis.open_position(next).unwrap();
         outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
         assert!(credis.open_position(params(handle(3), alice())).is_err());
@@ -1342,7 +1353,7 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         let midnight = date_key_to_utc_timestamp(next_day);
         storage.set_block_timestamp(U256::from(midnight)).unwrap();
         let mut pending = params(handle(2), alice());
-        pending.originated_at = midnight;
+        pending.issued_at = midnight;
         credis.open_position(pending).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -1611,12 +1622,13 @@ fn token_uri_renders_the_position_image_and_metadata() {
         assert_eq!(trait_value(&json, "Outstanding").unwrap(), 1000);
         assert_eq!(trait_value(&json, "Accrued Interest").unwrap(), 0);
         assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
-        assert_eq!(trait_value(&json, "Call Price").unwrap(), 0.82);
+        assert_eq!(trait_value(&json, "Call Anchor").unwrap(), 1);
+        assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.64);
         assert_eq!(trait_value(&json, "Policy Rate").unwrap(), 0.04);
         assert_eq!(trait_value(&json, "Collateral").unwrap(), 2000);
         assert_eq!(trait_value(&json, "Reference Currency").unwrap(), 978);
         assert_eq!(trait_value(&json, "CCA").unwrap(), cca().to_string());
-        assert_eq!(trait_value(&json, "Originated At").unwrap(), ORIGINATED_AT);
+        assert_eq!(trait_value(&json, "Issued At").unwrap(), ORIGINATED_AT);
         assert!(trait_value(&json, "Settlement Deadline").is_none());
         assert!(!json.to_string().contains("eoa"));
 
@@ -1625,7 +1637,7 @@ fn token_uri_renders_the_position_image_and_metadata() {
         assert!(svg.contains(">OPEN</text>"));
         assert!(svg.contains(">Outstanding</text>"));
         assert!(svg.contains(">1,000</text>"));
-        assert!(svg.contains(">0.82</text>"));
+        assert!(svg.contains(">1.64</text>"));
     });
 }
 

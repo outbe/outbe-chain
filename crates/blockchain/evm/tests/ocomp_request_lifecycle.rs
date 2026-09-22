@@ -392,6 +392,14 @@ impl StateProofProvider for TestProvider {
         self.inner.multiproof(input, targets)
     }
 
+    fn multiproof_v2(
+        &self,
+        input: TrieInput,
+        targets: reth_trie::MultiProofTargetsV2,
+    ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
+        self.inner.multiproof_v2(input, targets)
+    }
+
     fn witness(
         &self,
         input: TrieInput,
@@ -1817,9 +1825,6 @@ fn hashed_marker_state(storage: &HashMap<(Address, U256), U256>) -> HashedAccoun
 }
 
 fn apply_storage_overlay(storage: &mut BTreeMap<B256, U256>, post_state: HashedStorage) {
-    if post_state.wiped {
-        storage.clear();
-    }
     for (slot, value) in post_state.storage {
         if value.is_zero() {
             storage.remove(&slot);
@@ -1831,6 +1836,11 @@ fn apply_storage_overlay(storage: &mut BTreeMap<B256, U256>, post_state: HashedS
 
 fn state_root_with_overlay(base_state: &HashedAccountState, post_state: HashedPostState) -> B256 {
     let mut state = base_state.clone();
+    let destroyed_accounts = post_state
+        .accounts
+        .iter()
+        .filter_map(|(address, account)| account.is_none().then_some(*address))
+        .collect::<std::collections::BTreeSet<_>>();
     for (address, account) in post_state.accounts {
         match account {
             Some(account) => {
@@ -1848,7 +1858,8 @@ fn state_root_with_overlay(base_state: &HashedAccountState, post_state: HashedPo
     for (address, storage_overlay) in post_state.storages {
         let Some((_, storage)) = state.get_mut(&address) else {
             assert!(
-                storage_overlay.wiped && storage_overlay.storage.values().all(U256::is_zero),
+                destroyed_accounts.contains(&address)
+                    && storage_overlay.storage.values().all(U256::is_zero),
                 "post-state storage exists without a live account"
             );
             continue;
