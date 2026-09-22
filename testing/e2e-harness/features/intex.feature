@@ -85,7 +85,7 @@ Feature: Intex from auction to Promis
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
     Then every series qualifies in one group decision
-    And the target chain holds a closing price above every series floor
+    And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
     And the owner settles part of their units
     Then those units move from issued to settled

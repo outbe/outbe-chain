@@ -8534,6 +8534,7 @@ dependencies = [
  "alloy-trie",
  "ark-bn254",
  "ark-ff 0.6.0",
+ "base64 0.22.1",
  "blst",
  "bytes",
  "clap",

@@ -3,8 +3,9 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::U256;
+use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::sol;
+use base64::Engine as _;
 use outbe_tee::protocol::{Ledger, PromisOp};
 
 use crate::internal::{addresses, eth};
@@ -23,9 +24,13 @@ sol! {
         function decimals() external view returns (uint8);
     }
 
-    interface ITargetVwap {
-        function vwapRegistry() external view returns (address);
+    interface IIntexCard {
+        function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function uri(uint256 tokenId) external view returns (string memory);
         function vwapSource() external view returns (address);
+    }
+
+    interface IVwapSource {
         function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
     }
 }
@@ -371,48 +376,65 @@ fn both_series_qualify(world: &mut World) {
     }
 }
 
-/// The origin pushes each finalized day to the target registry.
-#[then("the target chain holds a closing price above every series floor")]
-fn target_holds_the_qualifying_day(world: &mut World) {
-    let url = target_rpc_url(world);
-    let nft = target_intex_nft(world);
-    let router = world
-        .state
-        .target_contracts
-        .as_ref()
-        .expect("intex venue was deployed on the target chain")
-        .target_router;
-    let registry = eth::read_call(&url, router, &ITargetVwap::vwapRegistryCall {})
-        .expect("the target router names its registry");
-    assert_eq!(
-        eth::read_call(&url, nft, &ITargetVwap::vwapSourceCall {}),
-        Some(registry),
-        "the target collection reads the registry"
-    );
+/// The origin's collection reads the IntexFactory; the target's reads the registry the origin pushes to.
+#[then("every series card reads Qualified on both chains")]
+fn cards_read_qualified(world: &mut World) {
+    let chains = [
+        (
+            world.rpc.url(world.validators.primary_port()),
+            intex_nft(world),
+        ),
+        (target_rpc_url(world), target_intex_nft(world)),
+    ];
     let deadline = Instant::now() + Duration::from_secs(VWAP_PUSH_TIMEOUT_SECS);
 
-    for series in world.state.lifecycle_series.clone() {
-        let (iso_code, floor, from) = venue_probes::series_floor_terms(&url, nft, series)
-            .expect("the target chain knows the series");
-        loop {
-            let max = eth::read_call(
-                &url,
-                registry,
-                &ITargetVwap::maxUtcDayVwapSinceCall {
-                    isoCode: iso_code,
-                    fromUtcDay: from,
-                },
-            );
-            if max.is_some_and(|max| max > U256::from(floor)) {
-                break;
+    for (url, nft) in &chains {
+        let source = eth::read_call(url, *nft, &IIntexCard::vwapSourceCall {})
+            .expect("the collection names its VWAP source");
+        for series in world.state.lifecycle_series.clone() {
+            loop {
+                let state = card_state(url, *nft, series);
+                if state.as_deref() == Some("Qualified") {
+                    break;
+                }
+                let (iso_code, floor, from) = venue_probes::series_floor_terms(url, *nft, series)
+                    .expect("the chain knows the series");
+                let max = eth::read_call(
+                    url,
+                    source,
+                    &IVwapSource::maxUtcDayVwapSinceCall {
+                        isoCode: iso_code,
+                        fromUtcDay: from,
+                    },
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "the card of {series} on {url} reads {state:?}; its source {source} has {max:?} against floor {floor}"
+                );
+                sleep(Duration::from_secs(5));
             }
-            assert!(
-                Instant::now() < deadline,
-                "no day above the floor of {series} reached the target registry (read {max:?})"
-            );
-            sleep(Duration::from_secs(5));
         }
     }
+}
+
+/// The `Series State` trait of the issued class's card.
+fn card_state(url: &str, nft: alloy_primitives::Address, series: FixedBytes<14>) -> Option<String> {
+    let token = eth::read_call(
+        url,
+        nft,
+        &IIntexCard::issuedTokenIdCall { seriesId: series },
+    )?;
+    let uri = eth::read_call(url, nft, &IIntexCard::uriCall { tokenId: token })?;
+    let json = base64::engine::general_purpose::STANDARD
+        .decode(uri.strip_prefix("data:application/json;base64,")?)
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&json).ok()?;
+    json["attributes"]
+        .as_array()?
+        .iter()
+        .find(|attribute| attribute["trait_type"] == "Series State")?["value"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Wait for the chain to reach `target` in its own time; it closes the gap per block.
