@@ -126,6 +126,31 @@ test("MCP formats native monetary fields at scale18 and leaves dimensionless FP1
   );
 });
 
+test("MCP formats Credis prices at six decimals", () => {
+  const position = {
+    name: "position",
+    type: "tuple",
+    internalType: "struct ICredis.Position",
+    components: [
+      { name: "entryPrice", type: "uint256" },
+      { name: "callAnchorPrice", type: "uint256" },
+      { name: "callPrice", type: "uint256" },
+    ],
+  } as AbiParameter;
+  assert.deepEqual(
+    formatParam(position, {
+      entryPrice: 2_000_000n,
+      callAnchorPrice: 1_900_000n,
+      callPrice: 3_116_000n,
+    }),
+    {
+      entryPrice: { raw: "2000000", value: "2" },
+      callAnchorPrice: { raw: "1900000", value: "1.9" },
+      callPrice: { raw: "3116000", value: "3.116" },
+    },
+  );
+});
+
 test("MCP formats Credis and Oracle annual rates with six decimals", () => {
   const position = {
     name: "position",

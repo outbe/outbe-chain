@@ -10,6 +10,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
+    time::{previous_date_key, timestamp_to_date_key},
     units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -133,10 +134,24 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         .map_err(|error| error.to_string())?;
     // The elected threshold anchor must be a registered reference currency. This
     // scenario anchors to the issuance currency, whose COEN pair is already seeded
-    // above, so the measured path stays one origination without extra oracle setup.
-    OracleContract::new(storage.clone())
+    // above. Issuance also requires that pair's previous closed UTC-day VWAP.
+    let oracle = OracleContract::new(storage.clone());
+    oracle
         .reference_currencies
         .push(REFERENCE_ISO)
+        .map_err(|error| error.to_string())?;
+    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_ISO)
+        .map_err(|error| error.to_string())?
+        .ok_or("benchmark COEN pair is not registered")?;
+    let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT));
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&closed_day)
+        .write(&index, oracle_rate())
+        .map_err(|error| error.to_string())?;
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(closed_day)
         .map_err(|error| error.to_string())?;
     storage
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))

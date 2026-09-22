@@ -17,7 +17,10 @@ use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
+    SECONDS_PER_DAY,
+};
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 use std::sync::Arc;
 
@@ -41,9 +44,14 @@ fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256
     }
     oracle.config_lookback_duration.write(86_400).unwrap();
     oracle.exchange_rate.write(&index, current).unwrap();
+    let previous_day = previous_date_key(timestamp_to_date_key(now));
     oracle
-        .write_snapshot(now - 1, &[(pair, vwap, SIX_DECIMAL_SCALE)])
+        .write_snapshot(
+            date_key_to_utc_timestamp(previous_day),
+            &[(pair, vwap, SIX_DECIMAL_SCALE)],
+        )
         .unwrap();
+    oracle.finalize_utc_day_vwap(previous_day).unwrap();
 }
 
 struct TestBodyRepository {
@@ -233,13 +241,14 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
 }
 
 #[test]
-fn lysis_entry_price_takes_the_max_for_usd_and_other_currencies() {
+fn lysis_entry_price_is_previous_day_vwap_regardless_of_current_price() {
     const NOW: u64 = 1_700_000_000;
     for iso in [840, 978] {
         for (vwap, current, expected) in [
             (250_000, 200_000, 250_000),
-            (250_000, 320_000, 320_000),
+            (250_000, 320_000, 250_000),
             (250_000, 250_000, 250_000),
+            (250_000, 0, 250_000),
         ] {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
@@ -267,6 +276,9 @@ fn lysis_entry_price_takes_the_max_for_usd_and_other_currencies() {
 #[test]
 fn entry_price_map_is_frozen_once_for_all_available_currencies() {
     const NOW: u64 = 1_700_000_000;
+    let previous_day = previous_date_key(timestamp_to_date_key(NOW));
+    let start = date_key_to_utc_timestamp(previous_day);
+    let end = start + SECONDS_PER_DAY;
     let day = WorldwideDay::new(20260715);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -286,10 +298,10 @@ fn entry_price_map_is_frozen_once_for_all_available_currencies() {
         }
         oracle.config_lookback_duration.write(86_400).unwrap();
         for (time, usd_price, eur_price, volume) in [
-            (NOW - 14_401, 900, 900, 10),
-            (NOW - 14_400, 100, 50, 1),
-            (NOW - 1, 200, 150, 3),
-            (NOW, 800, 800, 10),
+            (start - 1, 900, 900, 10),
+            (start, 100, 50, 1),
+            (end - 1, 200, 150, 3),
+            (end, 800, 800, 10),
         ] {
             oracle
                 .write_snapshot(
@@ -301,19 +313,19 @@ fn entry_price_map_is_frozen_once_for_all_available_currencies() {
                 )
                 .unwrap();
         }
+        oracle.finalize_utc_day_vwap(previous_day).unwrap();
         let prices = crate::api::freeze_entry_price_snapshot(storage.clone(), day, NOW).unwrap();
         assert_eq!(
             prices,
-            std::collections::BTreeMap::from([(840, coen(175)), (978, coen(180))])
+            std::collections::BTreeMap::from([(840, coen(175)), (978, coen(125))])
         );
         assert!(crate::runtime::resolve_entry_price_minor_for_test(&prices, 826).is_err());
-        oracle.config_lookback_duration.write(3_600).unwrap();
+        oracle
+            .finalize_utc_day_vwap(timestamp_to_date_key(NOW))
+            .unwrap();
         assert_eq!(
-            outbe_oracle::api::four_hour_vwap(storage.clone(), usd, NOW).unwrap(),
-            Some(coen(200))
-        );
-        assert_eq!(
-            crate::api::freeze_entry_price_snapshot(storage.clone(), day, NOW + 60).unwrap(),
+            crate::api::freeze_entry_price_snapshot(storage.clone(), day, NOW + SECONDS_PER_DAY)
+                .unwrap(),
             prices
         );
         assert_eq!(
@@ -350,7 +362,7 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 U256::from(500_000_u64),
                 U256::from(500_000_u64),
             );
-            let mut oracle = OracleContract::new(storage.clone());
+            let oracle = OracleContract::new(storage.clone());
             oracle.reference_currencies.push(978).unwrap();
             oracle
                 .exchange_rate
@@ -358,7 +370,9 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 .unwrap();
             if explicitly_write_zero {
                 oracle
-                    .write_snapshot(T_NOW - 1, &[(eur, U256::ZERO, SIX_DECIMAL_SCALE)])
+                    .utc_day_vwap_value
+                    .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
+                    .write(&eur_index, U256::ZERO)
                     .unwrap();
             }
             outbe_oracle::scurve::store_scurve_entry(
@@ -385,7 +399,7 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 wwd,
                 nominal / U256::from(10_u64),
             ) {
-                Ok(_) => panic!("Current price and S-curve must not substitute for a missing or zero four-hour VWAP"),
+                Ok(_) => panic!("Current price and S-curve must not substitute for a missing or zero previous-day VWAP"),
                 Err(error) => error,
             };
             assert!(error.to_string().contains("missing nod entry price"));
@@ -401,6 +415,10 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 1
             );
             assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+            assert_eq!(
+                outbe_nod::api::entry_price_snapshot(storage.clone(), wwd).unwrap(),
+                None
+            );
             assert!(outbe_intex::api::read_contributors(&storage, wwd)
                 .unwrap()
                 .is_empty());
@@ -811,15 +829,21 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
-        // Register COEN/840 and seed its current price and four-hour VWAP.
+        // Register COEN/840 with a current price above the previous-day VWAP.
         outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        seed_entry_prices(&s, T_NOW, 840, entry_price / U256::from(2), entry_price);
+        seed_entry_prices(&s, T_NOW, 840, entry_price, entry_price * U256::from(2));
         let frozen = crate::api::freeze_entry_price_snapshot(s.clone(), wwd, T_NOW).unwrap();
         assert_eq!(frozen.get(&840), Some(&entry_price));
-        // Issuance must use the snapshot even when a subsequent live VWAP query would fail.
+        // Issuance must use the snapshot even if Oracle daily data changes later.
         OracleContract::new(s.clone())
-            .config_lookback_duration
-            .write(0)
+            .utc_day_vwap_value
+            .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
+            .write(
+                &outbe_oracle::api::coen_pair_index_opt(s.clone(), 840)
+                    .unwrap()
+                    .unwrap(),
+                U256::ZERO,
+            )
             .unwrap();
         outbe_oracle::scurve::store_scurve_entry(
             &mut OracleContract::new(s.clone()),
@@ -836,7 +860,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             )
             .unwrap(),
             U256::from(900_000u64),
-            "fixture must prove an S-curve above the four-hour VWAP"
+            "fixture must prove an S-curve above the previous-day VWAP"
         );
 
         // Seed compact lifecycle state plus the canonical direct-map commitment,
@@ -1216,7 +1240,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        // Oracle: register ISO 840 -> COEN/840 and seed current price and four-hour VWAP.
+        // Oracle: register ISO 840 -> COEN/840 and seed current price and previous-day VWAP.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);

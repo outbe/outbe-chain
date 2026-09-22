@@ -245,9 +245,8 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/ISO rate (scale 1e6) used for the conversion; pinned as the Credis
-    /// position's `entry_price_minor` without changing the field shape.
-    pub entry_rate: U256,
+    /// COEN/ISO rate (scale 1e6) used to size `gratis_amount`.
+    pub entry_price: U256,
 }
 
 /// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
@@ -1366,7 +1365,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
             buf.extend_from_slice(&t.stables_amount.to_be_bytes::<32>());
             buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
             buf.extend_from_slice(t.asset.as_slice());
-            buf.extend_from_slice(&t.entry_rate.to_be_bytes::<32>());
+            buf.extend_from_slice(&t.entry_price.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }

@@ -28,6 +28,8 @@ pub enum CredisFactoryError {
     ReservationAssetMismatch,
     #[error("reservation amount is below the pledged credit")]
     ReservationInsufficient,
+    #[error("previous closed UTC-day VWAP is unavailable")]
+    PreviousDayVwapUnavailable,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

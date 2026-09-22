@@ -177,6 +177,7 @@ pub(crate) fn process_ocomp_ready_candidate(
     metadosis.initialize_ocomp_pre_admission(wwd)?;
     // This order is protocol-relevant: snapshot while CE is active, enqueue
     // the OCOMP FSM, then commit the outer transition.
+    outbe_lysis::api::freeze_entry_price_snapshot(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
     metadosis.build_fidelity_league_snapshot(scope, parent, wwd, ctx.block.timestamp)?;
     metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
     commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)
