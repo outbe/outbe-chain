@@ -1,5 +1,5 @@
 // Aggregates ABI JSON files for the credis-flow demo from canonical sources
-// under outbe-chain/contracts/, normalizing every output to {abi: [...]}.
+// in the chain and smart-account repositories, normalizing every output to {abi: [...]}.
 //
 // Run via `npm run prepare-abis` (also chained from `npm run generate-types`).
 
@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(here, "..");
 const repoContracts = resolve(projectRoot, "../../contracts");
+const smartAccountRoot = process.env.SMART_ACCOUNT_REPO
+  ? resolve(process.env.SMART_ACCOUNT_REPO)
+  : resolve(projectRoot, "../../../smart-account");
 const outDir = resolve(projectRoot, "abi");
 
 // Output name (typechain consumes this as the contract type name) -> source path.
@@ -25,16 +28,17 @@ const MAPPING = {
   ICredisFactory: "precompiles/abi-export/ICredisFactory.json",
   IFidelity: "precompiles/abi-export/IFidelity.json",
   IVaultRouter: "precompiles/abi-export/IVaultRouter.json",
-  SmartAccountFactory: "smart-account/abi-export/SmartAccountFactory.json",
-  ExecutionDelayPolicy: "smart-account/abi-export/ExecutionDelayPolicy.json",
-  WithdrawalLimitPolicy: "smart-account/abi-export/WithdrawalLimitPolicy.json",
-  IEntryPoint: "smart-account/abi-export/IEntryPoint.json",
-  IERC20: "smart-account/abi-export/IERC20.json"
+  SmartAccountFactory: "abi-export/SmartAccountFactory.json",
+  ExecutionDelayPolicy: "abi-export/ExecutionDelayPolicy.json",
+  WithdrawalLimitPolicy: "abi-export/WithdrawalLimitPolicy.json",
+  IEntryPoint: "abi-export/IEntryPoint.json",
+  IERC20: "abi-export/IERC20.json"
 };
 
 function extractAbi(name, sourcePath) {
   if (!existsSync(sourcePath)) {
-    throw new Error(`prepare-abis: missing source ABI for ${name} at ${sourcePath}`);
+    throw new Error(`prepare-abis: missing source ABI for ${name} at ${sourcePath}. ` +
+      "Export the source repository's ABIs; for smart-account, use a sibling checkout or set SMART_ACCOUNT_REPO.");
   }
   const parsed = JSON.parse(readFileSync(sourcePath, "utf8"));
   if (Array.isArray(parsed)) return parsed;
@@ -44,15 +48,20 @@ function extractAbi(name, sourcePath) {
   );
 }
 
+// Validate every input before replacing previously generated ABIs.
+const abis = Object.entries(MAPPING).map(([name, relSource]) => {
+  const root = relSource.startsWith("precompiles/") ? repoContracts : smartAccountRoot;
+  const sourcePath = resolve(root, relSource);
+  return { name, sourcePath, abi: extractAbi(name, sourcePath) };
+});
+
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
-for (const [name, relSource] of Object.entries(MAPPING)) {
-  const sourcePath = resolve(repoContracts, relSource);
-  const abi = extractAbi(name, sourcePath);
+for (const { name, sourcePath, abi } of abis) {
   const destPath = resolve(outDir, `${name}.json`);
   writeFileSync(destPath, `${JSON.stringify({ abi }, null, 2)}\n`);
-  console.log(`prepare-abis: wrote abi/${name}.json (${abi.length} entries) <- ${relSource}`);
+  console.log(`prepare-abis: wrote abi/${name}.json (${abi.length} entries) <- ${sourcePath}`);
 }
 
-console.log(`prepare-abis: ${Object.keys(MAPPING).length} ABI files staged in ${outDir}`);
+console.log(`prepare-abis: ${abis.length} ABI files staged in ${outDir}`);

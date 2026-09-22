@@ -70,7 +70,21 @@ cp .local-reth.env.example .local-reth.env   # then fill values
 npm run info                                  # read-only state snapshot
 ```
 
-`npm run generate-types` reads JSON ABI files and emits `src/contracts/`.
+`npm run generate-types` reads chain precompile ABIs from this checkout and the
+five smart-account ABIs from a sibling `smart-account` checkout, then emits
+`src/contracts/`. Clone `outbe/smart-account` alongside this chain repository, or
+set its location explicitly (relative paths resolve from the command's working directory):
+
+```bash
+SMART_ACCOUNT_REPO=/path/to/smart-account npm run generate-types
+```
+
+The imported ABIs are `SmartAccountFactory` (account prediction/creation and module
+addresses), `ExecutionDelayPolicy` (owner scheduling, readiness, and events),
+`WithdrawalLimitPolicy` (token restrictions and caps), `IEntryPoint` (nonces,
+deposits, and user operations), and `IERC20` (balances, transfers, and approvals).
+Regenerate them with `mise run export-abi` in the smart-account repository when
+its interfaces change. Deployment addresses still come from the environment files below.
 
 ## Configuration
 
