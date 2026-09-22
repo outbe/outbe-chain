@@ -185,7 +185,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -203,6 +203,11 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -371,7 +376,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -389,6 +394,11 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -487,7 +497,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "originatedAt",
+            "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -505,6 +515,11 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

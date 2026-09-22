@@ -39,7 +39,7 @@ fn terms(stables: U256, gratis: U256) -> api::PledgeTerms {
         stables_amount: stables,
         gratis_amount: gratis,
         asset: asset(),
-        entry_rate: U256::from(2_000_000u64),
+        entry_price: stables * U256::from(1_000_000u64) / gratis,
     }
 }
 
