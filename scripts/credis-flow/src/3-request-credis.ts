@@ -1,3 +1,4 @@
+import { checkIssuance } from "./issuance-checks.js";
 import { ethers, Wallet } from "ethers";
 import {
   IGratis__factory,
@@ -20,7 +21,7 @@ import {
   loadEnv,
   requireEnv,
 } from "./utils.js";
-import { pledgeSecret as derivePledgeSecret, spendAuth, positionId as computePositionId } from "./confidential.js";
+import { positionId as computePositionId } from "./confidential.js";
 import { findLatestTicket, readTicket, writeTicket, type Ticket } from "./ticket.js";
 
 const SALT = 0n;
@@ -29,11 +30,10 @@ const SALT = 0n;
 // only the call - the loan stays denominated in the disbursed asset's currency.
 const REFERENCE_CURRENCY = 840; // USD
 
-// The CCA calls issueCredis with the confidential pledge handle + a spend
-// authorization that binds it to the user's smart account. The CCA holds the
-// `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
-// hold the user's view key, so it cannot read the user's encrypted Gratis
-// balance - only the pledge is consumed and the loan disbursed to the bundle.
+// The CCA calls issueCredis with the confidential pledge note + a spend
+// authorization that binds it to the user's smart account. The user supplies
+// spendAuth; the CCA needs no pledge secret or view key. Stablecoins pay the
+// issuing CCA to cover the native COEN it delivers to the user's account.
 //
 // CLI: [ticketPath?] [envName?]
 let ticketPath: string | undefined;
@@ -80,7 +80,6 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultRouterAddress],
     SALT,
   );
 
@@ -93,8 +92,8 @@ async function main() {
 
   // Bind the pledge to this smart account with the spend authorization derived
   // from the pledge secret the user handed to the CCA.
-  const secret = ethers.getBytes(ticket.pledgeSecret);
-  const spend = spendAuth(secret, smartAccount);
+  const spend = ticket.spendAuth;
+  if (!ethers.isHexString(spend, 32)) throw new Error("Ticket has no recipient-bound spend authorization");
 
   console.log("=== Request Credis (confidential / TEE) ===");
   console.log(`Env:            ${envName}`);
@@ -104,16 +103,15 @@ async function main() {
   console.log(`CredisFactory:  ${credisFactoryAddress}`);
   console.log(`smart account: ${smartAccount}`);
   console.log(`ERC20:          ${erc20Address} (${erc20Meta.symbol})`);
-  console.log(`Pledge handle:  ${ticket.pledgeHandle}`);
-  console.log(`Spend auth:     ${spend}`);
+  console.log(`Pledge note:  ${ticket.pledgeNote}`);
   console.log(`Chain ID:       ${network.chainId}`);
 
-  const bundleErc20Before = await token.balanceOf(smartAccount);
-  console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
+  const accountErc20Before = await token.balanceOf(smartAccount);
+  console.log(`\nAccount ERC20 before: ${formatTokenMeta(accountErc20Before, erc20Meta)}`);
 
   // Neither the pledger EOA nor the asset/amount are passed in calldata: the enclave
   // reads the EOA from the pledge ticket, debits its pledged ledger, and returns it
-  // sealed so it is stored as ciphertext on the position (no EOA<->bundle linkage
+  // sealed so it is stored as ciphertext on the position (no EOA<->account linkage
   // on-chain); the asset and the disbursed amount were sealed into the same ticket at
   // pledge time, so the loan is issued at the price the user accepted.
   // The CCA matches the user's collateral one for one in native COEN. The required
@@ -129,7 +127,7 @@ async function main() {
   // paying gas for a mined revert carrying an opaque precompile string.
   const saCode = await provider.getCode(smartAccount);
   if (saCode === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run setup-account` first.");
     process.exit(1);
   }
 
@@ -151,12 +149,20 @@ async function main() {
   const reservationId = ticket.reservationId;
   console.log(`  reservation: ${reservationId}`);
 
+  if (ticket.chainId !== network.chainId.toString() || ticket.asset.toLowerCase() !== erc20Address.toLowerCase()
+    || (ticket.smartAccount && ticket.smartAccount.toLowerCase() !== smartAccount.toLowerCase())
+    || ccaWallet.address.toLowerCase() !== ccaAddress.toLowerCase()) throw new Error("Ticket/account/CCA mismatch");
+  await checkIssuance(ccaWallet, smartAccountFactoryAddress, smartAccount, userAddress, erc20Address,
+    BigInt(ticket.stablesAmount), vaultRouterAddress, reservationId, requireEnv("ENTRYPOINT_ADDRESS", envContext));
+  const ccaStablesBefore = await token.balanceOf(ccaAddress);
+  const accountCoenBefore = await provider.getBalance(smartAccount);
+
   console.log(
-    "\nSending issueCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency, reservationId)...",
+    "\nSending issueCredis(smartAccount, pledgeNote, spendAuth, referenceCurrency, reservationId)...",
   );
   const tx = await credisFactory.issueCredis(
     smartAccount,
-    ticket.pledgeHandle,
+    ticket.pledgeNote,
     spend,
     REFERENCE_CURRENCY,
     reservationId,
@@ -192,16 +198,19 @@ async function main() {
     }
   }
 
-  // Position id is deterministic: keccak256(pledgeHandle || smartAccount).
-  const positionId = computePositionId(ticket.pledgeHandle, smartAccount);
+  // Position id is deterministic: keccak256(pledgeNote || smartAccount).
+  const positionId = computePositionId(ticket.pledgeNote, smartAccount);
   if (eventPositionId !== null && eventPositionId !== positionId) {
     throw new Error(
       `PositionCreated id ${eventPositionId} != computed ${positionId} - check position_id parity`,
     );
   }
 
-  const bundleErc20After = await token.balanceOf(smartAccount);
+  const accountErc20After = await token.balanceOf(smartAccount);
   const position = await credis.getPosition(positionId);
+  const ccaPaid = (await token.balanceOf(ccaAddress)) - ccaStablesBefore;
+  console.log(`Stablecoins paid to CCA: ${formatTokenMeta(ccaPaid, erc20Meta)} to cover COEN delivered to the user's smart account.`);
+  console.log(`COEN delivered: ${formatCoen((await provider.getBalance(smartAccount)) - accountCoenBefore)}`);
 
   console.log("\n=== Position ===");
   console.log(`  positionId:        ${positionId}`);
@@ -216,9 +225,9 @@ async function main() {
   console.log(`  issuedAt:          ${position.issuedAt}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
   console.log(`  referenceCurrency: ${position.referenceCurrency}`);
-  console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
+  console.log(`\nAccount ERC20 change: ${formatTokenDiff(accountErc20After - accountErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 
-  // Persist the position + bundle for settlement.
+  // Persist the position + account for settlement.
   ticket.positionId = positionId.toString();
   ticket.smartAccount = smartAccount;
   writeTicket(ticket);

@@ -3,9 +3,7 @@ pragma solidity ^0.8.30;
 
 import {PolicyBase} from "kernel-7579-plugins/base/PolicyBase.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
-import {CallType} from "@zerodev/kernel/types/Types.sol";
-import {CALLTYPE_SINGLE, CALLTYPE_BATCH} from "@zerodev/kernel/types/Constants.sol";
-import {LibERC7579} from "solady/accounts/LibERC7579.sol";
+import {IERC7579Account} from "@zerodev/kernel/interfaces/IERC7579Account.sol";
 import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccountExecute} from "account-abstraction/interfaces/IAccountExecute.sol";
@@ -15,7 +13,7 @@ import {IAccountExecute} from "account-abstraction/interfaces/IAccountExecute.so
 ///         ERC20 transfer limits on smart accounts.
 /// @dev Tracks the total amount of a specific ERC20 token transferred within rolling
 ///      time windows. Only CALLTYPE_SINGLE calls to `IERC20.transfer` on the configured
-///      token are counted; all other call types and selectors are passed through.
+///      token are permitted; every other execution is rejected.
 /// @author Outbe Team
 /// @custom:version 1.0.0
 contract WithdrawalLimitPolicy is PolicyBase {
@@ -49,7 +47,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
     error WithdrawalLimitExceeded(uint256 used, uint256 limit);
     error WithdrawalLimitAlreadyInitialized();
     error NonCanonicalOffset(uint256 offset);
-    error BatchTargetsConfiguredToken(address token);
+    error InvalidWithdrawal();
 
     // -------------------------------------------------------------------------
     // Events
@@ -113,7 +111,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     /// @inheritdoc PolicyBase
     /// @dev Enforces the cumulative transfer limit for CALLTYPE_SINGLE ERC20 transfers.
-    ///      Returns 0 (pass-through) for non-matching call types and selectors.
+    ///      Rejects non-canonical calls and all operations except the configured token transfer.
     ///      Reverts with WithdrawalLimitExceeded when the limit is breached.
     ///
     ///      userOp.callData layout (Kernel execute):
@@ -136,56 +134,21 @@ contract WithdrawalLimitPolicy is PolicyBase {
             uopCallData = uopCallData[4:];
         }
 
-        // Minimum: selector(4) + ExecMode(32) = 36 bytes
-        if (uopCallData.length < 36) return 0;
-
-        // Call type is the first byte of the ExecMode word (at [4]).
-        CallType callType = CallType.wrap(bytes1(uopCallData[4]));
-        // SINGLE is metered below; BATCH is checked fail-closed against the configured token; any other
-        // call type carries no ERC20 transfer target here and is genuinely unrelated (pass-through).
-        if (callType != CALLTYPE_SINGLE && callType != CALLTYPE_BATCH) return 0;
-
-        // ABI-encoded params: [4:36]=ExecMode(static), [36:68]=offset=64, [68:100]=execLen, [100:]=execCalldata
-        if (uopCallData.length < 100) return 0;
-        // Kernel.execute decodes its `bytes calldata` param by following this offset, so a non-canonical
-        // value would let execution move a different amount than this policy validates. Reject it rather
-        // than pass-through (returning 0 here would be the bypass). Applies to SINGLE and BATCH alike.
+        if (
+            status[id][msg.sender] != Status.Live || userOp.sender != msg.sender || uopCallData.length != 228
+                || bytes4(uopCallData[:4]) != IERC7579Account.execute.selector
+                || bytes32(uopCallData[4:36]) != bytes32(0)
+        ) revert InvalidWithdrawal();
         uint256 offset = uint256(bytes32(uopCallData[36:68]));
         if (offset != 64) revert NonCanonicalOffset(offset);
-        uint256 execLen = uint256(bytes32(uopCallData[68:100]));
-        if (uopCallData.length < 100 + execLen) return 0;
-        bytes calldata execCalldata = uopCallData[100:100 + execLen];
-
+        if (uint256(bytes32(uopCallData[68:100])) != 120) revert InvalidWithdrawal();
         WithdrawalLimitConfig storage cfg = configs[id][msg.sender];
-
-        // Fail-closed for BATCH. This policy meters cumulative amounts only on the SINGLE transfer
-        // path (below) and cannot meter a batch atomically, so a batch that moves the configured token
-        // must not slip past unmetered - revert if any sub-call targets cfg.token. A batch that touches
-        // no configured token is genuinely unrelated and passes through. (In this deployment
-        // BundleWithdrawHook already blocks non-SINGLE on every CCA permission, but the policy must be
-        // self-contained if reused without that hook.) A batch too short to be a valid Execution[]
-        // encoding cannot target the token and would revert at execution anyway, so it passes through.
-        if (callType == CALLTYPE_BATCH) {
-            if (execCalldata.length < 64) return 0; // not a valid abi.encode(Execution[])
-            bytes32[] calldata pointers = LibERC7579.decodeBatch(execCalldata);
-            for (uint256 i; i < pointers.length; ++i) {
-                (address batchTarget,,) = LibERC7579.getExecution(pointers, i);
-                if (batchTarget == cfg.token) revert BatchTargetsConfiguredToken(cfg.token);
-            }
-            return 0; // batch touches no configured token -> unrelated
-        }
-
-        // SINGLE path: decodeSingle requires at least 52 bytes (target + value)
-        if (execCalldata.length < 52) return 0;
-        (address target,, bytes calldata innerCallData) = LibERC7579.decodeSingle(execCalldata);
-
-        if (target != cfg.token) return 0;
-
-        // innerCallData: [0:4]=selector, [4:36]=recipient, [36:68]=amount
-        if (innerCallData.length < 68) return 0;
-        if (bytes4(innerCallData[0:4]) != IERC20.transfer.selector) return 0;
-
-        uint256 amount = uint256(bytes32(innerCallData[36:68]));
+        if (
+            address(bytes20(uopCallData[100:120])) != cfg.token || bytes32(uopCallData[120:152]) != bytes32(0)
+                || bytes4(uopCallData[152:156]) != IERC20.transfer.selector
+                || uint256(bytes32(uopCallData[156:188])) >> 160 != 0 || bytes8(uopCallData[220:228]) != bytes8(0)
+        ) revert InvalidWithdrawal();
+        uint256 amount = uint256(bytes32(uopCallData[188:220]));
 
         WithdrawalLimitState storage state = states[id][msg.sender];
 
@@ -200,7 +163,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
         uint256 newUsed = state.usedAmount + amount;
         if (newUsed > cfg.amountLimit) revert WithdrawalLimitExceeded(newUsed, cfg.amountLimit);
 
-        // TODO: NB The debit is committed here in the ERC-4337 validation phase, on purpose. The
+        // NB: The debit is committed here in the ERC-4337 validation phase, on purpose. The
         // EntryPoint validates every op in a bundle before executing any, so committing at validation
         // is what prevents two bundled ops from each passing a stale-headroom check and together
         // over-spending the daily limit - the exact protection this limit exists to give the owner
@@ -218,6 +181,6 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     /// @inheritdoc PolicyBase
     function checkSignaturePolicy(bytes32, address, bytes32, bytes calldata) external pure override returns (uint256) {
-        return 0;
+        return 1;
     }
 }

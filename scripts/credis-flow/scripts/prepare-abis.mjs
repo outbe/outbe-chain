@@ -26,7 +26,8 @@ const MAPPING = {
   IFidelity: "precompiles/abi-export/IFidelity.json",
   IVaultRouter: "precompiles/abi-export/IVaultRouter.json",
   SmartAccountFactory: "smart-account/abi-export/SmartAccountFactory.json",
-  ITokenBundle: "smart-account/abi-export/ITokenBundle.json",
+  ExecutionDelayPolicy: "smart-account/abi-export/ExecutionDelayPolicy.json",
+  WithdrawalLimitPolicy: "smart-account/abi-export/WithdrawalLimitPolicy.json",
   IEntryPoint: "smart-account/abi-export/IEntryPoint.json",
   IERC20: "smart-account/abi-export/IERC20.json"
 };

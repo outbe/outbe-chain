@@ -55,7 +55,7 @@ async function main() {
 
   console.log("=== Unpledge Gratis (direct reclaim) ===");
   console.log(`Ticket:       ${found.path}`);
-  console.log(`Pledge handle:${ticket.pledgeHandle}`);
+  console.log(`Pledge note:${ticket.pledgeNote}`);
   console.log(`Amount:       ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)}`);
   console.log(`Op-nonce:     ${opNonce}`);
   console.log(`Balance:        ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
@@ -65,7 +65,7 @@ async function main() {
   const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Unpledge, stablesAmount, opNonce, chainId);
 
   console.log("\nSending unpledgeGratis(amountStables, handle, mac, opNonce)...");
-  const tx = await gratisFactory.unpledgeGratis(stablesAmount, ticket.pledgeHandle, mac, opNonce);
+  const tx = await gratisFactory.unpledgeGratis(stablesAmount, ticket.pledgeNote, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("unpledgeGratis tx receipt missing");

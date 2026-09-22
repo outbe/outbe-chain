@@ -1,5 +1,5 @@
 /**
- * 2-top-up-smart-account.ts
+ * 0-setup-account.ts
  *
  * Runs on behalf of the user to:
  *   1. Check if a smart account exists, create if not
@@ -9,7 +9,7 @@
  *   - Run 0-setup.ts first to ensure balances
  *   - .{envName}.env and .{envName}.deployment.env populated
  *
- * Usage: npx tsx src/2-top-up-smart-account.ts [envName]
+ * Usage: npx tsx src/0-setup-account.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   // Fetch token metadata
   const { decimals: tokenDecimals, symbol: tokenSymbol } = await fetchTokenMeta(token);
 
-  console.log("=== Top-Up smart account ===");
+  console.log("=== Deploy and fund smart account ===");
   console.log(`Env:     ${envName}`);
   console.log(`User     : ${userAddr}`);
   console.log(`CCA      : ${ccaAddress}`);
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // -- Step 1: Predict smart account address ---------------------------------
 
   console.log("\n[1] Predicting smart account address...");
-  const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
+  const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], SALT);
   console.log(`    -> ${accountAddr}`);
 
   // -- Step 2: Deploy if not exists ------------------------------------------
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const code = await provider.getCode(accountAddr);
   if (code === "0x") {
     console.log("    Account not deployed - creating...");
-    const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
+    const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], SALT);
     const receipt = await tx.wait();
     console.log(`    Deployed at block ${receipt!.blockNumber}, tx: ${tx.hash}`);
   } else {
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
     const tx = await token.transfer(accountAddr, TRANSFER_AMOUNT);
     await tx.wait();
     const newBal = await token.balanceOf(accountAddr);
-    console.log(`    TopUp ${formatToken(TRANSFER_AMOUNT, tokenDecimals, tokenSymbol)} -> account balance: ${formatToken(newBal, tokenDecimals, tokenSymbol)}`);
+    console.log(`    Transferred ${formatToken(TRANSFER_AMOUNT, tokenDecimals, tokenSymbol)} -> account balance: ${formatToken(newBal, tokenDecimals, tokenSymbol)}`);
   } else {
     console.log(`    Balance sufficient (${formatToken(accountBal, tokenDecimals, tokenSymbol)}) - skipping transfer`);
   }

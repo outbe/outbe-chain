@@ -1,5 +1,5 @@
 import { ethers, Wallet } from "ethers";
-import { IGratis__factory, IGratisFactory__factory, IERC20__factory } from "./contracts/index.js";
+import { IGratis__factory, IGratisFactory__factory, IERC20__factory, IVaultRouter__factory, SmartAccountFactory__factory } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
   DEFAULT_GRATIS_FACTORY_ADDRESS,
@@ -16,6 +16,7 @@ import {
   decryptPledged,
   modifyMac,
   pledgeSecret,
+  spendAuth,
   GratisOp,
 } from "./confidential.js";
 import { readReservation, writeTicket } from "./ticket.js";
@@ -29,7 +30,7 @@ import { readReservation, writeTicket } from "./ticket.js";
 const amountArg = process.argv[2] || "1";
 const envName = process.argv[3] || DEFAULT_ENV;
 
-const { envPath } = loadEnv(import.meta.url, envName);
+const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
 
 const rpcUrl = requireEnv("RPC_URL", envPath);
 const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
@@ -102,6 +103,17 @@ async function main() {
     process.exit(1);
   }
 
+  const factory = SmartAccountFactory__factory.connect(requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath), provider);
+  const cca = requireEnv("CCA_ADDRESS", envPath);
+  const account = await factory.getAccountAddress(userAddress, cca, [erc20Address], 0n);
+  const router = IVaultRouter__factory.connect(requireEnv("VAULT_ROUTER_ADDRESS", envPath), provider);
+  const reservation = await router.reservationOf(offer.reservationId);
+  const block = await provider.getBlock("latest");
+  if (offer.chainId !== chainId.toString() || offer.smartAccount.toLowerCase() !== account.toLowerCase()
+    || reservation.smartAccount.toLowerCase() !== account.toLowerCase() || reservation.cca.toLowerCase() !== cca.toLowerCase()
+    || reservation.asset.toLowerCase() !== erc20Address.toLowerCase() || reservation.amount < amountStables
+    || !block || BigInt(block.timestamp) > reservation.expiresAt) throw new Error("Reservation is not valid for this pledge");
+
   console.log("\nSending pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)...");
   const tx = await gratisFactory.pledgeGratis(amountStables, erc20Address, maxGratis, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
@@ -109,7 +121,7 @@ async function main() {
   if (!receipt) throw new Error("pledgeGratis tx receipt missing");
   console.log(`  Block:   ${receipt.blockNumber}`);
 
-  // Capture the confidential pledge handle from the GratisPledged event.
+  // Capture the confidential pledge note from the GratisPledged event.
   const factoryIface = IGratisFactory__factory.createInterface();
   const pledged = receipt.logs
     .filter((l) => l.address.toLowerCase() === gratisFactoryAddress.toLowerCase())
@@ -122,12 +134,12 @@ async function main() {
     })
     .find((p) => p?.name === "GratisPledged");
   if (!pledged) throw new Error("GratisPledged event not found in receipt");
-  const handle = pledged.args.pledgeHandle as string;
+  const pledgeNote = pledged.args.pledgeNote as string;
   // The gratis the quote actually cost - derived on-chain, so read it back off the event.
   const gratisAmount = pledged.args.gratisAmount as bigint;
 
-  // The bearer secret the user hands to the CCA to request credis later.
-  const secret = pledgeSecret(keys.modifyKey, handle);
+  // Keep the secret local; share only the account-bound spend authorization.
+  const secret = pledgeSecret(keys.modifyKey, pledgeNote);
 
   const balanceAfter = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const pledgedAfter = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));
@@ -137,7 +149,7 @@ async function main() {
   console.log(`  Active pledged:  ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)} (credited to the pledged ledger only at requestCredis)`);
   console.log(`  Pending pledge:  ${formatToken(gratisAmount, gratisMeta.decimals, gratisMeta.symbol)} (parked in this ticket)`);
   console.log(`  Quoted credit:   ${formatToken(amountStables, assetMeta.decimals, assetMeta.symbol)} (sealed in the ticket)`);
-  console.log(`  Pledge handle:   ${handle}`);
+  console.log(`  Pledge note:   ${pledgeNote}`);
 
   // A pledge moves the derived gratis from the liquid balance into a new pending
   // ticket; the active pledged ledger (`pledgedOf`) stays flat until requestCredis
@@ -149,8 +161,9 @@ async function main() {
   console.log(`  Pending pledge:  ${formatTokenDiff(gratisAmount, gratisMeta.decimals, gratisMeta.symbol)}`);
 
   const ticketPath = writeTicket({
-    pledgeHandle: handle,
+    pledgeNote,
     pledgeSecret: ethers.hexlify(secret),
+    spendAuth: spendAuth(secret, account),
     stablesAmount: amountStables.toString(),
     asset: erc20Address,
     amount: gratisAmount.toString(),
@@ -160,10 +173,11 @@ async function main() {
     chainId: chainId.toString(),
     createdAt: new Date().toISOString(),
     reservationId: offer.reservationId,
+    smartAccount: account,
   });
 
   console.log(`\nTicket written: ${ticketPath}`);
-  console.log("Hand the pledgeSecret to the CCA, then run `npm run request-credis`.");
+  console.log("Share pledgeNote, smartAccount and spendAuth with the CCA, then run `npm run request-credis`.");
   console.log("(Or `npm run unpledge-gratis-fast` to directly reclaim this unspent pledge.)");
 }
 

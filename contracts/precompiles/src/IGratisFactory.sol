@@ -9,11 +9,7 @@ interface IGratisFactory {
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     event GratisPledged(
-        address indexed account,
-        uint256 amountStables,
-        address indexed asset,
-        uint256 gratisAmount,
-        bytes32 pledgeHandle
+        address indexed account, uint256 amountStables, address indexed asset, uint256 gratisAmount, bytes32 pledgeNote
     );
 
     /// @notice Emitted when an unspent pledge is returned to the caller.
@@ -28,18 +24,18 @@ interface IGratisFactory {
     /// @param amountStables Stablecoin minor units this pledge must cover.
     /// @param asset         Stablecoin address.
     /// @param maxGratis     Slippage cap.
-    /// @return pledgeHandle The confidential pledge record id. Hand it (and the
+    /// @return pledgeNote The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
     function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
         external
-        returns (bytes32 pledgeHandle);
+        returns (bytes32 pledgeNote);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by
     ///         the caller's modify key. `amountStables` is the figure the pledge was
     ///         quoted for and must match the one sealed in the ticket.
     // todo remove amountStables
-    function unpledgeGratis(uint256 amountStables, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce) external;
+    function unpledgeGratis(uint256 amountStables, bytes32 pledgeNote, bytes32 mac, uint64 opNonce) external;
 
     /// @notice Convert `amount` protocol-6 gratis to the same whole-token amount of
     ///         native-18 COEN (burns gratis). The return value and

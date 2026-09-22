@@ -8,22 +8,7 @@
         "internalType": "address"
       },
       {
-        "name": "sudoPolicy_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleModulePlugin_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "callerHook_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleSpendProtectorHook_",
+        "name": "executionDelayPolicy_",
         "type": "address",
         "internalType": "address"
       },
@@ -34,11 +19,6 @@
       },
       {
         "name": "ecdsaSigner_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleWithdrawHook_",
         "type": "address",
         "internalType": "address"
       }
@@ -86,58 +66,6 @@
   },
   {
     "type": "function",
-    "name": "bundleModulePlugin",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bundleSpendProtectorHook",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bundleWithdrawHook",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "callerHook",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "createAccount",
     "inputs": [
       {
@@ -151,12 +79,7 @@
         "internalType": "address"
       },
       {
-        "name": "bundleTokens",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "bundleSenders",
+        "name": "withdrawalTokens",
         "type": "address[]",
         "internalType": "address[]"
       },
@@ -168,7 +91,7 @@
     ],
     "outputs": [
       {
-        "name": "account",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -178,6 +101,19 @@
   {
     "type": "function",
     "name": "ecdsaSigner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "executionDelayPolicy",
     "inputs": [],
     "outputs": [
       {
@@ -203,12 +139,7 @@
         "internalType": "address"
       },
       {
-        "name": "bundleTokens",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "bundleSenders",
+        "name": "withdrawalTokens",
         "type": "address[]",
         "internalType": "address[]"
       },
@@ -220,19 +151,6 @@
     ],
     "outputs": [
       {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "kernelFactory",
-    "inputs": [],
-    "outputs": [
-      {
         "name": "",
         "type": "address",
         "internalType": "address"
@@ -242,7 +160,7 @@
   },
   {
     "type": "function",
-    "name": "sudoPolicy",
+    "name": "kernelFactory",
     "inputs": [],
     "outputs": [
       {

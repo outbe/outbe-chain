@@ -869,8 +869,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             .insert(vault())
             .unwrap();
 
-        // The bundle receiver must be a deployed contract; a CALL to a codeless
-        // account would silently no-op the topUp.
+        // Ordinary transfers also work for deployed receivers.
         storage
             .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
             .unwrap();
@@ -889,7 +888,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
 }
 
 #[test]
-fn withdraw_rejects_undeployed_receiver() {
+fn withdraw_transfers_to_an_undeployed_receiver() {
     let x = U256::from(50u64);
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(vault(), word(x));
@@ -901,9 +900,8 @@ fn withdraw_rejects_undeployed_receiver() {
             .insert(vault())
             .unwrap();
 
-        // receiver() has no code: topUp would be silently skipped, so the whole
-        // withdraw (and the requestCredis that drives it) must fail instead.
-        let err = runtime::withdraw(
+        // Ordinary ERC20 transfers can deliver to an EOA.
+        let burned = runtime::withdraw(
             storage.clone(),
             target_account(),
             asset(),
@@ -911,8 +909,8 @@ fn withdraw_rejects_undeployed_receiver() {
             receiver(),
             IVaultRouter::StablesTarget::Credis,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("not a deployed contract"), "{err}");
+        .unwrap();
+        assert_eq!(burned, x);
     });
 }
 
@@ -2358,13 +2356,15 @@ fn reservations_are_gated_like_a_withdrawal() {
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity target"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("unauthorized"), "{err}");
 
         runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
-        let out = dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap();
+        let err =
+            dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("unauthorized"));
+        let factory = outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+        runtime::add_liquidity_target(storage.clone(), owner(), factory, 1).unwrap();
+        let out = dispatch(storage.clone(), &release_call, factory, U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::releaseReservationCall::abi_decode_returns(&out).unwrap(),
             U256::from(10)
@@ -2414,4 +2414,29 @@ fn bond_cca(storage: &StorageHandle<'_>) {
         .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, amount)
         .unwrap();
     outbe_ccaregistry::runtime::bond(storage.clone(), cca(), amount, "Test CCA".into()).unwrap();
+}
+
+#[test]
+fn reservation_expiry_boundary_and_repeated_permissionless_return() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id =
+            runtime::reserve_stables(storage.clone(), cca(), receiver(), asset(), U256::from(10))
+                .unwrap();
+        let expiry = runtime::reservation_of(&storage, id).unwrap().expires_at;
+        storage.set_block_timestamp(U256::from(expiry)).unwrap();
+        assert!(runtime::return_reservation(storage.clone(), stranger(), id).is_err());
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap().amount,
+            U256::from(10)
+        );
+        storage.set_block_timestamp(U256::from(expiry + 1)).unwrap();
+        assert_eq!(
+            runtime::return_reservation(storage.clone(), stranger(), id).unwrap(),
+            U256::from(100)
+        );
+        assert_eq!(
+            runtime::return_reservation(storage.clone(), stranger(), id).unwrap(),
+            U256::ZERO
+        );
+    });
 }

@@ -58,14 +58,15 @@ pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 
     GRATIS.derive_modify_key(state_key, account)
 }
 
-/// HKDF `info` for the deterministic per-pledge handle:
+/// HKDF `info` for the deterministic per-pledge note:
 /// `HKDF(salt = gratis_state_key, ikm = account || amount || op_nonce,
-/// info = GRATIS_PLEDGE_HANDLE_INFO)`.
-pub const GRATIS_PLEDGE_HANDLE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";
+/// info = GRATIS_PLEDGE_NOTE_INFO)`.
+// The derivation domain stays unchanged across the identifier rename.
+pub const GRATIS_PLEDGE_NOTE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";
 
-/// Deterministic pledge handle (public record id) that replaces the old ZK
+/// Deterministic pledge note (public record id) that replaces the old ZK
 /// commitment. Unique per `(account, amount, op_nonce)`.
-pub fn derive_pledge_handle(
+pub fn derive_pledge_note(
     state_key: &[u8; 32],
     account: Address,
     amount: U256,
@@ -77,7 +78,7 @@ pub fn derive_pledge_handle(
     Ok(B256::from(hkdf_sha256(
         state_key,
         &ikm,
-        GRATIS_PLEDGE_HANDLE_INFO,
+        GRATIS_PLEDGE_NOTE_INFO,
     )?))
 }
 
@@ -288,7 +289,7 @@ fn base_result() -> GratisOpResult {
         new_balance: Vec::new(),
         new_pledged: Vec::new(),
         new_pledge_record: Vec::new(),
-        pledge_handle: B256::ZERO,
+        pledge_note: B256::ZERO,
         gratis_amount: U256::ZERO,
         pledge_terms: None,
         revealed_owner: Address::ZERO,
@@ -347,13 +348,13 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 }
 
 /// Read-only: recover the plaintext EOA that keys the confidential pledged/balance ledgers,
-/// without the EOA ever appearing in calldata or stored plaintext. `pledge_handle = Some`
+/// without the EOA ever appearing in calldata or stored plaintext. `pledge_note = Some`
 /// -> the blob in `current_pledge_record` is a live `PledgeLockTicket` (credis
 /// `ConsumePledge` time, when calldata no longer carries the EOA); `None` -> the
 /// self-contained `eoa_ct` stored on the Credis position (settlement / void). No state
 /// mutation, no authorization - the on-chain Credis position is the accounting authority.
 fn apply_reveal_owner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    let owner = match req.pledge_handle {
+    let owner = match req.pledge_note {
         Some(handle) => {
             read_ticket(state_key, handle, &req.current_pledge_record)?
                 .1
@@ -448,7 +449,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 return Ok(reject("insufficient balance"));
             }
             let handle =
-                derive_pledge_handle(state_key, req.account, req.amount, req.modify_auth.op_nonce)?;
+                derive_pledge_note(state_key, req.account, req.amount, req.modify_auth.op_nonce)?;
             let ticket = PledgeLockTicket {
                 stables_amount: terms.stables_amount,
                 owner: req.account,
@@ -464,7 +465,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 balance - terms.gratis_amount,
             )?;
             r.new_pledge_record = write_ticket(state_key, handle, 0, &ticket)?;
-            r.pledge_handle = handle;
+            r.pledge_note = handle;
             // The aggregates and the GratisPledged event are gratis-denominated.
             r.event_amount = terms.gratis_amount;
         }
@@ -472,8 +473,8 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             // Return a still-pending pledge (e.g. credis rejected): credit the ticket
             // gratis back to the balance and DELETE the ticket (host writes back the
             // empty `new_pledge_record`) so it can never be consumed later.
-            let Some(handle) = req.pledge_handle else {
-                return Ok(reject("unpledge requires a pledge handle"));
+            let Some(handle) = req.pledge_note else {
+                return Ok(reject("unpledge requires a pledge note"));
             };
             let (_rver, ticket) = read_ticket(state_key, handle, &req.current_pledge_record)?;
             if ticket.owner != req.account {
@@ -505,7 +506,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 /// the state key - for the host to store on the Credis position (hiding the EOA<->bundle link).
 fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     let (Some(handle), Some(bundle), Some(spend_auth)) =
-        (req.pledge_handle, req.smart_account, req.spend_auth)
+        (req.pledge_note, req.smart_account, req.spend_auth)
     else {
         return Ok(reject(
             "consume_pledge requires handle, bundle, and spend_auth",
@@ -659,7 +660,7 @@ mod tests {
                 mac: [0u8; 32],
                 op_nonce: nonce,
             },
-            pledge_handle: None,
+            pledge_note: None,
             smart_account: None,
             spend_auth: None,
             pledge_terms: None,
@@ -791,7 +792,7 @@ mod tests {
             U256::from(1000u64),
             "pledged_total_supply is gratis-denominated"
         );
-        let handle = pledged.pledge_handle;
+        let handle = pledged.pledge_note;
         assert_ne!(handle, B256::ZERO);
         assert!(!pledged.new_pledge_record.is_empty(), "ticket written");
         assert!(
@@ -811,7 +812,7 @@ mod tests {
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
         rc.current_pledged = Vec::new();
-        rc.pledge_handle = Some(handle);
+        rc.pledge_note = Some(handle);
         rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let credis_res = apply_op(&sk, &rc);
@@ -891,7 +892,7 @@ mod tests {
         p.pledge_terms = Some(terms(stables, gratis));
         p.modify_auth = auth(sk, alice(), GratisOp::Pledge, stables, 1);
         let pledged = apply_op(sk, &p);
-        (pledged.pledge_handle, pledged)
+        (pledged.pledge_note, pledged)
     }
 
     /// The ticket carries every field the credis needs; a byte more or less must not
@@ -912,7 +913,7 @@ mod tests {
         assert!(PledgeLockTicket::decode(&encoded[..RECORD_PLAINTEXT_LEN - 1]).is_err());
 
         let sk = state_key();
-        let handle = derive_pledge_handle(&sk, alice(), U256::from(500u64), 1).unwrap();
+        let handle = derive_pledge_note(&sk, alice(), U256::from(500u64), 1).unwrap();
         let blob = write_ticket(&sk, handle, 0, &ticket).unwrap();
         assert_eq!(read_ticket(&sk, handle, &blob).unwrap().1, ticket);
     }
@@ -988,7 +989,7 @@ mod tests {
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
-        rc.pledge_handle = Some(handle);
+        rc.pledge_note = Some(handle);
         rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let consumed = apply_op(&sk, &rc);
@@ -1037,7 +1038,7 @@ mod tests {
 
         // Unpledge is quoted in the same unit the pledge was: stables in, gratis back.
         let mut up = req(GratisOp::Unpledge, alice(), stables, 2);
-        up.pledge_handle = Some(handle);
+        up.pledge_note = Some(handle);
         up.current_pledge_record = pledged.new_pledge_record.clone();
         up.current_balance = pledged.new_balance.clone();
         up.modify_auth = auth(&sk, alice(), GratisOp::Unpledge, stables, 2);
@@ -1060,7 +1061,7 @@ mod tests {
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = un.new_pledge_record.clone();
-        rc.pledge_handle = Some(handle);
+        rc.pledge_note = Some(handle);
         rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         assert!(
@@ -1078,7 +1079,7 @@ mod tests {
 
         // RevealOwner on the live ticket (Some(handle)) -> the pledger EOA.
         let mut rt = req(GratisOp::RevealOwner, Address::ZERO, U256::ZERO, 0);
-        rt.pledge_handle = Some(handle);
+        rt.pledge_note = Some(handle);
         rt.current_pledge_record = pledged.new_pledge_record.clone();
         let revealed = apply_op(&sk, &rt);
         assert!(matches!(revealed.status, GratisOpStatus::Applied));
@@ -1089,7 +1090,7 @@ mod tests {
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
         let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
-        rc.pledge_handle = Some(handle);
+        rc.pledge_note = Some(handle);
         rc.smart_account = Some(bundle());
         rc.spend_auth = Some(spend);
         let consumed = apply_op(&sk, &rc);
@@ -1098,20 +1099,20 @@ mod tests {
 
         // RevealOwner on the stored eoa_ct (None) -> the same EOA, with no handle needed.
         let mut re = req(GratisOp::RevealOwner, Address::ZERO, U256::ZERO, 0);
-        re.pledge_handle = None;
+        re.pledge_note = None;
         re.current_pledge_record = consumed.eoa_ct.clone();
         let opened = apply_op(&sk, &re);
         assert!(matches!(opened.status, GratisOpStatus::Applied));
         assert_eq!(opened.revealed_owner, alice());
     }
 
-    /// Same owner + different pledge handle -> different sealed ciphertext (nonce
+    /// Same owner + different pledge note -> different sealed ciphertext (nonce
     /// uniqueness), and a tampered blob fails AEAD integrity.
     #[test]
     fn eoa_ct_differs_across_positions() {
         let sk = state_key();
-        let h1 = derive_pledge_handle(&sk, alice(), U256::from(10u64), 1).unwrap();
-        let h2 = derive_pledge_handle(&sk, alice(), U256::from(20u64), 2).unwrap();
+        let h1 = derive_pledge_note(&sk, alice(), U256::from(10u64), 1).unwrap();
+        let h2 = derive_pledge_note(&sk, alice(), U256::from(20u64), 2).unwrap();
         assert_ne!(h1, h2);
         let c1 = seal_eoa_ct(&sk, h1, alice()).unwrap();
         let c2 = seal_eoa_ct(&sk, h2, alice()).unwrap();

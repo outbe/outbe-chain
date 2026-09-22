@@ -1,3 +1,4 @@
+import { delayedOwnerExecution } from "./owner-execution.js";
 import { ethers, Wallet } from "ethers";
 import {
   ICredisFactory__factory,
@@ -6,7 +7,6 @@ import {
   IERC20__factory,
   IVaultRouter__factory,
   IGratis__factory,
-  IEntryPoint__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
@@ -19,12 +19,6 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatToken,
-  ownerPermissionId,
-  permissionNonceKey,
-  encodePermissionSignature,
-  ENTRYPOINT_MIN_DEPOSIT,
-  ENTRYPOINT_TOPUP,
-  formatCoen,
 } from "./utils.js";
 import { deriveGratisKeys, decryptBalance } from "./confidential.js";
 import { findLatestTicket } from "./ticket.js";
@@ -32,8 +26,8 @@ import { findLatestTicket } from "./ticket.js";
 const SALT = 0n;
 
 // Parse CLI args: [positionId] [amount] [envName]. When positionId is omitted it is
-// read from the latest pledge ticket (written by request-credis). `amount` is in the
-// ERC20's smallest unit and defaults to exactly what the next installment still owes;
+// read from the latest pledge ticket (written by request-credis). A fixed `amount`
+// in ERC20 minor units is required so reruns schedule identical calldata;
 // any amount is accepted - it settles installments in order and may leave the last one
 // partially paid. Overpaying is safe: only the outstanding balance is pulled.
 let positionIdArg: string | undefined;
@@ -73,43 +67,6 @@ const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envContext);
 function formatDate(timestamp: bigint): string {
   if (timestamp === 0n) return "N/A";
   return new Date(Number(timestamp) * 1000).toISOString();
-}
-
-const ERROR_STRING_SELECTOR = "0x08c379a0";
-const PANIC_SELECTOR = "0x4e487b71";
-const KNOWN_ERROR_SIGS: Record<string, string> = {
-  // Kernel.executeUserOp wraps inner failure in this error
-  [ethers.id("ExecutionReverted()").slice(0, 10)]: "ExecutionReverted()",
-  [ethers.id("InsufficientFreeBalance()").slice(0, 10)]: "InsufficientFreeBalance()",
-  [ethers.id("InvalidCallType()").slice(0, 10)]: "InvalidCallType()",
-  [ethers.id("InvalidSelector()").slice(0, 10)]: "InvalidSelector()",
-};
-
-function decodeRevert(data: string): string {
-  if (!data || data === "0x") return "(empty)";
-  const sel = data.slice(0, 10).toLowerCase();
-  const abi = ethers.AbiCoder.defaultAbiCoder();
-  try {
-    if (sel === ERROR_STRING_SELECTOR) {
-      const [reason] = abi.decode(["string"], "0x" + data.slice(10));
-      return `Error("${reason}")`;
-    }
-    if (sel === PANIC_SELECTOR) {
-      const [code] = abi.decode(["uint256"], "0x" + data.slice(10));
-      return `Panic(0x${code.toString(16)})`;
-    }
-  } catch {
-    // fall through to raw
-  }
-  if (KNOWN_ERROR_SIGS[sel]) return KNOWN_ERROR_SIGS[sel];
-  const bytes = data.startsWith("0x") ? data.slice(2) : data;
-  if (bytes.length > 0 && bytes.length % 2 === 0) {
-    const buf = Buffer.from(bytes, "hex");
-    if (buf.every((b) => (b >= 0x20 && b < 0x7f) || b === 0x0a || b === 0x09)) {
-      return `"${buf.toString("utf8")}"`;
-    }
-  }
-  return `raw=${data}`;
 }
 
 /// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.
@@ -175,7 +132,6 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultRouterAddress],
     SALT,
   );
   console.log(`smart account:    ${smartAccountAddr}`);
@@ -183,7 +139,7 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run setup-account` first.");
     process.exit(1);
   }
 
@@ -217,8 +173,9 @@ async function main() {
   // outstanding principal. The chain pulls only what the position needs, so
   // over-approving would just leave a dangling allowance.
   const payoff = interest + position.outstanding;
-  const requested = amountArg !== undefined ? BigInt(amountArg) : payoff;
-  const settleAmount = requested > payoff ? payoff : requested;
+  if (amountArg === undefined) throw new Error(`Pass a fixed amount to schedule/resume settlement. Current payoff: ${payoff}`);
+  const requested = BigInt(amountArg);
+  const settleAmount = requested;
   console.log(`  Paying:        ${formatTokenMeta(settleAmount, erc20Meta)}`);
 
   if (settleAmount < interest) {
@@ -256,23 +213,6 @@ async function main() {
 
   // -- Build batch UserOp: approve + settle ------------------------------
 
-  // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
-  // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
-  const nonceKey = permissionNonceKey(ownerPermissionId());
-
-  const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);
-
-  const nonce = await entryPoint.getNonce(smartAccountAddr, nonceKey);
-
-  // Ensure EntryPoint has deposit for gas
-  const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
-  if (epDeposit < ENTRYPOINT_MIN_DEPOSIT) {
-    console.log("\nFunding EntryPoint deposit for smart account...");
-    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ENTRYPOINT_TOPUP });
-    await depositTx.wait();
-    console.log(`  Deposited ${formatCoen(ENTRYPOINT_TOPUP)} COEN into EntryPoint`);
-  }
-
   // Encode batch: [approve(credisFactory, settleAmount), settle(positionId, settleAmount)].
   // The runtime applies the payment interest first and principal second, pulls only
   // what the position needed, and releases the collateral share proportional to the
@@ -297,110 +237,10 @@ async function main() {
     "function execute(bytes32 mode, bytes calldata executionCalldata)",
   ]);
   const innerExecute = kernelIface.encodeFunctionData("execute", [execModeBatch, executionCalldata]);
-  const executeUserOpSel = "0x8dd7712f";
-  const callData = ethers.concat([executeUserOpSel, innerExecute]);
-
-  const accountGasLimits = ethers.solidityPacked(["uint128", "uint128"], [2_000_000n, 2_000_000n]);
-  const gasFees = ethers.solidityPacked(["uint128", "uint128"], [1n, 1n]);
-
-  const op = {
-    sender: smartAccountAddr,
-    nonce: nonce,
-    initCode: "0x",
-    callData: callData,
-    accountGasLimits: accountGasLimits,
-    preVerificationGas: 1_000_000n,
-    gasFees: gasFees,
-    paymasterAndData: "0x",
-    signature: "0x",
-  };
-
-  // Kernel v4 permission signature: abi.encode(bytes[]{ policy slice (empty), owner ECDSA sig }).
-  const userOpHash = await entryPoint.getUserOpHash(op);
-  const sig = await userWallet.signMessage(ethers.getBytes(userOpHash));
-  op.signature = encodePermissionSignature(sig);
-
-  // -- Pre-simulate the inner execute() so a precompile revert surfaces here
-  // rather than being swallowed by handleOps (which catches inner reverts and
-  // still reports the outer tx as successful).
-  console.log("\nSimulating inner execute() from EntryPoint...");
-  try {
-    await provider.call({
-      from: entryPointAddress,
-      to: smartAccountAddr,
-      data: innerExecute,
-    });
-    console.log("  Simulation OK");
-  } catch (err) {
-    const data = (err as { data?: string; info?: { error?: { data?: string } } }).data
-      ?? (err as { info?: { error?: { data?: string } } }).info?.error?.data
-      ?? "0x";
-    console.error(`  Simulation reverted: ${decodeRevert(data)}`);
-    process.exit(1);
-  }
-
-  console.log("\nSending UserOp via EntryPoint.handleOps...");
-  console.log(`  Nonce:      ${nonce}`);
-  console.log(`  UserOpHash: ${userOpHash}`);
-
-  const tx = await entryPoint.handleOps([op], userWallet.address);
-  const receipt = await tx.wait();
-  console.log(`  TX hash:    ${receipt!.hash}`);
-  console.log(`  Block:      ${receipt!.blockNumber}`);
-  console.log(`  Gas used:   ${receipt!.gasUsed}`);
-
-  // Parse events
-  const interfaces = [
-    { name: "EntryPoint", iface: IEntryPoint__factory.createInterface() },
-    { name: "ICredisFactory", iface: ICredisFactory__factory.createInterface() },
-    { name: "ICredis", iface: ICredis__factory.createInterface() },
-    { name: "VaultRouter", iface: IVaultRouter__factory.createInterface() },
-    { name: "IGratis", iface: IGratis__factory.createInterface() },
-    { name: "ERC20", iface: IERC20__factory.createInterface() },
-  ];
-
-  let userOpSuccess: boolean | null = null;
-  let userOpRevertReason: string | null = null;
-
-  console.log("\n=== Transaction Events ===");
-  for (const log of receipt?.logs ?? []) {
-    let parsed = false;
-    for (const { name: contractName, iface } of interfaces) {
-      try {
-        const event = iface.parseLog({ topics: log.topics as string[], data: log.data });
-        if (event) {
-          console.log(`  [${contractName}] ${event.name}:`);
-          const fragment = event.fragment;
-          for (let i = 0; i < fragment.inputs.length; i++) {
-            const paramName = fragment.inputs[i].name;
-            const value = event.args[i];
-            console.log(`    ${paramName}: ${value}`);
-          }
-          if (contractName === "EntryPoint" && event.args.userOpHash === userOpHash) {
-            if (event.name === "UserOperationEvent") userOpSuccess = event.args.success;
-            if (event.name === "UserOperationRevertReason") userOpRevertReason = event.args.revertReason;
-          }
-          parsed = true;
-          break;
-        }
-      } catch {
-        // Not from this interface
-      }
-    }
-    if (!parsed) {
-      console.log(`  [Unknown] address=${log.address} topics=${log.topics[0]}`);
-    }
-  }
-
-  if (userOpSuccess === false) {
-    console.error("\n!! UserOperation reverted - outer handleOps tx still succeeded (ERC-4337 swallows inner reverts).");
-    if (userOpRevertReason && userOpRevertReason !== "0x") {
-      console.error(`  Decoded: ${decodeRevert(userOpRevertReason)}`);
-    } else {
-      console.error("  No UserOperationRevertReason emitted (validation phase failure or zero-length revert data).");
-    }
-    process.exit(1);
-  }
+  const receipt = await delayedOwnerExecution(userWallet, smartAccountAddr, entryPointAddress,
+    await saFactory.executionDelayPolicy(), `settle-${positionId}-${settleAmount}`, innerExecute);
+  if (!receipt) return;
+  console.log(`Settlement completed: ${receipt.hash}`);
 
   // State after
   const after = await getState(token, credis, smartAccountAddr, underlyingVaultAddr);

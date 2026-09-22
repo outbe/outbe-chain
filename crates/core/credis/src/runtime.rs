@@ -31,7 +31,7 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPositionParams {
-    /// The pledge handle the position id derives from.
+    /// The pledge note the position id derives from.
     pub handle_id: U256,
     pub smart_account: Address,
     pub cca: Address,

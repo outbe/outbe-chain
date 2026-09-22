@@ -41,7 +41,6 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultRouterAddress],
     SALT,
   );
 
@@ -54,7 +53,7 @@ async function main() {
 
   const saCode = await provider.getCode(smartAccount);
   if (saCode === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-sa` first.");
+    console.error("smart account not deployed. Run `npm run setup-account` first.");
     process.exit(1);
   }
 

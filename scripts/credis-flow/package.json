@@ -6,6 +6,7 @@
   "scripts": {
     "prepare-abis": "node scripts/prepare-abis.mjs",
     "generate-types": "npm run prepare-abis && typechain --target ethers-v6 --out-dir src/contracts 'abi/*.json'",
+    "test": "node --import tsx --test src/*.test.ts",
     "build": "npm run generate-types && tsc",
     "clean": "rm -rf dist abi src/contracts",
     "info": "tsx src/0-info.ts",
@@ -15,7 +16,7 @@
     "reserve-stables": "tsx src/2.1-reserve-stables.ts",
     "pledge-gratis": "tsx src/1-pledge-gratis.ts",
     "unpledge-gratis": "tsx src/1.1-unpledge-gratis.ts",
-    "top-up-sa": "tsx src/2-top-up-smart-account.ts",
+    "setup-account": "tsx src/0-setup-account.ts",
     "request-credis": "tsx src/3-request-credis.ts",
     "cca-simulate-purchase": "tsx src/4-cca-simulate-purchase.ts",
     "user-sa-withdraw": "tsx src/4.1-user-sa-withdraw.ts",

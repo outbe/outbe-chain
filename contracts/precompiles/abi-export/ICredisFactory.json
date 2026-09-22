@@ -9,7 +9,7 @@
         "internalType": "address"
       },
       {
-        "name": "pledgeHandle",
+        "name": "pledgeNote",
         "type": "bytes32",
         "internalType": "bytes32"
       },

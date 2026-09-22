@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IERC7579Account} from "@zerodev/kernel/interfaces/IERC7579Account.sol";
 import {Test} from "forge-std/Test.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
@@ -55,7 +56,7 @@ contract WithdrawalLimitPolicyTest is Test {
     {
         bytes memory transferCalldata = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
         bytes memory execCalldata = abi.encodePacked(target, uint256(0), transferCalldata);
-        bytes memory callData = abi.encodeWithSelector(bytes4(0), bytes32(0), execCalldata);
+        bytes memory callData = abi.encodeWithSelector(IERC7579Account.execute.selector, bytes32(0), execCalldata);
 
         return PackedUserOperation({
             sender: kernelAccount,
@@ -78,7 +79,7 @@ contract WithdrawalLimitPolicyTest is Test {
     {
         bytes memory innerCalldata = abi.encodeWithSelector(selector, uint256(0));
         bytes memory execCalldata = abi.encodePacked(target, uint256(0), innerCalldata);
-        bytes memory callData = abi.encodeWithSelector(bytes4(0), bytes32(0), execCalldata);
+        bytes memory callData = abi.encodeWithSelector(IERC7579Account.execute.selector, bytes32(0), execCalldata);
 
         return PackedUserOperation({
             sender: kernelAccount,
@@ -96,7 +97,7 @@ contract WithdrawalLimitPolicyTest is Test {
     /// @dev Builds a UserOp with CALLTYPE_BATCH (first byte of ExecMode = 0x01).
     function _buildBatchUserOp() internal view returns (PackedUserOperation memory) {
         bytes32 batchMode = bytes32(bytes1(0x01)); // CALLTYPE_BATCH
-        bytes memory callData = abi.encodeWithSelector(bytes4(0), batchMode, new bytes(0));
+        bytes memory callData = abi.encodeWithSelector(IERC7579Account.execute.selector, batchMode, new bytes(0));
 
         return PackedUserOperation({
             sender: kernelAccount,
@@ -125,7 +126,7 @@ contract WithdrawalLimitPolicyTest is Test {
             target: target, value: 0, callData: abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1))
         });
         bytes32 batchMode = bytes32(bytes1(0x01)); // CALLTYPE_BATCH
-        bytes memory callData = abi.encodeWithSelector(bytes4(0), batchMode, abi.encode(execs));
+        bytes memory callData = abi.encodeWithSelector(IERC7579Account.execute.selector, batchMode, abi.encode(execs));
 
         return PackedUserOperation({
             sender: kernelAccount,
@@ -249,11 +250,12 @@ contract WithdrawalLimitPolicyTest is Test {
         bytes memory execCalldata = abi.encodePacked(address(token), uint256(0), transferCalldata);
         // Hand-build callData with offset word = 96 (0x60) instead of the canonical 64 (0x40).
         bytes memory callData = abi.encodePacked(
-            bytes4(0), // [0:4]   selector
+            IERC7579Account.execute.selector, // [0:4] selector
             bytes32(0), // [4:36]  ExecMode -> CALLTYPE_SINGLE
             uint256(96), // [36:68] non-canonical offset
             uint256(execCalldata.length), // [68:100] length
-            execCalldata // [100:]  data
+            execCalldata,
+            bytes8(0) // [100:] data and canonical padding
         );
 
         PackedUserOperation memory userOp = PackedUserOperation({
@@ -281,20 +283,18 @@ contract WithdrawalLimitPolicyTest is Test {
 
         PackedUserOperation memory userOp = _buildBatchUserOpTargeting(address(token));
         vm.prank(kernelAccount);
-        vm.expectRevert(
-            abi.encodeWithSelector(WithdrawalLimitPolicy.BatchTargetsConfiguredToken.selector, address(token))
-        );
+        vm.expectRevert(abi.encodeWithSelector(WithdrawalLimitPolicy.InvalidWithdrawal.selector));
         policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
     /// @dev T-04: a batch that touches no configured token is genuinely unrelated and still passes.
-    function test_W05_UnrelatedBatch_StillPasses() public {
+    function test_W05_UnrelatedBatch_Rejects() public {
         _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
 
         PackedUserOperation memory userOp = _buildBatchUserOpTargeting(makeAddr("otherToken"));
         vm.prank(kernelAccount);
-        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
-        assertEq(result, 0, "unrelated batch must pass through");
+        vm.expectRevert(WithdrawalLimitPolicy.InvalidWithdrawal.selector);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
     /// @dev T-06: metering a transfer emits LimitConsumed so monitoring can watch limit exhaustion.
@@ -405,9 +405,8 @@ contract WithdrawalLimitPolicyTest is Test {
         PackedUserOperation memory userOp = _buildUserOp(otherToken, recipient, DEFAULT_LIMIT * 100);
 
         vm.prank(kernelAccount);
-        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
-
-        assertEq(result, 0, "should pass-through for non-target token");
+        vm.expectRevert(WithdrawalLimitPolicy.InvalidWithdrawal.selector);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
     function test_CheckUserOpPolicy_NonTransferSelector() public {
@@ -416,9 +415,8 @@ contract WithdrawalLimitPolicyTest is Test {
         PackedUserOperation memory userOp = _buildNonTransferUserOp(address(token), IERC20.approve.selector);
 
         vm.prank(kernelAccount);
-        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
-
-        assertEq(result, 0, "should pass-through for non-transfer selector");
+        vm.expectRevert(WithdrawalLimitPolicy.InvalidWithdrawal.selector);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
     function test_CheckUserOpPolicy_BatchCallSkipped() public {
@@ -427,18 +425,17 @@ contract WithdrawalLimitPolicyTest is Test {
         PackedUserOperation memory userOp = _buildBatchUserOp();
 
         vm.prank(kernelAccount);
-        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
-
-        assertEq(result, 0, "should pass-through for batch calltype");
+        vm.expectRevert(WithdrawalLimitPolicy.InvalidWithdrawal.selector);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
     // -------------------------------------------------------------------------
     // checkSignaturePolicy
     // -------------------------------------------------------------------------
 
-    function test_CheckSignaturePolicy_ReturnsZero() public view {
+    function test_CheckSignaturePolicy_Rejects() public view {
         uint256 result = policy.checkSignaturePolicy(DEFAULT_ID, address(0), bytes32(0), "");
-        assertEq(result, 0, "checkSignaturePolicy should return 0");
+        assertEq(result, 1, "signature-only authorization must fail");
     }
 
     // -------------------------------------------------------------------------
@@ -481,6 +478,18 @@ contract WithdrawalLimitPolicyTest is Test {
             policy.checkUserOpPolicy(DEFAULT_ID, userOp);
             (uint256 usedFuzz,) = policy.states(DEFAULT_ID, kernelAccount);
             assertEq(usedFuzz, uint256(amount), "usedAmount should match");
+        }
+    }
+
+    function test_RejectsEveryNonCanonicalTransferField() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+        uint256[8] memory offsets = [uint256(0), 4, 100, 151, 152, 156, 220, 227];
+        for (uint256 i; i < offsets.length; ++i) {
+            PackedUserOperation memory op = _buildUserOp(address(token), recipient, 1);
+            op.callData[offsets[i]] = bytes1(uint8(op.callData[offsets[i]]) ^ 0xff);
+            vm.prank(kernelAccount);
+            vm.expectRevert(WithdrawalLimitPolicy.InvalidWithdrawal.selector);
+            policy.checkUserOpPolicy(DEFAULT_ID, op);
         }
     }
 }
