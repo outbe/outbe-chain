@@ -197,6 +197,8 @@ contract TargetRouter is
     /// @inheritdoc ITargetRouter
     function setVwapRegistry(address registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (registry == address(0)) revert ZeroAddress("vwapRegistry");
+        address registryRouter = IVwapRegistry(registry).router();
+        if (registryRouter != address(this)) revert VwapRegistryRouterMismatch(registryRouter);
         _ts().vwapRegistry = IVwapRegistry(registry);
         emit VwapRegistrySet(registry);
     }

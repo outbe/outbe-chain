@@ -28,8 +28,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Issued -> Called -> Expired; `Qualified` is derived, never stored. `Expired` is read-only: storage
-    ///      keeps `Called`, so the freezes that compare the stored field keep applying.
+    /// @dev Issued -> Called -> Expired; `Qualified` is derived and no longer written. `Expired` is read-only:
+    ///      storage keeps `Called`, so the freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
         Qualified,
@@ -241,7 +241,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The amount of burned tokens.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
-    /// @notice Zero renders every uncalled series as Issued.
+    /// @notice Zero derives no qualification.
     function setVwapSource(address source) external;
 
     // --- Reads ---

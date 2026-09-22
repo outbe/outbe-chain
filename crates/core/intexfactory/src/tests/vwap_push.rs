@@ -120,6 +120,26 @@ fn an_unpriced_day_moves_the_mark_and_a_refused_send_holds_it() {
 }
 
 #[test]
+fn a_router_that_answers_nothing_holds_the_mark() {
+    // An address without code answers a call with nothing.
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.stub_sub_call_at(
+        crate::constants::ORIGIN_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::new(),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let oracle = OracleContract::new(storage.clone());
+        list(&oracle, REFERENCE_ISO, PAIR_ID);
+        close_day(&oracle, FINALIZED, PAIR_ID, U256::from(1_000_000));
+
+        for _ in 0..6 {
+            fire(&storage);
+        }
+        assert_eq!(sent_day(&storage), previous_date_key(FINALIZED));
+    });
+}
+
+#[test]
 fn a_day_carries_its_priced_currencies_and_saturates_past_the_wire_type() {
     let mut provider = factory_provider();
     StorageHandle::enter(&mut provider, |storage| {

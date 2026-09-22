@@ -682,7 +682,13 @@
           ]
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "legs",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
       "stateMutability": "payable"
     },
     {

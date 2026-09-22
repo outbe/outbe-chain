@@ -51,12 +51,9 @@ contract BridgeMsgCodecDailyVwapTest is Test {
         }
     }
 
-    function test_TheFloorIsTheHeadAndOneRowIsTheSmallestDay() public pure {
+    function test_TheFloorIsTheSmallestDay() public pure {
         assertEq(BridgeMsgCodec.minLengthFor(BridgeMsgCodec.MSG_DAILY_VWAP), BridgeMsgCodec.MIN_LEN_DAILY_VWAP);
-        assertEq(
-            BridgeMsgCodec.encodeDailyVwap(UTC_DAY, _rows(1)).length,
-            BridgeMsgCodec.MIN_LEN_DAILY_VWAP + BridgeMsgCodec.DAILY_VWAP_LEN
-        );
+        assertEq(BridgeMsgCodec.encodeDailyVwap(UTC_DAY, _rows(1)).length, BridgeMsgCodec.MIN_LEN_DAILY_VWAP);
     }
 
     function test_RevertWhen_EncodingNoRows() public {
@@ -75,7 +72,14 @@ contract BridgeMsgCodecDailyVwapTest is Test {
     }
 
     function test_RevertWhen_DecodingADayWithNoRows() public {
-        vm.expectRevert(BridgeMsgCodec.EmptyDailyVwap.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BridgeMsgCodec.InvalidPayloadLength.selector,
+                BridgeMsgCodec.MSG_DAILY_VWAP,
+                BridgeMsgCodec.DAILY_VWAP_HEAD,
+                BridgeMsgCodec.MIN_LEN_DAILY_VWAP
+            )
+        );
         this.decode(abi.encodePacked(uint8(1), BridgeMsgCodec.MSG_DAILY_VWAP, UTC_DAY, uint8(0)));
     }
 
@@ -87,7 +91,7 @@ contract BridgeMsgCodecDailyVwapTest is Test {
                 BridgeMsgCodec.InvalidPayloadLength.selector,
                 BridgeMsgCodec.MSG_DAILY_VWAP,
                 message.length,
-                BridgeMsgCodec.MIN_LEN_DAILY_VWAP + 3 * BridgeMsgCodec.DAILY_VWAP_LEN
+                BridgeMsgCodec.DAILY_VWAP_HEAD + 3 * BridgeMsgCodec.DAILY_VWAP_LEN
             )
         );
         this.decode(message);

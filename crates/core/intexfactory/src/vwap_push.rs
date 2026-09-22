@@ -70,11 +70,14 @@ pub(crate) fn day_rows(
     Ok(rows)
 }
 
-/// Whether the router took the day; a refusal leaves it for the next firing.
+/// Whether the router took the day and answered with its legs; anything else leaves it for the next firing.
 fn send(storage: &StorageHandle<'_>, day: u32, rows: Vec<IOriginRouter::DailyVwap>) -> bool {
     let call = IOriginRouter::sendDailyVwapCall { utcDay: day, rows };
     let sent = storage.with_checkpoint(|| {
-        storage.call(ORIGIN_ROUTER_ADDRESS, U256::ZERO, call.abi_encode().into())?;
+        let out = storage.call(ORIGIN_ROUTER_ADDRESS, U256::ZERO, call.abi_encode().into())?;
+        IOriginRouter::sendDailyVwapCall::abi_decode_returns(&out).map_err(|_| {
+            outbe_primitives::error::PrecompileError::Revert("the router answered no legs".into())
+        })?;
         Ok(())
     });
     if let Err(error) = &sent {

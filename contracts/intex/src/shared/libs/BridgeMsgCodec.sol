@@ -89,8 +89,9 @@ library BridgeMsgCodec {
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
     // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
-    uint16 internal constant MIN_LEN_DAILY_VWAP = 7;
+    uint16 internal constant DAILY_VWAP_HEAD = 7;
     uint16 internal constant DAILY_VWAP_LEN = 10;
+    uint16 internal constant MIN_LEN_DAILY_VWAP = DAILY_VWAP_HEAD + DAILY_VWAP_LEN;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -621,11 +622,11 @@ library BridgeMsgCodec {
         utcDay = uint32(bytes4(_msg[2:6]));
         uint256 count = uint8(_msg[6]);
         _assertDailyVwapRows(count);
-        uint256 expected = MIN_LEN_DAILY_VWAP + count * DAILY_VWAP_LEN;
+        uint256 expected = DAILY_VWAP_HEAD + count * DAILY_VWAP_LEN;
         if (_msg.length != expected) revert InvalidPayloadLength(MSG_DAILY_VWAP, _msg.length, expected);
         rows = new IOriginRouter.DailyVwap[](count);
         for (uint256 i = 0; i < count; ++i) {
-            uint256 at = MIN_LEN_DAILY_VWAP + i * DAILY_VWAP_LEN;
+            uint256 at = DAILY_VWAP_HEAD + i * DAILY_VWAP_LEN;
             rows[i] = IOriginRouter.DailyVwap({
                 isoCode: uint16(bytes2(_msg[at:at + 2])), vwapMinor: uint64(bytes8(_msg[at + 2:at + 10]))
             });

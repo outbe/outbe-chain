@@ -317,7 +317,8 @@ interface IOriginRouter {
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Sends one finalized day to every registered target but this chain, whose NFT reads the IntexFactory.
-    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable;
+    /// @return legs Legs sent or parked.
+    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable returns (uint256 legs);
 
     /// @notice Permissionless flush of a parked outbound leg.
     function resendParkedMessage(uint256 idx) external;

@@ -8,8 +8,8 @@ import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
+import {IVwapRegistry} from "@contracts/target/interfaces/IVwapRegistry.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
@@ -81,8 +81,9 @@ contract DailyVwapWireTest is CrossChainTest {
 
         vm.recordLogs();
         vm.prank(intexFactory);
-        outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
+        uint256 legs = outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
 
+        assertEq(legs, 1);
         assertEq(_countTopic(IOriginRouter.DailyVwapSent.selector), 1, "only the other target is sent to");
         assertEq(bridge.lastRecipient(), _interop(BNB_CHAIN_ID, address(bnbRouter)));
     }
@@ -98,16 +99,36 @@ contract DailyVwapWireTest is CrossChainTest {
         outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
     }
 
-    function test_ATargetWithoutARegistryAcknowledgesTheDay() public {
+    function test_ATargetWithoutARegistryRefusesTheDayForRedelivery() public {
         TargetRouter bare = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         bare.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         bytes memory packet = BridgeMsgCodec.encodeDailyVwap(UTC_DAY, _rows(1));
 
-        vm.expectEmit(address(bare));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_DAILY_VWAP, bytes32(uint256(UTC_DAY)), InboundReason.OBSOLETE
-        );
+        vm.expectRevert(ITargetRouter.VwapRegistryUnset.selector);
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bare), packet);
+    }
+
+    function test_ADayTheRegistryRefusesStaysForRedelivery() public {
+        registry.setRouter(makeAddr("other router"));
+        bytes memory packet = BridgeMsgCodec.encodeDailyVwap(UTC_DAY, _rows(1));
+
+        vm.expectRevert(abi.encodeWithSelector(IVwapRegistry.NotRouter.selector, address(bnbRouter)));
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
+    }
+
+    function test_AParkedDayIsRecordedOnceResent() public {
+        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, "");
+        vm.prank(intexFactory);
+        assertEq(outbeRouter.sendDailyVwap(UTC_DAY, _rows(1)), 1, "a parked leg counts");
+
+        IOriginRouter.ParkedMessage memory parked = outbeRouter.parkedMessage(0);
+        assertEq(parked.dstChainId, BNB_CHAIN_ID);
+        assertFalse(parked.sent);
+
+        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        outbeRouter.resendParkedMessage(0);
+        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), bridge.lastPayload());
+        assertEq(registry.vwapOf(UTC_DAY, 840), 1_500_000);
     }
 
     function test_OnlyTheAdminSetsTheRegistry() public {
@@ -120,6 +141,11 @@ contract DailyVwapWireTest is CrossChainTest {
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "vwapRegistry"));
         bnbRouter.setVwapRegistry(address(0));
+
+        address otherRouter = makeAddr("other router");
+        VwapRegistry foreign = DeployProxy.vwapRegistry(admin, otherRouter);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.VwapRegistryRouterMismatch.selector, otherRouter));
+        bnbRouter.setVwapRegistry(address(foreign));
 
         vm.expectEmit(address(bnbRouter));
         emit ITargetRouter.VwapRegistrySet(address(registry));

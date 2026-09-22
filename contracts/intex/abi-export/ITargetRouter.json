@@ -736,6 +736,22 @@
     },
     {
       "type": "error",
+      "name": "VwapRegistryRouterMismatch",
+      "inputs": [
+        {
+          "name": "registryRouter",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "VwapRegistryUnset",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "ZeroAddress",
       "inputs": [
         {

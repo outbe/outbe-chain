@@ -455,13 +455,9 @@ library TargetInbound {
         }
     }
 
-    /// @notice Without a registry the day is acknowledged without effect.
     function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
-        if (address($.vwapRegistry) == address(0)) {
-            _ignore(srcChainId, BridgeMsgCodec.MSG_DAILY_VWAP, bytes32(uint256(utcDay)), InboundReason.OBSOLETE);
-            return;
-        }
+        if (address($.vwapRegistry) == address(0)) revert ITargetRouter.VwapRegistryUnset();
         $.vwapRegistry.record(utcDay, rows);
         emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
@@ -501,8 +497,8 @@ library TargetInbound {
         emit ITargetRouter.MarkParked(seriesId, BridgeMsgCodec.MSG_MARK_CALLED);
     }
 
-    /// @dev Apply the mark waiting for a series that has just been created. A mark is a state flip and
-    ///      moves no balances, so Called applies here as readily as Qualified. A failure re-announces the slot.
+    /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
+    ///      the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
         ParkedMark memory waiting = $.parkedMarks[seriesId];
         uint8 msgType = waiting.msgType;

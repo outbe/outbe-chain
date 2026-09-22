@@ -125,6 +125,10 @@ interface ITargetRouter {
     event NativeSwept(address indexed to, uint256 amount);
 
     // --- Errors ---
+    /// @notice A daily VWAP arrived before a registry was set; the transport redelivers it.
+    error VwapRegistryUnset();
+    /// @notice The registry records days from another router.
+    error VwapRegistryRouterMismatch(address registryRouter);
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
     error ZeroAddress(string field);

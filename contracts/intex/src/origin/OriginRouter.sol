@@ -391,7 +391,12 @@ contract OriginRouter is
 
     /// @inheritdoc IOriginRouter
     /// @dev Goes out over the live target list: a closing price is news to every target.
-    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable onlyRole(INTEX_FACTORY_ROLE) {
+    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows)
+        external
+        payable
+        onlyRole(INTEX_FACTORY_ROLE)
+        returns (uint256 legs)
+    {
         uint32[] memory chains = _os().targetChainIds;
         bytes memory payload = BridgeMsgCodec.encodeDailyVwap(utcDay, rows);
         uint256 gasLimit = IntexGas.dailyVwap(rows.length);
@@ -399,6 +404,7 @@ contract OriginRouter is
             if (chains[i] == block.chainid) continue;
             bytes32 sendId = _sendOrPark(chains[i], payload, gasLimit);
             emit DailyVwapSent(sendId, chains[i], utcDay);
+            ++legs;
         }
     }
 

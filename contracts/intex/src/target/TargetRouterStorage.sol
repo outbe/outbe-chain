@@ -95,7 +95,7 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
-    /// @dev Registry the daily VWAPs from Outbe are recorded in; unset, a day is acknowledged without effect.
+    /// @dev Registry the daily VWAPs from Outbe are recorded in; a day arriving while it is unset reverts.
     IVwapRegistry vwapRegistry;
 }
 

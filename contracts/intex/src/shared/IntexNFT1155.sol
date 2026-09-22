@@ -55,7 +55,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
-        /// @dev Daily VWAPs the metadata derives qualification from; zero renders uncalled series as Issued.
+        /// @dev Daily VWAPs the metadata derives qualification from; zero derives none.
         address vwapSource;
     }
 

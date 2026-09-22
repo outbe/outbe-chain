@@ -141,6 +141,7 @@ contract VwapRegistryTest is Test {
     }
 
     function test_SupportsInterface_VwapSource() public view {
+        assertTrue(registry.supportsInterface(type(IVwapRegistry).interfaceId));
         assertTrue(registry.supportsInterface(type(IVwapSource).interfaceId));
         assertTrue(registry.supportsInterface(type(IAccessControl).interfaceId));
     }

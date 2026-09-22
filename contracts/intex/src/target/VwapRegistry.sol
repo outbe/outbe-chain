@@ -94,6 +94,7 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
     }
 
     function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
-        return interfaceId == type(IVwapSource).interfaceId || super.supportsInterface(interfaceId);
+        return interfaceId == type(IVwapRegistry).interfaceId || interfaceId == type(IVwapSource).interfaceId
+            || super.supportsInterface(interfaceId);
     }
 }
