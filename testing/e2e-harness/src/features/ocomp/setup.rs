@@ -12,27 +12,40 @@ const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None, None, false);
+    start_ocomp_measurement_localnet(world, None, None, false, None);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), None, false);
+    start_ocomp_measurement_localnet(world, Some(0), None, false, None);
 }
 
 #[given("a fresh four-validator OCOMP short-window public measurement localnet")]
 fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), Some(6), false);
+    start_ocomp_measurement_localnet(world, Some(0), Some(6), false, None);
 }
 
 #[given("a fresh four-validator OCOMP short-window public recovery localnet")]
 fn fresh_ocomp_short_window_public_recovery_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), Some(6), true);
+    start_ocomp_measurement_localnet(world, Some(0), Some(6), true, None);
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None, false);
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None, false, None);
+}
+
+#[given("a fresh four-validator OCOMP offline-snapshot localnet")]
+fn fresh_ocomp_offline_snapshot_localnet(world: &mut World) {
+    // Both file-placement variants intentionally keep the donor offline. Budget
+    // that outage in this scenario's genesis; ordinary jail rules still apply.
+    start_ocomp_measurement_localnet(
+        world,
+        Some(OCOMP_CAPACITY_TRIBUTE_COUNT),
+        None,
+        false,
+        Some(OCOMP_TEST_EPOCH_LENGTH_BLOCKS - 1),
+    );
 }
 
 #[given("a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs")]
@@ -171,6 +184,7 @@ fn start_ocomp_measurement_localnet(
     public_capacity_tribute_count: Option<usize>,
     vote_window_blocks: Option<u64>,
     seed_recovery_day: bool,
+    dev_felony_threshold: Option<u64>,
 ) {
     assert!(
         !seed_recovery_day || public_capacity_tribute_count == Some(0),
@@ -183,6 +197,9 @@ fn start_ocomp_measurement_localnet(
     )];
     if let Some(window) = vote_window_blocks {
         tuning.push(("TESTNET_OCOMP_VOTE_WINDOW_BLOCKS", window.to_string()));
+    }
+    if let Some(threshold) = dev_felony_threshold {
+        tuning.push(("TESTNET_DEV_FELONY_THRESHOLD", threshold.to_string()));
     }
     bootstrap_localnet(world, 6, &tuning);
     let mut start_opts = if shorten_public_day {

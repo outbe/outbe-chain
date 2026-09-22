@@ -32,7 +32,7 @@ contract MockAuctionEscrow {
         reentryArmed = true;
     }
 
-    function lockFunds(uint32 seriesId, address bidder, uint128 amount) external {
+    function lockFunds(uint32 seriesId, address bidder, uint128 amount, uint32, uint16) external {
         if (lockShouldRevert) revert MockLockReverted();
         if (reentryArmed) {
             reentryArmed = false;

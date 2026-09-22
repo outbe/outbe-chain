@@ -1,5 +1,6 @@
 pub mod constants;
 pub mod errors;
+mod metadata;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

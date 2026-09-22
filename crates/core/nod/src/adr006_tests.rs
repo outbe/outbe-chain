@@ -1130,3 +1130,44 @@ fn a_qualify_sweep_over_several_currencies_always_ends() {
         assert_eq!(nod.qualify_sweep_day.read().unwrap(), 0, "the sweep closed");
     });
 }
+
+/// One Worldwide Day qualifying in two currencies within a single slice is announced once.
+#[test]
+fn a_qualify_slice_announces_each_day_once_across_currencies() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    let day = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        for (index, iso) in [(1u32, 840u16), (2, 978)] {
+            oracle.reference_currencies.push(iso).unwrap();
+            oracle
+                .pair_to_index
+                .write(&AddressPair::new_coen_to(iso), index)
+                .unwrap();
+        }
+        let usd = seed_priced_bucket(&storage, &scope, &parent, owner_n(1), 840, U256::from(1));
+        seed_priced_bucket(&storage, &scope, &parent, owner_n(2), 978, U256::from(1));
+        let closed = previous_date_key(timestamp_to_date_key(NOW));
+        publish_vwap_on(&storage, 1, closed, U256::from(1_000u64));
+        publish_vwap_on(&storage, 2, closed, U256::from(1_000u64));
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
+            storage.clone(),
+        );
+        crate::hooks::scan_and_qualify(&ctx, &scope, &parent).unwrap();
+        usd.worldwide_day()
+    });
+
+    let batches: Vec<(U256, U256)> = provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::BatchMetadataUpdate::decode_log_data(log).ok())
+        .map(|event| (event._fromTokenId, event._toTokenId))
+        .collect();
+    let from = WwdEntityId::from_day_and_digest(day, B256::ZERO).to_u256();
+    let to = WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xff)).to_u256();
+    assert_eq!(batches, vec![(from, to)]);
+}

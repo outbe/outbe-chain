@@ -526,19 +526,29 @@
           "internalType": "uint16"
         },
         {
-          "name": "bidders",
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "basis",
+          "type": "uint128",
+          "internalType": "uint128"
+        },
+        {
+          "name": "winners",
           "type": "address[]",
           "internalType": "address[]"
         },
         {
-          "name": "refundedAmounts",
-          "type": "uint128[]",
-          "internalType": "uint128[]"
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
-          "name": "paidAmounts",
-          "type": "uint128[]",
-          "internalType": "uint128[]"
+          "name": "partialWon",
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ],
       "outputs": [

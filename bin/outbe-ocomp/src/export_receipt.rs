@@ -297,6 +297,28 @@ pub fn list_prepared_export_jobs(
     }
     let base_root = base_root.as_ref();
     create_private_directory(base_root)?;
+    scan_prepared_export_jobs(base_root, max_jobs)
+}
+
+/// Lists existing prepared receipts without creating directories or changing modes.
+/// Uses the native directory selector; exact receipt contents are verified by
+/// `ExportReceiptReader` when the caller opens each selected job.
+pub fn list_prepared_export_jobs_read_only(
+    base_root: impl AsRef<Path>,
+    max_jobs: usize,
+) -> Result<Vec<B256>, ExportReceiptError> {
+    if max_jobs == 0 {
+        return Err(ExportReceiptError::InvalidJobLimit(max_jobs));
+    }
+    let base_root = base_root.as_ref();
+    inspect_private_directory(base_root)?;
+    scan_prepared_export_jobs(base_root, max_jobs)
+}
+
+fn scan_prepared_export_jobs(
+    base_root: &Path,
+    max_jobs: usize,
+) -> Result<Vec<B256>, ExportReceiptError> {
     let mut jobs = Vec::new();
     for entry in fs::read_dir(base_root)
         .map_err(|source| io_error("list receipt jobs", base_root, source))?

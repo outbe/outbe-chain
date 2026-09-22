@@ -14,6 +14,8 @@ use crate::internal::{
 };
 
 use super::Localnet;
+#[cfg(feature = "ocomp-integration")]
+use super::{checked_node_interrupt, NodeLaunchObservation, StoppedSnapshotNode};
 
 const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
     "--validator",
@@ -32,7 +34,7 @@ const VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS: &[(&str, bool)] = &[
     ("--radicle.status-address", true),
 ];
 
-fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
+pub(super) fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
     ensure!(
         args.iter()
             .any(|arg| arg == "--upstream" || arg.starts_with("--upstream=")),
@@ -237,6 +239,14 @@ impl Localnet {
     /// Provision the production FullNode NodeHost path for any enabled TEE
     /// policy. DCAP and GramineDirectDev differ only in attestation authority;
     /// both require the same resident offer-key delivery before node startup.
+    /// Prepare the same ordinary configuration without opening recipient databases.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn prepare_snapshot_full_node(&mut self, index: usize) -> Result<()> {
+        self.provision_full_node_node_host(index)?;
+        crate::world::projection::ensure_node_config(&self.cfg, index)?;
+        Ok(())
+    }
+
     pub fn provision_full_node_node_host(&mut self, index: usize) -> Result<()> {
         let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
             .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
@@ -521,6 +531,57 @@ impl Localnet {
         self.radicle_sidecars
             .get_mut(&index)
             .is_some_and(|guard| !guard.exited())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn follower_launch_observation(
+        &mut self,
+        name: &str,
+        index: usize,
+    ) -> Result<NodeLaunchObservation> {
+        let pid = self.live_follower_pid(name)?;
+        let recipe = self.captured_node_recipe(index, pid)?;
+        eyre::ensure!(
+            self.followers
+                .get(name)
+                .expect("checked owned follower")
+                .owns_node_data_dir(&recipe.node_dir.join("data")),
+            "follower does not own expected node datadir"
+        );
+        Ok(recipe.observation)
+    }
+
+    /// Strict snapshot boundary; unlike general teardown, missing or already
+    /// exited owners cannot establish successful stop evidence.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn stop_follower_for_snapshot(
+        &mut self,
+        name: &str,
+        index: usize,
+        expected_pid: u32,
+    ) -> Result<StoppedSnapshotNode> {
+        let observed = self.follower_launch_observation(name, index)?;
+        eyre::ensure!(observed.pid == expected_pid, "follower stop PID mismatch");
+        let recipe = self.captured_node_recipe(index, expected_pid)?;
+        let observation = checked_node_interrupt(
+            self.followers
+                .get_mut(name)
+                .expect("checked owned follower"),
+            observed,
+        )?;
+        self.followers.remove(name);
+        if let Some((pid, log)) = self.node_launch_logs.get_mut(&index) {
+            eyre::ensure!(
+                *pid == expected_pid,
+                "follower stop log incarnation changed"
+            );
+            log.seal()?;
+        }
+        Ok(StoppedSnapshotNode {
+            observation,
+            recipe,
+            follower_name: Some(name.to_owned()),
+        })
     }
 
     /// Stop all follower nodes (drop owned handles -> kill + reap).

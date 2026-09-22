@@ -17,6 +17,7 @@ import {
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
+import { type DecodedDataUri, parseDataUri } from "../format.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
@@ -219,11 +220,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     metaCache.set(n.name, meta);
     return meta;
   }
-  /** Per-token NFT metadata URIs for a series; undefined when the chain has no NFT deployed. */
+  /** Per-token NFT metadata documents for a series; undefined when the chain has no NFT deployed. */
   async function seriesMetadata(
     n: Network,
     series: Hex,
-  ): Promise<{ collection: string; issued: string; settled: string } | undefined> {
+  ): Promise<{ collection: DecodedDataUri; issued: DecodedDataUri; settled: DecodedDataUri } | undefined> {
     try {
       const nft = addr(n, "nft");
       const [issuedId, settledId] = (await n.client.readContract({
@@ -237,7 +238,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [issuedId] }),
         n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [settledId] }),
       ])) as [string, string, string];
-      return { collection, issued, settled };
+      return {
+        collection: parseDataUri(collection),
+        issued: parseDataUri(issued),
+        settled: parseDataUri(settled),
+      };
     } catch {
       return undefined;
     }
@@ -656,11 +661,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_bids_by_owner",
-    "Your commit/reveal status across active auctions, plus your escrow money on that chain: the commit " +
-      "bond (held from commit until reveal/cancel) and the bid lock (held from reveal until finalization). " +
-      "Emits a hint when funds are stuck - a no-reveal bond reclaimable via intex_claim_commit_bond, or a " +
-      "never-finalized lock (e.g. the chain missed the clearing deadline) reclaimable in full via " +
-      "auction_claim_refund after the shown refundClaimableAt. Pass worldwideDay to check just one.",
+    "Your commit/reveal status across recent auctions, closed days included, plus your escrow money on that " +
+      "chain: the commit bond (held from commit until reveal/cancel) and the bid lock (held from reveal until " +
+      "you claim). Every bid ends in a claim - a winner's change, a loser's whole principal - so the lock " +
+      "reports what auction_claim_refund pays and from when. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkArg.optional() },
     handler(async ({ account, worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -670,12 +674,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         targets = [worldwideDay];
       } else {
         const today = todayYmd();
+        // Closed days carry the locks that are still to be claimed, so the window is not filtered by stage.
         const probed = await discoverByDate(n, ymdShift(today, -DEFAULT_DAYS_BACK), ymdShift(today, DEFAULT_DAYS_AHEAD));
-        targets = probed.filter((x) => isActiveStage(x.stage)).map((x) => x.worldwideDay).sort((x, y) => x - y);
+        targets = probed.map((x) => x.worldwideDay).sort((x, y) => x - y);
       }
-      const refundDelay = Number(
-        (await n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "UNFINALIZED_REFUND_DELAY" })) as number,
-      );
       const bids = await Promise.all(
         targets.map(async (wwd) => {
           const [commitHash, revealed, lock, bond] = (await Promise.all([
@@ -704,24 +706,24 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             }
           }
           if (lock.status !== 0) {
-            const [, , , finalized] = (await n.client.readContract({
-              address: addr(n, "escrow"),
-              abi: ESCROW_ABI,
-              functionName: "auctionEscrowState",
-              args: [wwd],
-            })) as [bigint, number, number, boolean];
+            const [[, , , finalized], [claimable, claimableAt]] = (await Promise.all([
+              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "auctionEscrowState", args: [wwd] }),
+              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getClaimableRefund", args: [wwd, who] }),
+            ])) as [[bigint, number, number, boolean], [bigint, number]];
             const escrow: Record<string, unknown> = {
               lockedAmount: lock.lockedAmount.toString(),
               status: lockStatus(lock.status),
               finalized,
+              claimable: claimable.toString(),
+              // Zero means the escrow owes it now; a date means the day never finalized and the
+              // full principal waits out the anomaly window.
+              claimableAt: epochIso(claimableAt),
             };
-            // Locked + never finalized = no refund instructions reached this chain; the bidder
-            // self-serves the full principal once the delay passes. Only then is the claim time
-            // meaningful - a finalized lock refunds through the normal path, not this one.
-            if (lock.status === 1 && !finalized) {
-              escrow.refundClaimableAt = epochIso(lock.lockedAt + refundDelay);
+            if (claimable > 0n) {
               hints.push(
-                "escrow not finalized on this chain; if no refund arrives, claim the full lock via auction_claim_refund from refundClaimableAt",
+                claimableAt === 0
+                  ? "claim it now via auction_claim_refund"
+                  : "no refund instructions reached this chain; claim the full lock via auction_claim_refund from claimableAt",
               );
             }
             out.escrow = escrow;
@@ -956,9 +958,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_claim_refund",
-    "Reclaim a bid lock the finalization never covered: the full principal 72h after the lock when no " +
-      "refund instructions reached this chain (e.g. it missed the clearing deadline), or the recorded " +
-      "refund portion post-finalize. Permissionless and always pays the stored bidder. Requires OUTBE_PRIVATE_KEY.",
+    "Collect what a bid lock still holds and close it: a winner's change over the clearing price, a loser's " +
+      "whole principal once its day closed, or the whole principal 72h after the lock when no refund " +
+      "instructions reached this chain (e.g. it missed the clearing deadline). Read the amount and the date " +
+      "first with auction_bids_by_owner. Permissionless and always pays the stored bidder. Requires " +
+      "OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");

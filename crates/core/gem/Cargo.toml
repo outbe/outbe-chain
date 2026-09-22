@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-oracle = { path = "../../system/oracle" }
@@ -15,11 +16,12 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 hex.workspace = true
-base64 = "0.22"
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
+base64.workspace = true
+serde_json.workspace = true
 
 [features]
 default = []

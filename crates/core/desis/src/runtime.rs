@@ -1098,22 +1098,12 @@ fn clear_inner(
 
     // A skipped chain's bidders reclaim through the escrow timeout path instead.
     for &chain_id in included {
-        let mut bidders = Vec::new();
-        let mut refunded = Vec::new();
-        let mut paid = Vec::new();
-        for (i, &bidder_chain) in result.bidder_chains.iter().enumerate() {
-            if bidder_chain == chain_id {
-                bidders.push(result.all_bidders[i]);
-                refunded.push(result.refunded_amounts[i]);
-                paid.push(result.paid_amounts[i]);
-            }
-        }
-        if bidders.is_empty() {
+        if !result.bidder_chains.contains(&chain_id) {
             continue;
         }
-        let total_chunks = refund_chunk_count(bidders.len())?;
-        for (chunk_index, start) in (0..bidders.len()).step_by(REFUND_CHUNK_LEN).enumerate() {
-            let end = (start + REFUND_CHUNK_LEN).min(bidders.len());
+        let chunks = refund_chunks(&result, chain_id)?;
+        let total_chunks = chunks.len() as u16;
+        for (chunk_index, chunk) in chunks.into_iter().enumerate() {
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
@@ -1121,10 +1111,12 @@ fn clear_inner(
                     dstChainId: chain_id,
                     worldwideDay: worldwide_day.into(),
                     chunkIndex: chunk_index as u16,
-                    totalChunks: total_chunks as u16,
-                    bidders: bidders[start..end].to_vec(),
-                    refundedAmounts: refunded[start..end].to_vec(),
-                    paidAmounts: paid[start..end].to_vec(),
+                    totalChunks: total_chunks,
+                    clearingRate: u64::from(result.clearing_rate),
+                    basis: config.escrow_basis_minor(),
+                    winners: chunk.winners,
+                    partialIndex: chunk.partial_index,
+                    partialWon: chunk.partial_won,
                 }
                 .abi_encode()
                 .into(),
@@ -1174,6 +1166,7 @@ fn calculate_clearing(
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut winner_chains: Vec<u32> = Vec::with_capacity(len);
     let mut winner_currencies: Vec<(u16, u16)> = Vec::with_capacity(len);
+    let mut partial_winner = None;
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
     let escrow_basis = config.escrow_basis_minor();
@@ -1195,6 +1188,9 @@ fn calculate_clearing(
         let allocated = (bid.intex_quantity as u32).min(allocatable);
 
         if allocated > 0 {
+            if allocated < u32::from(bid.intex_quantity) {
+                partial_winner = Some(winners.len());
+            }
             winners.push(bid.bidder_address);
             winner_quantities.push(alloy_primitives::U256::from(allocated));
             winner_chains.push(*chain_id);
@@ -1241,6 +1237,7 @@ fn calculate_clearing(
         winner_quantities,
         winner_chains,
         winner_currencies,
+        partial_winner,
         all_bidders,
         refunded_amounts,
         paid_amounts,
@@ -1252,14 +1249,59 @@ fn calculate_clearing(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// How many REFUND_INSTRUCTIONS messages one chain's bidders take. Bounded by the
-/// codec's arrival set, which is one 256-bit word wide.
-pub(crate) fn refund_chunk_count(bidders: usize) -> Result<usize> {
-    let chunks = bidders.div_ceil(REFUND_CHUNK_LEN);
+/// How many REFUND_INSTRUCTIONS messages one chain's winners take: at least one, which
+/// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
+/// which is one 256-bit word wide.
+pub(crate) fn refund_chunk_count(winners: usize) -> Result<usize> {
+    let chunks = winners.div_ceil(REFUND_CHUNK_LEN).max(1);
     if chunks > MAX_REFUND_CHUNKS {
-        return Err(DesisError::RefundFanOutTooLarge(bidders).into());
+        return Err(DesisError::RefundFanOutTooLarge(winners).into());
     }
     Ok(chunks)
+}
+
+/// One REFUND_INSTRUCTIONS message: a run of a chain's winners and the partial fill among them.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RefundChunk {
+    pub(crate) winners: Vec<Address>,
+    pub(crate) partial_index: u16,
+    /// Units the partially filled winner received; 0 when the chunk has none.
+    pub(crate) partial_won: u16,
+}
+
+/// A chain's winners in ranking order, cut into REFUND_INSTRUCTIONS messages.
+pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Vec<RefundChunk>> {
+    let mut winners = Vec::new();
+    let mut partial = None;
+    for (j, &winner_chain) in result.winner_chains.iter().enumerate() {
+        if winner_chain != chain_id {
+            continue;
+        }
+        if result.partial_winner == Some(j) {
+            partial = Some((
+                winners.len(),
+                result.winner_quantities[j].saturating_to::<u16>(),
+            ));
+        }
+        winners.push(result.winners[j]);
+    }
+
+    let total_chunks = refund_chunk_count(winners.len())?;
+    Ok((0..total_chunks)
+        .map(|chunk_index| {
+            let start = chunk_index * REFUND_CHUNK_LEN;
+            let end = (start + REFUND_CHUNK_LEN).min(winners.len());
+            let (partial_index, partial_won) = match partial {
+                Some((at, won)) if (start..end).contains(&at) => ((at - start) as u16, won),
+                _ => (0, 0),
+            };
+            RefundChunk {
+                winners: winners[start..end].to_vec(),
+                partial_index,
+                partial_won,
+            }
+        })
+        .collect())
 }
 
 /// One issuance per distinct winning `(issuance, reference)` pair, in the order

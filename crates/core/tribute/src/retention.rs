@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
-    body_commitment, decode_stored_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
+    body_commitment, decode_stored_tribute_v1, CeAuditError, CeAuditWork, StoredBody, WwdEntityId,
+    ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
@@ -19,7 +20,7 @@ use outbe_offchain_storage::{
 use outbe_primitives::time::WorldwideDay;
 
 use crate::{
-    repository::{namespace, primary_key, TRIBUTES_NAMESPACE},
+    repository::{audit_error, namespace, primary_key, AuditEntries, TRIBUTES_NAMESPACE},
     TributeRepositoryError,
 };
 
@@ -63,6 +64,19 @@ pub struct RetainedTributePage {
     pub next_after: Option<RetainedTributeCursor>,
 }
 
+/// One canonical retained body with its native lease and partition selectors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetainedTributeAuditEntry {
+    pub pin: RetainedTributePin,
+    pub reference: RetainedTributeRef,
+    pub stored_body: StoredBody,
+}
+
+/// Receives bounded observations; they are provisional until the audit succeeds.
+pub trait RetainedTributeAuditVisitor {
+    fn visit_retained(&mut self, entry: RetainedTributeAuditEntry) -> Result<(), CeAuditError>;
+}
+
 /// Read and mutation-planning authority for the job-retained namespace.
 #[derive(Clone)]
 pub struct RetainedTributeReader {
@@ -73,6 +87,32 @@ impl RetainedTributeReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         Self { storage }
+    }
+
+    /// Enumerates every retained primary and verifies the entire day index.
+    /// The caller supplies one immutable view and authenticates lease obligations
+    /// separately. Empty or partial GC residuals need only be structurally valid.
+    pub fn audit_retained(
+        &self,
+        work: &CeAuditWork,
+        visitor: &mut impl RetainedTributeAuditVisitor,
+    ) -> Result<(), CeAuditError> {
+        let primary =
+            AuditEntries::new(&self.storage, OCOMP_RETAINED_TRIBUTES_NAMESPACE).map(|entry| {
+                let entry = entry?;
+                let (pin, reference, key) = retained_audit_record(&entry, false)?;
+                let stored_body =
+                    StoredBody::decode(entry.value.as_bytes()).map_err(audit_error)?;
+                visitor.visit_retained(RetainedTributeAuditEntry {
+                    pin,
+                    reference,
+                    stored_body,
+                })?;
+                Ok(key)
+            });
+        let index = AuditEntries::new(&self.storage, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE)
+            .map(|entry| retained_audit_record(&entry?, true).map(|(_, _, key)| key));
+        work.compare_records::<RETAINED_KEY_LEN>(ID_PREFIX_LEN, primary, index)
     }
 
     /// Plans the immutable retained copy for one current canonical body.
@@ -341,6 +381,30 @@ impl RetainedTributeReader {
         batch.validate()?;
         Ok((batch, !body_has_more))
     }
+}
+
+fn retained_audit_record(
+    entry: &ScanEntry,
+    index: bool,
+) -> Result<
+    (
+        RetainedTributePin,
+        RetainedTributeRef,
+        [u8; RETAINED_KEY_LEN],
+    ),
+    CeAuditError,
+> {
+    let key: [u8; RETAINED_KEY_LEN] = entry.key.as_bytes().try_into().map_err(|_| {
+        audit_error(TributeRepositoryError::MalformedIndexKey {
+            index: "OCOMP retained",
+        })
+    })?;
+    let pin = RetainedTributePin {
+        input_lease_id: B256::from_slice(&key[..JOB_PREFIX_LEN]),
+        worldwide_day: WorldwideDay::new(u32::from_be_bytes([key[32], key[33], key[34], key[35]])),
+    };
+    let reference = parse_retained_entry(entry, pin, index).map_err(audit_error)?;
+    Ok((pin, reference, key))
 }
 
 /// Node-owned release capability. Compute processes receive only the reader.

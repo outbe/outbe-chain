@@ -44,19 +44,19 @@ contract BridgeMsgCodecHardeningHarness {
         uint32 worldwideDay,
         uint16 chunkIndex,
         uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
+        address[] calldata winners,
+        uint16 partialIndex,
+        uint16 partialWon
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeRefundInstructions(
-            worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+            worldwideDay, chunkIndex, totalChunks, 600_000, 1e6, winners, partialIndex, partialWon
         );
     }
 
     function decodeRefundInstructions(bytes calldata m)
         external
         pure
-        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, uint64, uint128, address[] memory, uint16, uint16)
     {
         return BridgeMsgCodec.decodeRefundInstructions(m);
     }
@@ -151,21 +151,13 @@ contract BridgeMsgCodecHardeningTest is Test {
         harness.encodeIssuanceInstructions2(20_260_213, 0, 1, IssuanceBatchLib.one(payload));
     }
 
-    function test_encodeRefundInstructions_arrayLengthMismatch_reverts() public {
-        // bidders / refundedAmounts / paidAmounts must move in lockstep.
-        address[] memory bidders = new address[](2);
-        bidders[0] = address(0xB1);
-        bidders[1] = address(0xB2);
-        uint128[] memory refundedAmounts = new uint128[](1); // mismatch
-        refundedAmounts[0] = 1;
-        uint128[] memory paidAmounts = new uint128[](2);
+    function test_encodeRefundInstructions_partialOutsideWinners_reverts() public {
+        address[] memory winners = new address[](2);
+        winners[0] = address(0xB1);
+        winners[1] = address(0xB2);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
-            )
-        );
-        harness.encodeRefundInstructions(1, 0, 1, bidders, refundedAmounts, paidAmounts);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
+        harness.encodeRefundInstructions(1, 0, 1, winners, 2, 1);
     }
 
     // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
@@ -175,19 +167,15 @@ contract BridgeMsgCodecHardeningTest is Test {
         // reach the receiver via a peer compromise or a future encoder change. The decoder must
         // reject with the typed RefundBatchTooLarge error so the drop-don't-block handler surfaces
         // a parameterized diagnostic.
-        uint256 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
-        address[] memory bidders = new address[](n);
-        uint128[] memory refundedAmounts = new uint128[](n);
-        uint128[] memory paidAmounts = new uint128[](n);
+        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
+        address[] memory winners = new address[](n);
         for (uint256 i = 0; i < n; ++i) {
-            bidders[i] = address(uint160(i + 1));
-            refundedAmounts[i] = 1;
-            paidAmounts[i] = 0;
+            winners[i] = address(uint160(i + 1));
         }
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(0), uint16(0))
         );
 
         vm.expectRevert(

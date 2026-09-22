@@ -21,7 +21,6 @@ contract EscrowAdapterProceedsTest is Test {
     address outsider = address(7);
 
     uint32 worldwideDay1 = 1;
-    uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
     bytes32 constant GUID = bytes32(uint256(0xDEADBEEF));
 
     function setUp() public {
@@ -39,16 +38,17 @@ contract EscrowAdapterProceedsTest is Test {
     }
 
     function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
+        // One Intex at the full rate of a 1-unit basis locks 1e18, all of it paid at a full-rate clearing.
+        paymentToken.mint(bidder1, 1e18);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, 1e18, 1_000_000, 1);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
+        address[] memory winners = new address[](1);
+        winners[0] = bidder1;
 
         vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, GUID, instructions, true);
+        escrow.finalizeAuction(worldwideDay1, GUID, winners, 0, 0, 1_000_000, 1_000_000, true);
     }
 
     function test_SetProceedsRecipient_OnlyAdmin() public {

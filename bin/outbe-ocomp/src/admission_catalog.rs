@@ -103,6 +103,49 @@ pub struct VerifiedAdmissionCatalog {
     _lock: CatalogLock,
 }
 
+/// Immutable access to an existing admission catalog under its shared lock.
+///
+/// Opening never creates a directory, header, or lock file. The native catalog
+/// remains private so a reader cannot admit records or latch a conflict.
+pub struct AdmissionCatalogReader {
+    inner: VerifiedAdmissionCatalog,
+}
+
+impl AdmissionCatalogReader {
+    pub fn open_existing(
+        root: impl AsRef<Path>,
+        reader: &FilesystemCasReader,
+        limits: SchemaLimits,
+    ) -> Result<Self, AdmissionCatalogError> {
+        let root = root.as_ref().to_path_buf();
+        inspect_private_directory(&root)?;
+        let lock = CatalogLock::acquire_shared(&root)?;
+        Ok(Self {
+            inner: VerifiedAdmissionCatalog::reopen_with_lock(root, reader, limits, lock)?,
+        })
+    }
+
+    pub fn read(
+        &self,
+        plan_ordinal: u32,
+    ) -> Result<VerifiedAdmissionRecordV1, AdmissionCatalogError> {
+        self.inner.read(plan_ordinal)
+    }
+
+    pub fn exact_plan_cursor(&self) -> Result<AdmissionCursor<'_>, AdmissionCatalogError> {
+        self.inner.exact_plan_cursor()
+    }
+
+    #[must_use]
+    pub const fn is_abstained(&self) -> bool {
+        self.inner.is_abstained()
+    }
+
+    pub(crate) fn verified_view(&self) -> &VerifiedAdmissionCatalog {
+        &self.inner
+    }
+}
+
 impl VerifiedAdmissionCatalog {
     pub fn open(
         root: impl AsRef<Path>,
@@ -147,6 +190,15 @@ impl VerifiedAdmissionCatalog {
         let root = root.as_ref().to_path_buf();
         inspect_private_directory(&root)?;
         let lock = CatalogLock::acquire(&root)?;
+        Self::reopen_with_lock(root, reader, limits, lock)
+    }
+
+    fn reopen_with_lock(
+        root: PathBuf,
+        reader: &FilesystemCasReader,
+        limits: SchemaLimits,
+        lock: CatalogLock,
+    ) -> Result<Self, AdmissionCatalogError> {
         reject_orphaned_temps(&root)?;
         let header_path = root.join(HEADER_FILE);
         if !path_exists(&header_path)? {
@@ -954,6 +1006,32 @@ struct CatalogLock {
 }
 
 impl CatalogLock {
+    #[allow(unsafe_code)]
+    fn acquire_shared(root: &Path) -> Result<Self, AdmissionCatalogError> {
+        let path = root.join(LOCK_FILE);
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&path)
+            .map_err(|source| io_error("open read-only catalog lock", &path, source))?;
+        let metadata = file
+            .metadata()
+            .map_err(|source| io_error("inspect read-only catalog lock", &path, source))?;
+        if !metadata.file_type().is_file() {
+            return Err(AdmissionCatalogError::InvalidEnvelope);
+        }
+        // SAFETY: `file` owns a live descriptor for the complete flock call.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+        if result != 0 {
+            let source = std::io::Error::last_os_error();
+            if source.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                return Err(AdmissionCatalogError::LockHeld(path));
+            }
+            return Err(io_error("lock read-only catalog", &path, source));
+        }
+        Ok(Self { file })
+    }
+
     #[allow(unsafe_code)]
     fn acquire(root: &Path) -> Result<Self, AdmissionCatalogError> {
         let path = root.join(LOCK_FILE);
