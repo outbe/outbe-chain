@@ -369,9 +369,9 @@ mod tests {
     #[test]
     #[ignore = "generates and verifies a real Barretenberg Demo Tribute proof"]
     fn proven_offer_is_a_valid_demo_tribute_proof_for_its_statement() {
+        use outbe_protocol::protocol::zkproof::decode_public_words;
+        use outbe_tee::protocol::TributePublicInputs;
         use outbe_zk_backend::barretenberg::verify_circuit;
-        use outbe_zk_canonical::demo_tribute::decode_public_inputs as decode_demo_tribute_public_inputs;
-        use outbe_zk_canonical::tribute::alloy::PublicInputs;
 
         let caller = Address::repeat_byte(0x44);
         let (draft_id, su_hash) = offer_identifiers("test", caller, 20_260_729);
@@ -387,10 +387,10 @@ mod tests {
             su_hash,
         });
         let proof = hex::decode(zk.proof_hex().trim_start_matches("0x")).expect("proof hex");
-        let public: PublicInputs = decode_demo_tribute_public_inputs(&proof)
-            .expect("public inputs decode")
-            .try_into()
-            .expect("Alloy public inputs");
+        let public = TributePublicInputs::from_raw_parts(
+            decode_public_words::<4>(&proof, DEMO_TRIBUTE_COMBINED_LEN)
+                .expect("public inputs decode"),
+        );
         assert!(verify_circuit::<DemoTribute>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, zk.merkle_root);
         assert_eq!(zk.l2_chain_id, circuit_selector(57_005));

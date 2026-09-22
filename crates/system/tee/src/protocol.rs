@@ -100,6 +100,30 @@ pub struct TributeZkContext {
     pub l2_chain_id: u64,
 }
 
+/// Shared four-word public claim for Demo Tribute and Niflheim Tribute.
+/// The first word is `derived_owner` in Demo's ABI and `owner` in Niflheim's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TributePublicInputs {
+    pub derived_owner: B256,
+    pub nft_hash: B256,
+    pub binding_hash: B256,
+    pub merkle_root: B256,
+}
+
+impl TributePublicInputs {
+    /// Map ABI-ordered words after the caller validates canonical field encoding.
+    pub fn from_raw_parts(
+        [derived_owner, nft_hash, binding_hash, merkle_root]: [[u8; 32]; 4],
+    ) -> Self {
+        Self {
+            derived_owner: B256::from(derived_owner),
+            nft_hash: B256::from(nft_hash),
+            binding_hash: B256::from(binding_hash),
+            merkle_root: B256::from(merkle_root),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeZkExpectedHashes {
     pub nft_hash: B256,

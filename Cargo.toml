@@ -356,8 +356,3 @@ debug = 0
 # Preserve the existing context-dispatch hook on the matching upstream release.
 [patch.crates-io]
 alloy-evm = { path = "vendor/alloy-evm" }
-
-# Local integration of shared Tribute inputs until the sibling changes are released.
-[patch."https://github.com/outbe/outbe-circuits.git"]
-outbe-zk-canonical = { path = "../outbe-circuits/crates/outbe-zk-canonical" }
-outbe-protocol = { path = "../outbe-circuits/crates/outbe-protocol" }

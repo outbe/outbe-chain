@@ -9,11 +9,11 @@ use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
 use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
 use outbe_tee::protocol::{
-    EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
+    EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributePublicInputs,
+    TributeZkContext,
 };
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
-use outbe_zk_canonical::tribute::alloy::PublicInputs as TributePublicInputs;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -332,15 +332,9 @@ fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<Trib
     }
     // UltraKeccakZK: DefaultIO + Oink + Sumcheck + Shplemini.
     let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
-    let [derived_owner, nft_hash, binding_hash, merkle_root] =
-        decode_public_words::<4>(proof, combined_len)
-            .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
-    Ok(TributePublicInputs {
-        derived_owner: B256::from(derived_owner),
-        nft_hash: B256::from(nft_hash),
-        binding_hash: B256::from(binding_hash),
-        merkle_root: B256::from(merkle_root),
-    })
+    let words = decode_public_words::<4>(proof, combined_len)
+        .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+    Ok(TributePublicInputs::from_raw_parts(words))
 }
 
 fn validate_zk_result(

@@ -52,8 +52,10 @@ use outbe_protocol::primitive::signature::SignatureScheme;
 use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
+use outbe_protocol::protocol::zkproof::decode_public_words;
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
+use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
@@ -67,7 +69,6 @@ use outbe_zk_canonical::demo_tribute::{
     DemoTributeProvable, COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN,
 };
 use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
-use outbe_zk_canonical::tribute::alloy::PublicInputs as DemoTributePublicInputs;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
@@ -288,11 +289,9 @@ fn build_fixture() -> Fixture {
     };
     let proof_generation_ms = proof_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let generated_public_inputs: DemoTributePublicInputs =
-        decode_demo_tribute_public_inputs(&generated_combined)
-            .unwrap()
-            .try_into()
-            .unwrap();
+    let generated_public_inputs = DemoTributePublicInputs::from_raw_parts(
+        decode_public_words::<4>(&generated_combined, DEMO_TRIBUTE_COMBINED_LEN).unwrap(),
+    );
     assert!(verify_circuit::<DemoTribute>(&generated_combined).unwrap());
 
     assert_eq!(
@@ -300,11 +299,9 @@ fn build_fixture() -> Fixture {
         DEMO_TRIBUTE_COMBINED_LEN,
         "versioned benchmark proof has the wrong size"
     );
-    let public_inputs: DemoTributePublicInputs =
-        decode_demo_tribute_public_inputs(FIXED_DEMO_TRIBUTE_V1)
-            .unwrap()
-            .try_into()
-            .unwrap();
+    let public_inputs = DemoTributePublicInputs::from_raw_parts(
+        decode_public_words::<4>(FIXED_DEMO_TRIBUTE_V1, DEMO_TRIBUTE_COMBINED_LEN).unwrap(),
+    );
     assert!(
         verify_circuit::<DemoTribute>(FIXED_DEMO_TRIBUTE_V1).unwrap(),
         "versioned benchmark proof no longer verifies"

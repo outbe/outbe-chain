@@ -440,7 +440,6 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
     use outbe_tee_enclave::zk_claim::TributeDraftClaim;
     use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
     use outbe_zk_canonical::noir::{niflheim_tribute, EmbeddedCurvePoint};
-    use outbe_zk_canonical::tribute::PublicInputs;
     use rand::{rngs::StdRng, SeedableRng};
 
     const L2_CHAIN_ID: u32 = 9_900_501;
@@ -485,8 +484,8 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
         merkle_path_siblings: siblings,
         merkle_path_indices: [1; 32],
     };
-    let public = PublicInputs {
-        derived_owner: owner,
+    let public = niflheim_tribute::PublicInputs {
+        owner,
         nft_hash,
         binding_hash,
         merkle_root,
