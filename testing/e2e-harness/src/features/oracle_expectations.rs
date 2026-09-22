@@ -277,23 +277,14 @@ pub(crate) fn fresh_wwd_price(world: &World, height: u64) -> U256 {
     expected
 }
 
-fn rolling_entry_price(
-    quotes: &[Quote],
-    now: u64,
-    configured_lookback: u64,
-    current: U256,
-) -> U256 {
+fn previous_day_entry_price(quotes: &[Quote], prepared_at: u64) -> U256 {
+    let end = prepared_at / 86_400 * 86_400;
+    let price = weighted_price(quotes, end.saturating_sub(86_400), end);
     assert!(
-        !current.is_zero(),
-        "entry price requires a current exchange rate"
+        !price.is_zero(),
+        "entry price requires a positive previous-day VWAP"
     );
-    let start = now.saturating_sub(configured_lookback.min(4 * 60 * 60));
-    let rolling = weighted_price(quotes, start, now);
-    assert!(
-        !rolling.is_zero(),
-        "entry price requires a positive rolling VWAP"
-    );
-    rolling.max(current)
+    price
 }
 
 fn frozen_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 {
@@ -320,8 +311,8 @@ fn frozen_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 
     words[1]
 }
 
-/// Recompute the USD entry price from Oracle inputs at the exact request
-/// checkpoint. WWD VWAP remains a separate Metadosis input, not this price.
+/// Recompute the USD entry price from the UTC day preceding preparation.
+/// Find preparation from the first frozen snapshot, even when the request was delayed.
 pub(crate) fn frozen_entry_price(world: &World) -> U256 {
     let request = world
         .state
@@ -344,27 +335,38 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
         .ocomp_job_record_at_on(ports[0], request.intent_id, height)
         .expect("price input JobIntent")
         .intent;
-    let quotes = history(world, ports[0], height);
-    let params = eth::read_call_at(
-        &world.rpc.url(ports[0]),
-        ORACLE_ADDRESS,
-        &eth::IOracle::getParamsCall {},
-        height,
-    )
-    .expect("request-time Oracle parameters");
-    let current = eth::read_call_at(
-        &world.rpc.url(ports[0]),
-        ORACLE_ADDRESS,
-        &eth::IOracle::getCoenExchangeRateForCall { isoCode: 840 },
-        height,
-    )
-    .expect("request-time USD exchange rate");
-    let expected = rolling_entry_price(
-        &quotes,
-        intent.logical_evaluation_time,
-        params.lookbackDuration,
-        current,
-    );
+    let frozen_slot =
+        outbe_nod::openings::entry_price_slots(WorldwideDay::new(request.worldwide_day), &[840])
+            .expect("USD snapshot slots")[0];
+    // The frozen flag is monotonic. Locate its first block with logarithmic RPC reads.
+    let (mut low, mut high) = (0, height);
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let raw = eth::raw_json_with_params(
+            &world.rpc.url(ports[0]),
+            "eth_getStorageAt",
+            serde_json::json!([NOD_ADDRESS, frozen_slot, format!("0x{mid:x}")]),
+        )
+        .expect("historical preparation flag");
+        let frozen: U256 = serde_json::from_value(raw).expect("canonical frozen flag");
+        if frozen.is_zero() {
+            low = mid + 1;
+        } else {
+            assert_eq!(frozen, U256::from(1));
+            high = mid;
+        }
+    }
+    let preparation_height = low;
+    let preparation_checkpoint = world
+        .rpc
+        .checkpoint_at(ports[0], preparation_height)
+        .expect("preparation checkpoint");
+    let prepared_at = world
+        .rpc
+        .block_timestamp(ports[0], preparation_height)
+        .expect("preparation timestamp");
+    let quotes = history(world, ports[0], preparation_height);
+    let expected = previous_day_entry_price(&quotes, prepared_at);
     for &port in &ports {
         assert_eq!(
             world
@@ -375,27 +377,16 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
             intent
         );
         assert_eq!(
-            history(world, port, height),
+            history(world, port, preparation_height),
             quotes,
             "Oracle price history on {port}"
         );
-        let peer_params = eth::read_call_at(
-            &world.rpc.url(port),
-            ORACLE_ADDRESS,
-            &eth::IOracle::getParamsCall {},
-            height,
-        )
-        .expect("peer Oracle parameters");
-        assert_eq!(peer_params.lookbackDuration, params.lookbackDuration);
         assert_eq!(
-            eth::read_call_at(
-                &world.rpc.url(port),
-                ORACLE_ADDRESS,
-                &eth::IOracle::getCoenExchangeRateForCall { isoCode: 840 },
-                height
-            )
-            .expect("peer request-time rate"),
-            current
+            world
+                .rpc
+                .checkpoint_at(port, preparation_height)
+                .expect("peer preparation checkpoint"),
+            preparation_checkpoint
         );
         assert_eq!(
             frozen_usd_price_at(world, port, request.worldwide_day, height),
@@ -416,8 +407,8 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
             "worldwide_day": request.worldwide_day, "height": height,
             "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
             "logical_evaluation_time": intent.logical_evaluation_time,
-            "lookback_seconds": params.lookbackDuration.min(4 * 60 * 60),
-            "current_rate": current, "observations": quotes, "expected_entry_price": expected,
+            "preparation_height": preparation_height, "prepared_at": prepared_at,
+            "observations": quotes, "expected_entry_price": expected,
         })
     );
     expected
@@ -513,31 +504,24 @@ mod tests {
     }
 
     #[test]
-    fn entry_price_uses_both_maximum_branches_and_exact_rolling_boundaries() {
-        let now = 20_000;
+    fn entry_price_uses_previous_utc_day_and_exact_midnight_boundaries() {
         let quotes = [
-            quote(5_599, 999, 100),
-            quote(5_600, 100, 1),
-            quote(19_999, 200, 3),
-            quote(20_000, 999, 100),
+            quote(86_399, 999_000_000, 100),
+            quote(86_400, 100_000_000, 1),
+            quote(172_799, 200_000_000, 3),
+            quote(172_800, 999_000_000, 100),
         ];
-        assert_eq!(
-            rolling_entry_price(&quotes, now, 86_400, U256::from(150)),
-            U256::from(175)
-        );
-        assert_eq!(
-            rolling_entry_price(&quotes, now, 86_400, U256::from(180)),
-            U256::from(180)
-        );
-        assert_eq!(
-            rolling_entry_price(&quotes, now, 3_600, U256::from(150)),
-            U256::from(200)
-        );
+        for prepared_at in [172_800, 200_000, 259_199] {
+            assert_eq!(
+                previous_day_entry_price(&quotes, prepared_at),
+                U256::from(175_000_000)
+            );
+        }
     }
 
     #[test]
     #[should_panic(expected = "FORMING interval contains priced observations")]
-    fn current_rate_alone_cannot_supply_an_empty_rolling_window() {
-        rolling_entry_price(&[quote(10, 100, 1)], 20_000, 3_600, U256::from(200));
+    fn current_day_quotes_cannot_supply_an_empty_previous_day() {
+        previous_day_entry_price(&[quote(172_800, 100_000_000, 1)], 200_000);
     }
 }

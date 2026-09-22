@@ -9,6 +9,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     chain,
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
+    time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_validatorset::{
@@ -70,6 +71,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
+    let prepare_time = block_time - SECONDS_PER_DAY;
+    let price_day = previous_date_key(timestamp_to_date_key(prepare_time));
     let owner = address!("7100000000000000000000000000000000000071");
     let nominal = U256::from(1_000);
     let day_limit = U256::from(100);
@@ -98,7 +101,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap();
         oracle
             .write_snapshot(
-                block_time - 1,
+                date_key_to_utc_timestamp(price_day),
                 &[(
                     outbe_oracle::api::DAY_TYPE_PAIR,
                     U256::from(250_000),
@@ -106,6 +109,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 )],
             )
             .unwrap();
+        oracle.finalize_utc_day_vwap(price_day).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -159,10 +163,19 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap();
         tribute.seal_day(wwd).unwrap();
 
-        // Mirror production: the league snapshot is built in the active CE phase
+        // Mirror production: the price and league snapshots are built in the active CE phase
         // (process_ocomp_ready_candidate) before the post-seal terminal request.
+        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, prepare_time).unwrap();
         metadosis
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .unwrap();
+
+        // The request is delayed across UTC midnight; newer daily and current
+        // prices must not replace the preparation snapshot.
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&previous_date_key(timestamp_to_date_key(block_time)))
+            .write(&usd_index, U256::from(700_000))
             .unwrap();
 
         end_block(storage.clone(), &scope).unwrap();
@@ -181,7 +194,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 .get_nested(&wwd)
                 .read(&840)
                 .unwrap(),
-            U256::from(320_000)
+            U256::from(250_000)
         );
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -1289,6 +1302,7 @@ fn prepare_request_fixture_with_day_type(
         metadosis
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
             .unwrap();
+        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
         end_block(storage, &scope).unwrap();
     });
 
@@ -1390,6 +1404,8 @@ fn prepare_ready_days_fixture(
             // CE phase before the post-seal terminal request.
             metadosis
                 .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+                .unwrap();
+            outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time)
                 .unwrap();
         }
         end_block(storage, &scope).unwrap();
@@ -1533,6 +1549,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
             .unwrap();
 
+        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
         end_block(storage.clone(), &scope).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
