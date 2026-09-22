@@ -58,21 +58,29 @@ fn submit_one_offer_for_unregistered_chain(world: &mut World) {
         .evm_key()
         .expect("validator-0 key");
     wait_for_offering(world, &wwd);
-    // Chain zero cannot be registered. Reject before day, pricing, or enclave
-    // work, even though the offer carries no ZK material.
+    // Supply a real proof for the canonical test L2, but do not register that
+    // network. CLI inputs remain valid; chain admission must still fail closed.
+    let caller = super::l2_registration::operator_address(world, &key);
+    let zk = super::l2_zk_gate::offer_proof(
+        world,
+        caller,
+        B256::with_last_byte(0x11),
+        B256::with_last_byte(0x22),
+        wwd.parse().expect("numeric worldwide day"),
+    );
     let tx_hash = world
         .rpc
         .tribute_offer_with_zk(
             &key,
             &wwd,
             crate::world::rpc::TributeZkOffer {
-                tribute_draft_id_hex: &format!("{:#x}", B256::with_last_byte(0x11)),
-                su_hash_hex: &format!("{:#x}", B256::with_last_byte(0x22)),
-                merkle_root_hex: "0x",
-                proof_hex: "0x",
-                l2_chain_id: 0,
-                circuit_version: "",
-                signature_hex: "0x",
+                tribute_draft_id_hex: &zk.tribute_draft_id_hex,
+                su_hash_hex: &zk.su_hash_hex,
+                merkle_root_hex: &zk.merkle_root_hex(),
+                proof_hex: &zk.proof_hex(),
+                l2_chain_id: zk.l2_chain_id,
+                circuit_version: zk.circuit_version,
+                signature_hex: &zk.signature_hex(),
             },
         )
         .expect("product CLI offerTribute returned a transaction hash");

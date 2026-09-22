@@ -15941,14 +15941,14 @@
       },
       "calldata": {
         "bytes": 10084,
-        "zero_bytes": 1030,
-        "nonzero_bytes": 9054,
+        "zero_bytes": 1017,
+        "nonzero_bytes": 9067,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 4120,
-        "nonzero_byte_gas": 144864
+        "zero_byte_gas": 4068,
+        "nonzero_byte_gas": 145072
       },
       "gas_totals": {
-        "user_transaction": 745084
+        "user_transaction": 745140
       },
       "gas_components": [
         {
@@ -15960,14 +15960,14 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 4120,
-          "operations": 1030
+          "gas": 4068,
+          "operations": 1017
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 144864,
-          "operations": 9054
+          "gas": 145072,
+          "operations": 9067
         },
         {
           "ledger": "user_transaction",
@@ -15992,8 +15992,8 @@
         {
           "ledger": "user_transaction",
           "key": "storage.l2_registry.read",
-          "gas": 600,
-          "operations": 6,
+          "gas": 500,
+          "operations": 5,
           "module": "l2_registry"
         },
         {
@@ -16391,14 +16391,6 @@
         {
           "module": "l2_registry",
           "address": "0x000000000000000000000000000000000000ee0e",
-          "slot": "0xa14c3d6b574d1e531bee9df1e006eb7a6ee252ea8d6813584085ea67274934ab",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "l2_registry",
-          "address": "0x000000000000000000000000000000000000ee0e",
           "slot": "0xb34209a263f6c38fe55f099e9e70f9d67e93982480ff3234a5e0108028ad164d",
           "operation": "read",
           "count": 1,
@@ -16722,7 +16714,7 @@
         }
       ],
       "artifacts": {
-        "full_proof": "keccak256:0x7f57acdf3d550502515c28e3c466857c784559876403fe31a015f2dfe59b8855"
+        "demo_tribute_proof": "keccak256:0x7a06a6ba84961d2438348aebb533deb5b82ccc41a0d210cd689c784e6612232c"
       }
     }
   }
