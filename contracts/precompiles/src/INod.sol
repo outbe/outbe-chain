@@ -10,7 +10,8 @@ interface INod {
 
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906: emitted per Worldwide Day when a qualification or call pass changes its buckets.
+    /// ERC-4906: emitted per Worldwide Day when the call pass calls its buckets. Qualification is derived and
+    /// announces nothing.
     /// The range is the ids of that day, whose top four bytes are the day.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
