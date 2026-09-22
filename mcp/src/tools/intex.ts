@@ -136,6 +136,16 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return intexAddress(n.name, key);
   }
 
+  /** Whether the series has qualified; the outbe factory derives it from finalized daily VWAPs. */
+  async function seriesQualified(n: Network, series: Hex): Promise<boolean> {
+    return (await n.client.readContract({
+      address: addr(n, "factory"),
+      abi: FACTORY_ABI,
+      functionName: "isSeriesQualified",
+      args: [series],
+    })) as boolean;
+  }
+
   /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read.
    *  ERC-1155 carries no on-chain owner enumeration, so wallets and explorers derive holdings the same
    *  way. The scan starts at the pair's deployment block - see `intexNftFromBlock`. */
@@ -333,7 +343,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
+      "lifecycle state (Issued/Called/Expired), whether it has qualified (derived from finalized daily " +
+      "VWAPs, never stored), issued/called timestamps, the derived " +
       "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
       "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
     { series: seriesArg, network: networkArg.optional() },
@@ -354,7 +365,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
-      const metadata = await seriesMetadata(n, series);
+      const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
       return ok({
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
@@ -378,6 +389,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
+        qualified,
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
@@ -418,7 +430,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
-      "for Issued ones the series lifecycle with its callDeadline. Defaults to bsc-testnet (where won NFTs " +
+      "for Issued ones the series lifecycle with its callDeadline and, on outbe, whether it has qualified. " +
+      "Defaults to bsc-testnet (where won NFTs " +
       "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits - bridge " +
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkArg.optional() },
@@ -448,10 +461,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             })) as { state: number; calledAt: bigint | number; callTrigger: { callNoticePeriod: bigint | number } };
             const deadlineSec =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
+            // Only outbe has the factory that derives it.
+            const qualified = await seriesQualified(n, seriesHex).catch(() => undefined);
             return {
               ...base,
               series: fromSeriesId(seriesHex),
               state: intexState(d.state),
+              ...(qualified === undefined ? {} : { qualified }),
               callDeadline: epochIso(deadlineSec),
               expired: deadlineSec > 0 && Math.floor(Date.now() / 1000) > deadlineSec,
             };
