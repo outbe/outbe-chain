@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_oracle::{
-    api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap},
+    api::{get_all_reference_currencies, get_utc_day_vwap_for_iso},
     schema::OracleContract,
 };
 use outbe_primitives::{
@@ -104,7 +104,7 @@ pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<()> {
         let finished = if budget == 0 {
             false
         } else {
-            match day_price(ctx, iso_code, pinned_day)? {
+            match get_utc_day_vwap_for_iso(ctx.storage.clone(), pinned_day, iso_code)? {
                 // No pair or no trade that day: nothing to decide by.
                 None => true,
                 Some(vwap) => {
@@ -133,13 +133,6 @@ pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<()> {
         start_qualify_sweep(ctx, &gem, next)?;
     }
     Ok(())
-}
-
-fn day_price(ctx: &BlockRuntimeContext, iso_code: u16, day: u32) -> Result<Option<U256>> {
-    match coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-        Some(index) => get_utc_day_vwap(ctx.storage.clone(), day, index),
-        None => Ok(None),
-    }
 }
 
 /// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.

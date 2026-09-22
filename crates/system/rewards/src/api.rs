@@ -584,14 +584,12 @@ fn resolve_reward_entry_price(
         return Ok(None);
     }
 
-    if let Some(index) =
-        outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), reference_currency)?
-    {
-        if let Some(vwap) =
-            outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), reward_utc_day, index)?
-        {
-            return Ok(Some(vwap));
-        }
+    if let Some(vwap) = outbe_oracle::api::get_utc_day_vwap_for_iso(
+        ctx.storage.clone(),
+        reward_utc_day,
+        reference_currency,
+    )? {
+        return Ok(Some(vwap));
     }
 
     outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)

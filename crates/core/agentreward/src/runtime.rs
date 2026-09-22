@@ -230,14 +230,12 @@ fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> 
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let last_finalized_day = oracle.utc_day_vwap_last_finalized.read()?;
     if last_finalized_day != 0 {
-        if let Some(index) =
-            outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
-        {
-            if let Some(vwap) =
-                outbe_oracle::api::get_utc_day_vwap(storage.clone(), last_finalized_day, index)?
-            {
-                return Ok(Some(vwap));
-            }
+        if let Some(vwap) = outbe_oracle::api::get_utc_day_vwap_for_iso(
+            storage.clone(),
+            last_finalized_day,
+            AGENT_GEM_CURRENCY,
+        )? {
+            return Ok(Some(vwap));
         }
     }
 
