@@ -272,10 +272,10 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", rev = "d3ebb371817c526696728fdde7c847b52c9bcffe", features = ["alloy"] }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", rev = "d3ebb371817c526696728fdde7c847b52c9bcffe" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", rev = "d3ebb371817c526696728fdde7c847b52c9bcffe", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", rev = "d3ebb371817c526696728fdde7c847b52c9bcffe" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.25.0", features = ["alloy"] }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.25.0" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.25.0", features = ["alloy"] }
+outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.25.0" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 
