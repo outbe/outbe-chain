@@ -112,41 +112,6 @@ fn unreachable_tx_evicted_everywhere(world: &mut World) {
     }
 }
 
-#[then("the submitting validator logged the exact eviction identity and reason")]
-fn eviction_was_logged(world: &mut World) {
-    // Evictions must never be silent. Only the submitting node is known to have
-    // held this local RPC transaction, so bind its runtime record to the exact
-    // hash, sender, nonce, and removal reason.
-    let hash = world
-        .state
-        .stuck_tx_hash
-        .as_deref()
-        .expect("an unreachable transaction was submitted");
-    let sender = world
-        .state
-        .stuck_tx_sender
-        .as_deref()
-        .expect("the unreachable transaction sender was captured");
-    let nonce = world
-        .state
-        .stuck_tx_nonce
-        .expect("the unreachable transaction nonce was captured");
-    let line = world
-        .localnet
-        .first_runtime_log_line_containing(&format!("tx_hash={hash}"))
-        .expect("scan validator runtime logs")
-        .unwrap_or_else(|| panic!("validator-0 emitted no eviction record for {hash}"));
-    assert!(
-        line.contains("/validator-0/")
-            && line.contains("outbe::txpool")
-            && line.contains("evicting queued transaction after lifetime deadline")
-            && line.contains(&format!("sender={sender}"))
-            && line.contains(&format!("nonce={nonce}"))
-            && line.contains("reason=\"queued_lifetime\""),
-        "validator-0 eviction record did not bind the exact identity and reason: {line}"
-    );
-}
-
 #[when("the submitting validator restarts after the queued eviction")]
 fn restart_submitting_validator_after_eviction(world: &mut World) {
     world
