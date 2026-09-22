@@ -44,6 +44,9 @@ interface IIntexFactory {
     /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
 
+    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay` on, 0 when none.
+    function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
+
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit; the units burn from
     ///         `owner` and the Promis is minted to them. Authorized by the

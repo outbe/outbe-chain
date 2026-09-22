@@ -1592,3 +1592,37 @@ fn is_series_qualified_dispatch() {
         assert!(IIntexFactory::isSeriesQualifiedCall::abi_decode_returns(&out).unwrap());
     });
 }
+
+#[test]
+fn max_utc_day_vwap_since_dispatch() {
+    with_factory(|s| {
+        let closed_at = ISSUED_AT as u64 + 2 * DAY;
+        write_day_vwap(
+            &OracleContract::new(s.clone()),
+            REFERENCE_ISO,
+            PAIR_ID,
+            closed_at,
+            U256::from(EXPECTED_FLOOR + 1),
+        );
+        let read = |from: u32| {
+            let out = precompile::dispatch(
+                s.clone(),
+                &IIntexFactory::maxUtcDayVwapSinceCall {
+                    isoCode: REFERENCE_ISO,
+                    fromUtcDay: from,
+                }
+                .abi_encode(),
+                owner(),
+                U256::ZERO,
+            )
+            .unwrap();
+            IIntexFactory::maxUtcDayVwapSinceCall::abi_decode_returns(&out).unwrap()
+        };
+        let closed_day = previous_date_key(timestamp_to_date_key(closed_at));
+        assert_eq!(read(closed_day), U256::from(EXPECTED_FLOOR + 1));
+        assert_eq!(
+            read(outbe_primitives::time::next_date_key(closed_day)),
+            U256::ZERO
+        );
+    });
+}

@@ -239,6 +239,13 @@ pub fn dispatch(
                 isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {
                     runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
                 }),
+                maxUtcDayVwapSince(c) => view(c, |c| {
+                    outbe_oracle::api::max_utc_day_vwap_since(
+                        storage.clone(),
+                        c.isoCode,
+                        c.fromUtcDay,
+                    )
+                }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
                 // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has the protocol's leading zero bytes; `seq` is the on-chain

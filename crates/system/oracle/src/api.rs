@@ -463,6 +463,30 @@ pub fn crossed_floor(
     floor_minor: U256,
     from_utc_day: u32,
 ) -> Result<bool> {
+    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| vwap > floor_minor)
+}
+
+/// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on; zero when none.
+pub fn max_utc_day_vwap_since(
+    storage: StorageHandle,
+    iso_code: u16,
+    from_utc_day: u32,
+) -> Result<U256> {
+    let mut max = U256::ZERO;
+    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| {
+        max = max.max(vwap);
+        false
+    })?;
+    Ok(max)
+}
+
+/// Walks the finalized days from the newest back to `from_utc_day` until `stop` holds; whether it did.
+fn scan_utc_day_vwaps(
+    storage: StorageHandle,
+    iso_code: u16,
+    from_utc_day: u32,
+    mut stop: impl FnMut(U256) -> bool,
+) -> Result<bool> {
     if from_utc_day == 0 {
         return Ok(false);
     }
@@ -475,7 +499,7 @@ pub fn crossed_floor(
     while day >= from_utc_day {
         if oracle
             .get_utc_day_vwap_for_pair(day, index)?
-            .is_some_and(|vwap| vwap > floor_minor)
+            .is_some_and(&mut stop)
         {
             return Ok(true);
         }
