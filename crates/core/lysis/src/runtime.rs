@@ -3,7 +3,7 @@ use alloy_primitives::U256;
 use outbe_compressed_entities::{
     list, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -213,8 +213,8 @@ fn program_error(error: ProgramErrorV1) -> PrecompileError {
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-/// Calculate once for every registered reference currency and retain the
-/// complete map in Nod storage. Certified jobs call this at request time.
+/// Freeze the previous UTC day's finalized VWAPs during preparation, once per
+/// WorldwideDay. Oracle COEN/ISO prices already use six-decimal Gratis units.
 pub fn freeze_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,
@@ -223,16 +223,17 @@ pub fn freeze_entry_price_snapshot(
     if let Some(prices) = outbe_nod::api::entry_price_snapshot(storage.clone(), day)? {
         return Ok(prices);
     }
+    let previous_day = previous_date_key(timestamp_to_date_key(now));
     let mut prices = BTreeMap::new();
     for iso in outbe_oracle::api::reference_currencies(storage.clone())? {
-        let Some(current) = outbe_oracle::api::coen_rate_for_opt(storage.clone(), iso)? else {
+        let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)? else {
             continue;
         };
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-        if let Some(vwap) = outbe_oracle::api::four_hour_vwap(storage.clone(), pair, now)?
-            .filter(|value| !value.is_zero())
+        if let Some(vwap) =
+            outbe_oracle::api::get_utc_day_vwap(storage.clone(), previous_day, index)?
+                .filter(|value| !value.is_zero())
         {
-            prices.insert(iso, vwap.max(current));
+            prices.insert(iso, vwap);
         }
     }
     outbe_nod::api::store_entry_price_snapshot(storage, day, &prices)?;

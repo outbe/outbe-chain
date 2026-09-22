@@ -180,6 +180,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
@@ -203,11 +208,6 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
-          },
-          {
-            "name": "callAnchorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }
@@ -371,6 +371,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
@@ -394,11 +399,6 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
-          },
-          {
-            "name": "callAnchorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }
@@ -492,6 +492,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "callAnchorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
@@ -515,11 +520,6 @@
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
-          },
-          {
-            "name": "callAnchorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }

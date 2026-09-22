@@ -410,7 +410,7 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod(world: &m
     );
 }
 
-#[then("Lysis and OCOMP use the independently frozen rolling entry price")]
+#[then("Lysis and OCOMP use the independently frozen previous-day entry price")]
 fn lysis_and_ocomp_use_frozen_entry_price(world: &mut World) {
     let request = world
         .state
