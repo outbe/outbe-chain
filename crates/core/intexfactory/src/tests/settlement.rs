@@ -411,6 +411,27 @@ fn settle_rejects_expired_deadline() {
 }
 
 #[test]
+fn a_qualified_series_called_past_its_deadline_stays_closed() {
+    let mut storage = factory_provider();
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        seed_qualifying_day(&s);
+        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+    });
+    storage.set_timestamp(U256::from(
+        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000,
+    ));
+    StorageHandle::enter(&mut storage, |s| {
+        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        assert!(runtime::is_qualified(&s, &series).unwrap());
+        let err =
+            runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::from(1), &[])
+                .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("deadline"));
+    });
+}
+
+#[test]
 fn settled_token_id_tags_the_series_id() {
     let series_id = sid(7);
     let issued = U256::from_be_slice(series_id.as_bytes());
