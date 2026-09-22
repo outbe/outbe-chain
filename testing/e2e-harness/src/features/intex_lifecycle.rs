@@ -35,8 +35,8 @@ sol! {
     }
 }
 
-/// Every series carries the same entry price so their floors share a price bin and
-/// one sweep pass decides them together.
+/// Every series carries the same entry price, so their call prices share a bin and
+/// one sweep pass calls them together.
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
@@ -51,8 +51,6 @@ const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// USD (840) as the reference for every series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
-/// The DEV profile qualifies a series a day after issuance; overshoot so the
-/// sweep sees the period closed rather than exactly met.
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// Qualification is read off the seeded day, so it waits only for that block.
@@ -234,9 +232,8 @@ fn issue_two_series(world: &mut World) {
     )
     .expect("issue the lifecycle series");
 
-    // Outbound legs retain the issuing block's timestamp even when the test
-    // backdates the local series. The capacity committee runs ahead of wall
-    // time, so advance Anvil only after all legs have their timestamps fixed.
+    // The capacity committee runs ahead of wall time, so advance Anvil only
+    // after all legs have their timestamps fixed.
     let issued_through = world
         .rpc
         .latest_block_timestamp(port)
@@ -352,7 +349,7 @@ fn rate_above_floor(world: &mut World) {
     .expect("seed the closed day's VWAP");
 }
 
-#[then("every series qualifies in one group decision")]
+#[then("every series qualifies on the seeded day")]
 fn both_series_qualify(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + Duration::from_secs(QUALIFY_TIMEOUT_SECS);

@@ -46,10 +46,10 @@ Feature: Intex from auction to Promis
     And the cleared day issues the Intex on every chain it reached
     And each escrow settles the day and returns what the bids did not buy
 
-  # Two series rather than one: the sweeps decide per (reference currency,
-  # worldwide day), so a single series makes every group a group of one and
-  # neither the group promotion nor the mark batching is exercised at all. The
-  # two share a day and a reference currency, and differ in issuance currency.
+  # Two series rather than one: the call sweep decides per (reference currency,
+  # worldwide day), so a single series makes every group a group of one and the
+  # mark batching is not exercised at all. The two share a day and a reference
+  # currency, and differ in issuance currency.
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
@@ -60,7 +60,7 @@ Feature: Intex from auction to Promis
   # finalized watermark and counts the breach days itself.
   #
   # Qualification reads a closed day's VWAP as well, so that day is seeded the
-  # same way; the sweep still walks its index and compares the floor itself.
+  # same way, and every chain derives it from there.
   #
   # Two more series are left to run out instead of being settled whole: one is settled
   # in part and one is never touched at all, so the sweep has to return the load of the
@@ -84,7 +84,7 @@ Feature: Intex from auction to Promis
     Then the owner holds issued units of every series on each chain
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
-    Then every series qualifies in one group decision
+    Then every series qualifies on the seeded day
     And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
     And the owner settles part of their units
