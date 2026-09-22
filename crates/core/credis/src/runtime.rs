@@ -38,18 +38,18 @@ pub struct OpenPositionParams {
     /// Sealed pledger EOA, opaque here.
     pub eoa_ct: Vec<u8>,
     pub asset: Address,
-    /// ISO 4217 code of `asset`; denominates the position and keys the policy rate.
+    /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
-    /// ISO 4217 code of the call-threshold anchor. The call anchor and call
-    /// price are COEN quotes in this currency. `entry_price` is not.
+    /// ISO 4217 numeric code of the reference currency elected at origination
+    /// and fixed for the position's life.
     pub reference_currency: u16,
     /// `r`, 1e6 scaled, already multiplied by the policy-rate factor.
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// Principal / Gratis in the issuance currency, scale 1e6. Copied from the pledge.
+    /// Entry price in the issuance currency, scale 1e6, sealed on the pledge.
     pub entry_price: U256,
-    /// max(previous closed UTC-day VWAP, current price) of COEN/`reference_currency`.
+    /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
     pub call_anchor_price: U256,
     /// `G` - pledged Gratis collateral.
     pub collateral: U256,

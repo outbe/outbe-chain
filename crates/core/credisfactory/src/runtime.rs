@@ -194,7 +194,7 @@ pub fn issue_credis(
 /// pair, both refuse issuance. The current price is not a substitute.
 fn previous_closed_day_vwap(
     storage: StorageHandle<'_>,
-    reference_currency: u16,
+    currency_code: u16,
     now: u64,
 ) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now));
@@ -204,7 +204,7 @@ fn previous_closed_day_vwap(
     if finalized < day {
         return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
     }
-    let Some(index) = coen_pair_index_opt(storage.clone(), reference_currency)? else {
+    let Some(index) = coen_pair_index_opt(storage.clone(), currency_code)? else {
         return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
     };
     match get_utc_day_vwap(storage, day, index)? {
@@ -214,8 +214,8 @@ fn previous_closed_day_vwap(
 }
 
 /// The currency's official annual policy rate, scaled by the policy-rate factor.
-fn policy_rate_for(storage: StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let official = get_policy_rate(storage, issuance_currency)?;
+fn policy_rate_for(storage: StorageHandle<'_>, currency_code: u16) -> Result<U256> {
+    let official = get_policy_rate(storage, currency_code)?;
     official
         .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
         .map(|v| v / U256::from(BP_DEN))
