@@ -365,7 +365,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
-      const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
+      // A node without the view still answers the rest.
+      const [metadata, qualified] = await Promise.all([
+        seriesMetadata(n, series),
+        seriesQualified(n, series).catch(() => undefined),
+      ]);
       return ok({
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
@@ -389,7 +393,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
-        qualified,
+        ...(qualified === undefined ? {} : { qualified }),
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
@@ -1129,7 +1133,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
       "keeps the two unlinked), then build the spend proof off-chain; the MCP cannot produce it. " +
       "Defaults to your own wallet; pass owner to pay for someone else's position. " +
-      "Allowed when the series is Qualified (voluntary) or Called (forced, within the call period). The " +
+      "Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called " +
+      "(forced, within the call period). The " +
       "Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. " +
       "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
       "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
