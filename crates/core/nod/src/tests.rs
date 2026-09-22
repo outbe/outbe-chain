@@ -441,9 +441,6 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             if qualified {
                 qualify(&storage, &item);
             }
-            nod.bucket_called_at
-                .write(&item.bucket_key, called_at)
-                .unwrap();
             let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
             if paid {
                 api::settle_nod(
@@ -458,6 +455,9 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 )
                 .unwrap();
             }
+            nod.bucket_called_at
+                .write(&item.bucket_key, called_at)
+                .unwrap();
             let call = INod::nodDataCall {
                 nodId: item.nod_id.to_u256(),
             };
@@ -914,7 +914,6 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
             )
             .unwrap();
             qualify(&storage, &item);
-            nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
             if paid {
                 let bucket_id =
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
@@ -930,6 +929,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
                 )
                 .unwrap();
             }
+            nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
             let out = dispatch(
                 storage.clone(),
                 &scope,

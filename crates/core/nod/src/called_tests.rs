@@ -1162,6 +1162,107 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
                 .unwrap(),
             items[2].bucket_key
         );
+        nod.remove_call_bin(items[2].bucket_key).unwrap();
+        assert_eq!(
+            nod.call_bin_count
+                .read(&NodContract::scoped(ISO, bin))
+                .unwrap(),
+            0
+        );
+    });
+}
+
+fn slice(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    timestamp: u64,
+) -> u32 {
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        storage.clone(),
+    );
+    crate::called::run_call_slice(&ctx, scope, parent).unwrap()
+}
+
+#[test]
+fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
+    harness(|storage, scope, parent| {
+        let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK + 1)
+            .map(|owner| {
+                let item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
+                api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+                item
+            })
+            .collect();
+        let bucket_key = items[0].bucket_key;
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 1);
+
+        let past = at + NOTICE + 1;
+        finalize_through(storage, past);
+        assert_eq!(
+            scan(storage, scope, parent, past),
+            MAX_NOD_FORFEITS_PER_BLOCK
+        );
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
+        assert_eq!(slice(storage, scope, parent, past), 1);
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
+    harness(|storage, scope, parent| {
+        register(storage, OTHER_ISO);
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        let lapsed = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &lapsed, entry_price()).unwrap();
+        assert_eq!(scan(storage, scope, parent, at), 1);
+
+        // Settled buckets still take a visit each and use up the budget in the first currency.
+        let mut nod = NodContract::new(storage.clone());
+        for index in 1..=MAX_NOD_CALL_VISITS_PER_BLOCK {
+            let key = B256::left_padding_from(&index.to_be_bytes());
+            nod.callable_bucket_currency.write(&key, ISO).unwrap();
+            nod.callable_bucket_call_price
+                .write(&key, at_call())
+                .unwrap();
+            nod.insert_call_bin(key).unwrap();
+        }
+        let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
+        api::add_nod(storage, scope, parent, &fresh, entry_price()).unwrap();
+        let past = at + NOTICE + 1;
+        let latest = last_closed_day(past);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
+        fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
+
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(
+            nod.call_currency_cursor.read().unwrap(),
+            u32::from(OTHER_ISO)
+        );
+        assert_eq!(called_at(storage, fresh.bucket_key), 0);
+        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 1);
+
+        assert_eq!(slice(storage, scope, parent, past), 2);
+        assert_eq!(called_at(storage, fresh.bucket_key), past);
+        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 0);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
 

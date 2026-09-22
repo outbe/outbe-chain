@@ -372,12 +372,17 @@ fn forfeit_arm(
                 && now > api::settlement_deadline_of(called_at, notice_period(nod, bucket_key)?)
             {
                 let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
-                if budget > 0 {
-                    let res = ctx.storage.with_checkpoint(|| {
-                        forfeit_members(&ctx.storage, nod, scope, parent, bucket_key, budget)
-                    });
-                    if let Ok(burned) = res {
-                        forfeited = forfeited.saturating_add(burned);
+                if budget == 0 {
+                    break false;
+                }
+                let res = ctx.storage.with_checkpoint(|| {
+                    forfeit_members(&ctx.storage, nod, scope, parent, bucket_key, budget)
+                });
+                if let Ok(burned) = res {
+                    forfeited = forfeited.saturating_add(burned);
+                    // The next slice resumes on this bucket.
+                    if burned == budget && nod.bucket_nod_count.read(&bucket_key)? != 0 {
+                        break false;
                     }
                 }
             }
@@ -558,9 +563,8 @@ pub(crate) fn forfeit_members(
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
 /// newest first, filling it on first use.
 ///
-/// An unregistered pair caches an empty window: a bucket in that currency can
-/// never register a breach, but it must still reach the forfeit arm, so this is
-/// a skip of the call check rather than a skip of the bucket.
+/// An unregistered pair caches an empty window: a bucket in that currency never
+/// registers a breach.
 fn window_for(
     nod: &NodContract<'_>,
     storage: &StorageHandle<'_>,

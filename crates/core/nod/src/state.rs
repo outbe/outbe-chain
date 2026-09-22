@@ -401,14 +401,13 @@ impl NodContract<'_> {
         })
     }
 
-    /// Called and inside the deadline, or qualified; the caller refuses a lapsed call.
+    /// A called bucket settles until its deadline, an uncalled one once qualified.
     fn settlement_open(&self, bucket: &NodBucketState) -> Result<bool> {
         let storage = self.storage_handle();
-        let deadline = crate::api::settlement_deadline(&storage, bucket.bucket_key)?;
-        if deadline != 0 && storage.timestamp()?.to::<u64>() <= deadline {
-            return Ok(true);
+        match crate::api::settlement_deadline(&storage, bucket.bucket_key)? {
+            0 => crate::api::is_qualified(&storage, bucket),
+            deadline => Ok(storage.timestamp()?.to::<u64>() <= deadline),
         }
-        crate::api::is_qualified(&storage, bucket)
     }
 
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
@@ -494,6 +493,17 @@ impl NodContract<'_> {
         }
         let (bin_id, index) = unpack_bin_slot(packed);
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
+        if self
+            .call_bin_buckets
+            .read(&Self::bin_index_key(iso, bin_id, index))?
+            != bucket_key
+        {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
+                )),
+            );
+        }
         let scoped = Self::scoped(iso, bin_id);
         let last = self
             .call_bin_count
