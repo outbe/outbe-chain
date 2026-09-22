@@ -14,9 +14,8 @@ use outbe_ocomp_protocol::{
     },
     profile::ProtocolBundleV1,
     receipts::{ActivationOutcome, RequestLimitSplitReceiptV1},
-    result::wwd_allocation_ceiling,
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
-    SchemaLimits,
+    wwd_allocation_ceiling, SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;

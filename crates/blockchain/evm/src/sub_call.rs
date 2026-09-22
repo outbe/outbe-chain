@@ -24,7 +24,7 @@ use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
-    context::Evm,
+    context::{Evm, LocalContextTr},
     context_interface::{journaled_state::account::JournaledAccountTr, ContextTr, JournalTr},
     handler::{instructions::EthInstructions, EthFrame, EvmTr, FrameResult, ItemOrResult},
     interpreter::{
@@ -145,6 +145,11 @@ where
         ),
         ocomp_activation_block_meter,
     );
+    // A precompile resolves contract-originated calldata through `ctx.local()`, so the child
+    // frame has to carve its memory out of that buffer.
+    let mut caller_memory = CallerMemory(SharedMemory::new_with_buffer(
+        ctx.local().shared_memory_buffer().clone(),
+    ));
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,
@@ -156,7 +161,7 @@ where
 
     let frame_input = FrameInit {
         depth: 0,
-        memory: SharedMemory::new(),
+        memory: caller_memory.0.new_child_context(),
         frame_input: FrameInput::Call(Box::new(call_inputs)),
     };
 
@@ -180,6 +185,15 @@ where
         call_outcome,
         input.gas_limit,
     ))
+}
+
+/// Gives the child context back even when the frame loop unwinds: the buffer outlives the sub-call.
+struct CallerMemory(SharedMemory);
+
+impl Drop for CallerMemory {
+    fn drop(&mut self) {
+        self.0.free_child_context();
+    }
 }
 
 /// Pre-load target bytecode + hash. Mirrors revm-handler's

@@ -8,9 +8,6 @@ interface IGratisFactory {
     event CoenMined(address indexed sender, uint256 amount);
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
-    /// `pledgeHandle` is the confidential record id presented later at
-    /// `requestCredis`. NOTE: both amounts are public (calldata / event); only
-    /// cumulative balances are encrypted (see the gratis amount-privacy TODO).
     event GratisPledged(
         address indexed account,
         uint256 amountStables,
@@ -23,18 +20,14 @@ interface IGratisFactory {
     ///         `gratisAmount` is the collateral credited back.
     event GratisUnpledged(address indexed account, uint256 gratisAmount);
 
-    /// @notice Pledge enough gratis to collateralize `amountStables` of credit in
-    ///         `asset`. The gratis cost is derived on-chain from the oracle rate and
-    ///         sealed into the pledge ticket together with the asset and the rate, so
-    ///         `requestCredis` disburses exactly `amountStables` without re-pricing.
+    /// @notice Pledge enough gratis to collateralize `amountStables`.
     ///         Authorized by the caller's Gratis modify key:
     ///         `mac = HMAC(modifyKey, op-preimage over amountStables)` where `opNonce`
     ///         MUST equal the caller's current on-chain gratis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `opNonceOf`).
-    /// @param amountStables Stablecoin minor units of credit this pledge must cover.
-    /// @param asset         Stablecoin the credis will later be disbursed in.
-    /// @param maxGratis     Slippage cap: reverts if the oracle-derived gratis cost
-    ///                      exceeds it. Authenticated by the transaction signature.
+    /// @param amountStables Stablecoin minor units this pledge must cover.
+    /// @param asset         Stablecoin address.
+    /// @param maxGratis     Slippage cap.
     /// @return pledgeHandle The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
     function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)

@@ -28,8 +28,8 @@ use thiserror::Error;
 
 use crate::{
     admission_catalog::{
-        AdmissionCatalogError, AdmissionDirectoryCursorV1, AdmissionDirectoryStepV1,
-        VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
+        AdmissionCatalogError, AdmissionCatalogReader, AdmissionDirectoryCursorV1,
+        AdmissionDirectoryStepV1, VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
     },
     bundle::PinnedProtocolBundle,
     cas::{CasError, FilesystemCasReader},
@@ -148,6 +148,23 @@ pub struct LysisPlanAuditCursorV1<'a> {
 }
 
 impl<'a> LocalLysisPlanAuditV1<'a> {
+    /// Runs the native plan audit against an immutable admission reader.
+    pub fn open_read_only(
+        admissions: &'a AdmissionCatalogReader,
+        input_refs: &'a VerifiedInputChunkRefCatalog,
+        reader: &'a FilesystemCasReader,
+        bundle: &'a PinnedProtocolBundle,
+        limits: &'a SchemaLimits,
+    ) -> Result<Self, ExactLysisPlanError> {
+        Self::open(
+            admissions.verified_view(),
+            input_refs,
+            reader,
+            bundle,
+            limits,
+        )
+    }
+
     pub fn open(
         admissions: &'a VerifiedAdmissionCatalog,
         input_refs: &'a VerifiedInputChunkRefCatalog,

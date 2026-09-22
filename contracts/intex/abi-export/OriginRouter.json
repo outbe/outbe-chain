@@ -866,19 +866,29 @@
           "internalType": "uint16"
         },
         {
-          "name": "bidders",
+          "name": "clearingRate",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "basis",
+          "type": "uint128",
+          "internalType": "uint128"
+        },
+        {
+          "name": "winners",
           "type": "address[]",
           "internalType": "address[]"
         },
         {
-          "name": "refundedAmounts",
-          "type": "uint128[]",
-          "internalType": "uint128[]"
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
-          "name": "paidAmounts",
-          "type": "uint128[]",
-          "internalType": "uint128[]"
+          "name": "partialWon",
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ],
       "outputs": [
@@ -1851,6 +1861,22 @@
     },
     {
       "type": "error",
+      "name": "InvalidRefundPartial",
+      "inputs": [
+        {
+          "name": "partialIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "winners",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "IssuanceArrayLengthMismatch",
       "inputs": [
         {
@@ -2060,27 +2086,6 @@
       "type": "error",
       "name": "ReentrancyGuardReentrantCall",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "RefundArrayLengthMismatch",
-      "inputs": [
-        {
-          "name": "bidders",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "refundedAmounts",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "paidAmounts",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
     },
     {
       "type": "error",

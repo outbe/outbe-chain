@@ -21,7 +21,9 @@ use crate::world::venue_probes;
 use crate::world::venue_probes::IAuctionStage;
 use crate::world::venue_probes::IProceedsRoute;
 #[cfg(feature = "ocomp-integration")]
-use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken};
+use crate::world::venue_probes::IVenueSchedule;
+#[cfg(feature = "ocomp-integration")]
+use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken, IRefundClaim};
 use crate::world::{origin_venue, World};
 
 const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
@@ -160,16 +162,64 @@ mod tests {
     }
 }
 
-/// An e2e build runs the auction on minute-long windows, so the run waits the
-/// stages out rather than moving the clock across a day it never formed.
 #[cfg(feature = "ocomp-integration")]
 const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(2400);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
+    jump_committee_past_window(world, target_stage);
     for side in venue_sides(world) {
         advance_one_venue_to_stage(world, &side, target_stage);
     }
+}
+
+/// Jump the committee to the end of the window a stage waits on instead of sitting it out.
+/// The e2e windows lie inside one day, so the jump crosses nothing the wait would not.
+#[cfg(feature = "ocomp-integration")]
+fn jump_committee_past_window(world: &mut World, target_stage: u8) {
+    let side = venue_side(world);
+    let schedule = eth::read_call(
+        &side.url,
+        side.auction,
+        &IVenueSchedule::auctionsCall {
+            worldwideDay: settled_day(world),
+        },
+    )
+    .expect("the venue reports the day's schedule")
+    .schedule;
+    let window_end = match target_stage {
+        1 => schedule.commitEnd,
+        2 => schedule.revealEnd,
+        _ => return,
+    };
+    let target = u64::from(window_end) + 1;
+    let port = world.validators.primary_port();
+    let now = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee head timestamp");
+    if now >= target {
+        return;
+    }
+    let (_, _, height, pending) =
+        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    for peer in world.validators.committee_ports() {
+        assert!(
+            world.rpc.wait_finalized_at_least(peer, height, 240),
+            "validator on port {peer} did not finalize past the window jump"
+        );
+    }
+    if let Some(pending) = pending {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            assert!(
+                Instant::now() < deadline,
+                "post-jump feeder did not finalize"
+            );
+            sleep(Duration::from_millis(500));
+        }
+    }
+    committee_clock_settles(world);
 }
 
 /// Each chain runs the day on its own clock, so every venue has to reach the
@@ -398,16 +448,10 @@ fn committee_clock_settles(world: &mut World) {
     }
 }
 
-/// A loopback venue cannot relay its bids from inside the clearing delivery -
-/// that would be a nested send in the same transaction - so it parks the relay
-/// for a permissionless retry. Production has a keeper for this; the run does it
-/// itself.
-/// The loopback adapter isolates a failed delivery by parking it, and a real
-/// transport is what retries. Nothing plays that part in a localnet, so the
-/// scenario does: retrying is permissionless and a still-broken delivery simply
-/// parks again.
+/// A loopback delivery runs inside the sending transaction on the gas its message type budgets
+/// for it, so a park means a wrong budget or a reverting handler - the run's to report, not retry.
 #[cfg(feature = "ocomp-integration")]
-fn flush_parked_deliveries(world: &mut World) {
+fn assert_no_parked_deliveries(world: &World) {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(loopback) = world
         .state
@@ -417,19 +461,14 @@ fn flush_parked_deliveries(world: &mut World) {
     else {
         return;
     };
-    let parked =
-        eth::read_call(&url, loopback, &IParkedWork::nextParkedIdxCall {}).unwrap_or_default();
-    let mut idx = U256::ZERO;
-    while idx < parked {
-        let _ = eth::send_call(
-            &url,
-            loopback,
-            crate::world::forge::DEPLOYER_KEY,
-            &IParkedWork::retryDeliveryCall { idx },
-            None,
-        );
-        idx += U256::from(1);
-    }
+    let parked = eth::read_call(&url, loopback, &IParkedWork::nextParkedIdxCall {})
+        .expect("the loopback adapter's parked count");
+    assert_eq!(
+        parked,
+        U256::ZERO,
+        "a loopback delivery parked during this run: {}",
+        venue_probes::parked_deliveries(world)
+    );
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -453,7 +492,8 @@ fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
     if progress.is_none_or(|p| p.done) {
         return;
     }
-    eth::send_call(
+    // A fixed limit: the relay stops quietly when gas runs short, so an estimate buys a no-op.
+    eth::send_call_outcome(
         &venue.url,
         venue.target_router,
         crate::world::forge::DEPLOYER_KEY,
@@ -571,11 +611,11 @@ fn auction_clears(world: &mut World) {
                 worldwideDay: worldwide_day,
             },
         );
+        assert_no_parked_deliveries(world);
         if stage == Some(5) {
             return;
         }
         flush_parked_bid_relays(world, worldwide_day);
-        flush_parked_deliveries(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
@@ -676,9 +716,10 @@ fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_
 #[then("each escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
     // Each chain settled its own bids, so each has to give back what it did
-    // not buy.
+    // not buy, and each bidder collects it.
     for side in venue_sides(world) {
         refunds_landed_on(world, &side);
+        claim_refunds_on(world, &side);
     }
     super::auction_expectations::assert_clearing(
         world,
@@ -686,6 +727,36 @@ fn escrow_refunds_the_rest(world: &mut World) {
         &world.state.auction_bidders,
         U256::from(BIDDER_ALLOWANCE),
     );
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn claim_refunds_on(world: &World, side: &VenueSide) {
+    let worldwide_day = settled_day(world);
+    for bidder in &world.state.auction_bidders {
+        let claimable = eth::read_call(
+            &side.url,
+            side.escrow,
+            &IRefundClaim::getClaimableRefundCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+        )
+        .expect("read what the bidder can claim");
+        if claimable.amount == 0 {
+            continue;
+        }
+        eth::send_call(
+            &side.url,
+            side.escrow,
+            &bidder.key,
+            &IRefundClaim::claimRefundCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+            None,
+        )
+        .expect("claim the bidder's refund");
+    }
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -715,6 +786,7 @@ fn refunds_landed_on(world: &World, side: &VenueSide) {
         if received {
             break;
         }
+        assert_no_parked_deliveries(world);
         assert!(
             Instant::now() < deadline,
             "day {worldwide_day} cleared but the escrow never received refund instructions \

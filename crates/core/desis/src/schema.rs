@@ -137,6 +137,8 @@ pub struct ClearingResult {
     /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`);
     /// the day issues one series per distinct pair.
     pub winner_currencies: Vec<(u16, u16)>,
+    /// Index into `winners` of the one bid filled in part, where supply ran out.
+    pub partial_winner: Option<usize>,
     pub all_bidders: Vec<Address>,
     pub refunded_amounts: Vec<u128>,
     pub paid_amounts: Vec<u128>,

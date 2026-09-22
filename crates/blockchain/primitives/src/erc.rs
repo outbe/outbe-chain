@@ -12,3 +12,6 @@ pub const ERC721_METADATA_INTERFACE_ID: [u8; 4] = [0x5b, 0x5e, 0x13, 0x9f];
 
 /// ERC-721 Enumerable selector ID.
 pub const ERC721_ENUMERABLE_INTERFACE_ID: [u8; 4] = [0x78, 0x0e, 0x9d, 0x63];
+
+/// ERC-4906 metadata update selector ID.
+pub const ERC4906_INTERFACE_ID: [u8; 4] = [0x49, 0x06, 0x49, 0x06];

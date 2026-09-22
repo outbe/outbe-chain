@@ -6,8 +6,12 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
+
+uint128 constant BASIS = 1_000_000;
+uint32 constant CLEARING_RATE = 600_000;
 
 /// @dev Randomized actions against EscrowAdapter across several concurrent series.
 contract EscrowConservationHandler is Test {
@@ -39,23 +43,26 @@ contract EscrowConservationHandler is Test {
         return bidders[bound(seed, 0, bidders.length - 1)];
     }
 
-    function lock(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
-        uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
+    function lock(uint256 seriesSeed, uint256 bidderSeed, uint256 rateSeed, uint256 quantitySeed) external {
+        uint32 bidRate = uint32(bound(rateSeed, 1, 1_000_000));
+        uint16 quantity = uint16(bound(quantitySeed, 1, 1_000));
+        uint128 amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
         vm.prank(auction);
-        try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
+        try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), amount, bidRate, quantity) {} catch {}
     }
 
-    function finalize(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {
+    function finalize(uint256 seriesSeed, uint256 bidderSeed, uint256 wonSeed, bool completesDay) external {
         uint32 s = _series(seriesSeed);
         address b = _bidder(bidderSeed);
-        IEscrowAdapter.BidLock memory l = escrow.getBidLock(s, b);
-        uint128 refunded = l.lockedAmount == 0 ? 0 : uint128(bound(refundSeed, 0, l.lockedAmount));
-        IEscrowAdapter.FinalizationInstruction[] memory ins = new IEscrowAdapter.FinalizationInstruction[](1);
-        ins[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: b, refundedAmount: refunded, paidAmount: l.lockedAmount - refunded
-        });
+        address[] memory winners = new address[](1);
+        winners[0] = b;
+        uint16 quantity = escrow.getBidLock(s, b).quantity;
+        uint16 partialWon = quantity > 1 ? uint16(bound(wonSeed, 0, quantity - 1)) : 0;
         vm.prank(bridger);
-        try escrow.finalizeAuction(s, keccak256(abi.encode(s, b)), ins, true) {} catch {}
+        try escrow.finalizeAuction(
+            s, keccak256(abi.encode(s, b)), winners, 0, partialWon, CLEARING_RATE, BASIS, completesDay
+        ) {}
+            catch {}
     }
 
     function claim(uint256 seriesSeed, uint256 bidderSeed) external {
@@ -113,7 +120,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         bidders.push(address(0xB2));
         bidders.push(address(0xB3));
         for (uint256 i = 0; i < bidders.length; i++) {
-            paymentToken.mint(bidders[i], 1_000_000e6);
+            paymentToken.mint(bidders[i], 1e30);
             vm.prank(bidders[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
         }
@@ -151,5 +158,22 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());
         assertEq(sumTotalLocked + sumBonds, pooled, "sum(totalLocked) + sum(bonds) != pooled Compact balance");
+    }
+
+    /// @dev A winner's payment left with the proceeds, so its lock still holds only the rest.
+    function invariant_totalLockedIsWhatTheLocksStillHold() public view {
+        for (uint256 i = 0; i < worldwideDays.length; i++) {
+            uint256 held;
+            for (uint256 j = 0; j < bidders.length; j++) {
+                IEscrowAdapter.BidLock memory l = escrow.getBidLock(worldwideDays[i], bidders[j]);
+                if (l.status == IEscrowAdapter.LockStatus.Locked) {
+                    held += l.lockedAmount;
+                } else if (l.status == IEscrowAdapter.LockStatus.Won) {
+                    held += l.lockedAmount - BridgeMsgCodec.escrowAmount(l.quantity, BASIS, CLEARING_RATE);
+                }
+            }
+            (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);
+            assertEq(held, totalLocked, "totalLocked != what the day's locks still hold");
+        }
     }
 }

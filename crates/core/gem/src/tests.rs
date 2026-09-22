@@ -603,7 +603,7 @@ fn precompile_transfer_paths_revert() {
                 gemId: gem_id,
             }
             .abi_encode(),
-            IGem::safeTransferFromCall {
+            IGem::safeTransferFrom_0Call {
                 from: ALICE,
                 to: BOB,
                 gemId: gem_id,
@@ -1684,4 +1684,280 @@ fn an_unindexable_day_price_skips_qualification_for_the_day_and_says_so() {
     assert_eq!(skipped.len(), 1);
     assert_eq!(skipped[0].referenceCurrency, 840);
     assert_eq!(skipped[0].utcDay, day);
+}
+
+#[test]
+fn token_by_index_reads_the_live_gem_list() {
+    with_storage(|storage| {
+        let burned = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let kept = api::add_gem(storage, sample_params(BOB)).unwrap();
+        api::set_state(storage, burned, GemState::Settled).unwrap();
+        api::burn(storage, burned).unwrap();
+
+        let token_at = |index: u64| {
+            let data = IGem::tokenByIndexCall {
+                index: U256::from(index),
+            }
+            .abi_encode();
+            dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO)
+        };
+        let out = token_at(0).unwrap();
+        assert_eq!(
+            IGem::tokenByIndexCall::abi_decode_returns(&out).unwrap(),
+            kept
+        );
+        let err = token_at(1).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("index out of bounds"),
+            "{err:?}"
+        );
+    });
+}
+
+#[test]
+fn precompile_safe_transfer_with_data_reverts() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let data = IGem::safeTransferFrom_1Call {
+            from: ALICE,
+            to: BOB,
+            gemId: gem_id,
+            data: Default::default(),
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
+        assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+    });
+}
+
+#[test]
+fn metadata_update_marks_each_lifecycle_transition() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        GemContract::new(storage.clone())
+            .mark_called(gem_id, T_NOW)
+            .unwrap();
+        api::set_state(&storage, gem_id, GemState::Settled).unwrap();
+        api::burn(&storage, gem_id).unwrap();
+        gem_id
+    });
+
+    let updates: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::MetadataUpdate::decode_log_data(log).ok())
+        .map(|event| event._tokenId)
+        .collect();
+    assert_eq!(updates, vec![gem_id; 3]);
+}
+
+#[test]
+fn transfer_logs_announce_mint_and_burn() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Settled).unwrap();
+        api::burn(&storage, gem_id).unwrap();
+        gem_id
+    });
+
+    let transfers: Vec<(Address, Address, U256)> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::Transfer::decode_log_data(log).ok())
+        .map(|event| (event.from, event.to, event.tokenId))
+        .collect();
+    assert_eq!(
+        transfers,
+        vec![
+            (Address::ZERO, ALICE, gem_id),
+            (ALICE, Address::ZERO, gem_id)
+        ]
+    );
+}
+
+#[test]
+fn supported_interfaces_match_the_implemented_selectors() {
+    use alloy_sol_types::SolEvent;
+    use outbe_primitives::erc::{
+        ERC165_INTERFACE_ID, ERC20_INTERFACE_ID, ERC4906_INTERFACE_ID,
+        ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
+    };
+
+    let interface_id = |selectors: &[[u8; 4]]| {
+        selectors.iter().fold([0u8; 4], |acc, selector| {
+            std::array::from_fn(|i| acc[i] ^ selector[i])
+        })
+    };
+    assert_eq!(
+        interface_id(&[
+            IGem::balanceOfCall::SELECTOR,
+            IGem::ownerOfCall::SELECTOR,
+            IGem::safeTransferFrom_0Call::SELECTOR,
+            IGem::safeTransferFrom_1Call::SELECTOR,
+            IGem::transferFromCall::SELECTOR,
+            IGem::approveCall::SELECTOR,
+            IGem::setApprovalForAllCall::SELECTOR,
+            IGem::getApprovedCall::SELECTOR,
+            IGem::isApprovedForAllCall::SELECTOR,
+        ]),
+        ERC721_INTERFACE_ID
+    );
+    assert_eq!(
+        interface_id(&[
+            IGem::nameCall::SELECTOR,
+            IGem::symbolCall::SELECTOR,
+            IGem::tokenURICall::SELECTOR,
+        ]),
+        ERC721_METADATA_INTERFACE_ID
+    );
+    assert_eq!(
+        interface_id(&[
+            IGem::totalSupplyCall::SELECTOR,
+            IGem::tokenByIndexCall::SELECTOR,
+            IGem::tokenOfOwnerByIndexCall::SELECTOR,
+        ]),
+        ERC721_ENUMERABLE_INTERFACE_ID
+    );
+    assert_eq!(IGem::MetadataUpdate::SIGNATURE, "MetadataUpdate(uint256)");
+    assert_eq!(
+        IGem::BatchMetadataUpdate::SIGNATURE,
+        "BatchMetadataUpdate(uint256,uint256)"
+    );
+
+    with_storage(|storage| {
+        let supports = |id: [u8; 4]| {
+            let data = IGem::supportsInterfaceCall {
+                interfaceId: id.into(),
+            }
+            .abi_encode();
+            let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+            IGem::supportsInterfaceCall::abi_decode_returns(&out).unwrap()
+        };
+        for id in [
+            ERC165_INTERFACE_ID,
+            ERC721_INTERFACE_ID,
+            ERC721_METADATA_INTERFACE_ID,
+            ERC721_ENUMERABLE_INTERFACE_ID,
+            ERC4906_INTERFACE_ID,
+        ] {
+            assert!(supports(id), "{id:02x?}");
+        }
+        assert!(!supports(ERC20_INTERFACE_ID));
+        assert!(!supports([0xff; 4]));
+    });
+}
+
+fn token_uri_parts(storage: &StorageHandle, gem_id: U256) -> (serde_json::Value, String) {
+    use base64::Engine;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let data = IGem::tokenURICall { gemId: gem_id }.abi_encode();
+    let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+    let uri = IGem::tokenURICall::abi_decode_returns(&out).unwrap();
+    let json = engine
+        .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    let svg = engine
+        .decode(
+            json["image"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:image/svg+xml;base64,")
+                .unwrap(),
+        )
+        .unwrap();
+    (json, String::from_utf8(svg).unwrap())
+}
+
+fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value> {
+    json["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["trait_type"] == name)
+        .map(|entry| entry["value"].clone())
+}
+
+#[test]
+fn token_uri_renders_the_gem_card() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        let (json, svg) = token_uri_parts(storage, gem_id);
+
+        let id = outbe_common::nft_card::short_id(gem_id);
+        assert_eq!(json["name"], format!("Gem {id}"));
+        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
+        assert!(!json.to_string().contains("https://"));
+        assert_eq!(trait_value(&json, "State").unwrap(), "Qualified");
+        assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");
+        assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
+        assert_eq!(trait_value(&json, "Floor Price").unwrap(), 0.54);
+        assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
+        assert_eq!(trait_value(&json, "Promis Load").unwrap(), 1);
+        assert_eq!(trait_value(&json, "Issued At").unwrap(), T_NOW);
+        assert!(trait_value(&json, "Call Deadline").is_none());
+
+        assert!(svg.contains(">GEM</text>"));
+        assert!(svg.contains(&format!(">{id}</text>")));
+        assert!(svg.contains(">QUALIFIED</text>"));
+        assert!(svg.contains(">Call Price</text>"));
+        assert!(svg.contains(">1.14</text>"));
+        assert!(!svg.contains("Floor Price"));
+    });
+}
+
+#[test]
+fn an_issued_card_leads_with_the_load_and_shows_the_floor_price() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let (_, svg) = token_uri_parts(storage, gem_id);
+
+        let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
+        assert!(row("Promis Load") < row("Entry Price"));
+        assert!(row("Entry Price") < row("Floor Price"));
+        assert!(row("Floor Price") < row("Call Price"));
+    });
+}
+
+#[test]
+fn token_uri_stays_called_past_the_call_deadline() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        GemContract::new(storage.clone())
+            .mark_called(gem_id, T_NOW)
+            .unwrap();
+        let item = api::get_gem(&storage, gem_id).unwrap().unwrap();
+        (gem_id, T_NOW + u64::from(item.call_notice_period_seconds))
+    });
+
+    provider.set_timestamp(U256::from(deadline));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, svg) = token_uri_parts(&storage, gem_id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+        assert_eq!(trait_value(&json, "Called At").unwrap(), T_NOW);
+        assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
+        assert!(svg.contains(">CALLED</text>"));
+        assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
+    });
+
+    provider.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (json, svg) = token_uri_parts(&storage, gem_id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Called");
+        assert!(svg.contains(">CALLED</text>"));
+    });
 }

@@ -36,6 +36,7 @@ use outbe_primitives::{
 };
 use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
 use revm::{
+    context::{ContextTr as _, LocalContextTr as _},
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
     primitives::hardfork::SpecId,
@@ -180,11 +181,7 @@ fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
 }
 
 #[test]
-fn contract_originated_poseidon_call_preserves_empty_shared_buffer_behavior() {
-    // The nested frame currently starts with an empty SharedMemory, so its input
-    // range cannot materialize the caller's 32-byte memory. Poseidon therefore
-    // rejects the empty calldata and CALL returns zero. SCF-020 characterizes this
-    // pre-activation behavior; changing it requires an explicit protocol boundary.
+fn contract_originated_poseidon_call_receives_its_calldata() {
     let mut code = vec![
         0x60, 0x01, // PUSH1 1
         0x60, 0x00, // PUSH1 0
@@ -198,12 +195,12 @@ fn contract_originated_poseidon_call_preserves_empty_shared_buffer_behavior() {
     ];
     code.extend_from_slice(ZKPROOF_POSEIDON_ADDRESS.as_slice());
     code.extend_from_slice(&[
-        0x61, 0x07, 0x08, // PUSH2 1,800 gas
+        0x5a, // GAS
         0xf1, // CALL
         0x60, 0x40, // status output offset
         0x52, // MSTORE CALL status
-        0x60, 0x20, // return size
-        0x60, 0x40, // return offset
+        0x60, 0x40, // return size: hash at 0x20, status at 0x40
+        0x60, 0x20, // return offset
         0xf3, // RETURN
     ]);
 
@@ -218,6 +215,11 @@ fn contract_originated_poseidon_call_preserves_empty_shared_buffer_behavior() {
         },
     );
     let mut ctx = Context::mainnet().with_db(db);
+    // Outer memory the nested frame must not disturb, and a non-zero checkpoint for its own.
+    ctx.local()
+        .shared_memory_buffer()
+        .borrow_mut()
+        .extend_from_slice(&[0xAB; 64]);
 
     let result = sub_call::run(
         &mut ctx,
@@ -236,11 +238,23 @@ fn contract_originated_poseidon_call_preserves_empty_shared_buffer_behavior() {
     )
     .expect("outer contract call");
 
+    let mut input = [0u8; 32];
+    input[31] = 1;
+    let expected =
+        outbe_evm::zk::poseidon_hash(&input).expect("poseidon hash over one field element");
+
     assert!(matches!(result.status, SubCallStatus::Success));
-    assert_eq!(result.returndata.len(), 32);
+    assert_eq!(result.returndata.len(), 64);
     assert_eq!(
-        result.returndata[31], 0,
-        "inner Poseidon CALL must preserve pre-activation failure"
+        &result.returndata[..32],
+        expected.as_slice(),
+        "the precompile must hash the caller's memory, not an empty or foreign range",
+    );
+    assert_eq!(result.returndata[63], 1, "inner Poseidon CALL must succeed");
+    assert_eq!(
+        &ctx.local().shared_memory_buffer().borrow()[..],
+        &[0xAB; 64],
+        "the sub-call must restore the caller's memory",
     );
 }
 

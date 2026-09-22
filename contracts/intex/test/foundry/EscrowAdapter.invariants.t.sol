@@ -5,13 +5,15 @@ import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Property test for the per-series escrow invariant:
 ///   sum bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
+///   + sum (lockedAmount - payment at the day's clearing terms), status == Won
 ///     == auctionEscrowState[worldwideDay].totalLocked
-/// Holds across every state transition (lock, finalize, emergency refund).
+/// Holds across every state transition (lock, finalize, claim).
 contract EscrowAdapterInvariantsTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
@@ -27,9 +29,8 @@ contract EscrowAdapterInvariantsTest is Test {
     uint32 s1 = 1;
     uint32 s2 = 2;
 
-    uint128 constant LOCK_A = 100 * 10 ** 6;
-    uint128 constant LOCK_B = 250 * 10 ** 6;
-    uint128 constant LOCK_C = 75 * 10 ** 6;
+    uint128 constant BASIS = 1_000_000;
+    uint32 constant CLEARING_RATE = 600_000;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
@@ -44,7 +45,7 @@ contract EscrowAdapterInvariantsTest is Test {
 
         address[3] memory bidders = [bidderA, bidderB, bidderC];
         for (uint256 i = 0; i < bidders.length; i++) {
-            paymentToken.mint(bidders[i], 10_000 * 10 ** 6);
+            paymentToken.mint(bidders[i], 10_000e18);
             vm.prank(bidders[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
         }
@@ -56,6 +57,8 @@ contract EscrowAdapterInvariantsTest is Test {
             IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay, bidders[i]);
             if (lock.status == IEscrowAdapter.LockStatus.Locked) {
                 sum += lock.lockedAmount;
+            } else if (lock.status == IEscrowAdapter.LockStatus.Won) {
+                sum += lock.lockedAmount - uint128(BridgeMsgCodec.escrowAmount(lock.quantity, BASIS, CLEARING_RATE));
             }
         }
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
@@ -70,16 +73,13 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s2, bidders);
 
         // Mixed locks across two series.
-        vm.prank(auction);
-        escrow.lockFunds(s1, bidderA, LOCK_A);
+        _lock(s1, bidderA, 700_000, 1);
         _assertSeriesInvariant(s1, bidders);
 
-        vm.prank(auction);
-        escrow.lockFunds(s1, bidderB, LOCK_B);
+        _lock(s1, bidderB, 900_000, 3);
         _assertSeriesInvariant(s1, bidders);
 
-        vm.prank(auction);
-        escrow.lockFunds(s2, bidderC, LOCK_C);
+        _lock(s2, bidderC, CLEARING_RATE, 2);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
@@ -89,32 +89,40 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
-        // Finalize the remaining s1 lock with a partial split.
-        IEscrowAdapter.FinalizationInstruction[] memory s1Instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        s1Instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidderB, refundedAmount: LOCK_B / 2, paidAmount: LOCK_B - LOCK_B / 2
-        });
-        vm.prank(bridger);
-        escrow.finalizeAuction(s1, bytes32(uint256(0x5151)), s1Instructions, true);
+        // bidderB wins above the clearing rate and keeps its refund in escrow.
+        _finalize(s1, bidderB);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
-        // Finalize s2 with a full claim.
-        IEscrowAdapter.FinalizationInstruction[] memory s2Instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        s2Instructions[0] =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidderC, refundedAmount: 0, paidAmount: LOCK_C});
-        vm.prank(bridger);
-        escrow.finalizeAuction(s2, bytes32(uint256(0x5252)), s2Instructions, true);
+        // bidderC wins at the clearing rate and pays its whole lock.
+        _finalize(s2, bidderC);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
+
+        escrow.claimRefund(s1, bidderB);
+        _assertSeriesInvariant(s1, bidders);
+        _assertSeriesInvariant(s2, bidders);
+    }
+
+    function _lock(uint32 worldwideDay, address bidder, uint32 bidRate, uint16 quantity) internal {
+        vm.prank(auction);
+        escrow.lockFunds(
+            worldwideDay, bidder, uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate)), bidRate, quantity
+        );
+    }
+
+    function _finalize(uint32 worldwideDay, address winner) internal {
+        address[] memory winners = new address[](1);
+        winners[0] = winner;
+        vm.prank(bridger);
+        escrow.finalizeAuction(worldwideDay, bytes32(uint256(worldwideDay)), winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     /// @dev Sanity check that the invariant helper catches injected drift.
     function test_Invariant_CatchesInjectedDrift() public {
         address[3] memory bidders = [bidderA, bidderB, bidderC];
 
-        vm.prank(auction);
-        escrow.lockFunds(s1, bidderA, LOCK_A);
+        _lock(s1, bidderA, 700_000, 1);
 
         // auctionEscrowState mapping slot lookup: keccak256(abi.encode(s1, baseSlot)).
         // We bump `totalLocked` (low 8 bytes of the packed slot) without touching bidLocks

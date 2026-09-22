@@ -13,12 +13,12 @@ use super::{
 
 const READY_INDEX_MAGIC: [u8; 4] = *b"OMRI";
 const READY_INDEX_VERSION: u16 = 1;
-const READY_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
-const READY_INDEX_KEY_LEN: usize = 8 + 4 + 8;
+pub(super) const READY_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
+pub(super) const READY_INDEX_KEY_LEN: usize = 8 + 4 + 8;
 const RESPONSE_INDEX_MAGIC: [u8; 4] = *b"OMDI";
 const RESPONSE_INDEX_VERSION: u16 = 1;
-const RESPONSE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
-const RESPONSE_INDEX_KEY_LEN: usize = 8 + 32 + 32;
+pub(super) const RESPONSE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
+pub(super) const RESPONSE_INDEX_KEY_LEN: usize = 8 + 32 + 32;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ReadyIndexKey {

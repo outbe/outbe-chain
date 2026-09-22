@@ -543,6 +543,16 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function name() external pure returns (string memory) {
+        return "Intex";
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function symbol() external pure returns (string memory) {
+        return "INTEX";
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function contractURI() external pure returns (string memory) {
         return IntexMetadata.contractURI();
     }

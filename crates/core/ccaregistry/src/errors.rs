@@ -1,4 +1,5 @@
 //! CCA transition and arithmetic errors.
+use alloy_primitives::Address;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -10,8 +11,8 @@ pub enum CcaError {
     InvalidName,
     #[error("CCA is not registered")]
     NotRegistered,
-    #[error("CCA is not active")]
-    NotActive,
+    #[error("CCA is not active: {0}")]
+    CcaNotActive(Address),
     #[error("CCA unbond is pending")]
     UnbondPending,
     #[error("CCA has no pending unbond")]

@@ -79,7 +79,7 @@ interface IOriginRouter {
     /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param instructionsCount Number of finalization instructions.
+    /// @param instructionsCount Winners in the chunk.
     event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
     /// @notice Emitted when a mark-called message is sent to a target chain.
@@ -292,16 +292,19 @@ interface IOriginRouter {
         uint16 totalChunks,
         IssuanceInstructionsParams[] calldata series
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chunk of a day's refund instructions to a single target chain.
-    ///         Restricted to `DESIS_ROLE`.
+    /// @notice Send one chunk of a day's refunds to a single target chain: its winners and the day's clearing
+    ///         terms. A chain whose bids all lost still gets one empty chunk, which closes its day. Restricted to
+    ///         `DESIS_ROLE`.
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
         uint16 chunkIndex,
         uint16 totalChunks,
-        address[] calldata bidders,
-        uint128[] calldata refundedAmounts,
-        uint128[] calldata paidAmounts
+        uint64 clearingRate,
+        uint128 basis,
+        address[] calldata winners,
+        uint16 partialIndex,
+        uint16 partialWon
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called for one day's series over its snapshot. A batch is one day's
     ///         series that share both the decision that called them and its timestamp.

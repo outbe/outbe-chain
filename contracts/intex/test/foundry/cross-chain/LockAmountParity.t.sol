@@ -9,7 +9,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 ///         (`IntexAuction.revealBid`) and on Outbe (`Desis.rate_lock`): both evaluate
 ///         `qty * basis * rate / 1e6 * 1e12` in 256-bit space with protocol-6
 ///         `basis = promis_load` and a native-18 WCOEN result. A
-///         cross-chain finalize can never revert AmountMismatch from width drift, because any bid
+///         cross-chain finalize can never skip a winner from width drift, because any bid
 ///         that locks on BNB stays in the lockable range and Outbe reproduces the exact same value.
 contract LockAmountParityTest is Test {
     uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;

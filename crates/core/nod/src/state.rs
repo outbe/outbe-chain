@@ -10,12 +10,13 @@ use outbe_primitives::math::{
     tree_math::{self, BinTreeStorage},
 };
 use outbe_primitives::time::WorldwideDay;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
     constants::{BIN_STEP_BP, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW},
     errors::NodError,
+    precompile::INod,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
@@ -48,6 +49,19 @@ pub(crate) fn derived_call_terms(
 }
 
 impl NodContract<'_> {
+    /// A Nod id carries its Worldwide Day as a prefix, so each day is one id range.
+    pub(crate) fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
+        for &day in days {
+            let day = WorldwideDay::new(day);
+            self.emit(INod::BatchMetadataUpdate {
+                _fromTokenId: WwdEntityId::from_day_and_digest(day, B256::ZERO).to_u256(),
+                _toTokenId: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xff))
+                    .to_u256(),
+            })?;
+        }
+        Ok(())
+    }
+
     pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
         if !self.entry_prices_frozen.read(&day)? {
             return Ok(None);
@@ -294,10 +308,13 @@ impl NodContract<'_> {
                 self.storage_handle(),
                 scope,
                 BodyInput::NodBucket(&canonical_bucket),
-            )
-        } else {
-            Ok(())
+            )?;
         }
+        self.emit(INod::Transfer {
+            from: Address::ZERO,
+            to: item.owner,
+            tokenId: item.nod_id.to_u256(),
+        })
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.
@@ -333,17 +350,20 @@ impl NodContract<'_> {
             self.callable_bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
-            delete(self.storage_handle(), scope, current_bucket)
+            delete(self.storage_handle(), scope, current_bucket)?;
         } else if item.is_settled {
             update(
                 self.storage_handle(),
                 scope,
                 current_bucket,
                 BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-            )
-        } else {
-            Ok(())
+            )?;
         }
+        self.emit(INod::Transfer {
+            from: item.owner,
+            to: Address::ZERO,
+            tokenId: item.nod_id.to_u256(),
+        })
     }
 
     /// Moves one unpaid member into the live paid count, preserving ownership and supply.
@@ -379,7 +399,10 @@ impl NodContract<'_> {
             scope,
             current_bucket,
             BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-        )
+        )?;
+        self.emit(INod::MetadataUpdate {
+            _tokenId: item.nod_id.to_u256(),
+        })
     }
 
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {

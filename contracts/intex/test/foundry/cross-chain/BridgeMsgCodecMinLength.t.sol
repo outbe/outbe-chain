@@ -10,9 +10,7 @@ import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 /// smallest message its encoder can produce.
 contract BridgeMsgCodecMinLengthTest is Test {
     function test_RefundFloorIsTheSmallestRealRefund() public pure {
-        bytes memory smallest = BridgeMsgCodec.encodeRefundInstructions(
-            20_250_101, 0, 1, new address[](0), new uint128[](0), new uint128[](0)
-        );
+        bytes memory smallest = BridgeMsgCodec.encodeRefundInstructions(20_250_101, 0, 1, 0, 0, new address[](0), 0, 0);
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS, "refund floor");
     }
 
@@ -64,11 +62,8 @@ contract BridgeMsgCodecMinLengthTest is Test {
         // the two tests above cannot see on their own.
         assertLe(
             BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS,
-            BridgeMsgCodec.encodeRefundInstructions(
-                20_250_101, 0, 1, new address[](1), new uint128[](1), new uint128[](1)
-            )
-            .length,
-            "a one-bidder refund must pass its floor"
+            BridgeMsgCodec.encodeRefundInstructions(20_250_101, 0, 1, 1, 1, new address[](1), 0, 0).length,
+            "a one-winner refund must pass its floor"
         );
     }
 }

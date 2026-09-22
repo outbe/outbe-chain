@@ -840,9 +840,7 @@ mod boundary_value_tests {
         STAKING_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         VOTE_ADDRESS,
-        // requestCredis takes the originating CCA's matching COEN stake.
         CREDIS_FACTORY_ADDRESS,
-        // burn is the pool's only value-carrying entry point.
         EMIT_ADDRESS,
         CCA_REGISTRY_ADDRESS,
         // fund tops up the float that pays Interchain Account dispatch fees.
