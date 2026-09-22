@@ -147,6 +147,20 @@ impl World {
                     .write(&factory.address(), factory.source() as u8)
                     .unwrap();
             }
+            // A finalized day above the floor qualifies the series or gem.
+            let day = outbe_primitives::time::first_full_day(TIMESTAMP);
+            let pair = outbe_oracle::api::register_pair(
+                storage.clone(),
+                outbe_oracle::api::AddressPair::new_coen_to(840),
+            )
+            .unwrap();
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair, U256::from(2_160_001))
+                .unwrap();
+            oracle.utc_day_vwap_last_finalized.write(day).unwrap();
             match factory {
                 Factory::Intex => {
                     let series_id = SeriesId::from(FixedBytes(SERIES));
@@ -171,20 +185,6 @@ impl World {
                         },
                     )
                     .unwrap();
-                    // A finalized day above the floor qualifies the series.
-                    let day = outbe_primitives::time::first_full_day(TIMESTAMP);
-                    let pair = outbe_oracle::api::register_pair(
-                        storage.clone(),
-                        outbe_oracle::api::AddressPair::new_coen_to(840),
-                    )
-                    .unwrap();
-                    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-                    oracle
-                        .utc_day_vwap_value
-                        .get_nested(&day)
-                        .write(&pair, U256::from(2_160_001))
-                        .unwrap();
-                    oracle.utc_day_vwap_last_finalized.write(day).unwrap();
                     U256::ZERO
                 }
                 Factory::Gem => outbe_gem::api::add_gem(
@@ -199,7 +199,7 @@ impl World {
                         call_rate: 128,
                         issuance_currency: 840,
                         reference_currency: 840,
-                        initial_state: GemState::Qualified,
+                        initial_state: GemState::Issued,
                         issued_at: TIMESTAMP,
                     },
                 )

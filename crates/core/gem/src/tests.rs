@@ -213,6 +213,17 @@ fn qualification_is_never_stored() {
 }
 
 #[test]
+fn set_state_only_settles() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        for state in [GemState::Issued, GemState::Called] {
+            assert!(api::set_state(storage, gem_id, state).is_err());
+        }
+        assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
+    });
+}
+
+#[test]
 fn is_qualified_dispatch() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();

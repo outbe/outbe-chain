@@ -152,25 +152,19 @@ impl GemContract<'_> {
         })
     }
 
+    /// Only `Settled` is set here: a call goes through `mark_called`, and qualification is derived.
     pub(crate) fn set_state(&mut self, gem_id: U256, new_state: GemState) -> Result<()> {
-        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        match new_state {
-            // Qualification is derived; only a Genesis gem is born with it stored.
-            GemState::Qualified => return Err(GemError::InvalidState.into()),
-            GemState::Settled => {
-                // A callable gem leaves the bin index; Called leaves its queue below.
-                if is_callable(item.state) {
-                    self.remove_call_bin(gem_id, item.call_price_minor, item.reference_currency)?;
-                }
-                item.settled_at = self.storage.timestamp()?.to::<u64>();
-            }
-            _ => {}
+        if new_state != GemState::Settled {
+            return Err(GemError::InvalidState.into());
         }
-
-        if item.state == GemState::Called as u8 && new_state != GemState::Called {
+        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
+        if is_callable(item.state) {
+            self.remove_call_bin(gem_id, item.call_price_minor, item.reference_currency)?;
+        }
+        if item.state == GemState::Called as u8 {
             self.remove_called(gem_id)?;
         }
-
+        item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = new_state as u8;
         self.gem_items.update(&item)?;
         self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
