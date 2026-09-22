@@ -9957,7 +9957,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -14142,6 +14141,7 @@ dependencies = [
 [[package]]
 name = "reth-transaction-pool"
 version = "2.5.2"
+source = "git+https://github.com/paradigmxyz/reth.git?tag=v2.5.2#5a6940e351fed80458fe6c9da8581cbe4b8bd036"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
