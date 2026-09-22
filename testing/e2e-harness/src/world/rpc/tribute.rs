@@ -368,10 +368,10 @@ impl Rpc {
         );
     }
 
-    /// Prove one real `FullProof` offer for `caller`'s registered L2 fixture
-    /// network: the proof is bound to `caller`, this chain's id, the offer's
-    /// day, currency, amounts and draft, and its Merkle root is signed with the
-    /// key that network registered.
+    /// Prove one real Demo Tribute offer for `caller`'s registered L2 fixture
+    /// network: the proof is bound to `caller`, this host chain's id, the
+    /// selected L2 chain id, the offer's day, currency, amounts and draft, and
+    /// its Merkle root is signed with the key that network registered.
     fn prove_offer(
         &self,
         caller: Address,
@@ -399,7 +399,7 @@ impl Rpc {
         )
     }
 
-    /// A caller-bound FullProof for a selected registered network. Network
+    /// A caller-bound Demo Tribute proof for a selected registered network. Network
     /// ownership and the user submitting the Tribute are independent identities.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prove_offer_for_network(
@@ -440,8 +440,8 @@ impl Rpc {
     /// Submit a Tribute offer with an explicit circuit selector and L2 zk
     /// fields (`0x`-hex).
     ///
-    /// Empty zk fields are deliberate negative transactions: the node, not the
-    /// harness, decides whether they are admissible.
+    /// Proofs and circuit selectors are mandatory. Invalid signatures may still
+    /// be submitted to exercise the node's admission checks.
     pub fn tribute_offer_with_zk(
         &self,
         key: &str,

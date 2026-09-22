@@ -8,7 +8,7 @@ use alloy_sol_types::sol;
 
 pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1 as ITeeRegistry;
 
-pub use outbe_primitives::addresses::{L2_REGISTRY_ADDRESS, VOTE_ADDRESS};
+pub use outbe_primitives::addresses::VOTE_ADDRESS;
 
 // Precompile contract addresses
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
@@ -38,7 +38,6 @@ mod tribute_abi {
 }
 pub use tribute_abi::ITribute;
 sol!("../../contracts/precompiles/src/ITributeFactory.sol");
-sol!("../../contracts/precompiles/src/IL2Registry.sol");
 sol!("../../contracts/precompiles/src/ICycle.sol");
 sol!("../../contracts/precompiles/src/INod.sol");
 sol!("../../contracts/precompiles/src/IOracle.sol");

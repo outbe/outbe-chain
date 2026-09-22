@@ -32,6 +32,9 @@ tracing.workspace = true
 outbe-lysis.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+rand.workspace = true
 x25519-dalek.workspace = true
 serde_json.workspace = true
 commonware-codec.workspace = true

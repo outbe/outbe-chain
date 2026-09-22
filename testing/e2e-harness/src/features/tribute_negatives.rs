@@ -160,7 +160,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             assert_eq!(call.signature.len(), 48);
             assert_eq!(
                 call.zkProof.len(),
-                outbe_zk_canonical::full_proof::COMBINED_LEN
+                outbe_zk_canonical::demo_tribute::COMBINED_LEN
             );
         }
         Rejection::InvalidProof => {
@@ -168,18 +168,18 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             assert_eq!(call.signature.len(), 48);
             assert_eq!(
                 call.zkProof.len(),
-                outbe_zk_canonical::full_proof::COMBINED_LEN
+                outbe_zk_canonical::demo_tribute::COMBINED_LEN
             );
         }
         Rejection::UnregisteredNetwork => {
-            assert!(
-                call.zkMerkleRoot.is_empty()
-                    && call.zkProof.is_empty()
-                    && call.chainId == 0
-                    && call.version.is_empty()
-                    && call.signature.is_empty(),
-                "the registration guard must not depend on zk material"
+            assert_ne!(call.chainId, 0);
+            assert!(!call.version.is_empty());
+            assert_eq!(call.zkMerkleRoot.len(), 32);
+            assert_eq!(
+                call.zkProof.len(),
+                outbe_zk_canonical::demo_tribute::COMBINED_LEN
             );
+            assert_eq!(call.signature.len(), 48);
         }
     }
 

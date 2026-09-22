@@ -6,8 +6,8 @@
 //! The benchmark never starts a node, network, Docker, SGX, or a TEE sidecar.
 //! It executes both the canonical TributeFactory state transition and the
 //! canonical enclave offer processor in-process. Issuance is ZK-only, so the
-//! single scenario uses the frozen FullProof fixture, a registered L2, and a
-//! valid BLS MinSig signature over the proof's Merkle root.
+//! single scenario uses the frozen Demo Tribute proof fixture, a registered L2,
+//! and a valid BLS MinSig signature over the proof's Merkle root.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -62,13 +62,12 @@ use outbe_tee_enclave::{
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
-use outbe_zk_canonical::full_proof::{
-    alloy::PublicInputs as FullProofPublicInputs,
-    decode_public_inputs as decode_full_proof_public_inputs,
-    COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
+use outbe_zk_canonical::demo_tribute::{
+    decode_public_inputs as decode_demo_tribute_public_inputs, demo_tribute_domain,
+    DemoTributeProvable, COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN,
 };
-use outbe_zk_canonical::noir::full_proof::FullProof;
+use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
+use outbe_zk_canonical::tribute::alloy::PublicInputs as DemoTributePublicInputs;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
@@ -89,7 +88,11 @@ const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 /// and the registry key, so a single type keeps both in sync.
 const L2_CHAIN_ID: u32 = 0xdead;
 /// Circuit version enabled for `L2_CHAIN_ID` in the canonical circuit registry;
-/// the frozen FullProof fixture verifies under it.
+/// the frozen Demo Tribute fixture verifies under it.
+///
+/// Proving uses the active `demo_tribute` marker (1.2.0) while the registry
+/// enables 1.1.0 for this chain: the frozen `circuit.vk` files of both versions
+/// are byte-identical, so one proof verifies under either entry's key.
 const L2_CIRCUIT_VERSION: &str = "1.1.0";
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
@@ -107,7 +110,7 @@ const CE_FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = 55_000;
 const CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
 const CE_FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 = 25_000;
 const CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
-const FIXED_FULL_PROOF_V1: &[u8] = include_bytes!("../../fixtures/tribute_full_proof_v1.bin");
+const FIXED_DEMO_TRIBUTE_V1: &[u8] = include_bytes!("../../fixtures/tribute_demo_tribute_v1.bin");
 
 mod abi {
     use super::*;
@@ -174,7 +177,7 @@ struct Fixture {
     nonce: Bytes,
     ephemeral_pubkey: U256,
     proof: Bytes,
-    public_inputs: FullProofPublicInputs,
+    public_inputs: DemoTributePublicInputs,
     l2_public_key: Vec<u8>,
     signature: Bytes,
     crs_init_ms: f64,
@@ -231,63 +234,79 @@ fn build_fixture() -> Fixture {
     )
     .expect("deterministic offer encryption succeeds");
 
-    let mut proof_rng = StdRng::from_seed([9; 32]);
-    let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut proof_rng);
-    let owner_nonce = Fr::rand(&mut proof_rng);
-    let derived_owner = OutbeV1::derive_owner(&public_key, owner_nonce).unwrap();
-    let draft_id = B256::with_last_byte(0x11);
-    let draft = TributeDraftFixture {
-        id: draft_id,
-        derived_owner: B256::from(field_bytes(&derived_owner)),
-        worldwide_day: u64::from(TARGET_WWD.value()),
-        currency: 840,
-        base: 100,
-        atto: 0,
-        su_ids: vec![SU_HASH],
-    };
-    let binding = OutbeV1::binding(&CALLER.into_array(), draft_id.as_ref(), CHAIN_ID).unwrap();
-    let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
-
     let proof_started = Instant::now();
-    let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
-        .unwrap()
-        .empty_inclusion_path(0);
-    let (witness, public) = draft
-        .derive_full_witness(&mut proof_rng, &signer, binding, &path)
+    let generated_combined = {
+        let mut proof_rng = StdRng::from_seed([9; 32]);
+        let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut proof_rng);
+        let owner_nonce = Fr::rand(&mut proof_rng);
+        let derived_owner = OutbeV1::derive_owner(&public_key, owner_nonce).unwrap();
+        let draft_id = B256::with_last_byte(0x11);
+        let draft = TributeDraftFixture {
+            id: draft_id,
+            derived_owner: B256::from(field_bytes(&derived_owner)),
+            worldwide_day: u64::from(TARGET_WWD.value()),
+            currency: 840,
+            base: 100,
+            atto: 0,
+            su_ids: vec![SU_HASH],
+        };
+        // The submission binding is the caller, the draft and *both* chain ids: the
+        // host chain that executes the offer and the selected L2 network.
+        let binding = OutbeV1::binding(
+            &CALLER.into_array(),
+            draft_id.as_ref(),
+            CHAIN_ID,
+            u64::from(L2_CHAIN_ID),
+        )
         .unwrap();
-    let generated_proof =
-        ProofGenerator::<OutbeV1, FullProof>::generate(&Barretenberg::default(), &witness, &public)
+        let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
+
+        let path = Imt::<OutbeV1>::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
+            .unwrap()
+            .empty_inclusion_path(0);
+        let (witness, public) = draft
+            .derive_demo_tribute_witness(&mut proof_rng, &signer, binding, &path)
             .unwrap();
+        let proof = ProofGenerator::<OutbeV1, DemoTribute>::generate(
+            &Barretenberg::default(),
+            &witness,
+            &public,
+        )
+        .unwrap();
+
+        let public_fields = <DemoTribute as Circuit<OutbeV1>>::public_inputs(&public);
+        let mut combined = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
+        combined.extend_from_slice(&(public_fields.len() as u32).to_be_bytes());
+        for value in public_fields {
+            combined.extend_from_slice(&field_bytes(&value));
+        }
+        for field in proof.proof {
+            combined.extend_from_slice(&field);
+        }
+        assert_eq!(combined.len(), DEMO_TRIBUTE_COMBINED_LEN);
+        combined
+    };
     let proof_generation_ms = proof_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let public_fields = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
-    let mut generated_combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
-    generated_combined.extend_from_slice(&(public_fields.len() as u32).to_be_bytes());
-    for value in public_fields {
-        generated_combined.extend_from_slice(&field_bytes(&value));
-    }
-    for field in generated_proof.proof {
-        generated_combined.extend_from_slice(&field);
-    }
-    assert_eq!(generated_combined.len(), FULL_PROOF_COMBINED_LEN);
-    let generated_public_inputs: FullProofPublicInputs =
-        decode_full_proof_public_inputs(&generated_combined)
+    let generated_public_inputs: DemoTributePublicInputs =
+        decode_demo_tribute_public_inputs(&generated_combined)
             .unwrap()
             .try_into()
             .unwrap();
-    assert!(verify_circuit::<FullProof>(&generated_combined).unwrap());
+    assert!(verify_circuit::<DemoTribute>(&generated_combined).unwrap());
 
     assert_eq!(
-        FIXED_FULL_PROOF_V1.len(),
-        FULL_PROOF_COMBINED_LEN,
+        FIXED_DEMO_TRIBUTE_V1.len(),
+        DEMO_TRIBUTE_COMBINED_LEN,
         "versioned benchmark proof has the wrong size"
     );
-    let public_inputs: FullProofPublicInputs = decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1)
-        .unwrap()
-        .try_into()
-        .unwrap();
+    let public_inputs: DemoTributePublicInputs =
+        decode_demo_tribute_public_inputs(FIXED_DEMO_TRIBUTE_V1)
+            .unwrap()
+            .try_into()
+            .unwrap();
     assert!(
-        verify_circuit::<FullProof>(FIXED_FULL_PROOF_V1).unwrap(),
+        verify_circuit::<DemoTribute>(FIXED_DEMO_TRIBUTE_V1).unwrap(),
         "versioned benchmark proof no longer verifies"
     );
     assert_eq!(
@@ -311,7 +330,7 @@ fn build_fixture() -> Fixture {
         cipher_text: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeral_pubkey: U256::from_be_bytes(ephemeral_pubkey),
-        proof: Bytes::copy_from_slice(FIXED_FULL_PROOF_V1),
+        proof: Bytes::copy_from_slice(FIXED_DEMO_TRIBUTE_V1),
         public_inputs,
         l2_public_key: l2_public_key.encode().to_vec(),
         signature: signature.into(),
@@ -497,8 +516,8 @@ fn measure_pairing_ms(input: &[u8]) -> f64 {
 
 fn measure_verify_ms(proof: &[u8]) -> f64 {
     let started = Instant::now();
-    decode_full_proof_public_inputs(black_box(proof)).unwrap();
-    assert!(verify_circuit::<FullProof>(black_box(proof)).unwrap());
+    decode_demo_tribute_public_inputs(black_box(proof)).unwrap();
+    assert!(verify_circuit::<DemoTribute>(black_box(proof)).unwrap());
     started.elapsed().as_secs_f64() * 1_000.0
 }
 
@@ -761,7 +780,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             .with_postcondition("tribute.created", "true")
             .with_postcondition("tribute.id", tribute_id.to_string())
             .with_artifact(
-                "full_proof",
+                "demo_tribute_proof",
                 format!(
                     "keccak256:{:#x}",
                     alloy_primitives::keccak256(&fixture.proof)
@@ -778,7 +797,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         fixture.cipher_text.len().to_string(),
     );
     observation.postconditions.insert(
-        "fixture.full_proof_bytes".to_owned(),
+        "fixture.demo_tribute_proof_bytes".to_owned(),
         fixture.proof.len().to_string(),
     );
     Ok(observation)

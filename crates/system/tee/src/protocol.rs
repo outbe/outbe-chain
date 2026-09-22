@@ -44,7 +44,7 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 /// operator, validates the root signature, resolves the exact circuit version,
 /// and checks proof framing. After decryption it compares the enclave's expected
 /// hashes and verifies with the selected key. Raw proof/signature bytes and
-/// circuit selectors are not forwarded to the enclave.
+/// circuit versions are not forwarded; the L2 chain id binds the decrypted claim.
 ///
 /// Every field here is public and host-supplied, so the enclave never echoes any
 /// of them back - [`TributeOfferResult`] carries only what the enclave itself
@@ -87,8 +87,8 @@ pub struct EncryptedTributeOffer {
     /// active curve and is valid.
     pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied for every admitted offer. The owner is
-    /// the first public input in `zkProof`; the chain id comes from the local
-    /// execution context.
+    /// the first public input in `zkProof`; the host chain id comes from the
+    /// local execution context, and the L2 chain id from the verified network.
     #[serde(default)]
     pub zk_context: Option<TributeZkContext>,
 }
@@ -97,6 +97,7 @@ pub struct EncryptedTributeOffer {
 pub struct TributeZkContext {
     pub derived_owner: B256,
     pub chain_id: u64,
+    pub l2_chain_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1026,6 +1027,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
                 buf.push(1);
                 buf.extend_from_slice(context.derived_owner.as_slice());
                 buf.extend_from_slice(&context.chain_id.to_be_bytes());
+                buf.extend_from_slice(&context.l2_chain_id.to_be_bytes());
             }
             None => buf.push(0),
         }
