@@ -20,13 +20,18 @@ use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
-    OutbeHeader,
+    OutbeHeader, OutbePrimitives,
 };
 use reth_chain_state::PersistedBlockSubscriptions;
 use reth_provider::{
     BlockHashReader, DatabaseProviderFactory, HeaderProvider, ProviderError, ReceiptProvider,
 };
-use reth_storage_api::TryIntoHistoricalStateProvider;
+use reth_stages_types::StageId;
+use reth_storage_api::{
+    BlockNumReader, ChangeSetReader, DBProvider, HistoryReader, PruneCheckpointReader,
+    StageCheckpointReader, StateProvider, StorageChangeSetReader, StorageSettingsCache,
+};
+use reth_storage_overlay::{OverlayManager, OverlayStateProvider};
 
 use crate::ce_recovery::{CanonicalCeReplayBlock, CanonicalCeReplaySource};
 
@@ -141,7 +146,14 @@ where
     P::Provider: BlockHashReader
         + HeaderProvider<Header = OutbeHeader>
         + ReceiptProvider
-        + TryIntoHistoricalStateProvider,
+        + DBProvider
+        + BlockNumReader
+        + HistoryReader
+        + StorageSettingsCache
+        + StageCheckpointReader
+        + PruneCheckpointReader
+        + ChangeSetReader
+        + StorageChangeSetReader,
 {
     fn persisted_blocks(&self) -> BoxStream<'static, BlockNumHash> {
         self.provider.persisted_block_stream().boxed()
@@ -175,28 +187,15 @@ where
                 )
             })?
             .compressed_entities_root;
-        // Consume this exact read-only transaction into the historical state
-        // view. No in-memory blockchain-tree provider participates.
-        let state = match durable.try_into_history_at_block(height) {
-            Ok(state) => state,
-            Err(error) if is_pending_executed_state(&error, height) => {
-                // The block row can become visible just before Reth advances its
-                // durable executed-state tip. Treat that narrow window exactly
-                // like an absent block and wait for the persistence notification.
-                return Ok(None);
-            }
+        let root = match durable_ce_root(&durable, height, block_hash) {
+            Ok(root) => root,
+            Err(error) if is_pending_executed_state(&error, height) => return Ok(None),
             Err(error) => {
                 return Err(eyre::eyre!(
-                    "failed to open durable historical state for {height}/{block_hash}: {error}"
+                    "failed to read durable CE root for {height}/{block_hash}: {error}"
                 ));
             }
         };
-        let root = state
-            .storage(COMPRESSED_ENTITIES_ADDRESS, CE_ROOT_SLOT)
-            .map_err(|error| {
-                eyre::eyre!("failed to read durable CE root for {height}/{block_hash}: {error}")
-            })?
-            .map_or(B256::ZERO, |value| B256::from(value.to_be_bytes::<32>()));
         Ok(Some(DurableCeEvidence {
             block_hash,
             evm_root: root,
@@ -209,13 +208,64 @@ where
     }
 }
 
+/// Read the exact durable post-state using the same DB transaction as the header.
+/// A fresh, empty overlay manager can reconstruct historical state from DB
+/// changesets, but cannot contribute speculative in-memory blocks or cached state.
+fn durable_ce_root<DB>(
+    durable: &DB,
+    height: u64,
+    block_hash: B256,
+) -> reth_provider::ProviderResult<B256>
+where
+    DB: DBProvider
+        + BlockNumReader
+        + HistoryReader
+        + StorageSettingsCache
+        + StageCheckpointReader
+        + PruneCheckpointReader
+        + ChangeSetReader
+        + StorageChangeSetReader,
+{
+    let checkpoint = durable.get_stage_checkpoint(StageId::Finish)?;
+    let finish = checkpoint
+        .as_ref()
+        .map_or(0, |checkpoint| checkpoint.block_number);
+    let state_tip = checkpoint
+        .as_ref()
+        .and_then(|checkpoint| checkpoint.finish_stage_checkpoint())
+        .and_then(|finish| finish.partial_state_trie())
+        .unwrap_or(finish);
+    if height > state_tip {
+        return Err(ProviderError::BlockNotExecuted {
+            requested: height,
+            executed: state_tip,
+        });
+    }
+    let value = if height == finish {
+        reth_provider::LatestStateProviderRef::new(durable)
+            .storage(COMPRESSED_ENTITIES_ADDRESS, CE_ROOT_SLOT)?
+    } else {
+        let overlays = OverlayManager::<OutbePrimitives>::default();
+        let state = OverlayStateProvider::new_ref(durable, overlays.overlay_builder(block_hash));
+        state.storage(COMPRESSED_ENTITIES_ADDRESS, CE_ROOT_SLOT)?
+    };
+    Ok(value.map_or(B256::ZERO, |value| B256::from(value.to_be_bytes::<32>())))
+}
+
 impl<P> CanonicalCeReplaySource for RethDurableCeState<P>
 where
     P: PersistedBlockSubscriptions + DatabaseProviderFactory + Clone + Send + Sync + 'static,
     P::Provider: BlockHashReader
         + HeaderProvider<Header = OutbeHeader>
         + ReceiptProvider
-        + TryIntoHistoricalStateProvider,
+        + DBProvider
+        + BlockNumReader
+        + HistoryReader
+        + StorageSettingsCache
+        + StageCheckpointReader
+        + PruneCheckpointReader
+        + ChangeSetReader
+        + StorageChangeSetReader,
 {
     fn durable_checkpoint(
         &self,
@@ -700,6 +750,95 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn durable_root_reads_exact_database_history_and_rejects_masked_tip() {
+        use reth_chain_state::test_utils::TestBlockBuilder;
+        use reth_db::{
+            models::{storage_sharded_key::StorageShardedKey, BlockNumberAddress, ShardedKey},
+            tables,
+            transaction::DbTxMut,
+            BlockNumberList,
+        };
+        use reth_primitives_traits::StorageEntry;
+        use reth_provider::{test_utils::create_test_provider_factory, BlockWriter};
+        use reth_stages_types::{FinishCheckpoint, StageCheckpoint};
+        use reth_storage_api::StageCheckpointWriter;
+
+        let factory = create_test_provider_factory();
+        let writer = factory.provider_rw().unwrap();
+        let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(0..3).collect();
+        for block in &blocks {
+            writer.insert_block(block.recovered_block()).unwrap();
+        }
+        let first_hash = blocks[1].recovered_block().hash();
+        let second_hash = blocks[2].recovered_block().hash();
+        writer
+            .save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(2))
+            .unwrap();
+        writer
+            .tx_ref()
+            .put::<tables::PlainStorageState>(
+                COMPRESSED_ENTITIES_ADDRESS,
+                StorageEntry {
+                    key: CE_ROOT_SLOT,
+                    value: U256::from(20),
+                },
+            )
+            .unwrap();
+        writer
+            .tx_ref()
+            .put::<tables::StoragesHistory>(
+                StorageShardedKey {
+                    address: COMPRESSED_ENTITIES_ADDRESS,
+                    sharded_key: ShardedKey {
+                        key: CE_ROOT_SLOT,
+                        highest_block_number: u64::MAX,
+                    },
+                },
+                BlockNumberList::new([2]).unwrap(),
+            )
+            .unwrap();
+        writer
+            .tx_ref()
+            .put::<tables::StorageChangeSets>(
+                BlockNumberAddress((2, COMPRESSED_ENTITIES_ADDRESS)),
+                StorageEntry {
+                    key: CE_ROOT_SLOT,
+                    value: U256::from(10),
+                },
+            )
+            .unwrap();
+        writer.commit().unwrap();
+
+        let durable = factory.provider().unwrap();
+        assert_eq!(durable_ce_root(&durable, 1, first_hash).unwrap(), hash(10));
+        assert_eq!(durable_ce_root(&durable, 2, second_hash).unwrap(), hash(20));
+        assert!(is_pending_executed_state(
+            &durable_ce_root(&durable, 3, hash(3)).unwrap_err(),
+            3,
+        ));
+        drop(durable);
+
+        // Headers/receipts can reach H=2 while state/trie persistence is still
+        // masked at H=1. That must not acknowledge CE finalization at H=2.
+        let writer = factory.provider_rw().unwrap();
+        writer
+            .save_stage_checkpoint(
+                StageId::Finish,
+                StageCheckpoint::new(2).with_finish_stage_checkpoint(FinishCheckpoint {
+                    partial_state_trie: Some(1),
+                }),
+            )
+            .unwrap();
+        writer.commit().unwrap();
+        let durable = factory.provider().unwrap();
+        assert!(is_pending_executed_state(
+            &durable_ce_root(&durable, 2, second_hash).unwrap_err(),
+            2,
+        ));
+        assert_eq!(durable_ce_root(&durable, 1, first_hash).unwrap(), hash(10));
+    }
 
     #[test]
     fn block_row_visible_before_executed_state_is_transient() {

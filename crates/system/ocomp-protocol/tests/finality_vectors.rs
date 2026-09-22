@@ -634,6 +634,14 @@ impl StateProofProvider for FixtureStateProvider {
         Ok(MultiProof::default())
     }
 
+    fn multiproof_v2(
+        &self,
+        _input: TrieInput,
+        _targets: reth_trie::MultiProofTargetsV2,
+    ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
+        Ok(reth_trie::DecodedMultiProofV2::default())
+    }
+
     fn witness(
         &self,
         _input: TrieInput,
