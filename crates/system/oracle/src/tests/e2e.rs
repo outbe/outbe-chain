@@ -1,11 +1,11 @@
 //! End-to-end tests: genesis round-trips, precompile dispatch, VWAP flows.
 
+use crate::constants::DAY_TYPE_ISO;
+use crate::schema::{OracleContract, SCALE_1E18};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use crate::constants::DAY_TYPE_ISO;
-use crate::schema::{OracleContract, SCALE_1E18};
 
 use super::common::*;
 
@@ -1145,7 +1145,7 @@ fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
 
 #[test]
 fn utc_day_vwap_for_iso_preserves_scale_and_absent_prices() {
-    use crate::api::{get_utc_day_vwap_for_iso};
+    use crate::api::get_utc_day_vwap_for_iso;
 
     with_storage(|storage| {
         let day = 20260624;
@@ -1195,7 +1195,10 @@ fn utc_day_vwap_for_iso_preserves_scale_and_absent_prices() {
             get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
             None
         );
-        assert_eq!(get_utc_day_vwap_for_iso(storage.clone(), day, DAY_TYPE_ISO).unwrap(), None);
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, DAY_TYPE_ISO).unwrap(),
+            None
+        );
     });
 }
 
