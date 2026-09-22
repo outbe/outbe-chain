@@ -22,6 +22,12 @@ sol! {
     interface ILifecyclePaymentToken {
         function decimals() external view returns (uint8);
     }
+
+    interface ITargetVwap {
+        function vwapRegistry() external view returns (address);
+        function vwapSource() external view returns (address);
+        function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
+    }
 }
 
 /// Every series carries the same entry price so their floors share a price bin and
@@ -46,6 +52,8 @@ const REFERENCE_BYTE: u8 = b'U';
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// Qualification is read off the seeded day, so it waits only for that block.
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
+/// A fresh sender backfills a few days a minute before the relay carries the newest one over.
+const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
 /// `IntexState::Called`.
 const CALLED: u8 = 2;
 /// Derived against the clock on both chains; never written by anything.
@@ -359,6 +367,51 @@ fn both_series_qualify(world: &mut World) {
                 "series {series} did not qualify on the seeded day"
             );
             sleep(Duration::from_secs(2));
+        }
+    }
+}
+
+/// The origin pushes each finalized day to the target registry, which the target collection
+/// derives qualification from.
+#[then("the target chain holds a closing price above every series floor")]
+fn target_holds_the_qualifying_day(world: &mut World) {
+    let url = target_rpc_url(world);
+    let nft = target_intex_nft(world);
+    let router = world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .target_router;
+    let registry = eth::read_call(&url, router, &ITargetVwap::vwapRegistryCall {})
+        .expect("the target router names its registry");
+    assert_eq!(
+        eth::read_call(&url, nft, &ITargetVwap::vwapSourceCall {}),
+        Some(registry),
+        "the target collection reads the registry"
+    );
+    let deadline = Instant::now() + Duration::from_secs(VWAP_PUSH_TIMEOUT_SECS);
+
+    for series in world.state.lifecycle_series.clone() {
+        let (iso_code, floor, from) = venue_probes::series_floor_terms(&url, nft, series)
+            .expect("the target chain knows the series");
+        loop {
+            let max = eth::read_call(
+                &url,
+                registry,
+                &ITargetVwap::maxUtcDayVwapSinceCall {
+                    isoCode: iso_code,
+                    fromUtcDay: from,
+                },
+            );
+            if max.is_some_and(|max| max > U256::from(floor)) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no day above the floor of {series} reached the target registry (read {max:?})"
+            );
+            sleep(Duration::from_secs(5));
         }
     }
 }

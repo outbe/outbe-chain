@@ -758,6 +758,22 @@ pub(crate) fn series_call_deadline(
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
+/// What a series qualifies on: its reference currency, its floor, and the first UTC day it held in full.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn series_floor_terms(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<(u16, u64, u32)> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
+        (
+            data.referenceCurrency,
+            data.floorPriceMinor,
+            outbe_primitives::time::first_full_day(u64::from(data.issuedAt)),
+        )
+    })
+}
+
 /// The prices the engine derived at issuance: entry, floor, and call.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_prices(
