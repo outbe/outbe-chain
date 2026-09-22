@@ -2756,9 +2756,9 @@ mod frames_inventory {
                     transactions_root: alloy_consensus::proofs::calculate_transaction_root(
                         &transactions[(number - 1) as usize..number as usize],
                     ),
-                    receipts_root: reth_ethereum::calculate_receipt_root_no_memo(
-                        std::slice::from_ref(&receipt),
-                    ),
+                    receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
+                        alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
+                    ]),
                     ..Default::default()
                 }));
             }
@@ -4129,7 +4129,7 @@ mod pin_authority {
                             .activation_preconditions_hash(&poc_schema_limits())
                             .unwrap(),
                     };
-                    let receipts = vec![OutbeReceipt {
+                    let receipts = [OutbeReceipt {
                         success: true,
                         cumulative_gas_used: 21_000,
                         logs: vec![Log {
@@ -4148,8 +4148,12 @@ mod pin_authority {
                     header.inner.gas_used = 21_000;
                     header.inner.transactions_root =
                         alloy_consensus::proofs::calculate_transaction_root(&transactions);
-                    header.inner.receipts_root =
-                        reth_ethereum::calculate_receipt_root_no_memo(&receipts);
+                    header.inner.receipts_root = alloy_consensus::proofs::calculate_receipt_root(
+                        &receipts
+                            .iter()
+                            .map(alloy_consensus::TxReceipt::with_bloom_ref)
+                            .collect::<Vec<_>>(),
+                    );
                     let hash = header.hash_slow();
                     tx.put::<tables::Headers<OutbeHeader>>(100, header.clone())
                         .unwrap();
@@ -6354,7 +6358,7 @@ mod pin_authority {
                 address: METADOSIS_ADDRESS,
                 data: event.encode_log_data(),
             };
-            let mut receipts = vec![
+            let mut receipts = [
                 OutbeReceipt {
                     success: true,
                     cumulative_gas_used: 21_000,
@@ -6425,7 +6429,12 @@ mod pin_authority {
             request.inner.gas_used = 42_000;
             request.inner.transactions_root =
                 alloy_consensus::proofs::calculate_transaction_root(&transactions);
-            request.inner.receipts_root = reth_ethereum::calculate_receipt_root_no_memo(&receipts);
+            request.inner.receipts_root = alloy_consensus::proofs::calculate_receipt_root(
+                &receipts
+                    .iter()
+                    .map(alloy_consensus::TxReceipt::with_bloom_ref)
+                    .collect::<Vec<_>>(),
+            );
             let request_hash = request.hash_slow();
             tx.put::<tables::Headers<OutbeHeader>>(B, request).unwrap();
             tx.put::<tables::CanonicalHeaders>(B, request_hash).unwrap();

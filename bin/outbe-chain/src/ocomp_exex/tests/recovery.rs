@@ -489,9 +489,9 @@ pub(super) mod copied_native {
                     transactions_root: alloy_consensus::proofs::calculate_transaction_root(
                         std::slice::from_ref(&transaction),
                     ),
-                    receipts_root: reth_ethereum::calculate_receipt_root_no_memo(
-                        std::slice::from_ref(&receipt),
-                    ),
+                    receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
+                        alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
+                    ]),
                     ..Default::default()
                 })
             };
@@ -1621,8 +1621,9 @@ pub(super) mod copied_native {
                 .get::<tables::Headers<OutbeHeader>>(height)
                 .unwrap()
                 .unwrap();
-            header.inner.receipts_root =
-                reth_ethereum::calculate_receipt_root_no_memo(std::slice::from_ref(&receipt));
+            header.inner.receipts_root = alloy_consensus::proofs::calculate_receipt_root(&[
+                alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
+            ]);
             let hash = header.hash_slow();
             tx.delete::<tables::HeaderNumbers>(old, None).unwrap();
             tx.put::<tables::HeaderNumbers>(hash, height).unwrap();
@@ -2437,9 +2438,9 @@ mod copied_exex_startup {
                     transactions_root: alloy_consensus::proofs::calculate_transaction_root(
                         std::slice::from_ref(&transaction),
                     ),
-                    receipts_root: reth_ethereum::calculate_receipt_root_no_memo(
-                        std::slice::from_ref(&receipt),
-                    ),
+                    receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
+                        alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
+                    ]),
                     ..Default::default()
                 })
             };
