@@ -10,6 +10,8 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
 import {DateKey} from "@contracts/shared/libs/DateKey.sol";
 import {MockVwapSource} from "@test-mocks/MockVwapSource.sol";
+import {IVwapSource} from "@contracts/shared/interfaces/IVwapSource.sol";
+import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
 
 /// @notice Per-token on-chain metadata: JSON document, attributes, and embedded SVG.
 contract IntexNFT1155MetadataTest is Test {
@@ -157,6 +159,10 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
+    }
+
+    function test_TheIntexFactoryAnswersAsAVwapSource() public pure {
+        assertEq(IIntexFactory.maxUtcDayVwapSince.selector, IVwapSource.maxUtcDayVwapSince.selector);
     }
 
     function test_setVwapSource_OnlyAdmin() public {

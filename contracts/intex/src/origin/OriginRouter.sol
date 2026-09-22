@@ -390,7 +390,7 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    /// @dev Goes out over the live registry rather than a day's snapshot: a closing price is news to every target.
+    /// @dev Goes out over the live target list: a closing price is news to every target.
     function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable onlyRole(INTEX_FACTORY_ROLE) {
         uint32[] memory chains = _os().targetChainIds;
         bytes memory payload = BridgeMsgCodec.encodeDailyVwap(utcDay, rows);

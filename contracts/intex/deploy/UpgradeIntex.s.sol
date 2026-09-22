@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {console} from "forge-std/console.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {BaseScript} from "./BaseScript.s.sol";
+import {VwapSourceWiring} from "./VwapSourceWiring.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -11,6 +12,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title UpgradeBase
 /// @author Outbe
@@ -37,7 +39,7 @@ abstract contract UpgradeBase is BaseScript {
 ///         freshly compiled implementations.
 /// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, ORIGIN_CHAIN_ID.
 ///      Impl constructor args mirror DeployTarget so the immutables are unchanged.
-contract UpgradeTarget is UpgradeBase {
+contract UpgradeTarget is UpgradeBase, VwapSourceWiring {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -46,6 +48,7 @@ contract UpgradeTarget is UpgradeBase {
 
         Create3Factory factory = create3Factory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
+        address router = predictProxy(factory, deployer, "TargetRouter");
 
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
@@ -53,6 +56,14 @@ contract UpgradeTarget is UpgradeBase {
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
         upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
         upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, originChainId)));
+
+        address vwapSource = INTEX_FACTORY;
+        if (block.chainid != originChainId) {
+            vwapSource = predictProxy(factory, deployer, "VwapRegistry");
+            if (vwapSource.code.length == 0) deployVwapRegistry(factory, deployer, router);
+            else upgradeProxy(factory, deployer, "VwapRegistry", address(new VwapRegistry()));
+        }
+        wireVwapSource(nft, router, vwapSource);
         vm.stopBroadcast();
     }
 }

@@ -64,7 +64,7 @@ contract DailyVwapWireTest is CrossChainTest {
         assertEq(registry.lastUtcDay(840), UTC_DAY);
     }
 
-    /// @dev The destination gas follows the row count, not the message type.
+    /// @dev The destination gas follows the row count.
     function test_TheSendBuysDestinationGasForItsRows() public {
         vm.startPrank(intexFactory);
         outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
@@ -74,7 +74,7 @@ contract DailyVwapWireTest is CrossChainTest {
         vm.stopPrank();
     }
 
-    /// @dev The origin's own NFT reads the Oracle, so a chain that targets itself sends it nothing.
+    /// @dev The origin's NFT reads the IntexFactory, so a chain that targets itself sends it nothing.
     function test_TheOriginSkipsItself() public {
         outbeRouter.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), address(outbeRouter)));
         outbeRouter.addTarget(uint32(block.chainid));
@@ -98,7 +98,6 @@ contract DailyVwapWireTest is CrossChainTest {
         outbeRouter.sendDailyVwap(UTC_DAY, _rows(1));
     }
 
-    /// @dev Acknowledged rather than held in redelivery.
     function test_ATargetWithoutARegistryAcknowledgesTheDay() public {
         TargetRouter bare = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         bare.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));

@@ -316,7 +316,7 @@ interface IOriginRouter {
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
 
-    /// @notice Sends one finalized day to every registered target but this chain.
+    /// @notice Sends one finalized day to every registered target but this chain, whose NFT reads the IntexFactory.
     function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.

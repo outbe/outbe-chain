@@ -3,14 +3,13 @@ pragma solidity 0.8.30;
 
 import {console} from "forge-std/console.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {BaseScript} from "./BaseScript.s.sol";
+import {VwapSourceWiring} from "./VwapSourceWiring.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title DeployTarget
 /// @author Outbe
@@ -22,7 +21,7 @@ import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE (proceeds
 ///      route). The deployer is admin + delegate; app wiring (escrow/compact, roles) is a
 ///      separate step. Peers are CREATE3-deterministic across chains.
-contract DeployTarget is BaseScript {
+contract DeployTarget is VwapSourceWiring {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -75,19 +74,8 @@ contract DeployTarget is BaseScript {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
-        // The origin has the oracle itself.
-        address vwapRegistry;
-        if (local != originChainId) {
-            vwapRegistry = deployProxy(
-                factory,
-                deployer,
-                "VwapRegistry",
-                address(new VwapRegistry()),
-                abi.encodeCall(VwapRegistry.initialize, (admin, router))
-            );
-            TargetRouter(payable(router)).setVwapRegistry(vwapRegistry);
-            IntexNFT1155(nft).setVwapSource(vwapRegistry);
-        }
+        address vwapSource = local == originChainId ? INTEX_FACTORY : deployVwapRegistry(factory, deployer, router);
+        wireVwapSource(nft, router, vwapSource);
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
@@ -129,6 +117,6 @@ contract DeployTarget is BaseScript {
         console.log("IntexAuction:", auction);
         console.log("IntexNFT1155Bridge:", nftBridge);
         console.log("TargetRouter:", router);
-        if (vwapRegistry != address(0)) console.log("VwapRegistry:", vwapRegistry);
+        console.log("VwapSource:", vwapSource);
     }
 }
