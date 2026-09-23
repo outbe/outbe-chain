@@ -7,6 +7,8 @@
 //! work to `crate::internal`.
 
 pub mod bidders;
+#[cfg(feature = "ocomp-integration")]
+pub mod credis;
 pub mod forge;
 pub mod hardhat;
 pub mod localnet;
