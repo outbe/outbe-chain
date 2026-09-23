@@ -648,7 +648,7 @@ pub(in crate::world::ocomp) fn seed_capacity_operator_l2_registrations(
             if let Some(record) = registry.networks.get(*operator_chain_id)? {
                 eyre::ensure!(
                     record.l1_address == *l1_address
-                        && record.public_key_bytes().as_slice() == public_key.as_slice()
+                        && record.public_key_bytes()?.as_slice() == public_key.as_slice()
                         && registry.l1_to_chain.read(l1_address)? == *operator_chain_id,
                     "conflicting bulk L2 registration for chain {operator_chain_id}"
                 );

@@ -37,7 +37,7 @@ pub fn dispatch(
                 let record = registry.load_network(c.chainId)?;
                 Ok(IL2Registry::getNetworkReturn {
                     l1Address: record.l1_address,
-                    publicKey: Bytes::copy_from_slice(&record.public_key_bytes()),
+                    publicKey: Bytes::copy_from_slice(&record.public_key_bytes()?),
                 })
             }),
             chainIdByL1Address(c) => view(c, |c| registry.l1_to_chain.read(&c.l1Address)),

@@ -1,16 +1,12 @@
 use alloy_primitives::{Address, Bytes};
-use commonware_codec::DecodeExt;
-use commonware_cryptography::bls12381::primitives::group::G2;
 use outbe_primitives::error::Result;
 
 use crate::errors::L2RegistryError;
 use crate::precompile::IL2Registry;
-use crate::schema::{
-    L2NetworkRecord, L2NetworkRecordEntryExt, L2RegistryContract, BLS_PUBLIC_KEY_LEN,
-};
+use crate::schema::{L2NetworkRecord, L2NetworkRecordEntryExt, L2RegistryContract};
 
 impl L2RegistryContract<'_> {
-    /// Atomically registers an L2 operator and its root-signing key.
+    /// Atomically registers an L2 operator and its 256-byte EIP-2537 root-signing key.
     pub fn register_network(
         &mut self,
         chain_id: u64,
@@ -23,15 +19,7 @@ impl L2RegistryContract<'_> {
         if l1_address == Address::ZERO {
             return Err(L2RegistryError::InvalidL1Address.into());
         }
-        let pubkey: &[u8; BLS_PUBLIC_KEY_LEN] =
-            public_key
-                .try_into()
-                .map_err(|_| L2RegistryError::InvalidPublicKeyLength {
-                    length: public_key.len(),
-                })?;
-        // Group check: the stored key must be a valid MinSig G2 group key so the
-        // offer-time verification path can never fail on decode.
-        decode_public_key(pubkey)?;
+        let pubkey = crate::public_key::decode(public_key)?;
 
         if self.networks.exists(chain_id)? {
             return Err(L2RegistryError::NetworkAlreadyRegistered { chain_id }.into());
@@ -47,7 +35,7 @@ impl L2RegistryContract<'_> {
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
+            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(&pubkey);
             self.networks.create(&L2NetworkRecord {
                 chain_id,
                 l1_address,
@@ -66,7 +54,7 @@ impl L2RegistryContract<'_> {
         })
     }
 
-    /// Rotates the root-signing key when `caller` is the stored L1 operator,
+    /// Rotates the EIP-2537 root-signing key when `caller` is the stored L1 operator,
     /// including when the operator is a contract making an ordinary EVM CALL.
     pub fn update_public_key(
         &mut self,
@@ -78,17 +66,11 @@ impl L2RegistryContract<'_> {
         if caller != record.l1_address {
             return Err(L2RegistryError::NotNetworkOwner { caller, chain_id }.into());
         }
-        let pubkey: &[u8; BLS_PUBLIC_KEY_LEN] =
-            public_key
-                .try_into()
-                .map_err(|_| L2RegistryError::InvalidPublicKeyLength {
-                    length: public_key.len(),
-                })?;
-        decode_public_key(pubkey)?;
+        let pubkey = crate::public_key::decode(public_key)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
+            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(&pubkey);
             let entry = self.networks.entry(chain_id);
             entry.pubkey_lo().write(pubkey_lo)?;
             entry.pubkey_mid().write(pubkey_mid)?;
@@ -123,9 +105,4 @@ impl L2RegistryContract<'_> {
             .get(chain_id)?
             .ok_or_else(|| L2RegistryError::NetworkNotRegistered { chain_id }.into())
     }
-}
-
-/// Decodes a 96-byte MinSig G2 group public key, performing the group check.
-pub(crate) fn decode_public_key(pubkey: &[u8; BLS_PUBLIC_KEY_LEN]) -> Result<G2> {
-    G2::decode(pubkey.as_slice()).map_err(|_| L2RegistryError::InvalidPublicKey.into())
 }

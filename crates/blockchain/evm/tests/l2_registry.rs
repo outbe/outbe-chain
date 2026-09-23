@@ -15,7 +15,6 @@
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
 use outbe_evm::OutbeEvmFactory;
 use outbe_l2registry::precompile::IL2Registry;
@@ -85,13 +84,15 @@ fn funded() -> AccountInfo {
     }
 }
 
-/// A deterministic 96-byte compressed BLS MinSig G2 public key. The registry only
-/// requires those bytes to decode as a group element, so keypairs from a seeded
-/// RNG are valid fixtures.
+/// A deterministic BLS MinSig G2 public key in the registry's external
+/// EIP-2537 encoding (256 bytes). The registry only requires those bytes to
+/// decode as a group element, so keypairs from a seeded RNG are valid fixtures.
 fn bls_key(seed: u64) -> Bytes {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let (_, public) = ops::keypair::<_, MinSig>(&mut rng);
-    Bytes::from(public.encode().to_vec())
+    Bytes::from(
+        outbe_l2registry::public_key::encode(&public).expect("fixture L2 key encodes as EIP-2537"),
+    )
 }
 
 /// Test-only calldata forwarder that bubbles the registry's return or revert.

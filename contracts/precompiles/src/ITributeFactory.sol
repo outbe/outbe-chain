@@ -12,8 +12,9 @@ interface ITributeFactory {
     // including any operator-authorized updatePublicKey rotation.
     //
     // `signature` is the L2 committee's compressed BLS MinSig signature in G1
-    // (48 bytes) over the 32-byte `zkMerkleRoot`. L2Registry stores the
-    // corresponding compressed G2 group key (96 bytes). Proof, root, signature,
+    // (48 bytes) over the 32-byte `zkMerkleRoot`. L2Registry's public API uses
+    // the corresponding EIP-2537 G2 group key (256 bytes); its compact internal
+    // storage and the signature encoding are unchanged. Proof, root, signature,
     // and circuit selection are mandatory for every offer.
     function offerTribute(
         bytes calldata cipherText,

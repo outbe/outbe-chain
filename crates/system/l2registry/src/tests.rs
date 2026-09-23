@@ -1,8 +1,8 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent, SolValue};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{
-    group::Private,
+    group::{Private, G2},
     ops::{self, sign_message},
     variant::MinSig,
 };
@@ -16,7 +16,8 @@ use rand_commonware::SeedableRng as _;
 
 use crate::api::{check_zk_merkle_root_signature, ZkOfferCheck, ZK_MERKLE_ROOT_NAMESPACE};
 use crate::precompile;
-use crate::schema::L2RegistryContract;
+use crate::public_key;
+use crate::schema::{L2NetworkRecord, L2RegistryContract};
 
 const CHAIN_ID: u64 = 1;
 const L2_CHAIN_ID: u64 = 0xdead;
@@ -35,14 +36,23 @@ fn keypair() -> (Private, Vec<u8>) {
     let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
         rand_commonware::rngs::SysRng,
     ));
-    let public = public.encode().to_vec();
-    (private, public)
+    (private, eip256(&public))
 }
 
 fn seeded_keypair(seed: u64) -> (Private, Vec<u8>) {
-    let (private, public) = ops::keypair::<_, MinSig>(&mut ChaCha20Rng::seed_from_u64(seed));
-    let public = public.encode().to_vec();
-    (private, public)
+    let (private, public) = seeded_g2_keypair(seed);
+    (private, eip256(&public))
+}
+
+/// Deterministic MinSig group keypair, returned as the group element so callers
+/// can encode it either compactly (96 bytes) or as EIP-2537 (256 bytes).
+fn seeded_g2_keypair(seed: u64) -> (Private, G2) {
+    ops::keypair::<_, MinSig>(&mut ChaCha20Rng::seed_from_u64(seed))
+}
+
+/// EIP-2537 G2 point encoding (256 bytes: padded `x.c0, x.c1, y.c0, y.c1`).
+fn eip256(public: &G2) -> Vec<u8> {
+    public_key::encode(public).unwrap().to_vec()
 }
 
 fn revert_message(err: PrecompileError) -> String {
@@ -64,7 +74,10 @@ fn register_and_owner_remove_roundtrip() {
 
         let record = registry.load_network(L2_CHAIN_ID).unwrap();
         assert_eq!(record.l1_address, l1_addr());
-        assert_eq!(record.public_key_bytes().as_slice(), public.as_slice());
+        assert_eq!(
+            record.public_key_bytes().unwrap().as_slice(),
+            public.as_slice()
+        );
         assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
 
         let query = precompile::IL2Registry::getNetworkCall {
@@ -122,25 +135,25 @@ fn register_rejects_invalid_inputs() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut registry = L2RegistryContract::new(storage.clone());
 
-        let err = registry
-            .register_network(0, l1_addr(), &public)
-            .unwrap_err();
-        assert!(revert_message(err).contains("chain id"));
+        let rejections = [
+            (0u64, l1_addr(), public.clone()),
+            (L2_CHAIN_ID, Address::ZERO, public.clone()),
+            (L2_CHAIN_ID, l1_addr(), public[..255].to_vec()),
+            // Legacy compressed length and a 256-byte non-group blob.
+            (L2_CHAIN_ID, l1_addr(), vec![0xAB; 96]),
+            (L2_CHAIN_ID, l1_addr(), vec![0xAB; 256]),
+        ];
+        for (chain_id, l1_address, public_key) in rejections {
+            let err = registry
+                .register_network(chain_id, l1_address, &public_key)
+                .unwrap_err();
+            assert!(matches!(err, PrecompileError::Revert(_)));
+        }
 
-        let err = registry
-            .register_network(L2_CHAIN_ID, Address::ZERO, &public)
-            .unwrap_err();
-        assert!(revert_message(err).contains("l1 address"));
-
-        let err = registry
-            .register_network(L2_CHAIN_ID, l1_addr(), &public[..95])
-            .unwrap_err();
-        assert!(revert_message(err).contains("96 bytes"));
-
-        let err = registry
-            .register_network(L2_CHAIN_ID, l1_addr(), &[0xAB; 96])
-            .unwrap_err();
-        assert!(revert_message(err).contains("group element"));
+        // Every rejection left the registry untouched.
+        assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
+        assert!(!registry.networks.exists(0).unwrap());
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
     });
 }
 
@@ -477,6 +490,7 @@ fn update_public_key_rejects_other_operators_and_unknown_chains() {
                 .load_network(L2_CHAIN_ID)
                 .unwrap()
                 .public_key_bytes()
+                .unwrap()
                 .as_slice(),
             public.as_slice()
         );
@@ -485,6 +499,7 @@ fn update_public_key_rejects_other_operators_and_unknown_chains() {
                 .load_network(L2_CHAIN_ID + 1)
                 .unwrap()
                 .public_key_bytes()
+                .unwrap()
                 .as_slice(),
             other_public.as_slice()
         );
@@ -515,6 +530,7 @@ fn update_public_key_rejects_other_operators_and_unknown_chains() {
 #[test]
 fn update_public_key_rejects_malformed_key() {
     let (private, public) = seeded_keypair(1);
+    let (_, legacy_group) = seeded_g2_keypair(2);
     let root = [0x42; 32];
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -523,29 +539,62 @@ fn update_public_key_rejects_malformed_key() {
             .register_network(L2_CHAIN_ID, l1_addr(), &public)
             .unwrap();
 
-        // Wrong length, then 96 bytes that are not a MinSig G2 group element.
-        for malformed in [vec![0xAB; 95], vec![0xAB; 96]] {
+        let mut bad_padding = public.clone();
+        bad_padding[0] = 1;
+
+        // Wrong length, a genuine legacy compressed key (96 bytes, no
+        // compatibility), a 256-byte point with non-zero padding, and the
+        // 256-byte point at infinity.
+        let malformed = [
+            vec![0xAB; 95],
+            legacy_group.encode().to_vec(),
+            bad_padding,
+            vec![0x00; 256],
+        ];
+
+        for public_key in malformed {
             let call = precompile::IL2Registry::updatePublicKeyCall {
                 chainId: L2_CHAIN_ID,
-                publicKey: Bytes::from(malformed),
+                publicKey: Bytes::from(public_key),
             };
             let err =
                 precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO)
                     .unwrap_err();
             assert!(matches!(err, PrecompileError::Revert(_)));
 
+            // The stored key, the reverse index, and the ABI view are all
+            // exactly what they were before the rejected call.
             let registry = L2RegistryContract::new(storage.clone());
             assert_eq!(
                 registry
                     .load_network(L2_CHAIN_ID)
                     .unwrap()
                     .public_key_bytes()
+                    .unwrap()
                     .as_slice(),
                 public.as_slice()
             );
             assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+
+            let network = precompile::dispatch(
+                storage.clone(),
+                &precompile::IL2Registry::getNetworkCall {
+                    chainId: L2_CHAIN_ID,
+                }
+                .abi_encode(),
+                l1_addr(),
+                U256::ZERO,
+            )
+            .unwrap();
+            assert_eq!(
+                network.as_ref(),
+                (l1_addr(), Bytes::copy_from_slice(&public))
+                    .abi_encode_params()
+                    .as_slice()
+            );
         }
 
+        // The key that survived every rejection still authenticates.
         let sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &root)
             .encode()
             .to_vec();
@@ -561,4 +610,58 @@ fn update_public_key_rejects_malformed_key() {
         .get_events(L2_REGISTRY_ADDRESS)
         .iter()
         .all(|log| precompile::IL2Registry::L2PublicKeyUpdated::decode_log_data(log).is_err()));
+}
+
+/// A record written before the wire-format change keeps its compact key words,
+/// yet every public boundary reports the canonical 256-byte point encoding.
+#[test]
+fn legacy_compact_record_reads_as_eip256_and_authenticates() {
+    let (private, legacy_group) = seeded_g2_keypair(7);
+    let compact = legacy_group.encode().to_vec();
+    let canonical = eip256(&legacy_group);
+    let root = [0x42; 32];
+    let sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+        .encode()
+        .to_vec();
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        // Seed the legacy layout directly: compressed key words plus the index.
+        let registry = L2RegistryContract::new(storage.clone());
+        registry
+            .networks
+            .create(&L2NetworkRecord {
+                chain_id: L2_CHAIN_ID,
+                l1_address: l1_addr(),
+                pubkey_lo: B256::from_slice(&compact[..32]),
+                pubkey_mid: B256::from_slice(&compact[32..64]),
+                pubkey_hi: B256::from_slice(&compact[64..]),
+            })
+            .unwrap();
+        registry.l1_to_chain.write(&l1_addr(), L2_CHAIN_ID).unwrap();
+
+        let network = precompile::dispatch(
+            storage.clone(),
+            &precompile::IL2Registry::getNetworkCall {
+                chainId: L2_CHAIN_ID,
+            }
+            .abi_encode(),
+            l1_addr(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            network.as_ref(),
+            (l1_addr(), Bytes::copy_from_slice(&canonical))
+                .abi_encode_params()
+                .as_slice()
+        );
+
+        assert_eq!(
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &sig).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+    });
 }

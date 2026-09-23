@@ -1,8 +1,9 @@
 //! `L2Registry` - storage-backed registry of L2 networks (`0x...EE0E`).
 //!
 //! Records each network's L1 operator address and BLS MinSig committee group
-//! key (compressed G2, 96 bytes), keyed by non-zero `chain_id`. Registration is
-//! applied by the validator [`vote_target::L2RegistryVoteTarget`]; the public
+//! key, keyed by non-zero `chain_id`. Public keys use EIP-2537 G2 encoding
+//! (256 bytes) at all API boundaries; existing compressed storage stays unchanged.
+//! Registration is applied by the validator [`vote_target::L2RegistryVoteTarget`]; the public
 //! precompile exposes registry views and operator-authorized key rotation and
 //! removal. The operator may be an EOA or a contract; authorization uses the
 //! immediate caller, not the transaction origin.
@@ -17,6 +18,7 @@
 pub mod api;
 pub mod errors;
 pub mod precompile;
+pub mod public_key;
 pub mod schema;
 pub mod vote_target;
 
