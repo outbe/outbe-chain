@@ -571,15 +571,10 @@ fn resolve_reward_entry_price(
     ctx: &BlockRuntimeContext,
     reference_currency: u16,
 ) -> Result<Option<U256>> {
-    let Some(index) =
-        outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), reference_currency)?
-    else {
-        return Ok(None);
-    };
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
     );
-    outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), day, index)
+    outbe_oracle::api::get_utc_day_vwap_for_iso(ctx.storage.clone(), day, reference_currency)
 }
 
 fn reward_gem_batch_digest(

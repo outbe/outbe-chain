@@ -2075,9 +2075,9 @@ mod copied_public_work {
                             transactions_root: alloy_consensus::proofs::calculate_transaction_root(
                                 std::slice::from_ref(&transaction),
                             ),
-                            receipts_root: reth_ethereum::calculate_receipt_root_no_memo(
-                                std::slice::from_ref(&receipt),
-                            ),
+                            receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
+                                alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
+                            ]),
                             ..Default::default()
                         })
                     };

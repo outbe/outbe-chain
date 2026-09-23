@@ -43,7 +43,7 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
-use outbe_oracle::api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap};
+use outbe_oracle::api::{get_all_reference_currencies, get_utc_day_vwap_for_iso};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::{Scheduled, SweepDays},
@@ -164,7 +164,7 @@ pub fn run_qualify_slice(
         } else if nod.bin_tree_root.read(&iso_code)?.is_zero() {
             true
         } else {
-            match day_price(ctx, iso_code, pinned_day)? {
+            match get_utc_day_vwap_for_iso(ctx.storage.clone(), pinned_day, iso_code)? {
                 None => true,
                 Some(vwap) => match NodContract::price_to_bin(vwap) {
                     Err(error) => {
@@ -228,13 +228,6 @@ pub fn qualify_nods(
     parent: &impl ParentBodySource,
 ) -> Result<()> {
     scan_and_qualify(ctx, scope, parent).map(|_| ())
-}
-
-fn day_price(ctx: &BlockRuntimeContext, iso_code: u16, day: u32) -> Result<Option<U256>> {
-    match coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-        Some(index) => get_utc_day_vwap(ctx.storage.clone(), day, index),
-        None => Ok(None),
-    }
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.

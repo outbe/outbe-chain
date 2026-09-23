@@ -66,7 +66,7 @@ fn convert_stables_to_gratis(
 /// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
 /// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
-/// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
+/// `(pledge_note, gratis_cost)`; the handle is what the CCA presents at
 /// `issueCredis`. The loan's own terms - the policy rate, the floor and call prices -
 /// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
@@ -120,10 +120,10 @@ pub fn unpledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
     amount_stables: U256,
-    pledge_handle: B256,
+    pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    gratis::unpledge(storage, caller, amount_stables, pledge_note, auth)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify

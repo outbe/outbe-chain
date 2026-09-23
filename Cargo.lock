@@ -8322,7 +8322,6 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-consensus",
- "outbe-l2registry",
  "outbe-operator",
  "outbe-paynote",
  "outbe-primitives",
@@ -8362,7 +8361,7 @@ dependencies = [
  "criterion 0.5.1",
  "hex",
  "outbe-macros",
- "outbe-poseidon",
+ "outbe-poseidon 0.11.0",
  "outbe-primitives",
  "outbe-sparse-merkle-tree-v061",
  "outbe-sparse-merkle-tree-v061-pristine",
@@ -8750,7 +8749,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-paynote",
- "outbe-poseidon",
+ "outbe-poseidon 0.11.0",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
@@ -9411,6 +9410,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-poseidon"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "304c5852d481a6b20a13d761a50ffcd0c698f97653a6af40fd76851790b34a9f"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.6.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-primitives"
 version = "0.1.0"
 dependencies = [
@@ -9491,8 +9501,8 @@ dependencies = [
 
 [[package]]
 name = "outbe-protocol"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+version = "0.25.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.25.0#b0a4e1d641b9cbab5bbe7202d4ab3b1763df3ce0"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9503,7 +9513,7 @@ dependencies = [
  "ark-std 0.6.0",
  "blake2 0.10.6",
  "generic-array 1.4.2",
- "outbe-poseidon",
+ "outbe-poseidon 0.13.0",
  "thiserror 2.0.18",
  "zeroize",
 ]
@@ -9563,8 +9573,8 @@ dependencies = [
 
 [[package]]
 name = "outbe-protocol-derive"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+version = "0.25.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.25.0#b0a4e1d641b9cbab5bbe7202d4ab3b1763df3ce0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9850,7 +9860,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-consensus",
  "outbe-fidelity-math",
- "outbe-poseidon",
+ "outbe-poseidon 0.11.0",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-protocol-derive",
@@ -9912,6 +9922,8 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "ark-bn254",
+ "ark-ff 0.6.0",
  "commonware-codec",
  "commonware-cryptography",
  "commonware-math",
@@ -9932,6 +9944,7 @@ dependencies = [
  "outbe-zk-backend",
  "outbe-zk-canonical",
  "rand 0.10.2",
+ "rand 0.8.6",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
  "serde_json",
@@ -10068,8 +10081,8 @@ dependencies = [
 
 [[package]]
 name = "outbe-zk-backend"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+version = "0.25.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.25.0#b0a4e1d641b9cbab5bbe7202d4ab3b1763df3ce0"
 dependencies = [
  "acir",
  "acvm",
@@ -10086,8 +10099,8 @@ dependencies = [
 
 [[package]]
 name = "outbe-zk-canonical"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.20.0#9f2f907a5d9af0c0752cbc24c6721580b7c4045c"
+version = "0.25.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.25.0#b0a4e1d641b9cbab5bbe7202d4ab3b1763df3ce0"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",

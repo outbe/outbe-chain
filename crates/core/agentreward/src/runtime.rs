@@ -224,13 +224,9 @@ impl AgentRewardContract<'_> {
 }
 
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
-    let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
-    else {
-        return Ok(None);
-    };
     let now = storage.timestamp()?.to::<u64>();
     let day = previous_date_key(timestamp_to_date_key(now));
-    outbe_oracle::api::get_utc_day_vwap(storage.clone(), day, index)
+    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, AGENT_GEM_CURRENCY)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.

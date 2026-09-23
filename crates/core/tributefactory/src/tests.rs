@@ -55,7 +55,7 @@ mod l2_zk_gate {
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
+    use outbe_zk_canonical::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
@@ -89,14 +89,14 @@ mod l2_zk_gate {
         }
     }
 
-    fn dummy_full_proof(root: [u8; 32]) -> Bytes {
-        let mut proof = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
+    fn dummy_demo_tribute_proof(root: [u8; 32]) -> Bytes {
+        let mut proof = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
         proof.extend_from_slice(&4u32.to_be_bytes());
         proof.extend_from_slice(&[0x01; 32]);
         proof.extend_from_slice(&[0x02; 32]);
         proof.extend_from_slice(&[0x03; 32]);
         proof.extend_from_slice(&root);
-        proof.resize(FULL_PROOF_COMBINED_LEN, 0);
+        proof.resize(DEMO_TRIBUTE_COMBINED_LEN, 0);
         proof.into()
     }
 
@@ -128,7 +128,7 @@ mod l2_zk_gate {
         )
         .encode();
         let mut input = offer(&root, &signature);
-        input.zk_proof = dummy_full_proof(root);
+        input.zk_proof = dummy_demo_tribute_proof(root);
         input
     }
 
@@ -171,10 +171,10 @@ mod l2_zk_gate {
             .encode()
             .to_vec();
             // A signed root does not select a missing version or implicitly
-            // adopt the global registry's newer FullProof version.
+            // adopt the global registry's newer Demo Tribute version.
             for version in ["", "1.2.0"] {
                 let mut wrong_version = offer(&root, &good_sig);
-                wrong_version.zk_proof = dummy_full_proof(root);
+                wrong_version.zk_proof = dummy_demo_tribute_proof(root);
                 wrong_version.circuit_version = version.to_owned();
                 let error = factory
                     .offer_tribute(&scope, &NoParentBodies, wrong_version)
@@ -188,7 +188,7 @@ mod l2_zk_gate {
             let mut valid_gate = offer(&root, &good_sig);
             // The submitter need not be the registered network operator.
             valid_gate.caller = Address::repeat_byte(0x88);
-            valid_gate.zk_proof = dummy_full_proof(root);
+            valid_gate.zk_proof = dummy_demo_tribute_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
                 .offer_tribute(&scope, &NoParentBodies, valid_gate)
@@ -200,7 +200,7 @@ mod l2_zk_gate {
             registry.remove_network(caller(), L2_CHAIN_ID).unwrap();
             registry.register_network(4242, caller(), &public).unwrap();
             let mut wrong_chain = offer(&root, &good_sig);
-            wrong_chain.zk_proof = dummy_full_proof(root);
+            wrong_chain.zk_proof = dummy_demo_tribute_proof(root);
             let error = factory
                 .offer_tribute(&scope, &NoParentBodies, wrong_chain)
                 .unwrap_err();
@@ -247,7 +247,7 @@ mod l2_zk_gate {
             assert!(revert_message(missing).contains("zkProof is required"));
 
             let mut wrong_root = offer(&root, &signature);
-            wrong_root.zk_proof = dummy_full_proof([0x24; 32]);
+            wrong_root.zk_proof = dummy_demo_tribute_proof([0x24; 32]);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let mismatch = factory
                 .offer_tribute(&scope, &NoParentBodies, wrong_root)
@@ -419,24 +419,104 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
 #[test]
 #[ignore = "requires the pinned Barretenberg CRS"]
 fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
+    let proof = include_bytes!(
+        "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+    );
+    assert_real_zk_offer(proof, 0xdead, "1.1.0");
+}
+
+#[test]
+#[ignore = "generates a real Barretenberg proof with the pinned CRS"]
+fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
+    use ark_bn254::Fr;
+    use ark_ff::{BigInteger, PrimeField};
+    use outbe_protocol::primitive::{curve::coords, hash::FieldHasher};
+    use outbe_protocol::protocol::{
+        entity::Entity as EntityTrait,
+        key::{NftSigner, Signer},
+        zk::ProofGenerator,
+    };
+    use outbe_protocol::{OutbeV1, Suite};
+    use outbe_tee_enclave::zk_claim::TributeDraftClaim;
+    use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
+    use outbe_zk_canonical::noir::{niflheim_tribute, EmbeddedCurvePoint};
+    use rand::{rngs::StdRng, SeedableRng};
+
+    const L2_CHAIN_ID: u32 = 9_900_501;
+    let mut rng = StdRng::from_seed([0x99; 32]);
+    let signer = Signer::<OutbeV1>::local(&mut rng).unwrap();
+    let seed = signer.owner_seed();
+    let owner = seed.derive_owner().unwrap();
+    let draft = TributeDraftClaim {
+        id: B256::with_last_byte(0x11),
+        derived_owner: B256::from_slice(&owner.into_bigint().to_bytes_be()),
+        worldwide_day: TARGET_WWD_A.into(),
+        currency: 840,
+        base: 100,
+        atto: 0,
+        su_ids: vec![B256::with_last_byte(0x22)],
+    };
+    let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft).unwrap();
+    let binding_hash = OutbeV1::binding(
+        &Address::repeat_byte(0x77).into_array(),
+        draft.id.as_ref(),
+        CHAIN_ID,
+        u64::from(L2_CHAIN_ID),
+    )
+    .unwrap();
+    let message = OutbeV1::signing_payload(nft_hash, seed.nonce, binding_hash).unwrap();
+    let signature = signer.sign(&mut rng, message).unwrap();
+    let (x, y) = coords::<<OutbeV1 as Suite>::Curve>(&seed.pk).unwrap();
+    // Niflheim uses two-input Poseidon2 without Demo's domain separator.
+    // Insert the draft at the leftmost leaf of a depth-32 empty tree.
+    let mut merkle_root = nft_hash;
+    let mut sibling = Fr::from(0u64);
+    let mut siblings = [sibling; 32];
+    for level in &mut siblings {
+        *level = sibling;
+        merkle_root = <OutbeV1 as Suite>::Hash::hash(&[merkle_root, sibling]).unwrap();
+        sibling = <OutbeV1 as Suite>::Hash::hash(&[sibling, sibling]).unwrap();
+    }
+    let witness = niflheim_tribute::Witness {
+        pk: EmbeddedCurvePoint { x, y },
+        signature,
+        nonce: seed.nonce,
+        merkle_path_siblings: siblings,
+        merkle_path_indices: [1; 32],
+    };
+    let public = niflheim_tribute::PublicInputs {
+        owner,
+        nft_hash,
+        binding_hash,
+        merkle_root,
+    };
+    init_crs().unwrap();
+    let proof = ProofGenerator::<OutbeV1, niflheim_tribute::NiflheimTribute>::generate(
+        &Barretenberg::default(),
+        &witness,
+        &public,
+    )
+    .unwrap();
+    let combined = niflheim_tribute::encode_combined_proof(public, proof.proof).unwrap();
+    assert_real_zk_offer(&combined, L2_CHAIN_ID, "1.0.0");
+}
+
+fn assert_real_zk_offer(proof: &[u8], l2_chain_id: u32, circuit_version: &str) {
     use commonware_codec::Encode;
     use commonware_cryptography::bls12381::primitives::{
         ops::{self, sign_message},
         variant::MinSig,
     };
     use outbe_l2registry::L2RegistryContract;
+    use outbe_protocol::protocol::zkproof::decode_public_words;
     use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
-    use outbe_zk_canonical::full_proof::{alloy::PublicInputs, decode_public_inputs};
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    const PROOF: &[u8] = include_bytes!(
-        "../../../../testing/protocol-benchmarks/fixtures/tribute_full_proof_v1.bin"
-    );
     const CALLER: Address = Address::repeat_byte(0x77);
     const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
     outbe_zk_backend::barretenberg::init_crs().unwrap();
-    let public: PublicInputs = decode_public_inputs(PROOF).unwrap().try_into().unwrap();
+    let merkle_root = B256::from(decode_public_words::<4>(proof, proof.len()).unwrap()[3]);
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{CALLER:#x}"),
         "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
@@ -460,7 +540,7 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
     let signature = sign_message::<MinSig>(
         &private,
         outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
-        public.merkle_root.as_slice(),
+        merkle_root.as_slice(),
     )
     .encode();
     let make_offer = || OfferTributeInput {
@@ -472,10 +552,10 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        zk_proof: Bytes::from_static(PROOF),
-        l2_chain_id: 0xdead,
-        circuit_version: "1.1.0".to_owned(),
-        zk_merkle_root: Bytes::copy_from_slice(public.merkle_root.as_slice()),
+        zk_proof: Bytes::copy_from_slice(proof),
+        l2_chain_id,
+        circuit_version: circuit_version.to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(merkle_root.as_slice()),
         signature: Bytes::copy_from_slice(&signature),
     };
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -485,7 +565,11 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         let mut registry = L2RegistryContract::new(storage.clone());
         registry
-            .register_network(0xdead, Address::repeat_byte(0x88), &group_key.encode())
+            .register_network(
+                u64::from(l2_chain_id),
+                Address::repeat_byte(0x88),
+                &group_key.encode(),
+            )
             .unwrap();
         begin_block(storage.clone(), &scope).unwrap();
     });

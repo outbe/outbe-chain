@@ -9,8 +9,8 @@ use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::Codec as _;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_canonical::{
+    demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS,
     emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
-    full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
 };
 
 use crate::zk::{
@@ -152,7 +152,7 @@ fn abi_encode(circuit_hash: &[u8; 32], proof: &[u8]) -> Vec<u8> {
     out
 }
 
-fn combined_full_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<u8> {
+fn combined_demo_tribute_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + 32 * (4 + proof_words));
     out.extend_from_slice(&4u32.to_be_bytes());
     for public_input in public_inputs {
@@ -163,12 +163,12 @@ fn combined_full_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<
 }
 
 #[test]
-fn full_proof_with_invalid_curve_points_returns_backend_error() {
-    use outbe_zk_canonical::noir::full_proof::FullProof;
+fn demo_tribute_with_invalid_curve_points_returns_backend_error() {
+    use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
     use outbe_zk_canonical::CircuitId as _;
 
-    let proof = combined_full_proof([[0u8; 32]; 4], FULL_PROOF_PROOF_WORDS);
-    let input = abi_encode(&FullProof::CIRCUIT_HASH, &proof);
+    let proof = combined_demo_tribute_proof([[0u8; 32]; 4], DEMO_TRIBUTE_PROOF_WORDS);
+    let input = abi_encode(&DemoTribute::CIRCUIT_HASH, &proof);
     assert!(matches!(
         zk_verify(&input),
         Err(PrecompileError::Revert(message))

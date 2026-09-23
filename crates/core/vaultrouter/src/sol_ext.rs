@@ -17,8 +17,6 @@ sol!("../../../contracts/precompiles/src/IVaultV2.sol");
 
 sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");
 
-sol!("../../../contracts/smart-account/src/interfaces/ITokenBundle.sol");
-
 // Bridge sends go through `IERC7786GatewaySource`; the fee estimate comes from
 // the gateway's `IGatewayQuote` extension. Both live in the same file.
 //

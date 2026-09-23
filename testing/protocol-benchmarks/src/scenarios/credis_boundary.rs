@@ -25,6 +25,7 @@ const AMOUNT: u64 = 2_000_000;
 sol! {
     interface IERC20Boundary {
         function approve(address spender, uint256 amount) external returns (bool);
+        function transfer(address to, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
     }
 
@@ -39,9 +40,6 @@ sol! {
         function isoCode() external view returns (uint16);
     }
 
-    interface ITokenBundleBoundary {
-        function topUp(address sender, address token, uint256 amount) external;
-    }
 }
 
 pub struct CredisVaultBoundaryScenario;
@@ -99,6 +97,11 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
             Bytes::new(),
         );
         provider.stub_sub_call_at_selector(
+            ASSET,
+            IERC20Boundary::transferCall::SELECTOR,
+            Bytes::new(),
+        );
+        provider.stub_sub_call_at_selector(
             VAULT,
             IVaultV2Boundary::previewWithdrawCall::SELECTOR,
             Bytes::from((U256::from(AMOUNT),).abi_encode_params()),
@@ -112,11 +115,6 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
             VAULT,
             IVaultV2Boundary::withdrawCall::SELECTOR,
             Bytes::from((U256::from(AMOUNT),).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            SMART_ACCOUNT_STUB,
-            ITokenBundleBoundary::topUpCall::SELECTOR,
-            Bytes::new(),
         );
 
         StorageHandle::enter(&mut provider, |storage| {
@@ -215,14 +213,9 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
                 IVaultV2Boundary::withdrawCall::SELECTOR,
             ),
             stub_frame(
-                "IERC20.approve",
+                "IERC20.transfer",
                 ASSET,
-                IERC20Boundary::approveCall::SELECTOR,
-            ),
-            stub_frame(
-                "ITokenBundle.topUp (smart-account TODO)",
-                SMART_ACCOUNT_STUB,
-                ITokenBundleBoundary::topUpCall::SELECTOR,
+                IERC20Boundary::transferCall::SELECTOR,
             ),
         ];
         Ok(observation)

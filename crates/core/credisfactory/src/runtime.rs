@@ -24,12 +24,12 @@ use crate::sol_ext::IERC20;
 // issue_credis
 // ---------------------------------------------------------------------------
 
-/// Consumes a confidential Gratis pledge (identified by `pledge_handle` +
+/// Consumes a confidential Gratis pledge (identified by `pledge_note` +
 /// `spend_auth`, which binds it to `smart_account`), crediting the collateral into
 /// the pledger's own confidential pledged ledger, opens a credis position bound to
 /// `smartAccount`, stores the sealed pledger EOA on the position for the later
-/// collateral release / void burn, and delivers the stablecoin loan via the
-/// vault sub-call.
+/// collateral release / void burn. Native COEN goes to the account; the reserved
+/// stablecoin principal goes directly to the issuing CCA to cover that COEN.
 ///
 /// The loan is not priced here: the disbursed amount, the asset, the collateral and the
 /// entry price were quoted and sealed into the pledge ticket by `pledgeGratis`, so the
@@ -51,7 +51,7 @@ pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     smart_account: Address,
-    pledge_handle: B256,
+    pledge_note: B256,
     spend_auth: [u8; 32],
     reference_currency: u16,
     reservation_id: U256,
@@ -95,12 +95,8 @@ pub fn issue_credis(
     // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
     // reads the pledger EOA from the ticket and returns it sealed (`eoa_ct`) so it is
     // stored on the position as ciphertext, never plaintext.
-    let (terms, eoa_ct) = outbe_gratis::api::consume_pledge(
-        storage.clone(),
-        pledge_handle,
-        smart_account,
-        spend_auth,
-    )?;
+    let (terms, eoa_ct) =
+        outbe_gratis::api::consume_pledge(storage.clone(), pledge_note, smart_account, spend_auth)?;
     let asset = terms.asset;
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
@@ -142,10 +138,10 @@ pub fn issue_credis(
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
     // can address the right confidential pledged ledger. The `handle_id`
-    // building the position_id is the globally-unique pledge handle.
+    // building the position_id is the globally-unique pledge note.
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.open_position(OpenPositionParams {
-        handle_id: U256::from_be_bytes(pledge_handle.0),
+        handle_id: U256::from_be_bytes(pledge_note.0),
         smart_account,
         cca: caller,
         eoa_ct,
@@ -167,7 +163,7 @@ pub fn issue_credis(
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, smart_account, stake)?;
     }
 
-    // Deliver the pledged credit from the CCA's prior reservation. Any unused
+    // Pay the issuing CCA for COEN delivered to the user. Any unused
     // remainder goes back to the origin vault inside `releaseReservation`.
     outbe_vaultrouter::api::release_reservation(
         &storage,

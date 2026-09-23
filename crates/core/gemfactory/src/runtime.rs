@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{coen_pair_index_opt, fresh_coen_rate_for, get_utc_day_vwap};
+use outbe_oracle::api::{fresh_coen_rate_for, get_utc_day_vwap_for_iso};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -634,11 +634,8 @@ fn read_market_price(
     now: u64,
 ) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now));
-    let vwap = match coen_pair_index_opt(storage.clone(), reference_currency)? {
-        Some(index) => get_utc_day_vwap(storage.clone(), day, index)?,
-        None => None,
-    };
-    vwap.ok_or_else(|| GemFactoryError::OracleUnavailable.into())
+    get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)?
+        .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 fn compute_params(

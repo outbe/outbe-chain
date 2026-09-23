@@ -2,7 +2,7 @@
 //!
 //! The claim is folded from the encrypted payload (draft id, amount, su ids),
 //! the cleartext offer (`worldwide_day`, `tribute_currency`) and
-//! `derived_owner`, which is public input zero of the submitted full proof.
+//! `derived_owner`, which is public input zero of the submitted Tribute proof.
 //! Keeping the fold here binds the proof claim to the plaintext the enclave
 //! actually decrypted without exposing the draft id or amount fields to the
 //! host.
@@ -23,22 +23,23 @@ use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 use crate::compute::CanonicalAmount;
 use crate::payload::TributeInputPayload;
 
+/// Canonical TributeDraft entity hashed by the enclave and proof producers.
 #[derive(Entity)]
-struct TributeDraftClaim {
+pub struct TributeDraftClaim {
     #[outbe(id_seed)]
-    id: B256,
+    pub id: B256,
     #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
+    pub derived_owner: B256,
     #[outbe(body, pos = 1)]
-    worldwide_day: u64,
+    pub worldwide_day: u64,
     #[outbe(body, pos = 2)]
-    currency: u16,
+    pub currency: u16,
     #[outbe(body, pos = 3)]
-    base: u64,
+    pub base: u64,
     #[outbe(body, pos = 4)]
-    atto: u64,
+    pub atto: u64,
     #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
+    pub su_ids: Vec<B256>,
 }
 
 pub(crate) fn derive_expected_hashes(
@@ -70,8 +71,13 @@ pub(crate) fn derive_expected_hashes(
     };
     let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft)
         .map_err(|error| format!("invalid canonical TributeDraft: {error}"))?;
-    let binding_hash = OutbeV1::binding(&offer.owner.into_array(), id.as_ref(), context.chain_id)
-        .map_err(|error| format!("failed to derive binding_hash: {error}"))?;
+    let binding_hash = OutbeV1::binding(
+        &offer.owner.into_array(),
+        id.as_ref(),
+        context.chain_id,
+        context.l2_chain_id,
+    )
+    .map_err(|error| format!("failed to derive binding_hash: {error}"))?;
 
     Ok(Some(TributeZkExpectedHashes {
         nft_hash: field_to_b256(nft_hash),
