@@ -10,7 +10,7 @@ use cucumber::{then, when};
 use outbe_tee::protocol::{Ledger, PromisOp};
 
 use crate::features::settlement::{
-    assert_mined_success, chain_id_b256, find_pow_nonce, promis_balance,
+    assert_mined_success, chain_id_b256, find_mining_pow_nonce, promis_balance,
 };
 use crate::internal::{addresses, eth};
 use crate::world::forge::DEPLOYER_KEY;
@@ -400,7 +400,7 @@ fn settle_and_mine(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
-            nonce: find_pow_nonce(gem_id),
+            nonce: find_mining_pow_nonce(gem_id, merchant),
             mac: B256::from(mac),
             opNonce: op_nonce,
         },
