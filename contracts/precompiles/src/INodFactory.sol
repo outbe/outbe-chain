@@ -55,7 +55,8 @@ interface INodFactory {
     /// @notice Pay a qualified Nod in ERC20 base units of `asset`.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
-    /// reference-currency entry cost at the current COEN cross rate.
+    /// reference-currency entry cost at the COEN cross rate of the last closed
+    /// UTC day.
     function settleNod(uint256 nodId, address asset) external;
 
     /// @notice Pay a qualified Nod at or before its settlement deadline.

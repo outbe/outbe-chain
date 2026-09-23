@@ -239,7 +239,8 @@ impl World {
         }
     }
 
-    fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
+    /// Registers `COEN/<iso>` and prices it live only.
+    fn publish_coen_spot(&mut self, iso_code: u16, rate: U256) {
         self.enter(|storage, _, _| {
             let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
             outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
@@ -252,6 +253,26 @@ impl World {
                 storage.timestamp().unwrap().to::<u64>(),
             )
             .unwrap();
+        });
+    }
+
+    /// Prices `COEN/<iso>` at `rate` live and for the last closed UTC day, which
+    /// is the one settlement converts at.
+    fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
+        self.publish_coen_spot(iso_code, rate);
+        self.enter(|storage, _, _| {
+            use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)
+                .unwrap()
+                .expect("COEN pair registered");
+            let day = previous_date_key(timestamp_to_date_key(
+                storage.timestamp().unwrap().to::<u64>(),
+            ));
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&index, rate)
+                .unwrap();
         });
     }
 
@@ -1742,32 +1763,21 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
 }
 
 #[test]
-fn issuance_rail_rejects_a_stale_leg_without_settling() {
+fn issuance_rail_rejects_a_leg_the_closed_day_never_priced() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa5));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
-    let now = 1_700_000_000u64;
-    world.enter(|storage, _, _| {
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::AddressPair::new_coen_to(978),
-            U256::from(SIX_DECIMALS),
-            1,
-            now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
-    });
+    // The euro trades live, but the day it converts at closed without it.
+    world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
     let spend = cost_of(&input) / 2;
     let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
     assert!(
-        error.to_string().contains("stale"),
+        error.to_string().contains("oracle nominal unavailable"),
         "unexpected error: {error}"
     );
     assert!(!is_settled(&mut world, nod_id));
@@ -1786,7 +1796,7 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
     assert!(
-        error.to_string().contains("not registered"),
+        error.to_string().contains("oracle nominal unavailable"),
         "unexpected error: {error}"
     );
     assert!(!is_settled(&mut world, nod_id));

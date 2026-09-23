@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for, get_utc_day_vwap_for_iso};
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -482,7 +482,8 @@ fn accept_payment_asset(
 }
 
 /// Cost of one gem in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate into the same fraction, so the whole thing is floored once.
+/// cross rate of the last closed UTC day into the same fraction, so the whole
+/// thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -492,10 +493,14 @@ fn cost_in_token(
     let asset_decimals = read_decimals(storage, asset)?;
     let rate = match currency {
         PaymentCurrency::Reference => None,
-        PaymentCurrency::Issuance => Some((
-            fresh_coen_rate_for(storage.clone(), item.issuance_currency)?,
-            fresh_coen_rate_for(storage.clone(), item.reference_currency)?,
-        )),
+        PaymentCurrency::Issuance => {
+            // One timestamp, so both legs come from the same closed day.
+            let now = storage.timestamp()?.to::<u64>();
+            Some((
+                read_market_price(storage, item.issuance_currency, now)?,
+                read_market_price(storage, item.reference_currency, now)?,
+            ))
+        }
     };
     settlement_units(item, rate, asset_decimals)
 }
@@ -628,13 +633,10 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-fn read_market_price(
-    storage: &StorageHandle<'_>,
-    reference_currency: u16,
-    now: u64,
-) -> Result<U256> {
+/// COEN price of `iso_code` from the last closed UTC day.
+fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)?
+    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 

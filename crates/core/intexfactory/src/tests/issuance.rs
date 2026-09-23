@@ -334,29 +334,19 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
 /// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
 const COEN_ISO_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
-/// Publish a COEN rate for `iso_code`, stamped `age` seconds ago.
-fn publish_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256, age: u64) {
-    write_rate(oracle, iso_code, pair_id, rate);
-    oracle
-        .exchange_rate_timestamp
-        .write(&pair_id, ISSUED_AT as u64 - age)
-        .unwrap();
-}
-
 #[test]
 fn the_issuance_currency_settles_through_the_coen_pivot() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
         // COEN buys twice as many dollars as euros, so the euro price of one
         // Intex is half its dollar price.
-        publish_rate(
+        write_day_rate(
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
-            0,
         );
-        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
@@ -367,14 +357,13 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
-        publish_rate(
+        write_day_rate(
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
             U256::from(3u64) * COEN_ISO_RATE_SCALE,
-            0,
         );
-        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_333u64));
@@ -385,40 +374,39 @@ fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
 fn an_unpriced_issuance_currency_cannot_be_settled_in() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
-        publish_rate(
+        write_day_rate(
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
-            0,
         );
         // No euro pair at all.
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("not registered"), "{err}");
+        assert!(
+            err.to_string().contains("oracle nominal unavailable"),
+            "{err}"
+        );
     });
 }
 
 #[test]
-fn a_stale_rate_cannot_be_settled_in() {
+fn a_rate_the_closed_day_never_priced_cannot_be_settled_in() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
-        publish_rate(
+        write_day_rate(
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
-            0,
         );
-        publish_rate(
-            &oracle,
-            EUR_ISO,
-            EUR_PAIR_ID,
-            COEN_ISO_RATE_SCALE,
-            outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
-        );
+        // The euro trades live, but the day it converts at closed without it.
+        write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("stale"), "{err}");
+        assert!(
+            err.to_string().contains("oracle nominal unavailable"),
+            "{err}"
+        );
     });
 }
 
@@ -426,8 +414,8 @@ fn a_stale_rate_cannot_be_settled_in() {
 fn issuance_currency_settlement_rejects_fx_overflow() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
-        publish_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE, 0);
-        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX, 0);
+        write_day_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE);
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX);
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
