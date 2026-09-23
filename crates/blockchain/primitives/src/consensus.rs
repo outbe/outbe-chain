@@ -211,46 +211,6 @@ pub struct DkgBoundaryArtifact {
     pub tee_expired_target_exclusions_hash: B256,
 }
 
-/// Wire size of one [`HyperlaneCheckpoint`]:
-/// `domain(4) + root(32) + index(4) + message_id(32) + signature(65)`.
-pub const HYPERLANE_CHECKPOINT_LEN: usize = 4 + 32 + 4 + 32 + 65;
-/// Upper bound on origin domains (one checkpoint each) in a single
-/// attestation. Caps header size and the number of signature recoveries a
-/// block can force.
-pub const HYPERLANE_MAX_ATTESTED_DOMAINS: usize = 4;
-
-/// One signed Hyperlane checkpoint for an origin `domain`: the agent's
-/// `checkpoint_<index>_with_id.json` minus the hook address (the controller
-/// knows it per domain) and with the signature in its 65-byte form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HyperlaneCheckpoint {
-    /// Hyperlane origin domain (= chain id) whose merkle tree was signed.
-    pub domain: u32,
-    /// Merkle tree root the validator signed; part of the signed digest.
-    pub root: B256,
-    /// Checkpoint index (leaf count - 1) the validator signed.
-    pub index: u32,
-    /// keccak256 of the dispatched message, the leaf at `index`; part of the
-    /// signed digest.
-    pub message_id: B256,
-    /// secp256k1 signature `r || s || v` as written by the agent (v = 27/28).
-    pub signature: [u8; 65],
-}
-
-/// The block proposer's latest signed Hyperlane checkpoints, one per origin
-/// chain (OART tag 0x09), attached as proof that its Hyperlane agent is alive
-/// and signing. Codec: `reshare_artifact::{encode,decode}_hyperlane_attestation`.
-///
-/// Proposer-supplied and best effort: other nodes verify each signature
-/// (`ecrecover` against the proposer's registered signer) inside the
-/// `hyperlanecontroller` precompile; they never re-derive the artifact, so a
-/// stale or missing attestation is not a consensus fault.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct HyperlaneAttestation {
-    /// Ascending by `domain`, no duplicates (the codec rejects otherwise).
-    pub checkpoints: Vec<HyperlaneCheckpoint>,
-}
-
 /// A single validator entry for genesis initialization.
 #[derive(Debug, Clone)]
 pub struct GenesisValidator {

@@ -1,10 +1,8 @@
-use crate::consensus::{DkgBoundaryArtifact, HyperlaneAttestation};
+use crate::consensus::DkgBoundaryArtifact;
 use crate::consensus_metadata::CertifiedParentAccountingMetadata;
 use crate::reshare_artifact::decode_boundary_artifact;
-use crate::reshare_artifact::decode_hyperlane_attestation_artifact;
 use crate::reshare_artifact::decode_late_finalize_credits_artifact;
 use crate::reshare_artifact::encode_boundary_artifact;
-use crate::reshare_artifact::encode_hyperlane_attestation_artifact;
 use crate::reshare_artifact::encode_late_finalize_credits_artifact;
 use crate::reshare_artifact::LateFinalizeCreditsArtifact;
 use alloy_primitives::Bytes;
@@ -41,9 +39,7 @@ pub enum SystemTxInputV2 {
         payload: crate::tee_bootstrap_v2::TeeBootstrapV2,
     },
     OracleSlashWindow,
-    HookEvents {
-        hyperlane: Option<HyperlaneAttestation>,
-    },
+    HookEvents,
     OcompTerminalRequest,
 }
 
@@ -58,7 +54,7 @@ impl SystemTxInputV2 {
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
-            Self::HookEvents { .. } => SystemTxKind::HookEvents,
+            Self::HookEvents => SystemTxKind::HookEvents,
             Self::OcompTerminalRequest => SystemTxKind::OcompTerminalRequest,
         }
     }
@@ -82,16 +78,8 @@ impl SystemTxInputV2 {
             | Self::CycleTick
             | Self::RewardsGemDelivery
             | Self::OracleSlashWindow
+            | Self::HookEvents
             | Self::OcompTerminalRequest => {}
-            Self::HookEvents { hyperlane } => {
-                if let Some(attestation) = hyperlane {
-                    out.extend_from_slice(
-                        encode_hyperlane_attestation_artifact(attestation)
-                            .map_err(SystemTxError::from_precompile)?
-                            .as_ref(),
-                    );
-                }
-            }
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes - the mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -177,10 +165,15 @@ impl SystemTxInputV2 {
                 }
                 Ok(Self::OracleSlashWindow)
             }
-            SystemTxKind::HookEvents => Ok(Self::HookEvents {
-                hyperlane: decode_hyperlane_attestation_artifact(body)
-                    .map_err(SystemTxError::from_precompile)?,
-            }),
+            SystemTxKind::HookEvents => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::HookEvents)
+            }
             SystemTxKind::OcompTerminalRequest => {
                 if !body.is_empty() {
                     return Err(SystemTxError::UnexpectedBody {
