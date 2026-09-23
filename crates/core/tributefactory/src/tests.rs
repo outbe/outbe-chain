@@ -118,7 +118,11 @@ mod l2_zk_gate {
             <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
         let (private, public) = ops::keypair::<_, MinSig>(&mut rng);
         L2RegistryContract::new(storage)
-            .register_network(L2_CHAIN_ID, caller(), &public.encode())
+            .register_network(
+                L2_CHAIN_ID,
+                caller(),
+                &outbe_l2registry::public_key::encode(&public).unwrap(),
+            )
             .unwrap();
         let root = [0x04; 32];
         let signature = sign_message::<MinSig>(
@@ -143,7 +147,7 @@ mod l2_zk_gate {
         let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));
-        let public = public.encode().to_vec();
+        let public = outbe_l2registry::public_key::encode(&public).unwrap();
         let root = [0x04; 32];
 
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
@@ -222,7 +226,7 @@ mod l2_zk_gate {
         let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));
-        let public = public.encode().to_vec();
+        let public = outbe_l2registry::public_key::encode(&public).unwrap();
         let root = [0x04; 32];
         let signature = sign_message::<MinSig>(
             &private,
@@ -568,7 +572,7 @@ fn assert_real_zk_offer(proof: &[u8], l2_chain_id: u32, circuit_version: &str) {
             .register_network(
                 u64::from(l2_chain_id),
                 Address::repeat_byte(0x88),
-                &group_key.encode(),
+                &outbe_l2registry::public_key::encode(&group_key).unwrap(),
             )
             .unwrap();
         begin_block(storage.clone(), &scope).unwrap();

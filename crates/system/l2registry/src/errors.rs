@@ -17,10 +17,10 @@ pub enum L2RegistryError {
     #[error("l1 address must be non-zero")]
     InvalidL1Address,
 
-    #[error("BLS MinSig group public key must be 96 bytes, got {length}")]
+    #[error("EIP-2537 G2 public key must be 256 bytes, got {length}")]
     InvalidPublicKeyLength { length: usize },
 
-    #[error("BLS public key is not a valid MinSig G2 group element")]
+    #[error("BLS public key is not a canonical nonidentity EIP-2537 G2 group element")]
     InvalidPublicKey,
 
     #[error("L2 network {chain_id} is already registered")]

@@ -329,7 +329,9 @@ fn build_fixture() -> Fixture {
         ephemeral_pubkey: U256::from_be_bytes(ephemeral_pubkey),
         proof: Bytes::copy_from_slice(FIXED_DEMO_TRIBUTE_V1),
         public_inputs,
-        l2_public_key: l2_public_key.encode().to_vec(),
+        l2_public_key: outbe_l2registry::public_key::encode(&l2_public_key)
+            .unwrap()
+            .to_vec(),
         signature: signature.into(),
         crs_init_ms,
         proof_generation_ms,

@@ -3,14 +3,15 @@
 
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
-    group::G1, ops::verify_message, variant::MinSig,
+    group::{G1, G2},
+    ops::verify_message,
+    variant::MinSig,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_zk_canonical::L2CircuitVersion;
 
 use crate::errors::L2RegistryError;
-use crate::runtime::decode_public_key;
 use crate::schema::L2RegistryContract;
 
 /// Domain-separation namespace for L2 signatures over `zkMerkleRoot`.
@@ -48,7 +49,8 @@ pub fn check_zk_merkle_root_signature(
         return Err(L2RegistryError::ZkMerkleRootRequired.into());
     }
 
-    let pubkey = decode_public_key(&record.public_key_bytes())?;
+    let pubkey = G2::decode(record.compressed_public_key_bytes().as_slice())
+        .map_err(|_| L2RegistryError::InvalidPublicKey)?;
     let sig = G1::decode(signature).map_err(|_| L2RegistryError::InvalidZkSignature)?;
     verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
         .map_err(|_| L2RegistryError::InvalidZkSignature)?;

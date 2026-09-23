@@ -37,8 +37,8 @@ use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 
 /// Must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`. Kept as a
-/// literal so the harness exercises the external signing contract rather than
-/// importing the runtime crate.
+/// local literal so an L2 signature the fixture produces is bound by the wire
+/// contract, not by a host-side rename.
 pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
 /// Frozen circuit version declared for the basic test L2 57005.
@@ -135,9 +135,12 @@ pub(crate) fn root_signing_keypair(chain_id: u64) -> (Private, G2) {
     ops::keypair::<_, MinSig>(&mut rng)
 }
 
-/// Encoded MinSig G2 public key the registry stores for fixture chain `chain_id`.
+/// Encoded MinSig G2 public key in the registry's external EIP-2537 form
+/// (256 bytes) for fixture chain `chain_id`.
 pub(crate) fn root_signing_public_key(chain_id: u64) -> Vec<u8> {
-    root_signing_keypair(chain_id).1.encode().to_vec()
+    outbe_l2registry::public_key::encode(&root_signing_keypair(chain_id).1)
+        .expect("fixture L2 root key encodes as EIP-2537")
+        .to_vec()
 }
 
 /// Sign `merkle_root` with fixture chain `chain_id`'s registered key, as the L2
@@ -159,7 +162,7 @@ pub(crate) fn verify_merkle_root(
     merkle_root: &[u8; 32],
     signature: &[u8],
 ) -> bool {
-    let Ok(public) = G2::decode(public_key) else {
+    let Ok(public) = outbe_l2registry::public_key::decode(public_key) else {
         return false;
     };
     let Ok(signature) = G1::decode(signature) else {
@@ -323,7 +326,6 @@ mod tests {
             root_signing_public_key(chain_id + 1),
             "each fixture L2 chain must sign roots with its own registered key"
         );
-        assert_eq!(root_signing_public_key(chain_id).len(), 96);
     }
 
     #[test]

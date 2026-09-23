@@ -13,6 +13,7 @@ outbe-zk-canonical.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 bytes.workspace = true
+blst.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 hex.workspace = true
