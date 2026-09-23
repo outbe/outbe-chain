@@ -45,11 +45,8 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 /// Consecutive failures that end a parked pass: an empty relay float fails every entry alike.
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
-/// Days a fresh VWAP sender backfills. A series qualified before the first send carries Qualified on its
-/// targets already.
-pub const INITIAL_BACKFILL_DAYS: u32 = 35;
-
 /// Days one `intex_vwap_push` firing may walk; each priced day is one cross-chain send per target.
+/// A sender that never sent starts at the newest finalized day: earlier days stay off the targets.
 pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
 
 /// Rows one DAILY_VWAP message may carry. Mirrors the codec's `MAX_REFERENCE_PRICES`.

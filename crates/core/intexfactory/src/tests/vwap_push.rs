@@ -11,7 +11,7 @@ use outbe_primitives::time::{next_date_key, previous_date_key};
 use super::{factory_provider, CHAIN_ID, EUR_ISO, EUR_PAIR_ID, ISSUED_AT, PAIR_ID, REFERENCE_ISO};
 use crate::constants::MAX_VWAP_DAYS_PER_FIRING;
 use crate::schema::IntexFactoryContract;
-use crate::vwap_push::{self, backfill_start, day_rows};
+use crate::vwap_push::{self, day_rows};
 
 const FINALIZED: u32 = 20_260_301;
 
@@ -64,23 +64,44 @@ fn nothing_goes_out_before_the_oracle_finalizes_a_day() {
 }
 
 #[test]
-fn a_fresh_sender_backfills_the_window_a_few_days_per_firing() {
-    // Jan 26 to Mar 1 is 35 days in a common year.
-    assert_eq!(backfill_start(FINALIZED), 20_260_126);
-
+fn a_fresh_sender_starts_at_the_newest_finalized_day() {
     let mut provider = factory_provider();
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
         list(&oracle, REFERENCE_ISO, PAIR_ID);
-        let mut day = backfill_start(FINALIZED);
+        close_day(
+            &oracle,
+            previous_date_key(FINALIZED),
+            PAIR_ID,
+            U256::from(1_000_000),
+        );
+        close_day(&oracle, FINALIZED, PAIR_ID, U256::from(1_000_000));
+
+        fire(&storage);
+        assert_eq!(sent_day(&storage), FINALIZED, "the day before stays behind");
+    });
+}
+
+#[test]
+fn a_backlog_moves_a_few_days_per_firing() {
+    let mut provider = factory_provider();
+    StorageHandle::enter(&mut provider, |storage| {
+        let oracle = OracleContract::new(storage.clone());
+        list(&oracle, REFERENCE_ISO, PAIR_ID);
+        // A sender that stopped on `from` and a chain that closed days without it.
+        let from = 20_260_201;
+        IntexFactoryContract::new(storage.clone())
+            .vwap_sent_day
+            .write(from)
+            .unwrap();
+        let mut day = next_date_key(from);
         while day <= FINALIZED {
             close_day(&oracle, day, PAIR_ID, U256::from(1_000_000));
             day = next_date_key(day);
         }
 
         fire(&storage);
-        let first_firing = (1..MAX_VWAP_DAYS_PER_FIRING)
-            .fold(backfill_start(FINALIZED), |day, _| next_date_key(day));
+        let first_firing = (0..MAX_VWAP_DAYS_PER_FIRING).fold(from, |day, _| next_date_key(day));
         assert_eq!(sent_day(&storage), first_firing);
 
         for _ in 0..4 {
@@ -110,6 +131,11 @@ fn an_unpriced_day_moves_the_mark_and_a_refused_send_holds_it() {
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
         list(&oracle, REFERENCE_ISO, PAIR_ID);
+        // The day between the mark and the finalized one is never priced.
+        IntexFactoryContract::new(storage.clone())
+            .vwap_sent_day
+            .write(previous_date_key(previous_date_key(FINALIZED)))
+            .unwrap();
         close_day(&oracle, FINALIZED, PAIR_ID, U256::from(1_000_000));
 
         for _ in 0..6 {
@@ -130,6 +156,11 @@ fn a_router_that_answers_nothing_holds_the_mark() {
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
         list(&oracle, REFERENCE_ISO, PAIR_ID);
+        // The day between the mark and the finalized one is never priced.
+        IntexFactoryContract::new(storage.clone())
+            .vwap_sent_day
+            .write(previous_date_key(previous_date_key(FINALIZED)))
+            .unwrap();
         close_day(&oracle, FINALIZED, PAIR_ID, U256::from(1_000_000));
 
         for _ in 0..6 {

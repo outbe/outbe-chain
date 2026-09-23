@@ -4,10 +4,10 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
-use outbe_primitives::time::{next_date_key, previous_date_key};
+use outbe_primitives::time::next_date_key;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
-use crate::constants::{INITIAL_BACKFILL_DAYS, MAX_VWAP_DAYS_PER_FIRING, MAX_VWAP_ROWS};
+use crate::constants::{MAX_VWAP_DAYS_PER_FIRING, MAX_VWAP_ROWS};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 
@@ -23,7 +23,7 @@ pub fn run(ctx: &BlockRuntimeContext) -> Result<()> {
     }
     let sent = factory.vwap_sent_day.read()?;
     let mut day = if sent == 0 {
-        backfill_start(finalized)
+        finalized
     } else {
         next_date_key(sent)
     };
@@ -39,11 +39,6 @@ pub fn run(ctx: &BlockRuntimeContext) -> Result<()> {
         day = next_date_key(day);
     }
     Ok(())
-}
-
-/// First day a fresh sender covers: the history a series still open can read.
-pub(crate) fn backfill_start(finalized: u32) -> u32 {
-    (1..INITIAL_BACKFILL_DAYS).fold(finalized, |day, _| previous_date_key(day))
 }
 
 /// The day's priced reference currencies. A price past the wire type saturates: it stays above every floor.

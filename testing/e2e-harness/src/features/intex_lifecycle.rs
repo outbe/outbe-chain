@@ -55,7 +55,7 @@ const REFERENCE_BYTE: u8 = b'U';
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// Qualification is read off the seeded day, so it waits only for that block.
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
-/// A fresh sender backfills a few days a minute before the relay carries the newest one over.
+/// The sender fires every minute in e2e, then the relay carries the day over.
 const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
 /// `IntexState::Called`.
 const CALLED: u8 = 2;
