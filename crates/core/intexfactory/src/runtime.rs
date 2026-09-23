@@ -934,8 +934,9 @@ fn discharge_cost(
 
     let currency = accept_payment_token(storage, claim.asset, series)?;
     let cost = cost_in_token(storage, series, claim.asset, currency, amount)?;
-    if claim.spend_amount < cost {
-        return Err(IntexFactoryError::PayNoteUndercoversCost {
+    // Exact: the surplus of an over-spend is already in the reserve vault.
+    if claim.spend_amount != cost {
+        return Err(IntexFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
             required: cost,
         }

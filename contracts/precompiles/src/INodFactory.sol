@@ -60,8 +60,8 @@ interface INodFactory {
     function settleNod(uint256 nodId, address asset) external;
 
     /// @notice Pay a qualified Nod at or before its settlement deadline.
-    /// The PayNote proof must name the caller as its owner and carry an asset
-    /// the Nod accepts on either currency rail.
+    /// The PayNote proof must name the caller as its owner, carry an asset the
+    /// Nod accepts on either currency rail, and spend exactly the cost.
     function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's

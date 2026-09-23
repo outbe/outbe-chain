@@ -317,8 +317,9 @@ pub fn settle_gem_with_paynote(
 
         let currency = accept_payment_asset(storage, claim.asset, item)?;
         let amount_paid = cost_in_token(storage, item, claim.asset, currency)?;
-        if claim.spend_amount < amount_paid {
-            return Err(GemFactoryError::PayNoteUndercoversCost {
+        // Exact: the surplus of an over-spend is already in the reserve vault.
+        if claim.spend_amount != amount_paid {
+            return Err(GemFactoryError::PayNoteCostMismatch {
                 covered: claim.spend_amount,
                 required: amount_paid,
             }
