@@ -2403,7 +2403,13 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
             next_pair_id += 1;
             id
         };
-        seed_price(s, NOW, iso_code, pair_id, ENTRY_PRICE * u128::from(iso_code));
+        seed_price(
+            s,
+            NOW,
+            iso_code,
+            pair_id,
+            ENTRY_PRICE * u128::from(iso_code),
+        );
     }
     runtime::schedule_tick(s, NOW).unwrap();
     runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();

@@ -374,12 +374,14 @@ pub fn ocomp_pre_admission_projection(
     // Hashed in order, so the order the selector returns is part of the day's identity.
     let auction_entry_prices = priced_reference_currencies(storage.clone(), last_closed_day)?
         .into_iter()
-        .map(|(reference_currency, entry_price_minor)| OcompReferenceEntryPrice {
-            reference_currency,
-            entry_price_minor,
-            source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: last_closed_day,
-        })
+        .map(
+            |(reference_currency, entry_price_minor)| OcompReferenceEntryPrice {
+                reference_currency,
+                entry_price_minor,
+                source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
+                source_day: last_closed_day,
+            },
+        )
         .collect();
     let oracle = OracleContract::new(storage);
     let scurve_count = oracle.scurve_count.read()?;

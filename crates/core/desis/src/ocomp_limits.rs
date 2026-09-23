@@ -12,7 +12,6 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
-
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
 /// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
 /// is briefed all the same so its targets learn the auction is cancelled.

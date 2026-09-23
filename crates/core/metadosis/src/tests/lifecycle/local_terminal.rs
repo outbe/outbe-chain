@@ -859,4 +859,3 @@ fn zero_limit_green_day_dispatches_no_brief() {
         assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 0);
     });
 }
-
