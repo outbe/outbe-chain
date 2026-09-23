@@ -94,50 +94,34 @@ fn network_key(seed: u8) -> NetworkKey {
     }
 }
 
-fn push1(code: &mut Vec<u8>, value: u8) {
-    code.extend_from_slice(&[0x60, value]);
-}
-
-fn push2(code: &mut Vec<u8>, value: u16) {
-    code.extend_from_slice(&[0x61, (value >> 8) as u8, value as u8]);
-}
-
-/// Runtime code for `IDaInbox.groupPubKey()`: `prefix` runs first, then a
-/// revert on any other selector, then `abi.encode(bytes)` built from storage
-/// slots 0..8. A hostile `prefix` writes storage before answering.
+/// Implements `groupPubKey()` by ABI-encoding storage slots 0..8.
+/// `prefix` runs after selector validation (used to probe STATICCALL protection).
 fn inbox_code(prefix: &[u8]) -> Bytes {
-    let mut code = prefix.to_vec();
-    push1(&mut code, 0x00);
-    code.push(0x35); // CALLDATALOAD
-    push1(&mut code, 0xe0);
-    code.push(0x1c); // SHR
-    code.push(0x63); // PUSH4 selector
+    let mut code = vec![
+        0x60, 0x00, 0x35, // CALLDATALOAD(0)
+        0x60, 0xe0, 0x1c, // SHR(224)
+        0x63, // PUSH4 selector
+    ];
     code.extend_from_slice(&IDaInbox::groupPubKeyCall::SELECTOR);
-    code.push(0x14); // EQ
-    push1(&mut code, 0x00); // jump destination, patched below
-    let placeholder = code.len() - 1;
-    code.push(0x57); // JUMPI
-    push1(&mut code, 0x00);
-    push1(&mut code, 0x00);
-    code.push(0xfd); // REVERT
-    code[placeholder] = code.len() as u8; // the JUMPDEST below lands here
-    code.push(0x5b); // JUMPDEST
-    push1(&mut code, 0x20);
-    push1(&mut code, 0x00);
-    code.push(0x52); // MSTORE: bytes offset
-    push2(&mut code, 256);
-    push1(&mut code, 0x20);
-    code.push(0x52); // MSTORE: bytes length
+    code.extend_from_slice(&[
+        0x14, 0x60, 0x14, 0x57, // EQ; jump to byte 20 on a match
+        0x60, 0x00, 0x60, 0x00, 0xfd, // REVERT(0, 0)
+        0x5b, // JUMPDEST at byte 20
+    ]);
+    code.extend_from_slice(prefix);
+    code.extend_from_slice(&[
+        0x60, 0x20, 0x60, 0x00, 0x52, // MSTORE(0, bytes offset = 32)
+        0x61, 0x01, 0x00, 0x60, 0x20, 0x52, // MSTORE(32, bytes length = 256)
+    ]);
     for slot in 0u8..8 {
-        push1(&mut code, slot);
-        code.push(0x54); // SLOAD
-        push2(&mut code, 0x40 + u16::from(slot) * 32);
-        code.push(0x52); // MSTORE
+        let [hi, lo] = (0x40 + u16::from(slot) * 32).to_be_bytes();
+        code.extend_from_slice(&[
+            0x60, slot, 0x54, // SLOAD(slot)
+            0x61, hi, lo, 0x52, // MSTORE(64 + slot * 32, word)
+        ]);
     }
-    push2(&mut code, 0x140);
-    push1(&mut code, 0x00);
-    code.push(0xf3); // RETURN
-    Bytes::from(code)
+    code.extend_from_slice(&[0x61, 0x01, 0x40, 0x60, 0x00, 0xf3]); // RETURN(0, 320)
+    code.into()
 }
 
 /// `PUSH2 0x1234; PUSH1 0x99; SSTORE`: SSTORE pops the key first, so this is
@@ -392,7 +376,7 @@ fn pinned_key_wins_over_the_inbox() {
 #[test]
 fn unresolvable_inbox_keys_fail_closed() {
     let key = network_key(6);
-    let invalid_key = L2RegistryError::InvalidInboxPublicKey.to_string();
+    let invalid_key = L2RegistryError::InvalidPublicKey.to_string();
     let failed_call = L2RegistryError::InboxKeyCallFailed.to_string();
     let mut db = database(&key.public_key);
 

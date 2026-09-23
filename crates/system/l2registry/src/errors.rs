@@ -23,9 +23,6 @@ pub enum L2RegistryError {
     #[error("BLS public key is not a canonical nonidentity EIP-2537 G2 group element")]
     InvalidPublicKey,
 
-    #[error("inbox groupPubKey must return a valid 256-byte EIP-2537 G2 public key")]
-    InvalidInboxPublicKey,
-
     #[error("inbox groupPubKey call failed")]
     InboxKeyCallFailed,
 

@@ -160,9 +160,8 @@ impl L2RegistryContract<'_> {
             SubCallStatus::Halt(_) => return Err(L2RegistryError::InboxKeyCallFailed.into()),
         }
         let public_key = IDaInbox::groupPubKeyCall::abi_decode_returns(&response.returndata)
-            .map_err(|_| L2RegistryError::InvalidInboxPublicKey)?;
-        crate::public_key::decode(&public_key)
-            .map_err(|_| L2RegistryError::InvalidInboxPublicKey.into())
+            .map_err(|_| L2RegistryError::InvalidPublicKey)?;
+        crate::public_key::decode(&public_key).map_err(|_| L2RegistryError::InvalidPublicKey.into())
     }
 }
 
