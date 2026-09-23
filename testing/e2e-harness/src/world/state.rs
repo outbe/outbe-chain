@@ -633,6 +633,8 @@ pub struct FixtureState {
     pub reward_gem_balance_before_delivery: Option<alloy_primitives::U256>,
     /// Exact UTC reward day durably stored at the pending Rewards FIFO head.
     pub pending_reward_gem_utc_day: Option<u32>,
+    /// UTC day whose closed VWAP the materialized Nod qualifies on.
+    pub nod_qualification_utc_day: Option<u32>,
     /// Finalized EVM block captured before restarting with a pending Gem batch.
     pub pending_reward_gem_restart_block_number: Option<u64>,
     /// Canonical block that delivered the saved batch through OSG2.
@@ -850,6 +852,7 @@ impl Default for FixtureState {
             zerofee_new_day_balance_after: None,
             reward_gem_balance_before_delivery: None,
             pending_reward_gem_utc_day: None,
+            nod_qualification_utc_day: None,
             pending_reward_gem_restart_block_number: None,
             reward_gem_delivery_block_number: None,
             delivered_reward_gem_id: None,
