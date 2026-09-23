@@ -11,6 +11,8 @@ use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_I
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng as _;
 
 use crate::api::{check_zk_merkle_root_signature, ZkOfferCheck, ZK_MERKLE_ROOT_NAMESPACE};
 use crate::precompile;
@@ -33,6 +35,12 @@ fn keypair() -> (Private, Vec<u8>) {
     let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
         rand_commonware::rngs::SysRng,
     ));
+    let public = public.encode().to_vec();
+    (private, public)
+}
+
+fn seeded_keypair(seed: u64) -> (Private, Vec<u8>) {
+    let (private, public) = ops::keypair::<_, MinSig>(&mut ChaCha20Rng::seed_from_u64(seed));
     let public = public.encode().to_vec();
     (private, public)
 }
@@ -337,4 +345,220 @@ fn zk_signature_check_paths() {
             }
         );
     });
+}
+
+#[test]
+fn update_public_key_rotates_owner_key() {
+    let (old_private, old_public) = seeded_keypair(1);
+    let (new_private, new_public) = seeded_keypair(2);
+    let root = [0x42; 32];
+    let sign = |private: &Private| {
+        sign_message::<MinSig>(private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+            .encode()
+            .to_vec()
+    };
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        L2RegistryContract::new(storage.clone())
+            .register_network(L2_CHAIN_ID, l1_addr(), &old_public)
+            .unwrap();
+        assert_eq!(
+            check_zk_merkle_root_signature(
+                storage.clone(),
+                L2_CHAIN_ID,
+                &root,
+                &sign(&old_private)
+            )
+            .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+
+        let call = precompile::IL2Registry::updatePublicKeyCall {
+            chainId: L2_CHAIN_ID,
+            publicKey: Bytes::copy_from_slice(&new_public),
+        };
+        precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO).unwrap();
+
+        // Consumers read the rotated key while ownership and the reverse index stay put.
+        let network = precompile::dispatch(
+            storage.clone(),
+            &precompile::IL2Registry::getNetworkCall {
+                chainId: L2_CHAIN_ID,
+            }
+            .abi_encode(),
+            l1_addr(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            network.as_ref(),
+            (l1_addr(), Bytes::copy_from_slice(&new_public))
+                .abi_encode_params()
+                .as_slice()
+        );
+        let chain_id = precompile::dispatch(
+            storage.clone(),
+            &precompile::IL2Registry::chainIdByL1AddressCall {
+                l1Address: l1_addr(),
+            }
+            .abi_encode(),
+            l1_addr(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(u64::abi_decode(chain_id.as_ref()).unwrap(), L2_CHAIN_ID);
+
+        // The rotated key authorizes roots; the retired key no longer does.
+        assert_eq!(
+            check_zk_merkle_root_signature(
+                storage.clone(),
+                L2_CHAIN_ID,
+                &root,
+                &sign(&new_private)
+            )
+            .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        let retired =
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &sign(&old_private));
+        assert!(matches!(retired, Err(PrecompileError::Revert(_))));
+    });
+
+    let event = provider
+        .get_events(L2_REGISTRY_ADDRESS)
+        .iter()
+        .find_map(|log| precompile::IL2Registry::L2PublicKeyUpdated::decode_log_data(log).ok())
+        .expect("public key update event");
+    assert_eq!(event.chainId, L2_CHAIN_ID);
+    assert_eq!(event.publicKey.as_ref(), new_public.as_slice());
+}
+
+#[test]
+fn update_public_key_rejects_other_operators_and_unknown_chains() {
+    let (private, public) = seeded_keypair(1);
+    let (_, other_public) = seeded_keypair(2);
+    let other_operator = Address::repeat_byte(0x22);
+    let root = [0x42; 32];
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+        registry
+            .register_network(L2_CHAIN_ID, l1_addr(), &public)
+            .unwrap();
+        registry
+            .register_network(L2_CHAIN_ID + 1, other_operator, &other_public)
+            .unwrap();
+
+        // Another network's operator, an unrelated account, and the owner of a
+        // chain that was never registered all fail to rotate this key.
+        for (chain_id, caller) in [
+            (L2_CHAIN_ID, other_operator),
+            (L2_CHAIN_ID, Address::repeat_byte(0x33)),
+            (L2_CHAIN_ID + 2, l1_addr()),
+        ] {
+            let call = precompile::IL2Registry::updatePublicKeyCall {
+                chainId: chain_id,
+                publicKey: Bytes::copy_from_slice(&other_public),
+            };
+            let err = precompile::dispatch(storage.clone(), &call.abi_encode(), caller, U256::ZERO)
+                .unwrap_err();
+            assert!(matches!(err, PrecompileError::Revert(_)));
+        }
+
+        let registry = L2RegistryContract::new(storage.clone());
+        assert_eq!(
+            registry
+                .load_network(L2_CHAIN_ID)
+                .unwrap()
+                .public_key_bytes()
+                .as_slice(),
+            public.as_slice()
+        );
+        assert_eq!(
+            registry
+                .load_network(L2_CHAIN_ID + 1)
+                .unwrap()
+                .public_key_bytes()
+                .as_slice(),
+            other_public.as_slice()
+        );
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+        assert_eq!(
+            registry.l1_to_chain.read(&other_operator).unwrap(),
+            L2_CHAIN_ID + 1
+        );
+
+        // The untouched key still authenticates a real signature on its chain.
+        let sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+            .encode()
+            .to_vec();
+        assert_eq!(
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &sig).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+    });
+
+    assert!(provider
+        .get_events(L2_REGISTRY_ADDRESS)
+        .iter()
+        .all(|log| precompile::IL2Registry::L2PublicKeyUpdated::decode_log_data(log).is_err()));
+}
+
+#[test]
+fn update_public_key_rejects_malformed_key() {
+    let (private, public) = seeded_keypair(1);
+    let root = [0x42; 32];
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        L2RegistryContract::new(storage.clone())
+            .register_network(L2_CHAIN_ID, l1_addr(), &public)
+            .unwrap();
+
+        // Wrong length, then 96 bytes that are not a MinSig G2 group element.
+        for malformed in [vec![0xAB; 95], vec![0xAB; 96]] {
+            let call = precompile::IL2Registry::updatePublicKeyCall {
+                chainId: L2_CHAIN_ID,
+                publicKey: Bytes::from(malformed),
+            };
+            let err =
+                precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO)
+                    .unwrap_err();
+            assert!(matches!(err, PrecompileError::Revert(_)));
+
+            let registry = L2RegistryContract::new(storage.clone());
+            assert_eq!(
+                registry
+                    .load_network(L2_CHAIN_ID)
+                    .unwrap()
+                    .public_key_bytes()
+                    .as_slice(),
+                public.as_slice()
+            );
+            assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+        }
+
+        let sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+            .encode()
+            .to_vec();
+        assert_eq!(
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &sig).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+    });
+
+    assert!(provider
+        .get_events(L2_REGISTRY_ADDRESS)
+        .iter()
+        .all(|log| precompile::IL2Registry::L2PublicKeyUpdated::decode_log_data(log).is_err()));
 }

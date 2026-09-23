@@ -3,7 +3,9 @@
 //! Records each network's L1 operator address and BLS MinSig committee group
 //! key (compressed G2, 96 bytes), keyed by non-zero `chain_id`. Registration is
 //! applied by the validator [`vote_target::L2RegistryVoteTarget`]; the public
-//! precompile exposes registry views and owner-authorized removal.
+//! precompile exposes registry views and operator-authorized key rotation and
+//! removal. The operator may be an EOA or a contract; authorization uses the
+//! immediate caller, not the transaction origin.
 //!
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature
 //! over `zkMerkleRoot` for `TributeFactory.offerTribute`, independent of the caller.

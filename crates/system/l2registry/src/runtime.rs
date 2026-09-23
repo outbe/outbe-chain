@@ -5,7 +5,9 @@ use outbe_primitives::error::Result;
 
 use crate::errors::L2RegistryError;
 use crate::precompile::IL2Registry;
-use crate::schema::{L2NetworkRecord, L2RegistryContract, BLS_PUBLIC_KEY_LEN};
+use crate::schema::{
+    L2NetworkRecord, L2NetworkRecordEntryExt, L2RegistryContract, BLS_PUBLIC_KEY_LEN,
+};
 
 impl L2RegistryContract<'_> {
     /// Atomically registers an L2 operator and its root-signing key.
@@ -58,6 +60,41 @@ impl L2RegistryContract<'_> {
             self.emit(IL2Registry::L2NetworkRegistered {
                 chainId: chain_id,
                 l1Address: l1_address,
+                publicKey: Bytes::copy_from_slice(public_key),
+            })?;
+            Ok(())
+        })
+    }
+
+    /// Rotates the root-signing key when `caller` is the stored L1 operator,
+    /// including when the operator is a contract making an ordinary EVM CALL.
+    pub fn update_public_key(
+        &mut self,
+        caller: Address,
+        chain_id: u64,
+        public_key: &[u8],
+    ) -> Result<()> {
+        let record = self.load_network(chain_id)?;
+        if caller != record.l1_address {
+            return Err(L2RegistryError::NotNetworkOwner { caller, chain_id }.into());
+        }
+        let pubkey: &[u8; BLS_PUBLIC_KEY_LEN] =
+            public_key
+                .try_into()
+                .map_err(|_| L2RegistryError::InvalidPublicKeyLength {
+                    length: public_key.len(),
+                })?;
+        decode_public_key(pubkey)?;
+
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
+            let entry = self.networks.entry(chain_id);
+            entry.pubkey_lo().write(pubkey_lo)?;
+            entry.pubkey_mid().write(pubkey_mid)?;
+            entry.pubkey_hi().write(pubkey_hi)?;
+            self.emit(IL2Registry::L2PublicKeyUpdated {
+                chainId: chain_id,
                 publicKey: Bytes::copy_from_slice(public_key),
             })?;
             Ok(())
