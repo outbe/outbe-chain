@@ -5,7 +5,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap};
+use outbe_oracle::api::{get_all_reference_currencies, get_utc_day_vwap_for_iso};
 use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
@@ -120,7 +120,7 @@ pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let finished = if budget.is_spent() {
             false
         } else {
-            match day_price(ctx, iso_code, pinned_day)? {
+            match get_utc_day_vwap_for_iso(ctx.storage.clone(), pinned_day, iso_code)? {
                 // No pair or no trade that day: nothing to decide by.
                 None => true,
                 Some(vwap) => {
@@ -149,13 +149,6 @@ pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         start_qualify_sweep(ctx, &factory, next)?;
     }
     Ok(promoted)
-}
-
-fn day_price(ctx: &BlockRuntimeContext, iso_code: u16, day: u32) -> Result<Option<U256>> {
-    match coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-        Some(index) => get_utc_day_vwap(ctx.storage.clone(), day, index),
-        None => Ok(None),
-    }
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.

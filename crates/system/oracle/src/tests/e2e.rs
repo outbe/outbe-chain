@@ -1,11 +1,11 @@
 //! End-to-end tests: genesis round-trips, precompile dispatch, VWAP flows.
 
+use crate::constants::DAY_TYPE_ISO;
+use crate::schema::{OracleContract, SCALE_1E18};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-
-use crate::schema::{OracleContract, SCALE_1E18};
 
 use super::common::*;
 
@@ -1141,6 +1141,97 @@ fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
             .read(&worldwide_day)
             .unwrap());
     });
+}
+
+#[test]
+fn utc_day_vwap_for_iso_preserves_scale_and_absent_prices() {
+    use crate::api::get_utc_day_vwap_for_iso;
+
+    with_storage(|storage| {
+        let day = 20260624;
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
+            None
+        );
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let index = oracle.pair_index_of(pair).unwrap();
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
+            None
+        );
+
+        // Use fractional six-decimal units to catch accidental rescaling.
+        let price = U256::from(133_333_333u64);
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&index, price)
+            .unwrap();
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
+            Some(price)
+        );
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, DAY_TYPE_ISO).unwrap(),
+            Some(price)
+        );
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, 978).unwrap(),
+            None
+        );
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), 20260625, 840).unwrap(),
+            None
+        );
+
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&index, U256::ZERO)
+            .unwrap();
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
+            None
+        );
+        assert_eq!(
+            get_utc_day_vwap_for_iso(storage.clone(), day, DAY_TYPE_ISO).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn utc_day_vwap_for_iso_propagates_storage_errors_unchanged() {
+    use alloy_primitives::B256;
+    use outbe_primitives::error::{PrecompileError, Result};
+    use outbe_primitives::storage::readonly::{ReadOnlyStorageProvider, StorageReader};
+    use std::cell::Cell;
+
+    struct FailingReader(Cell<usize>);
+    impl StorageReader for FailingReader {
+        fn read_storage(&self, _address: Address, _key: B256) -> Result<U256> {
+            let remaining = self.0.get();
+            if remaining == 0 {
+                return Err(PrecompileError::Storage("VWAP read failed".into()));
+            }
+            self.0.set(remaining - 1);
+            Ok(U256::from(1)) // Registered pair index for the daily-read failure case.
+        }
+    }
+
+    // Fail first at pair resolution, then at the daily price read.
+    for successful_reads in [0, 1] {
+        let mut provider = ReadOnlyStorageProvider::new(FailingReader(Cell::new(successful_reads)));
+        let error = StorageHandle::enter(&mut provider, |storage| {
+            crate::api::get_utc_day_vwap_for_iso(storage, 20260624, 840)
+        })
+        .unwrap_err();
+        assert!(
+            matches!(error, PrecompileError::Storage(message) if message == "VWAP read failed")
+        );
+    }
 }
 
 #[test]
