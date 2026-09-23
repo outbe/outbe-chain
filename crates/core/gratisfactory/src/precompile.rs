@@ -59,7 +59,7 @@ pub fn dispatch(
                         storage.clone(),
                         sender,
                         c.amountStables,
-                        c.pledgeHandle,
+                        c.pledgeNote,
                         auth,
                     )?;
                     emit_unpledged(&storage, sender, gratis_amount)
@@ -85,7 +85,7 @@ fn emit_pledged(
     account: Address,
     call: &IGratisFactory::pledgeGratisCall,
     gratis_amount: U256,
-    pledge_handle: B256,
+    pledge_note: B256,
 ) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
@@ -94,7 +94,7 @@ fn emit_pledged(
             amountStables: call.amountStables,
             asset: call.asset,
             gratisAmount: gratis_amount,
-            pledgeHandle: pledge_handle,
+            pledgeNote: pledge_note,
         }),
     )
 }

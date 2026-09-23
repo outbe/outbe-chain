@@ -19,5 +19,7 @@ Feature: Protocol positions redeem through the reserve into COEN
     Then the stale boundary finalizes with one pending reward Gem batch and no new Gem
     When the committee restarts while the reward Gem batch is pending
     Then the controlled COEN USD quote is finalized through the real price feeder
-    Then the first canonical fresh tally delivers the saved reward Gem batch exactly once
+    And the fresh tally leaves the saved reward Gem batch pending
+    When the previous UTC day's COEN USD VWAP is seeded
+    Then the seeded VWAP delivers the saved reward Gem batch exactly once
     And every validator observes the same delivered reward Gem and continued finality

@@ -2,8 +2,8 @@
 //!
 //! The harness plays the L2 network: it registers the operator's EOA through
 //! validator governance under a deterministic fixture key, and every offer must
-//! carry a real FullProof under the circuit version enabled for the registered
-//! L2 chain whose root is signed with exactly that registered key.
+//! carry a real Demo Tribute proof under the circuit version enabled for the
+//! registered L2 chain whose root is signed with exactly that registered key.
 
 use alloy_primitives::{Address, B256};
 use cucumber::{then, when};
@@ -33,7 +33,7 @@ fn registered_network(world: &World) -> (Address, Vec<u8>) {
 }
 
 /// A real offer proof for one statement of this scenario's L2 network.
-fn offer_proof(
+pub(super) fn offer_proof(
     world: &World,
     l1_owner: Address,
     draft_id: B256,
@@ -60,8 +60,8 @@ fn offer_proof(
 /// the result is well formed but cryptographically invalid for its statement.
 fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk) -> Vec<u8> {
     use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::full_proof::{decode_public_inputs, PUBLIC_INPUT_COUNT};
-    use outbe_zk_canonical::noir::full_proof::FullProof;
+    use outbe_zk_canonical::demo_tribute::{decode_public_inputs, PUBLIC_INPUT_COUNT};
+    use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
 
     let original = original.proof.clone();
     let donor = donor.proof.clone();
@@ -72,8 +72,8 @@ fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk)
             public, other,
             "proof donor must represent a different statement"
         );
-        assert!(verify_circuit::<FullProof>(&original).expect("original proof verification"));
-        assert!(verify_circuit::<FullProof>(&donor).expect("donor proof verification"));
+        assert!(verify_circuit::<DemoTribute>(&original).expect("original proof verification"));
+        assert!(verify_circuit::<DemoTribute>(&donor).expect("donor proof verification"));
         let prefix = 4 + PUBLIC_INPUT_COUNT * 32;
         let mut tampered = original;
         tampered[prefix..].copy_from_slice(&donor[prefix..]);
@@ -83,7 +83,8 @@ fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk)
             public
         );
         assert!(
-            !verify_circuit::<FullProof>(&tampered).expect("well-formed mixed proof verification"),
+            !verify_circuit::<DemoTribute>(&tampered)
+                .expect("well-formed mixed proof verification"),
             "mixed proof must fail cryptographic verification"
         );
         tampered
@@ -130,16 +131,24 @@ fn offer_without_signature(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     super::tribute_projection::wait_for_offering(world, &wwd);
     let key = operator_key(world);
+    let caller = super::l2_registration::operator_address(world, &key);
+    let zk = offer_proof(
+        world,
+        caller,
+        low_b256(0x11),
+        low_b256(0x22),
+        wwd.parse().expect("numeric worldwide day"),
+    );
     let tx_hash = world
         .rpc
         .tribute_offer_with_zk(
             &key,
             &wwd,
             TributeZkOffer {
-                tribute_draft_id_hex: &format!("{:#x}", low_b256(0x11)),
-                su_hash_hex: &format!("{:#x}", low_b256(0x22)),
-                merkle_root_hex: &format!("{:#x}", low_b256(0x33)),
-                proof_hex: "0x",
+                tribute_draft_id_hex: &zk.tribute_draft_id_hex,
+                su_hash_hex: &zk.su_hash_hex,
+                merkle_root_hex: &zk.merkle_root_hex(),
+                proof_hex: &zk.proof_hex(),
                 l2_chain_id: L2_CHAIN_ID_SELECTOR,
                 circuit_version: l2_fixture::FIXTURE_CIRCUIT_VERSION,
                 signature_hex: "0x",
@@ -179,12 +188,12 @@ fn submit_proven_offer(world: &mut World, tag: &str) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("the operator submits a valid FullProof offer for one encrypted tribute")]
-fn offer_with_valid_full_proof(world: &mut World) {
+#[when("the operator submits a valid Demo Tribute proof offer for one encrypted tribute")]
+fn offer_with_valid_proof(world: &mut World) {
     submit_proven_offer(world, "zk-gate-valid");
 }
 
-#[when("the operator proves a signed tampered proof is rejected then submits the valid FullProof")]
+#[when("the operator proves a signed tampered proof is rejected then submits the valid Demo Tribute proof")]
 fn offer_with_valid_zk_proof(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let worldwide_day = wwd.parse::<u64>().expect("worldwide-day number");

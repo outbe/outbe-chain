@@ -87,7 +87,7 @@ pub fn burn_with_fidelity(
 
 /// Pledge the gratis that covers `terms.stables_amount` from `caller` into a new
 /// pending `PledgeLockTicket`, sealing `terms` alongside it. `amount_stables` is the
-/// MAC-bound figure and must equal `terms.stables_amount`. Returns the pledge handle
+/// MAC-bound figure and must equal `terms.stables_amount`. Returns the pledge note
 /// to present at `requestCredis`.
 pub fn pledge(
     storage: StorageHandle<'_>,
@@ -100,7 +100,7 @@ pub fn pledge(
 }
 
 /// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
-/// Returns `(pledge_handle, fidelity_outcome)`; the outcome's `league` is the
+/// Returns `(pledge_note, fidelity_outcome)`; the outcome's `league` is the
 /// caller's current league for the eligibility gate (nothing to persist - a
 /// probe never mutates cohorts).
 pub fn pledge_with_fidelity(
@@ -114,22 +114,22 @@ pub fn pledge_with_fidelity(
     runtime::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, fidelity)
 }
 
-/// Directly unpledge an unspent (pending) pledge (`pledge_handle`) back to `caller`.
+/// Directly unpledge an unspent (pending) pledge (`pledge_note`) back to `caller`.
 /// `amount_stables` is the stables figure the pledge was quoted for - the enclave
 /// matches it against the ticket. Returns the gratis collateral credited back.
 pub fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
     amount_stables: U256,
-    pledge_handle: B256,
+    pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    runtime::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    runtime::unpledge(storage, caller, amount_stables, pledge_note, auth)
 }
 
 // --- Credis-driven ---
 
-/// requestCredis: consume `pledge_handle`'s ticket for `bundle` (authorized by
+/// requestCredis: consume `pledge_note`'s ticket for `smart_account` (authorized by
 /// `spend_auth`), crediting the collateral into the pledger's OWN pledged ledger and
 /// deleting the ticket. The pledger EOA is not passed in calldata - the enclave recovers
 /// it from the ticket. Returns `(terms, eoa_ct)`: the loan terms quoted when the pledge
@@ -138,11 +138,11 @@ pub fn unpledge(
 /// [`reveal_owner`]).
 pub fn consume_pledge(
     storage: StorageHandle<'_>,
-    pledge_handle: B256,
-    bundle: Address,
+    pledge_note: B256,
+    smart_account: Address,
     spend_auth: [u8; 32],
 ) -> Result<(PledgeTerms, Vec<u8>)> {
-    runtime::consume_pledge(storage, pledge_handle, bundle, spend_auth)
+    runtime::consume_pledge(storage, pledge_note, smart_account, spend_auth)
 }
 
 /// Decrypt a position's stored `eoa_ct` blob back to the pledger EOA (read-only, via the

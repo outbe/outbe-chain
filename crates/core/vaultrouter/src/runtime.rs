@@ -1,13 +1,11 @@
 //! Orchestration logic for the vaultrouter precompile.
 //!
 //! Faithful port of `contracts/.../VaultRouter.sol`. All cross-contract
-//! interaction (ERC-20 token ops, ERC-4626 vault ops, token-bundle top-up) goes
+//! interaction (ERC-20 token ops, ERC-4626 vault ops) goes
 //! through `StorageHandle::call` / `StorageHandle::staticcall`; from the callee's
 //! perspective `msg.sender` is `VAULT_ROUTER_ADDRESS` (this precompile).
 //!
-//! Following the repo convention (see `outbe_credisfactory::runtime`), ERC-20
-//! mutating sub-calls propagate failure by reverting; their boolean return is
-//! not separately decoded.
+//! ERC-20 transfers reject false or malformed return values; empty returns are accepted.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -22,7 +20,7 @@ use crate::constants::RESERVATION_TTL_SECS;
 use crate::errors::VaultRouterError;
 use crate::schema::{LiquidityReservation, VaultRouterContract, UNKNOWN};
 use crate::sol_ext::IReferenceCurrency;
-use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
+use crate::sol_ext::{IVaultV2, IERC20};
 
 /// This precompile's own address (`address(this)` in the Solidity original).
 const SELF: Address = VAULT_ROUTER_ADDRESS;
@@ -356,8 +354,7 @@ pub(crate) fn deposit(
     Ok(shares)
 }
 
-/// `withdraw`: redeems `amount` of `asset` from the vault and tops it
-/// up into `receiver` (a token bundle), returning the burned shares.
+/// `withdraw`: redeems assets and transfers them to `receiver`, returning burned shares.
 pub(crate) fn withdraw(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -387,8 +384,7 @@ pub(crate) fn withdraw(
 
     let burned_shares = vault_withdraw(&storage, vault, amount, SELF, SELF)?;
 
-    erc20_approve(&storage, asset, receiver, amount)?;
-    token_bundle_top_up(&storage, receiver, SELF, asset, amount)?;
+    erc20_transfer(&storage, asset, receiver, amount)?;
 
     let mut contract = VaultRouterContract::new(storage.clone());
     contract.emit(IVaultRouter::LiquidityWithdrawn {
@@ -469,7 +465,7 @@ pub(crate) fn reserve_stables(
     })
 }
 
-/// `releaseReservation`: deliver `amount` of the hold under `id` to `receiver`
+/// Validate the reserved account, pay its recorded CCA for COEN delivered to the user,
 /// and return any unused remainder to the origin vault.
 pub(crate) fn release_reservation(
     storage: StorageHandle<'_>,
@@ -505,8 +501,7 @@ pub(crate) fn release_reservation(
             .into());
         }
 
-        erc20_approve(&storage, record.asset, receiver, amount)?;
-        token_bundle_top_up(&storage, receiver, SELF, record.asset, amount)?;
+        erc20_transfer(&storage, record.asset, record.cca, amount)?;
 
         let excess = record.amount - amount;
         let mut returned_shares = U256::ZERO;
@@ -518,7 +513,7 @@ pub(crate) fn release_reservation(
         contract.emit(IVaultRouter::ReservationReleased {
             id,
             asset: record.asset,
-            receiver,
+            receiver: record.cca,
             amount,
         })?;
         if !excess.is_zero() {
@@ -881,7 +876,10 @@ fn erc20_transfer(
     amount: U256,
 ) -> Result<()> {
     let calldata = IERC20::transferCall { to, amount }.abi_encode();
-    storage.call(token, U256::ZERO, calldata.into())?;
+    let ret = storage.call(token, U256::ZERO, calldata.into())?;
+    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
+        return Err(VaultRouterError::TokenOperationFailed.into());
+    }
     Ok(())
 }
 
@@ -959,27 +957,4 @@ fn vault_withdraw(
     )?;
     IVaultV2::withdrawCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 withdraw").into())
-}
-
-fn token_bundle_top_up(
-    storage: &StorageHandle<'_>,
-    receiver: Address,
-    sender: Address,
-    token: Address,
-    amount: U256,
-) -> Result<()> {
-    // A CALL to a codeless account succeeds and returns empty in EVM, so topUp's
-    // internal guards would be silently skipped if the bundle smart account is not
-    // deployed. Reject up front so issueCredis fails instead of half-completing.
-    if storage.with_account_info(receiver, |info| Ok(info.is_empty_code_hash()))? {
-        return Err(VaultRouterError::ReceiverNotDeployed.into());
-    }
-    let calldata = ITokenBundle::topUpCall {
-        sender,
-        token,
-        amount,
-    }
-    .abi_encode();
-    storage.call(receiver, U256::ZERO, calldata.into())?;
-    Ok(())
 }

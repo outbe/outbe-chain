@@ -10,7 +10,7 @@ use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext
 use serde::Deserialize;
 
 use crate::errors::L2RegistryError;
-use crate::runtime::decode_public_key;
+use crate::public_key;
 use crate::schema::{L2RegistryContract, BLS_PUBLIC_KEY_LEN};
 
 #[derive(Debug, Deserialize)]
@@ -59,17 +59,17 @@ impl L2RegistryVotePayloadV1 {
                 let encoded = public_key
                     .strip_prefix("0x")
                     .ok_or(L2RegistryError::InvalidPublicKeyEncoding)?;
-                let mut public_key = [0u8; BLS_PUBLIC_KEY_LEN];
-                hex::decode_to_slice(encoded, &mut public_key).map_err(|_| {
+                let mut key = [0u8; BLS_PUBLIC_KEY_LEN];
+                hex::decode_to_slice(encoded, &mut key).map_err(|_| {
                     L2RegistryError::InvalidPublicKeyLength {
                         length: encoded.len() / 2,
                     }
                 })?;
-                decode_public_key(&public_key).map_err(|_| L2RegistryError::InvalidPublicKey)?;
+                public_key::decode(&key).map_err(|_| L2RegistryError::InvalidPublicKey)?;
                 Ok(Self::Register {
                     chain_id,
                     l1_address,
-                    public_key,
+                    public_key: key,
                 })
             }
         }
@@ -141,15 +141,16 @@ mod tests {
         let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));
-        let mut key = [0u8; BLS_PUBLIC_KEY_LEN];
-        key.copy_from_slice(public.encode().as_ref());
-        key
+        public_key::encode(&public).unwrap()
     }
 
     fn register_json(chain_id: u64, extra: &str) -> String {
+        register_json_with_key(chain_id, &hex::encode(valid_public_key()), extra)
+    }
+
+    fn register_json_with_key(chain_id: u64, public_key_hex: &str, extra: &str) -> String {
         format!(
-            r#"{{"operation":"register","chainId":{chain_id},"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x{}"{extra}}}"#,
-            hex::encode(valid_public_key())
+            r#"{{"operation":"register","chainId":{chain_id},"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x{public_key_hex}"{extra}}}"#
         )
     }
 
@@ -189,6 +190,24 @@ mod tests {
             r#"{"operation":"register","chainId":4242,"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x01"}"#,
         );
         assert!(L2RegistryVotePayloadV1::decode_json(malformed.as_bytes()).is_err());
+
+        // No compressed-96 compatibility: the legacy encoding is rejected on
+        // length, and a 256-byte blob that is not an EIP-2537 G2 point is
+        // rejected on the point check.
+        let (_, compressed) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
+        let legacy = register_json_with_key(4242, &hex::encode(compressed.encode().as_ref()), "");
+        assert!(matches!(
+            L2RegistryVotePayloadV1::decode_json(legacy.as_bytes()),
+            Err(L2RegistryError::InvalidPublicKeyLength { length: 96 })
+        ));
+
+        let invalid_point = register_json_with_key(4242, &"ab".repeat(BLS_PUBLIC_KEY_LEN), "");
+        assert!(matches!(
+            L2RegistryVotePayloadV1::decode_json(invalid_point.as_bytes()),
+            Err(L2RegistryError::InvalidPublicKey)
+        ));
     }
 
     #[test]

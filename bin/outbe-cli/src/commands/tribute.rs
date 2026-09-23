@@ -5,12 +5,11 @@ use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 use outbe_primitives::time::WorldwideDay;
-use outbe_zk_canonical::{noir::full_proof::FullProof, CircuitId};
+use outbe_zk_canonical::{noir::L2_CIRCUITS_REGISTRY, L2CircuitVersion};
 use serde_json::Value;
 
 use crate::abi::{
-    IL2Registry, ITeeRegistry, ITribute, ITributeFactory, L2_REGISTRY_ADDRESS, TEE_REGISTRY_ADDR,
-    TRIBUTE_ADDR, TRIBUTE_FACTORY_ADDR,
+    ITeeRegistry, ITribute, ITributeFactory, TEE_REGISTRY_ADDR, TRIBUTE_ADDR, TRIBUTE_FACTORY_ADDR,
 };
 use crate::rpc::Rpc;
 
@@ -87,40 +86,33 @@ pub enum TributeCmd {
         /// Exclude the resulting Tribute from Intex issuance
         #[arg(long, default_value_t = false)]
         exclude_from_intex_issuance: bool,
-        /// L2 zkMerkleRoot bytes (`0x`-hex). Required; `0x` is accepted only for
-        /// a deliberate negative transaction, which the node then rejects.
+        /// L2 zkMerkleRoot bytes (`0x`-hex).
         #[arg(long)]
         zk_merkle_root: String,
         /// Combined Tribute proof bytes (`0x`-hex), including its four public
         /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
-        /// Required; `0x` is accepted only for a deliberate negative
-        /// transaction, which the node then rejects.
-        #[arg(long)]
-        zk_proof: String,
-        /// L2 chain id selecting the circuit that verifies `--zk-proof`. Must
-        /// match the caller's registered L2. Defaults to the caller's
-        /// registered chain id when `--zk-proof` is non-empty.
-        #[arg(long)]
-        l2_chain_id: Option<u32>,
-        /// Exact circuit version enabled for `--l2-chain-id`. Defaults, when
-        /// `--zk-proof` is non-empty, to the enabled version whose verification
-        /// key is the canonical FullProof's.
-        #[arg(long)]
-        circuit_version: Option<String>,
+        #[arg(long, value_parser = parse_zk_proof)]
+        zk_proof: Bytes,
+        /// Registered L2 chain id selecting the Tribute circuit. Required.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        l2_chain_id: u32,
+        /// Circuit version. Defaults to the latest enabled version for the selected L2.
+        #[arg(
+            long,
+            required = false,
+            default_value_ifs = circuit_version_defaults(),
+            value_parser = clap::builder::NonEmptyStringValueParser::new(),
+        )]
+        circuit_version: String,
         /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
-        /// `nft_hash` and `binding_hash`. Required with `--zk-proof`; otherwise
-        /// generated randomly.
+        /// `nft_hash` and `binding_hash`.
         #[arg(long)]
-        tribute_draft_id: Option<String>,
-        /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the
-        /// TributeDraft. Required with `--zk-proof`; otherwise generated
-        /// randomly.
+        tribute_draft_id: String,
+        /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the TributeDraft.
         #[arg(long)]
-        su_hash: Option<String>,
+        su_hash: String,
         /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
-        /// produced with the network key registered in the L2Registry. Required;
-        /// `0x` is accepted only for a deliberate negative transaction, which the
-        /// node then rejects.
+        /// produced with the network key registered in the L2Registry.
         #[arg(long)]
         signature: String,
     },
@@ -158,11 +150,11 @@ impl TributeCmd {
                     currency,
                     exclude_from_intex_issuance,
                     &zk_merkle_root,
-                    &zk_proof,
+                    zk_proof,
                     l2_chain_id,
-                    circuit_version.as_deref(),
-                    tribute_draft_id.as_deref(),
-                    su_hash.as_deref(),
+                    circuit_version,
+                    &tribute_draft_id,
+                    &su_hash,
                     &signature,
                 )
                 .await
@@ -303,23 +295,19 @@ async fn offer(
     currency: u16,
     exclude_from_intex_issuance: bool,
     zk_merkle_root: &str,
-    zk_proof: &str,
-    l2_chain_id: Option<u32>,
-    circuit_version: Option<&str>,
-    tribute_draft_id: Option<&str>,
-    su_hash: Option<&str>,
+    zk_proof: Bytes,
+    l2_chain_id: u32,
+    circuit_version: String,
+    tribute_draft_id: &str,
+    su_hash: &str,
     signature: &str,
 ) -> Result<()> {
     let signer = crate::commands::require_signer(private_key)?;
     let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
-    let zk_proof = decode_hex_bytes(zk_proof, "--zk-proof")?;
-    let has_zk_proof = !zk_proof.is_empty();
-    let (l2_chain_id, circuit_version) =
-        circuit_selector(client, creator, has_zk_proof, l2_chain_id, circuit_version).await?;
     let signature = decode_hex_bytes(signature, "--signature")?;
-    let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id", has_zk_proof)?;
-    let su_hash = offer_hex32(su_hash, "--su-hash", has_zk_proof)?;
+    let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id")?;
+    let su_hash = offer_hex32(su_hash, "--su-hash")?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
     let bootstrapped = {
@@ -348,9 +336,7 @@ async fn offer(
     let offer_pub: [u8; 32] = offer_pub_u256.to_be_bytes();
     println!("offer key (DKG-derived): 0x{}", hex::encode(offer_pub));
 
-    // 2. Build the plaintext payload. The draft id + su hash must match the
-    //    proof's private input; without a proof (deliberate negative
-    //    transaction) they are fresh random.
+    // 2. Build the plaintext payload matching the proof's private inputs.
     let wwd: u32 = worldwide_day.into();
     // worldwide_day + currency are cleartext ABI args (below) so the node can
     // admit and price the offer without decrypting; the ciphertext carries only
@@ -414,7 +400,7 @@ async fn offer(
     Ok(())
 }
 
-/// Decode a `0x`-hex CLI argument into raw bytes ("" and "0x" mean empty).
+/// Decode a hex CLI argument into raw bytes.
 fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
     let stripped = value.strip_prefix("0x").unwrap_or(value);
     if stripped.is_empty() {
@@ -424,84 +410,43 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
     Ok(Bytes::from(bytes))
 }
 
-/// Resolve the `(chainId, version)` circuit selector carried by `offerTribute`.
-///
-/// A combined proof does not carry its verification key, so the canonical
-/// default with a proof and no explicit selector is the version enabled for the
-/// caller's registered L2 chain whose verification key hashes to
-/// [`FullProof::VK_HASH`]. Without a proof the selectors default to `0`/empty
-/// and no registry read is needed. Explicit values - including ones the node
-/// will reject - are passed through unchanged: registration and enablement
-/// remain the node's checks.
-async fn circuit_selector(
-    client: &(impl Rpc + Sync),
-    caller: Address,
-    has_proof: bool,
-    l2_chain_id: Option<u32>,
-    circuit_version: Option<&str>,
-) -> Result<(u32, String)> {
-    if !has_proof {
-        return Ok((
-            l2_chain_id.unwrap_or(0),
-            circuit_version.unwrap_or_default().to_owned(),
-        ));
-    }
-    let chain_id = match l2_chain_id {
-        Some(chain_id) => chain_id,
-        None => registered_l2_chain_id(client, caller).await?,
-    };
-    let version = match circuit_version {
-        Some(version) => version.to_owned(),
-        None => {
-            outbe_l2registry::api::l2_circuits(client.eth_chain_id().await?, u64::from(chain_id))
-                .iter()
-                .find(|entry| entry.vk_hash == FullProof::VK_HASH)
-                .map(|entry| entry.version.to_owned())
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "no circuit version enabled for L2 chain {chain_id} matches the canonical \
-                 FullProof verification key; pass --circuit-version"
-                    )
-                })?
-        }
-    };
-    Ok((chain_id, version))
+fn parse_zk_proof(value: &str) -> Result<Bytes> {
+    let proof = decode_hex_bytes(value, "--zk-proof")?;
+    eyre::ensure!(!proof.is_empty(), "--zk-proof must not be empty");
+    Ok(proof)
 }
 
-/// The caller's registered L2 chain id, read from the L2Registry (0xEE0E).
-async fn registered_l2_chain_id(client: &(impl Rpc + Sync), caller: Address) -> Result<u32> {
-    let call = IL2Registry::chainIdByL1AddressCall { l1Address: caller };
-    let result = client
-        .eth_call(L2_REGISTRY_ADDRESS, &call.abi_encode())
-        .await?;
-    let chain_id = IL2Registry::chainIdByL1AddressCall::abi_decode_returns(&result)?;
-    if chain_id == 0 {
-        return Err(eyre::eyre!(
-            "caller {caller:?} is not a registered L2 operator"
-        ));
-    }
-    u32::try_from(chain_id).map_err(|_| {
-        eyre::eyre!("registered L2 chain id {chain_id} does not fit the uint32 circuit selector")
+fn latest_circuit_version(enabled: &[L2CircuitVersion]) -> Option<&'static str> {
+    enabled
+        .iter()
+        .max_by_key(|entry| {
+            let mut parts = entry.version.split('.').map(|part| {
+                part.parse::<u64>()
+                    .expect("canonical circuit version must be major.minor.patch")
+            });
+            (parts.next(), parts.next(), parts.next())
+        })
+        .map(|entry| entry.version)
+}
+
+fn circuit_version_defaults() -> impl Iterator<
+    Item = (
+        &'static str,
+        clap::builder::ArgPredicate,
+        Option<&'static str>,
+    ),
+> {
+    use clap::builder::ArgPredicate;
+    L2_CIRCUITS_REGISTRY.iter().map(|chain| {
+        (
+            "l2_chain_id",
+            ArgPredicate::Equals(chain.chain_id.to_string().into()),
+            latest_circuit_version(chain.circuits),
+        )
     })
 }
 
-/// 32 fresh random bytes as a `0x`-hex string (offer draft id / su hash).
-fn random_hex32() -> Result<String> {
-    use ring::rand::SecureRandom;
-    let mut bytes = [0u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| eyre::eyre!("rng failure"))?;
-    Ok(format!("0x{}", hex::encode(bytes)))
-}
-
-fn offer_hex32(value: Option<&str>, flag: &str, required: bool) -> Result<String> {
-    let Some(value) = value else {
-        if required {
-            return Err(eyre::eyre!("{flag} is required with --zk-proof"));
-        }
-        return random_hex32();
-    };
+fn offer_hex32(value: &str, flag: &str) -> Result<String> {
     let bytes = decode_hex_bytes(value, flag)?;
     if bytes.len() != 32 {
         return Err(eyre::eyre!(
@@ -515,7 +460,7 @@ fn offer_hex32(value: Option<&str>, flag: &str, required: bool) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::mock::{abi_u64, call_map, MockRpc};
+    use crate::rpc::mock::{call_map, MockRpc};
     use alloy_primitives::address;
     use clap::Parser;
     use std::collections::HashMap;
@@ -626,138 +571,25 @@ mod tests {
     }
 
     #[test]
-    fn zk_offer_requires_explicit_draft_inputs() {
-        let error = offer_hex32(None, "--tribute-draft-id", true).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("--tribute-draft-id is required with --zk-proof"));
-    }
-
-    /// L2Registry mock answering `chainIdByL1Address` for the offer caller.
-    fn l2_registry_mock(chain_id: u64) -> MockRpc {
-        let mut map = HashMap::new();
-        map.insert(
-            (
-                L2_REGISTRY_ADDRESS,
-                IL2Registry::chainIdByL1AddressCall::SELECTOR,
-            ),
-            abi_u64(chain_id),
-        );
-        MockRpc {
-            chain_id: Ok(outbe_primitives::chain::DEVNET_CHAIN_ID),
-            eth_call_map: Some(call_map(map)),
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn offer_without_a_proof_sends_the_empty_circuit_selector() {
-        let caller = address!("0x1111111111111111111111111111111111111111");
-        // Non-ZK selectors default independently without any registry RPC.
-        for (chain_id, version, expected) in [
-            (None, None, (0, "")),
-            (Some(7), None, (7, "")),
-            (None, Some("custom"), (0, "custom")),
-        ] {
-            let selector = circuit_selector(&MockRpc::default(), caller, false, chain_id, version)
-                .await
-                .unwrap();
-            assert_eq!(selector, (expected.0, expected.1.to_owned()));
-        }
-    }
-
-    #[tokio::test]
-    async fn proof_defaults_to_the_caller_registered_l2_and_its_canonical_version() {
-        let caller = address!("0x1111111111111111111111111111111111111111");
-        let registered = l2_registry_mock(0xdead);
-        let selector = circuit_selector(&registered, caller, true, None, None)
-            .await
-            .unwrap();
-        assert_eq!(selector, (0xdead, "1.1.0".to_owned()));
-    }
-
-    #[tokio::test]
-    async fn explicit_circuit_selectors_are_passed_through_unchanged() {
-        let caller = address!("0x1111111111111111111111111111111111111111");
-        // A default mock fails every eth_call: explicit selectors need no RPC.
-        let offline = MockRpc::default();
-        assert_eq!(
-            circuit_selector(&offline, caller, true, Some(7), Some("9.9.9"))
-                .await
-                .unwrap(),
-            (7, "9.9.9".to_owned())
-        );
-        // An explicit empty version must not be replaced by the default.
-        assert_eq!(
-            circuit_selector(&offline, caller, true, Some(7), Some(""))
-                .await
-                .unwrap(),
-            (7, String::new())
-        );
-        // Each selector defaults independently of the other.
-        let registered = l2_registry_mock(0xdead);
-        assert_eq!(
-            circuit_selector(&registered, caller, true, None, Some("1.1.0"))
-                .await
-                .unwrap(),
-            (0xdead, "1.1.0".to_owned())
-        );
-        assert_eq!(
-            circuit_selector(&registered, caller, true, Some(0xdead), None)
-                .await
-                .unwrap(),
-            (0xdead, "1.1.0".to_owned())
-        );
-    }
-
-    #[tokio::test]
-    async fn proof_without_explicit_selectors_requires_a_registered_canonical_circuit() {
-        let caller = address!("0x1111111111111111111111111111111111111111");
-        let unregistered = l2_registry_mock(0);
-        assert!(
-            circuit_selector(&unregistered, caller, true, None, None)
-                .await
-                .is_err(),
-            "an unregistered caller must not fall back to chain 0"
-        );
-        let oversize = l2_registry_mock(u64::from(u32::MAX) + 1);
-        assert!(
-            circuit_selector(&oversize, caller, true, None, None)
-                .await
-                .is_err(),
-            "a chain id wider than uint32 must not be truncated"
-        );
-        let non_development = MockRpc {
-            chain_id: Ok(outbe_primitives::chain::MAINNET_CHAIN_ID),
-            ..Default::default()
-        };
-        assert!(
-            circuit_selector(&non_development, caller, true, Some(999), None)
-                .await
-                .is_err(),
-            "a chain with no canonical FullProof binding has no default version"
-        );
-    }
-
-    #[test]
     fn explicit_offer_input_must_be_exactly_32_bytes() {
-        let error = offer_hex32(Some("0x0102"), "--su-hash", true).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("--su-hash must contain exactly 32 bytes"));
+        assert!(offer_hex32("0x0102", "--su-hash").is_err());
 
         let value = format!("0x{}", "01".repeat(32));
-        assert_eq!(offer_hex32(Some(&value), "--su-hash", true).unwrap(), value);
+        assert_eq!(offer_hex32(&value, "--su-hash").unwrap(), value);
     }
 
-    /// Every required offer flag, in `flag, value` pairs.
-    const REQUIRED_OFFER_FLAGS: [&str; 6] = [
+    /// Required proof inputs, in `flag, value` pairs; the L2 is selected below.
+    const REQUIRED_OFFER_FLAGS: [&str; 10] = [
         "--zk-proof",
-        "0x",
+        "0x01",
         "--zk-merkle-root",
-        "0x",
+        "0x01",
         "--signature",
-        "0x",
+        "0x01",
+        "--tribute-draft-id",
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "--su-hash",
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
     ];
 
     /// `tribute offer 20250115` plus `extra` plus the required ZK flags.
@@ -766,12 +598,22 @@ mod tests {
         argv.extend(["tribute", "offer", "20250115"].map(str::to_owned));
         argv.extend(extra.iter().map(|value| (*value).to_owned()));
         argv.extend(REQUIRED_OFFER_FLAGS.iter().map(|value| (*value).to_owned()));
+        if !extra.contains(&"--l2-chain-id") {
+            argv.extend(["--l2-chain-id", "57005"].map(str::to_owned));
+        }
         argv
     }
 
     #[test]
     fn offer_cli_requires_the_zk_offer_inputs() {
-        for missing in ["--zk-proof", "--zk-merkle-root", "--signature"] {
+        for missing in [
+            "--zk-proof",
+            "--zk-merkle-root",
+            "--signature",
+            "--tribute-draft-id",
+            "--su-hash",
+            "--l2-chain-id",
+        ] {
             let mut argv = offer_argv(&[]);
             let index = argv
                 .iter()
@@ -784,6 +626,53 @@ mod tests {
             );
         }
         assert!(TributeHarness::try_parse_from(offer_argv(&[])).is_ok());
+    }
+
+    #[test]
+    fn offer_cli_defaults_to_latest_version_of_the_explicit_l2() {
+        for (extra, expected_chain, expected_version) in [
+            (vec![], 57_005, "1.1.0"),
+            (vec!["--l2-chain-id", "9900501"], 9_900_501, "1.0.0"),
+            (
+                vec!["--l2-chain-id", "7", "--circuit-version", "9.9.9"],
+                7,
+                "9.9.9",
+            ),
+        ] {
+            let parsed = TributeHarness::try_parse_from(offer_argv(&extra)).unwrap();
+            let TributeCmd::Offer {
+                l2_chain_id,
+                circuit_version,
+                ..
+            } = parsed.command
+            else {
+                panic!("expected offer command");
+            };
+            assert_eq!(l2_chain_id, expected_chain);
+            assert_eq!(circuit_version, expected_version);
+        }
+        assert!(TributeHarness::try_parse_from(offer_argv(&["--l2-chain-id", "7"])).is_err());
+    }
+
+    #[test]
+    fn latest_enabled_version_uses_numeric_semver_order() {
+        let base = L2_CIRCUITS_REGISTRY[0].circuits[0];
+        let versions =
+            ["1.10.0", "1.2.0", "1.9.0"].map(|version| L2CircuitVersion { version, ..base });
+        assert_eq!(latest_circuit_version(&versions), Some("1.10.0"));
+        assert_eq!(latest_circuit_version(&[]), None);
+    }
+
+    #[test]
+    fn offer_cli_rejects_empty_proofs_and_selectors() {
+        for proof in ["", "0x", "not-hex"] {
+            let mut argv = offer_argv(&[]);
+            let index = argv.iter().position(|arg| arg == "--zk-proof").unwrap();
+            argv[index + 1] = proof.to_owned();
+            assert!(TributeHarness::try_parse_from(argv).is_err());
+        }
+        assert!(TributeHarness::try_parse_from(offer_argv(&["--l2-chain-id", "0"])).is_err());
+        assert!(TributeHarness::try_parse_from(offer_argv(&["--circuit-version", ""])).is_err());
     }
 
     #[test]

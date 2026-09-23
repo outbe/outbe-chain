@@ -49,7 +49,7 @@ impl CredisScenario {
 
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
-    pledge_handle: B256,
+    pledge_note: B256,
     spend_auth: [u8; 32],
     reservation_id: U256,
 }
@@ -171,7 +171,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
             expires_at: CREATED_AT + 15 * 60,
         })
         .map_err(|error| error.to_string())?;
-    let (pledge_handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+    let (pledge_note, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
         storage.clone(),
         ALICE,
         pledge_stables(),
@@ -188,8 +188,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         .map_err(|error| error.to_string())?;
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .map_err(|error| error.to_string())?;
-    let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_handle), ALICE);
-    Ok((pledge_handle, spend_auth, reservation_id))
+    let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_note), ALICE);
+    Ok((pledge_note, spend_auth, reservation_id))
 }
 
 impl BenchmarkScenario for CredisScenario {
@@ -214,11 +214,11 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_sub_call_stub();
         provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
         provider.stub_sub_call_at(ASSET, iso_word(ISSUANCE_ISO));
-        let (pledge_handle, spend_auth, reservation_id) =
+        let (pledge_note, spend_auth, reservation_id) =
             StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {
             provider,
-            pledge_handle,
+            pledge_note,
             spend_auth,
             reservation_id,
         })
@@ -232,7 +232,7 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             smartAccount: ALICE,
-            pledgeHandle: prepared.pledge_handle,
+            pledgeNote: prepared.pledge_note,
             spendAuth: B256::from(prepared.spend_auth),
             referenceCurrency: REFERENCE_ISO,
             reservationId: prepared.reservation_id,

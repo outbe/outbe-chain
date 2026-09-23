@@ -1,7 +1,7 @@
 //! Fixture material for the L2Registry zk gate that every positive Tribute
 //! offer path shares: the deterministic root-signing key of a fixture L2
-//! network, one real `FullProof` builder bound to a single offer statement, and
-//! the unique draft/SU identifiers an offer needs.
+//! network, one real Demo Tribute proof builder bound to a single offer
+//! statement, and the unique draft/SU identifiers an offer needs.
 //!
 //! ZK verification is mandatory, so a fixture operator can only offer with a
 //! real proof for its own caller, host chain, day, currency, amount and draft,
@@ -29,18 +29,23 @@ use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
-use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
-use outbe_zk_canonical::noir::full_proof::FullProof;
+use outbe_zk_canonical::demo_tribute::{
+    demo_tribute_domain, DemoTributeProvable, COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN,
+};
+use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 
 /// Must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`. Kept as a
-/// literal so the harness exercises the external signing contract rather than
-/// importing the runtime crate.
+/// local literal so an L2 signature the fixture produces is bound by the wire
+/// contract, not by a host-side rename.
 pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
 /// Frozen circuit version declared for the basic test L2 57005.
+///
+/// Proving uses the active `demo_tribute` marker (1.2.0) while the binding
+/// enables 1.1.0: the two frozen `circuit.vk` files are byte-identical, so the
+/// generated proof verifies under the enabled version's key.
 pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.1.0";
 
 /// The `uint32` circuit selector argument of `offerTribute`.
@@ -130,9 +135,12 @@ pub(crate) fn root_signing_keypair(chain_id: u64) -> (Private, G2) {
     ops::keypair::<_, MinSig>(&mut rng)
 }
 
-/// Encoded MinSig G2 public key the registry stores for fixture chain `chain_id`.
+/// Encoded MinSig G2 public key in the registry's external EIP-2537 form
+/// (256 bytes) for fixture chain `chain_id`.
 pub(crate) fn root_signing_public_key(chain_id: u64) -> Vec<u8> {
-    root_signing_keypair(chain_id).1.encode().to_vec()
+    outbe_l2registry::public_key::encode(&root_signing_keypair(chain_id).1)
+        .expect("fixture L2 root key encodes as EIP-2537")
+        .to_vec()
 }
 
 /// Sign `merkle_root` with fixture chain `chain_id`'s registered key, as the L2
@@ -154,7 +162,7 @@ pub(crate) fn verify_merkle_root(
     merkle_root: &[u8; 32],
     signature: &[u8],
 ) -> bool {
-    let Ok(public) = G2::decode(public_key) else {
+    let Ok(public) = outbe_l2registry::public_key::decode(public_key) else {
         return false;
     };
     let Ok(signature) = G1::decode(signature) else {
@@ -234,26 +242,31 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
             atto,
             su_ids: vec![su_hash],
         };
-        let binding = OutbeV1::binding(&caller.into_array(), draft_id.as_ref(), host_chain_id)
-            .expect("derive offer binding");
+        let binding = OutbeV1::binding(
+            &caller.into_array(),
+            draft_id.as_ref(),
+            host_chain_id,
+            l2_chain_id,
+        )
+        .expect("derive offer binding");
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).expect("draft signer");
-        let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
+        let path = Imt::<OutbeV1>::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
             .expect("empty commitment tree")
             .empty_inclusion_path(0);
         let (witness, public) = draft
-            .derive_full_witness(&mut rng, &signer, binding, &path)
-            .expect("derive full-proof witness");
-        let proof = ProofGenerator::<OutbeV1, FullProof>::generate(
+            .derive_demo_tribute_witness(&mut rng, &signer, binding, &path)
+            .expect("derive demo tribute witness");
+        let proof = ProofGenerator::<OutbeV1, DemoTribute>::generate(
             &Barretenberg::default(),
             &witness,
             &public,
         )
-        .expect("generate the offer FullProof");
+        .expect("generate the offer Demo Tribute proof");
 
-        let public_inputs = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
+        let public_inputs = <DemoTribute as Circuit<OutbeV1>>::public_inputs(&public);
         assert_eq!(public_inputs.len(), 4);
         let merkle_root = field_bytes(&public_inputs[3]);
-        let mut combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
+        let mut combined = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
         combined.extend_from_slice(&(public_inputs.len() as u32).to_be_bytes());
         for value in public_inputs {
             combined.extend_from_slice(&field_bytes(&value));
@@ -261,7 +274,7 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
         for field in proof.proof {
             combined.extend_from_slice(&field);
         }
-        assert_eq!(combined.len(), FULL_PROOF_COMBINED_LEN);
+        assert_eq!(combined.len(), DEMO_TRIBUTE_COMBINED_LEN);
 
         TributeOfferZk {
             tribute_draft_id_hex: format!("0x{}", hex::encode(draft_id)),
@@ -313,7 +326,6 @@ mod tests {
             root_signing_public_key(chain_id + 1),
             "each fixture L2 chain must sign roots with its own registered key"
         );
-        assert_eq!(root_signing_public_key(chain_id).len(), 96);
     }
 
     #[test]
@@ -357,12 +369,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "generates and verifies a real Barretenberg FullProof"]
-    fn proven_offer_is_a_valid_full_proof_for_its_statement() {
+    #[ignore = "generates and verifies a real Barretenberg Demo Tribute proof"]
+    fn proven_offer_is_a_valid_demo_tribute_proof_for_its_statement() {
+        use outbe_protocol::protocol::zkproof::decode_public_words;
+        use outbe_tee::protocol::TributePublicInputs;
         use outbe_zk_backend::barretenberg::verify_circuit;
-        use outbe_zk_canonical::full_proof::{
-            alloy::PublicInputs, decode_public_inputs as decode_full_proof_public_inputs,
-        };
 
         let caller = Address::repeat_byte(0x44);
         let (draft_id, su_hash) = offer_identifiers("test", caller, 20_260_729);
@@ -378,11 +389,11 @@ mod tests {
             su_hash,
         });
         let proof = hex::decode(zk.proof_hex().trim_start_matches("0x")).expect("proof hex");
-        let public: PublicInputs = decode_full_proof_public_inputs(&proof)
-            .expect("public inputs decode")
-            .try_into()
-            .expect("Alloy public inputs");
-        assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
+        let public = TributePublicInputs::from_raw_parts(
+            decode_public_words::<4>(&proof, DEMO_TRIBUTE_COMBINED_LEN)
+                .expect("public inputs decode"),
+        );
+        assert!(verify_circuit::<DemoTribute>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, zk.merkle_root);
         assert_eq!(zk.l2_chain_id, circuit_selector(57_005));
         assert_eq!(zk.circuit_version, FIXTURE_CIRCUIT_VERSION);

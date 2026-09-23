@@ -212,7 +212,7 @@ def main() -> None:
         "--zk-proof",
         required=True,
         type=hex_bytes_arg,
-        help="Combined FullProof bytes (0x-hex): 4-byte public-input word count, public "
+        help="Combined Tribute proof bytes (0x-hex): 4-byte public-input word count, public "
         "inputs, proof; 0x is a deliberate negative offer the node rejects",
     )
     parser.add_argument(

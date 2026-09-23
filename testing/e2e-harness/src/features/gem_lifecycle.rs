@@ -204,6 +204,14 @@ fn issue_two_gems(world: &mut World) {
     let merchant = crate::world::origin_venue::deployer_address();
     let position_id = world.state.gem_position.expect("a position was parked");
 
+    test_issuance::seed_day_vwaps(
+        &url,
+        DEPLOYER_KEY,
+        settlement_currency::USD_ISO,
+        1,
+        U256::from(ENTRY_PRICE_MINOR),
+    )
+    .expect("seed the previous day's VWAP");
     for _ in 0..2 {
         let issued = eth::send_call_outcome(
             &url,

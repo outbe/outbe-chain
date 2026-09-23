@@ -658,7 +658,7 @@ fn public_capacity_fixture_funds_every_distinct_tribute_owner_before_genesis_is_
             let record = registry.load_network(chain_id).unwrap();
             assert_eq!(record.l1_address, owner);
             assert_eq!(
-                record.public_key_bytes().as_slice(),
+                record.public_key_bytes().unwrap().as_slice(),
                 crate::internal::l2_fixture::root_signing_public_key(chain_id).as_slice(),
                 "capacity owner {owner:#x} must be registered under the fixture key"
             );

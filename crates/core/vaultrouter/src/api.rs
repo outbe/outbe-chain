@@ -54,8 +54,8 @@ pub fn reservation_of(
     crate::runtime::reservation_of(storage, id)
 }
 
-/// `releaseReservation`: deliver `amount` of the hold under `id` into `receiver`
-/// via an EVM sub-call, returning any unused remainder to the origin vault.
+/// `releaseReservation`: bind `receiver` to the reserved account and pay the recorded
+/// CCA via an EVM sub-call, returning any unused remainder to the origin vault.
 pub fn release_reservation(
     storage: &StorageHandle<'_>,
     id: U256,
@@ -90,8 +90,8 @@ pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256>
         .map_err(|_| PrecompileError::Revert("returnReservation undecodable".into()))
 }
 
-/// `withdraw`: redeem `amount` of `asset` from its reserve vault and top
-/// it up into `receiver` via an EVM sub-call to the vault router, returning the
+/// `withdraw`: redeem `amount` of `asset` from its reserve vault and transfer
+/// it to `receiver` via an EVM sub-call to the vault router, returning the
 /// burned shares.
 pub fn withdraw(
     storage: &StorageHandle<'_>,

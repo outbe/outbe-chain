@@ -578,11 +578,7 @@ fn reward_gem_delivery_drains_one_max_batch_while_cycle_appends_the_next() {
                     .write(&voter, 1)
                     .unwrap();
             }
-            // Close the reward day so delivery prices the batch instead of waiting.
-            outbe_oracle::schema::OracleContract::new(storage.clone())
-                .utc_day_vwap_last_finalized
-                .write(29_991_231)
-                .unwrap();
+            seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
             outbe_oracle::api::set_exchange_rate(
                 storage,
                 Address::ZERO,
@@ -817,11 +813,13 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
                 TEST_BLOCK_TIMESTAMP_BASE + 1,
             )
             .unwrap();
-            // Close the reward day so delivery prices the batch instead of waiting.
-            outbe_oracle::schema::OracleContract::new(storage.clone())
-                .utc_day_vwap_last_finalized
-                .write(29_991_231)
-                .unwrap();
+            seed_previous_day_vwap(
+                &storage,
+                TEST_BLOCK_TIMESTAMP_BASE + 1,
+                U256::from(1_000_000u64),
+            );
+            // The retry block below runs at timestamp 2.
+            seed_previous_day_vwap(&storage, 2, U256::from(1_000_000u64));
             outbe_rewards::api::prepare_daily_validator_gem_batch(
                 &ctx,
                 20_240_101,

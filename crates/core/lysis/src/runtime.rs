@@ -226,12 +226,8 @@ pub fn freeze_entry_price_snapshot(
     let previous_day = previous_date_key(timestamp_to_date_key(now));
     let mut prices = BTreeMap::new();
     for iso in outbe_oracle::api::reference_currencies(storage.clone())? {
-        let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)? else {
-            continue;
-        };
         if let Some(vwap) =
-            outbe_oracle::api::get_utc_day_vwap(storage.clone(), previous_day, index)?
-                .filter(|value| !value.is_zero())
+            outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), previous_day, iso)?
         {
             prices.insert(iso, vwap);
         }

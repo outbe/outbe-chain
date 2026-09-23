@@ -521,8 +521,7 @@ fn deliver_oldest_reward_gem_batch_inner(
             ))
         },
     )?;
-    let Some(entry_price) = resolve_reward_entry_price(ctx, reward_utc_day, reference_currency)?
-    else {
+    let Some(entry_price) = resolve_reward_entry_price(ctx, reference_currency)? else {
         tracing::warn!(
             target: "outbe::rewards",
             reward_utc_day,
@@ -568,33 +567,14 @@ fn deliver_oldest_reward_gem_batch_inner(
     })
 }
 
-/// The COEN price a batch for `reward_utc_day` mints at.
-///
-/// The reward belongs to its day, so that day's finalized VWAP is the answer.
-/// A day the oracle closed empty falls back to the live quote - today's rule -
-/// so no reward is ever lost to a day that carries no price. `None` means the
-/// day is not closed yet: the batch waits, exactly as it does today.
 fn resolve_reward_entry_price(
     ctx: &BlockRuntimeContext,
-    reward_utc_day: u32,
     reference_currency: u16,
 ) -> Result<Option<U256>> {
-    let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
-    if reward_utc_day > oracle.utc_day_vwap_last_finalized.read()? {
-        return Ok(None);
-    }
-
-    if let Some(index) =
-        outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), reference_currency)?
-    {
-        if let Some(vwap) =
-            outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), reward_utc_day, index)?
-        {
-            return Ok(Some(vwap));
-        }
-    }
-
-    outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)
+    let day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
+    );
+    outbe_oracle::api::get_utc_day_vwap_for_iso(ctx.storage.clone(), day, reference_currency)
 }
 
 fn reward_gem_batch_digest(
@@ -717,9 +697,15 @@ mod tests {
         // Register ISO 840 (USD) so issue_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
-        // Close every reward day these tests use: none carries a VWAP, so
-        // delivery takes the live quote seeded above.
-        oracle.utc_day_vwap_last_finalized.write(29991231).unwrap();
+        let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
+        );
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&index, rate_6)
+            .unwrap();
     }
 
     fn one_coen840() -> U256 {
@@ -1139,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_delivery_preserves_fifo_head_without_minting() {
+    fn unpriced_delivery_preserves_fifo_head_without_minting() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -1149,9 +1135,13 @@ mod tests {
                 .unwrap();
             let (_, pair_index) =
                 outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
+            let day = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
+            );
             outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-                .exchange_rate_timestamp
-                .write(&pair_index, 0)
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair_index, U256::ZERO)
                 .unwrap();
 
             assert_eq!(

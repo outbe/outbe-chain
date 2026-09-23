@@ -134,10 +134,18 @@ fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         .storage
         .contract::<outbe_oracle::schema::OracleContract<'_>>();
     oracle.reference_currencies.push(840).unwrap();
-    // Close the reward day: no day carries a VWAP, so delivery takes the live quote.
     oracle
         .utc_day_vwap_last_finalized
         .write(29_991_231)
+        .unwrap();
+    let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
+    let day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
+    );
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, U256::from(2_000_000u64))
         .unwrap();
 }
 

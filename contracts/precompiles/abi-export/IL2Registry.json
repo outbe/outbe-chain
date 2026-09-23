@@ -56,6 +56,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "updatePublicKey",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "publicKey",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "L2NetworkRegistered",
     "inputs": [
@@ -89,6 +107,25 @@
         "type": "uint64",
         "indexed": true,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "L2PublicKeyUpdated",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "publicKey",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

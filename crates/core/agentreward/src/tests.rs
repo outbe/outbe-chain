@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::checked_protocol_to_native;
 
 use outbe_gemfactory::schema::GemTypes;
@@ -274,33 +274,31 @@ fn test_address_list_deduplication() {
     });
 }
 
-/// Registers COEN/840, publishes `live_quote` on it and adds 840 to the
-/// reference registry. `last_finalized_day` of 0 leaves the day ladder empty so
-/// the live quote answers.
-fn seed_oracle(storage: &StorageHandle<'_>, live_quote: U256, last_finalized_day: u32) {
+/// Registers COEN/840 with `price` as its spot and previous-day VWAP.
+fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        live_quote,
+        price,
         1,
         T_NOW,
     )
     .unwrap();
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle.reference_currencies.push(840u16).unwrap();
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(last_finalized_day)
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .reference_currencies
+        .push(840u16)
         .unwrap();
+    seed_day_vwap(storage, price);
 }
 
-/// Publishes `vwap` as `day`'s finalized COEN/840 VWAP.
-fn seed_day_vwap(storage: &StorageHandle<'_>, day: u32, vwap: U256) {
+/// Publishes `vwap` as the COEN/840 VWAP of the UTC day before `T_NOW`; zero clears it.
+fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
         .unwrap()
         .expect("COEN/840 registered");
+    let day = previous_date_key(timestamp_to_date_key(T_NOW));
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .utc_day_vwap_value
         .get_nested(&day)
@@ -322,7 +320,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
     let backing = native(500);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -359,7 +357,7 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
     let backing = native(1_000_000);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -379,29 +377,58 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
     });
 }
 
+fn claim_waa(
+    storage: &StorageHandle<'_>,
+    contract: &mut AgentRewardContract,
+    alice: Address,
+    backing: U256,
+) -> outbe_primitives::error::Result<U256> {
+    storage
+        .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
+        .unwrap();
+    contract
+        .add_claimable_reward(RewardPool::Waa, alice, backing)
+        .unwrap();
+    contract.claim_reward(RewardPool::Waa, alice, U256::ZERO)
+}
+
 #[test]
-fn a_claim_prices_on_the_last_finalized_utc_day() {
+fn a_claim_prices_on_the_previous_day_vwap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
-    let backing = native(500);
-    let day = 20_260_525u32;
     let day_vwap = U256::from(2u64) * ONE_COEN;
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, day);
-        seed_day_vwap(&storage, day, day_vwap);
-        contract
-            .storage
-            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
-            .unwrap();
-        contract
-            .add_claimable_reward(RewardPool::Waa, alice, backing)
-            .unwrap();
-
-        contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
-            .unwrap();
-        // The closed day's VWAP wins over the live quote.
+        seed_oracle(&storage, ONE_COEN);
+        seed_day_vwap(&storage, day_vwap);
+        claim_waa(&storage, contract, alice, native(500)).unwrap();
         assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
+    });
+}
+
+#[test]
+fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let day_vwap = U256::from(2u64) * ONE_COEN;
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
+        seed_day_vwap(&storage, day_vwap);
+        claim_waa(&storage, contract, alice, native(500)).unwrap();
+        assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
+    });
+}
+
+#[test]
+fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        seed_day_vwap(&storage, U256::ZERO);
+        let err = claim_waa(&storage, contract, alice, backing).unwrap_err();
+        assert!(err.to_string().contains("no usable COEN price"));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
     });
 }
 
@@ -441,7 +468,7 @@ fn a_load_whose_cost_rounds_to_zero_keeps_its_balance() {
 
     with_contract_mut(|storage, contract| {
         // Entry 1 minor unit x load 1 minor unit floors to a zero cost.
-        seed_oracle(&storage, U256::from(1u64), 0);
+        seed_oracle(&storage, U256::from(1u64));
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, dust)
@@ -464,7 +491,7 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
     let taken = native(200);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -500,7 +527,7 @@ fn claiming_more_than_the_pool_holds_is_refused() {
     let backing = native(500);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -524,7 +551,7 @@ fn a_sub_unit_remainder_stays_claimable() {
     let backing = native(500) + remainder;
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -557,7 +584,7 @@ fn claiming_an_empty_pool_is_refused() {
     let alice = address!("0x1111111111111111111111111111111111111111");
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
             .unwrap();
@@ -576,7 +603,7 @@ fn the_pools_are_claimed_apart() {
     let sra = native(700);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN, 0);
+        seed_oracle(&storage, ONE_COEN);
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, waa + sra)

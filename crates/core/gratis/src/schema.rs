@@ -27,7 +27,7 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   2: mapping(address => bytes)  - encrypted balance blob
 ///   3: mapping(address => bytes)  - encrypted pledged-ledger blob
 ///   4: mapping(address => u64)    - modify-auth replay counter (monotonic)
-///   5: mapping(bytes32 => bytes)  - encrypted pledge-lock-tickets keyed by pledge_handle
+///   5: mapping(bytes32 => bytes)  - encrypted pledge-lock-tickets keyed by pledge_note
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
     pub total_supply: Slot<U256>,

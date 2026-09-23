@@ -219,7 +219,7 @@ def main() -> None:
     ap.add_argument("--exclude-from-intex-issuance", action="store_true",
                     help="set the excludeFromIntexIssuance flag")
     ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
-                    help="combined FullProof bytes (0x-hex): 4-byte public-input word "
+                    help="combined Tribute proof bytes (0x-hex): 4-byte public-input word "
                          "count, public inputs, proof; 0x is a deliberate negative "
                          "offer the node rejects")
     ap.add_argument("--zk-merkle-root", required=True, type=hex_bytes_arg,

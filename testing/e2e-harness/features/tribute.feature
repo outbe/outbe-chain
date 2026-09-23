@@ -19,12 +19,12 @@ Feature: Tribute admission, projection, and proofs
     Then the duplicate is rejected without changing tribute state or projections
 
   @pfs-001-10
-  Scenario: An unsigned offer is rejected and a valid FullProof is admitted
+  Scenario: An unsigned offer is rejected and a valid Demo Tribute proof is admitted
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When an L2 network is registered for the operator
     And the operator submits an encrypted tribute offer without an L2 signature
     Then the offer is rejected and tribute supply stays zero
-    When the operator submits a valid FullProof offer for one encrypted tribute
+    When the operator submits a valid Demo Tribute proof offer for one encrypted tribute
     Then the tribute transaction succeeds and supply becomes one
 
   @tribute-unregistered-chain
@@ -34,10 +34,10 @@ Feature: Tribute admission, projection, and proofs
     Then the offer is rejected for an unregistered L2 chain and tribute supply stays zero
 
   @pfs-001-11
-  Scenario: A registered L2 network rejects a signed tampered proof and admits the valid FullProof
+  Scenario: A registered L2 network rejects a signed tampered proof and admits the valid Demo Tribute proof
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When an L2 network is registered for the operator
-    And the operator proves a signed tampered proof is rejected then submits the valid FullProof
+    And the operator proves a signed tampered proof is rejected then submits the valid Demo Tribute proof
     Then the tribute transaction succeeds and supply becomes one
 
   @tribute-independent-user

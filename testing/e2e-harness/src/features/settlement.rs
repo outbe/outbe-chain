@@ -17,6 +17,7 @@ use crate::env::environment;
 use crate::features::paynote;
 use crate::internal::{addresses, eth};
 use crate::world::forge::{self, address_from, DEPLOYER_KEY};
+use crate::world::test_issuance;
 use crate::world::World;
 
 const USD_ISO: u16 = 840;
@@ -211,8 +212,51 @@ fn restart_committee_with_pending_reward_batch(world: &mut World) {
     world.state.pending_reward_gem_restart_block_number = Some(before);
 }
 
-#[then("the first canonical fresh tally delivers the saved reward Gem batch exactly once")]
-fn fresh_tally_delivers_saved_reward_batch(world: &mut World) {
+#[then("the fresh tally leaves the saved reward Gem batch pending")]
+fn fresh_tally_leaves_reward_batch_pending(world: &mut World) {
+    let port = world.validators.primary_port();
+    let fresh_tally_block_number = world
+        .price_oracle
+        .last_oracle_block()
+        .expect("controlled feeder recorded one canonical fresh tally");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(port, fresh_tally_block_number.saturating_add(1), 60),
+        "committee did not finalize past the fresh tally"
+    );
+    let snapshot = reward_gem_queue_snapshot(world, port).expect("Rewards FIFO after fresh tally");
+    assert_eq!(snapshot.tail, snapshot.head.saturating_add(1));
+    assert_eq!(
+        snapshot.reward_utc_day,
+        world.state.pending_reward_gem_utc_day
+    );
+    assert_eq!(
+        validator_reward_gem_balance(world, port),
+        world
+            .state
+            .reward_gem_balance_before_delivery
+            .expect("Gem balance captured before pending delivery"),
+        "a fresh spot alone must not deliver the pending batch"
+    );
+}
+
+#[when("the previous UTC day's COEN USD VWAP is seeded")]
+fn seed_previous_day_vwap(world: &mut World) {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let funder = world.validators.get(0);
+    let funding = world
+        .rpc
+        .fund_key(&funder, DEPLOYER_KEY, 1_000)
+        .expect("fund the VWAP seeder");
+    assert!(world.rpc.wait_successful_receipt(&funding, 60));
+    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD_ISO, 1, U256::from(1_000_000u64))
+        .expect("seed the previous day's VWAP");
+}
+
+#[then("the seeded VWAP delivers the saved reward Gem batch exactly once")]
+fn seeded_vwap_delivers_saved_reward_batch(world: &mut World) {
     let port = world.validators.primary_port();
     let before = world
         .state
@@ -228,7 +272,7 @@ fn fresh_tally_delivers_saved_reward_batch(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "fresh canonical rate did not deliver the pending validator Gem: before={before} current={} head={:?} finalized={:?}",
+            "the seeded VWAP did not deliver the pending validator Gem: before={before} current={} head={:?} finalized={:?}",
             validator_reward_gem_balance(world, port),
             world.rpc.head(port),
             world.rpc.finalized(port),
@@ -247,11 +291,15 @@ fn fresh_tally_delivers_saved_reward_batch(world: &mut World) {
         .expect("controlled feeder recorded one canonical fresh tally");
     let delivery_block_numbers = canonical_reward_gem_delivery_block_numbers(world, gem_id);
     assert_eq!(
-        delivery_block_numbers,
-        vec![fresh_tally_block_number],
-        "the saved batch must be delivered exactly once by the OSG2 in the first canonical fresh tally block"
+        delivery_block_numbers.len(),
+        1,
+        "the saved batch must be delivered exactly once"
     );
-    let delivery_block_number = fresh_tally_block_number;
+    let delivery_block_number = delivery_block_numbers[0];
+    assert!(
+        delivery_block_number > fresh_tally_block_number,
+        "the saved batch was delivered by the fresh tally, not the seeded VWAP"
+    );
     world.state.reward_gem_delivery_block_number = Some(delivery_block_number);
     world.state.delivered_reward_gem_id = Some(gem_id);
     eprintln!(

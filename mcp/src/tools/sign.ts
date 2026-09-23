@@ -33,7 +33,7 @@ const zkProof = z
   .string()
   .regex(HEX, "zk_proof must be 0x-prefixed hex")
   .describe(
-    "combined FullProof bytes (0x-hex): 4-byte public-input word count, public inputs, then proof",
+    "combined Tribute proof bytes (0x-hex): 4-byte public-input word count, public inputs, then proof",
   );
 const zkMerkleRoot = z
   .string()

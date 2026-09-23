@@ -2,12 +2,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{four_hour_vwap, fresh_coen_rate_for, AddressPair};
+use outbe_oracle::api::{fresh_coen_rate_for, get_utc_day_vwap_for_iso};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
@@ -627,16 +628,13 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-/// Four-hour VWAP of COEN in `reference_currency`; an empty window maps to
-/// `OracleUnavailable`, so issuance pauses rather than pricing off another source.
 fn read_market_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
     now: u64,
 ) -> Result<U256> {
-    let pair = AddressPair::new_coen_to(reference_currency);
-    four_hour_vwap(storage.clone(), pair, now)?
-        .filter(|vwap| !vwap.is_zero())
+    let day = previous_date_key(timestamp_to_date_key(now));
+    get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
@@ -649,16 +647,9 @@ fn compute_params(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let (floor_price, initial_state) = match gem_type {
-        // Genesis: validator gem during the genesis window - born Qualified
-        // (no maturity wait), but validators pay like every other agent
-        // class: cost = entry x load, floor = rate x 1.08. settleGem moves
-        // the cost into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (
-                derived_floor(coen_rate, terms.floor_rate)?,
-                GemState::Qualified,
-            )
+            (U256::ZERO, GemState::Qualified)
         }
         GemTypes::Sra => {
             compute_cost(coen_rate, promis_load, SRA_RATE)?;

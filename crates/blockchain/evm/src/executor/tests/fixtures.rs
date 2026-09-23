@@ -949,3 +949,20 @@ pub(super) fn signer_balance(
         .map(|a| a.balance)
         .unwrap_or_default()
 }
+
+/// Publishes `rate` as the COEN/840 VWAP of the UTC day before `block_ts`.
+pub(super) fn seed_previous_day_vwap(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    block_ts: u64,
+    rate: U256,
+) {
+    let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+    let day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(block_ts),
+    );
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, rate)
+        .unwrap();
+}
