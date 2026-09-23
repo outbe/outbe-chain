@@ -10,6 +10,7 @@ interface ITributeFactory {
     // the TributeDraft and caller/L1-chain binding semantics checked by the enclave.
     // `zkPublicKey` remains ignored; the current root-signing key comes from L2Registry,
     // including any operator-authorized updatePublicKey rotation.
+    // An unset registry key is resolved live from `l1Address.groupPubKey()`.
     //
     // `signature` is the L2 committee's compressed BLS MinSig signature in G1
     // (48 bytes) over the 32-byte `zkMerkleRoot`. L2Registry's public API uses

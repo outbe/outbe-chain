@@ -3,9 +3,7 @@
 
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{
-    group::{G1, G2},
-    ops::verify_message,
-    variant::MinSig,
+    group::G1, ops::verify_message, variant::MinSig,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -34,6 +32,7 @@ pub enum ZkOfferCheck {
 /// - Registered chain: `zk_merkle_root` must be 32 bytes and `signature`
 ///   must be a valid BLS MinSig G1 signature over it under
 ///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
+/// - An unset stored key is resolved from the registered inbox on every check.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
     l2_chain_id: u64,
@@ -49,8 +48,7 @@ pub fn check_zk_merkle_root_signature(
         return Err(L2RegistryError::ZkMerkleRootRequired.into());
     }
 
-    let pubkey = G2::decode(record.compressed_public_key_bytes().as_slice())
-        .map_err(|_| L2RegistryError::InvalidPublicKey)?;
+    let pubkey = registry.resolve_public_key(&record)?;
     let sig = G1::decode(signature).map_err(|_| L2RegistryError::InvalidZkSignature)?;
     verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
         .map_err(|_| L2RegistryError::InvalidZkSignature)?;

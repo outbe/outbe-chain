@@ -17,7 +17,8 @@ use rand_commonware::SeedableRng as _;
 use crate::api::{check_zk_merkle_root_signature, ZkOfferCheck, ZK_MERKLE_ROOT_NAMESPACE};
 use crate::precompile;
 use crate::public_key;
-use crate::schema::{L2NetworkRecord, L2RegistryContract};
+use crate::runtime::IDaInbox;
+use crate::schema::{L2NetworkRecord, L2RegistryContract, BLS_PUBLIC_KEY_LEN};
 
 const CHAIN_ID: u64 = 1;
 const L2_CHAIN_ID: u64 = 0xdead;
@@ -53,6 +54,11 @@ fn seeded_g2_keypair(seed: u64) -> (Private, G2) {
 /// EIP-2537 G2 point encoding (256 bytes: padded `x.c0, x.c1, y.c0, y.c1`).
 fn eip256(public: &G2) -> Vec<u8> {
     public_key::encode(public).unwrap().to_vec()
+}
+
+/// `IDaInbox.groupPubKey()` ABI-encodes the EIP-2537 key as `bytes`.
+fn inbox_key_returns(key: &[u8]) -> Bytes {
+    Bytes::from((Bytes::copy_from_slice(key),).abi_encode_params())
 }
 
 fn revert_message(err: PrecompileError) -> String {
@@ -662,6 +668,183 @@ fn legacy_compact_record_reads_as_eip256_and_authenticates() {
             ZkOfferCheck::Verified {
                 chain_id: L2_CHAIN_ID
             }
+        );
+    });
+}
+
+#[test]
+fn register_accepts_unset_key_and_keeps_ownership() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+
+        // Anything that is neither empty nor a 256-byte key is rejected; the
+        // retired compact length is not a sentinel either.
+        for malformed in [
+            &[0u8; 95][..],
+            &[0u8; 96][..],
+            &[0u8; 97][..],
+            &[0xAB; 96][..],
+        ] {
+            let err = registry
+                .register_network(L2_CHAIN_ID, l1_addr(), malformed)
+                .unwrap_err();
+            assert!(matches!(err, PrecompileError::Revert(_)));
+            assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
+            assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
+        }
+
+        // An unset key registers with the zero sentinel persisted and the L1
+        // owner unchanged.
+        registry
+            .register_network(L2_CHAIN_ID, l1_addr(), &[])
+            .unwrap();
+        let record = registry.load_network(L2_CHAIN_ID).unwrap();
+        assert_eq!(
+            record.public_key_bytes().unwrap(),
+            [0u8; BLS_PUBLIC_KEY_LEN]
+        );
+        assert_eq!(record.l1_address, l1_addr());
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+
+        registry.remove_network(l1_addr(), L2_CHAIN_ID).unwrap();
+        assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
+
+        // The explicit all-zero EIP-2537 key is the same unset sentinel.
+        registry
+            .register_network(L2_CHAIN_ID, l1_addr(), &[0u8; BLS_PUBLIC_KEY_LEN])
+            .unwrap();
+        assert_eq!(
+            registry
+                .load_network(L2_CHAIN_ID)
+                .unwrap()
+                .public_key_bytes()
+                .unwrap(),
+            [0u8; BLS_PUBLIC_KEY_LEN]
+        );
+    });
+}
+
+/// An unset registration authenticates through `IDaInbox.groupPubKey()`; a key
+/// pinned afterwards — by the operator or by registration — wins over it.
+#[test]
+fn zk_signature_gate_resolves_unset_key_from_inbox() {
+    let (private, public) = seeded_keypair(1);
+    let (pinned_private, pinned_public) = seeded_keypair(2);
+    let (rotated_private, rotated_public) = seeded_keypair(3);
+    let root = [0x42; 32];
+    let sign = |private: &Private| {
+        sign_message::<MinSig>(private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+            .encode()
+            .to_vec()
+    };
+    let signed = sign(&private);
+    let pinned_sig = sign(&pinned_private);
+    let rotated_sig = sign(&rotated_private);
+
+    let selector = IDaInbox::groupPubKeyCall::SELECTOR;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.stub_sub_call_at_selector(l1_addr(), selector, inbox_key_returns(&public));
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+        registry
+            .register_network(L2_CHAIN_ID, l1_addr(), &[])
+            .unwrap();
+
+        // An unset key authenticates through the live inbox getter.
+        assert_eq!(
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &signed).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        let query = precompile::IL2Registry::getNetworkCall {
+            chainId: L2_CHAIN_ID,
+        };
+        let response =
+            precompile::dispatch(storage.clone(), &query.abi_encode(), l1_addr(), U256::ZERO)
+                .unwrap();
+        assert_eq!(
+            response.as_ref(),
+            (l1_addr(), Bytes::copy_from_slice(&public))
+                .abi_encode_params()
+                .as_slice(),
+        );
+
+        // A registered key takes precedence over the getter's answer.
+        registry
+            .register_network(L2_CHAIN_ID + 1, Address::repeat_byte(0x22), &pinned_public)
+            .unwrap();
+        assert_eq!(
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID + 1, &root, &pinned_sig)
+                .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID + 1
+            }
+        );
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID + 1, &root, &signed)
+            .unwrap_err();
+        assert!(matches!(err, PrecompileError::Revert(_)));
+    });
+
+    // Rotating the getter's answer rotates the accepted key: nothing is cached
+    // and the previous key stops authenticating.
+    provider.stub_sub_call_at_selector(l1_addr(), selector, inbox_key_returns(&rotated_public));
+    StorageHandle::enter(&mut provider, |storage| {
+        let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &signed)
+            .unwrap_err();
+        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert_eq!(
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &rotated_sig).unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+    });
+
+    // A getter answer that is not a 256-byte EIP-2537 G2 key fails closed.
+    provider.stub_sub_call_at_selector(
+        l1_addr(),
+        selector,
+        Bytes::from((Bytes::from(vec![0u8; 255]),).abi_encode_params()),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let err =
+            check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &rotated_sig).unwrap_err();
+        assert!(matches!(err, PrecompileError::Revert(_)));
+    });
+
+    // The operator pins a key on the inbox-backed network; the getter's answer,
+    // still valid, no longer decides which signature is accepted.
+    provider.stub_sub_call_at_selector(l1_addr(), selector, inbox_key_returns(&rotated_public));
+    StorageHandle::enter(&mut provider, |storage| {
+        let call = precompile::IL2Registry::updatePublicKeyCall {
+            chainId: L2_CHAIN_ID,
+            publicKey: Bytes::copy_from_slice(&pinned_public),
+        };
+        precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO).unwrap();
+
+        assert_eq!(
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &pinned_sig)
+                .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        let from_inbox =
+            check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &rotated_sig);
+        assert!(matches!(from_inbox, Err(PrecompileError::Revert(_))));
+
+        let query = precompile::IL2Registry::getNetworkCall {
+            chainId: L2_CHAIN_ID,
+        };
+        let response =
+            precompile::dispatch(storage, &query.abi_encode(), l1_addr(), U256::ZERO).unwrap();
+        assert_eq!(
+            response.as_ref(),
+            (l1_addr(), Bytes::copy_from_slice(&pinned_public))
+                .abi_encode_params()
+                .as_slice(),
         );
     });
 }

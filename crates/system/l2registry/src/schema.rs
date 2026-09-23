@@ -12,6 +12,8 @@ pub const BLS_PUBLIC_KEY_LEN: usize = 256;
 ///
 /// Storage remains three compressed 32-byte words, preserving existing records.
 /// Public inputs and outputs use the 256-byte EIP-2537 representation.
+/// All three words zero selects live `IDaInbox(l1_address).groupPubKey()` lookup;
+/// the registration still exists because `l1_address` remains nonzero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = l1_address)]
 pub struct L2NetworkRecord {
@@ -37,9 +39,13 @@ pub struct L2NetworkRecord {
 }
 
 impl L2NetworkRecord {
-    /// Returns the public key in canonical EIP-2537 G2 wire format.
+    /// Returns the registered EIP-2537 key, or 256 zero bytes for inbox mode.
     pub fn public_key_bytes(&self) -> Result<[u8; BLS_PUBLIC_KEY_LEN]> {
-        crate::public_key::expand(&self.compressed_public_key_bytes())
+        let compressed = self.compressed_public_key_bytes();
+        if compressed == [0; 96] {
+            return Ok([0; BLS_PUBLIC_KEY_LEN]);
+        }
+        crate::public_key::expand(&compressed)
     }
 
     /// Internal compressed encoding for storage and native BLS verification.

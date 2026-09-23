@@ -23,6 +23,9 @@ pub enum L2RegistryError {
     #[error("BLS public key is not a canonical nonidentity EIP-2537 G2 group element")]
     InvalidPublicKey,
 
+    #[error("inbox groupPubKey call failed")]
+    InboxKeyCallFailed,
+
     #[error("L2 network {chain_id} is already registered")]
     NetworkAlreadyRegistered { chain_id: u64 },
 
