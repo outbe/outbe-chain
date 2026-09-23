@@ -60,6 +60,9 @@ impl DesisContract<'_> {
         Ok(rows)
     }
 
+    /// Written once per day, by `start_auction`. The price rows are keyed by index
+    /// and the tail beyond `reference_price_count` is never cleared, so a second
+    /// write with a shorter table would leave rows behind.
     pub(crate) fn write_auction_config(
         &self,
         worldwide_day: WorldwideDay,

@@ -6,7 +6,7 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::{
     NATIVE_UNITS_PER_PROTOCOL_UNIT, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64,
 };
@@ -68,21 +68,16 @@ pub(crate) fn preflight_brief(
     u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
 }
 
+/// A brief carries no terms: the day's prices, load and profile are all chosen
+/// at `start_auction`, from the oracle as it reads immediately before the start.
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     desis_limit_minor: u128,
-    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
-    let promis_load_minor = step_promis_load(&mut contract, worldwide_day, &reference_prices)?;
-    let reference_prices = choose_reference_prices(&mut contract, worldwide_day, reference_prices)?;
-    contract.write_auction_config(
-        worldwide_day,
-        &AuctionConfig::from_reference_prices(reference_prices, promis_load_minor),
-    )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
         .pending_desis_limit_minor
@@ -165,8 +160,8 @@ pub(crate) fn promis_load_exponent(anchor_digits: u32, current: Option<u32>, rat
     }
 }
 
-/// Read before `choose_reference_prices` trims the table: either of its rules would
-/// drop the anchor currency and the ladder with it.
+/// Read at auction start, before `choose_reference_prices` trims the table: either
+/// of its rules would drop the anchor currency and the ladder with it.
 fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -465,7 +460,21 @@ fn start_auction(
     issuance_end: u64,
     now: u64,
 ) -> Result<StartOutcome> {
-    let mut config = contract.read_auction_config(worldwide_day)?;
+    // The day's terms are chosen here and nowhere else: the entry price is the
+    // VWAP of the UTC day that closed before this start, not before the brief,
+    // which can sit a whole day earlier when the anchor was deferred.
+    let utc_day = previous_date_key(timestamp_to_date_key(now));
+    let rows: Vec<ReferenceCurrencyPrice> =
+        outbe_oracle::api::priced_reference_currencies(storage.clone(), utc_day)?
+            .into_iter()
+            .map(|(iso_code, entry_price_minor)| ReferenceCurrencyPrice {
+                iso_code,
+                entry_price_minor,
+            })
+            .collect();
+    let promis_load_minor = step_promis_load(contract, worldwide_day, &rows)?;
+    let rows = choose_reference_prices(contract, worldwide_day, rows)?;
+    let mut config = AuctionConfig::from_reference_prices(rows, promis_load_minor);
     let iparams = fold_profile(storage, contract, &mut config)?;
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);

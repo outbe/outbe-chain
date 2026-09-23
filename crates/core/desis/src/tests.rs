@@ -2,9 +2,11 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_oracle::api::AddressPair;
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
@@ -19,6 +21,10 @@ const REFERENCE_ISO: u16 = 840;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
 const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
+/// Registry indices of the seeded oracle pairs: the reference currency, and one
+/// more for the cases that price a day in something else.
+const PAIR_ID: u32 = 1;
+const OTHER_PAIR_ID: u32 = 2;
 /// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
 const SRC_CHAIN: u32 = 1;
 /// Block timestamp the tests brief at: just after a midnight, so the brief
@@ -48,9 +54,10 @@ fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn the_first_priced_brief_captures_the_launch_anchor() {
+fn the_first_priced_start_captures_the_launch_anchor() {
     with_storage(|s| {
         brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -92,6 +99,7 @@ fn the_fixture_load_is_the_one_the_ladder_picks() {
     assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
     with_storage(|s| {
         brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .config_promis_load_minor
@@ -221,8 +229,58 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
             .config_profile
             .write(outbe_intexfactory::config::PROFILE_PROD)
             .unwrap();
+        // A day is priced when its auction starts, so the oracle has to carry every
+        // day a start can land on - a deferred anchor reads the next one, not this
+        // one. Unpriced, those days would cancel instead of opening.
+        for day in 0..5 {
+            seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
+        }
         f(handle)
     })
+}
+
+/// The UTC day an auction starting at `now` prices from: the one that closed before it.
+fn price_day(now: u64) -> u32 {
+    previous_date_key(timestamp_to_date_key(now))
+}
+
+/// Register COEN/`iso_code` under `pair_id`, once: the selector skips a currency
+/// whose pair the registry does not know.
+fn register_pair(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
+    let pair = AddressPair::new_coen_to(iso_code);
+    if oracle.pair_index_of(pair).unwrap() != 0 {
+        return;
+    }
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
+    oracle.pair_count.write(pair_id).unwrap();
+    oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
+    oracle.reference_currencies.push(iso_code).unwrap();
+}
+
+/// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads.
+fn seed_price(s: &StorageHandle, now: u64, iso_code: u16, pair_id: u32, rate: u128) {
+    let oracle = OracleContract::new(s.clone());
+    register_pair(&oracle, iso_code, pair_id);
+    let day = price_day(now);
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&pair_id, U256::from(rate))
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
+}
+
+/// Price the reference currency the fixtures quote in.
+fn seed_rate(s: &StorageHandle, now: u64, rate: u128) {
+    seed_price(s, now, REFERENCE_ISO, PAIR_ID, rate)
+}
+
+/// Leave the UTC day an auction starting at `now` reads without a price. The brief
+/// helpers price that day themselves, so this has to come after them.
+fn unprice_day(s: &StorageHandle, now: u64) {
+    seed_rate(s, now, 0)
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -233,7 +291,8 @@ fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, desis_limit_minor: u
     brief_at_rate(s, worldwide_day, desis_limit_minor, ENTRY_PRICE, green)
 }
 
-/// Brief a day quoted at `rate`, which is what the PROMIS load is picked from.
+/// Brief a day whose auction starts at `NOW`, quoted at `rate`: both the entry
+/// price it will carry and the rate the PROMIS load is picked from.
 fn brief_at_rate(
     s: &StorageHandle,
     worldwide_day: WorldwideDay,
@@ -241,17 +300,27 @@ fn brief_at_rate(
     rate: u128,
     green: bool,
 ) {
+    brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, green, NOW)
+}
+
+/// The same, for a day briefed at `now` - which is what fixes both its schedule
+/// anchor and the UTC day its start will price from.
+fn brief_at_rate_from(
+    s: &StorageHandle,
+    worldwide_day: WorldwideDay,
+    desis_limit_minor: u128,
+    rate: u128,
+    green: bool,
+    now: u64,
+) {
+    seed_rate(s, now, rate);
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
             worldwide_day,
             U256::from(desis_limit_minor),
-            vec![crate::schema::ReferenceCurrencyPrice {
-                iso_code: REFERENCE_ISO,
-                entry_price_minor: U256::from(rate),
-            }],
             green,
-            NOW,
+            now,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap(),
@@ -362,14 +431,6 @@ fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPric
     }]
 }
 
-/// The single priced reference currency the fixtures brief with.
-fn entry_price_rows() -> Vec<crate::schema::ReferenceCurrencyPrice> {
-    vec![crate::schema::ReferenceCurrencyPrice {
-        iso_code: REFERENCE_ISO,
-        entry_price_minor: U256::from(ENTRY_PRICE),
-    }]
-}
-
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
@@ -377,7 +438,6 @@ fn dispatch_auction_brief_records_the_brief() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(10 * PROMIS_LOAD_MINOR),
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -406,11 +466,12 @@ fn dispatch_auction_brief_records_the_brief() {
             contract.sched_active_at.read(&0).unwrap(),
             WORLDWIDE_DAY.value()
         );
-        let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
-        assert_eq!(
-            cfg.entry_price_for(REFERENCE_ISO),
-            Some(U256::from(ENTRY_PRICE))
-        );
+        // A brief carries no terms: the day is priced when its auction starts.
+        assert!(contract
+            .read_auction_config(WORLDWIDE_DAY)
+            .unwrap()
+            .reference_prices
+            .is_empty());
     });
 }
 
@@ -421,7 +482,6 @@ fn dispatch_auction_brief_records_a_red_day() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(PROMIS_LOAD_MINOR),
-            entry_price_rows(),
             false,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -465,13 +525,12 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
         assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
-        assert_eq!(
-            contract
-                .read_auction_config(WORLDWIDE_DAY)
-                .unwrap()
-                .entry_price_for(REFERENCE_ISO),
-            Some(U256::from(ENTRY_PRICE))
-        );
+        // The receipt commits the price table; the auction does not run on it.
+        assert!(contract
+            .read_auction_config(WORLDWIDE_DAY)
+            .unwrap()
+            .reference_prices
+            .is_empty());
     });
 }
 
@@ -689,7 +748,6 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * PROMIS_LOAD_MINOR),
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -701,7 +759,6 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -736,7 +793,6 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::MAX,
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -777,7 +833,6 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 U256::from(u128::MAX),
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -795,7 +850,6 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 supply,
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -832,7 +886,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             WorldwideDay::new(0),
             U256::MAX,
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -844,7 +897,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             WORLDWIDE_DAY,
             U256::MAX,
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -860,7 +912,6 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage,
             NEXT_WORLDWIDE_DAY,
             U256::MAX,
-            entry_price_rows(),
             true,
             late,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -881,7 +932,6 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -900,7 +950,6 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                entry_price_rows(),
                 true,
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -921,7 +970,6 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             storage,
             WORLDWIDE_DAY,
             U256::MAX,
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -944,7 +992,6 @@ fn brief_anchor_at(now: u64) -> u64 {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(LOAD_MINOR),
-                entry_price_rows(),
                 true,
                 now,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -982,7 +1029,6 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * LOAD_MINOR),
-                entry_price_rows(),
                 true,
                 noon,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -1016,6 +1062,108 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
 }
 
 // --- Schedule tick ---
+
+// --- The day is priced when its auction starts ---
+
+/// A brief past the six-hour grace anchors to the next midnight, so its auction
+/// opens a day later and must run on the day that closed before that start.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_deferred_start_prices_the_day_that_closed_before_it() {
+    with_storage(|s| {
+        let late = ANCHOR + 7 * 3_600;
+        let start = ANCHOR + 86_400;
+        brief_at_rate_from(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, late);
+        seed_rate(&s, start, 3 * ENTRY_PRICE);
+
+        runtime::schedule_tick(&s, late).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Briefed,
+            "a deferred day waits for its anchor"
+        );
+
+        runtime::schedule_tick(&s, start).unwrap();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Started
+        );
+        assert_eq!(
+            contract
+                .read_auction_config(WORLDWIDE_DAY)
+                .unwrap()
+                .entry_price_for(REFERENCE_ISO),
+            Some(U256::from(3 * ENTRY_PRICE)),
+            "the entry price is the VWAP of the day before the start, not before the brief"
+        );
+    });
+}
+
+/// The opposite direction: a price the brief could see is gone by the start.
+#[test]
+fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() {
+    with_storage(|s| {
+        brief(&s, true);
+        unprice_day(&s, NOW);
+
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Cancelled,
+            "an auction never opens on stale terms"
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(10 * LOAD_MINOR),
+            "the briefed limit goes back"
+        );
+    });
+}
+
+/// A day nothing could price at its brief still opens when its start can price it:
+/// the start is the moment that decides, so an oracle gap before it does not carry.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_day_unpriced_at_its_brief_opens_when_its_start_can_price_it() {
+    with_storage(|s| {
+        let late = ANCHOR + 7 * 3_600;
+        let start = ANCHOR + 86_400;
+        brief_at_rate_from(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, late);
+        unprice_day(&s, late);
+        seed_rate(&s, start, ENTRY_PRICE);
+
+        runtime::schedule_tick(&s, start).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Started
+        );
+    });
+}
+
+/// Terms are fixed at the start and copied into the series: the oracle moving
+/// during the auction changes neither.
+#[test]
+fn the_price_chosen_at_start_is_the_one_the_series_carries() {
+    use outbe_intexfactory::SeriesId;
+
+    with_storage(|s| {
+        open_clearing(&s, 2);
+        seed_rate(&s, NOW, 5 * ENTRY_PRICE);
+        relay_bids(&s, SRC_CHAIN, 1, 2, 200);
+        assert_eq!(clear(&s).issued_units, 2);
+
+        let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
+        let series = outbe_intex::api::read_series(&s, series_id).unwrap();
+        assert_eq!(series.entry_price_minor, U256::from(ENTRY_PRICE));
+    });
+}
 
 #[test]
 fn schedule_starts_a_green_brief() {
@@ -1171,17 +1319,20 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         relay_bids(&s, SRC_CHAIN, 1, 100, 200);
         assert_eq!(clear(&s).issued_units, 100);
 
-        // Ten times the rate of the fixture, which is past the deadband.
-        brief_at_rate(
+        // Ten times the rate of the fixture, which is past the deadband. The day
+        // is briefed a day later so its start reads a different closed UTC day,
+        // which is the only way the two days can be quoted differently at all.
+        brief_at_rate_from(
             &s,
             NEXT_WORLDWIDE_DAY,
             100 * LOAD_MINOR,
             10 * ENTRY_PRICE,
             true,
+            NOW + 86_400,
         );
-        runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -2237,29 +2388,23 @@ fn test_iface_id_matches_selector_xor() {
 
 // --- Clearing: one series per currency pair ---
 
-/// Brief `units` of Desis Limit against several priced reference currencies and drive
-/// the schedule until the clearing gate is armed.
+/// Brief `units` of Desis Limit against a day that priced exactly `references` -
+/// the fixture's own currency included only when it is one of them - and drive the
+/// schedule until the clearing gate is armed.
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
-    let rows = references
-        .iter()
-        .map(|&iso_code| crate::schema::ReferenceCurrencyPrice {
-            iso_code,
-            entry_price_minor: U256::from(ENTRY_PRICE) * U256::from(iso_code),
-        })
-        .collect();
-    assert_eq!(
-        crate::api::dispatch_auction_brief(
-            s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(units * LOAD_MINOR),
-            rows,
-            true,
-            NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
-        )
-        .unwrap(),
-        AuctionBriefReceipt::Accepted
-    );
+    brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
+    unprice_day(s, NOW);
+    let mut next_pair_id = OTHER_PAIR_ID;
+    for &iso_code in references {
+        let pair_id = if iso_code == REFERENCE_ISO {
+            PAIR_ID
+        } else {
+            let id = next_pair_id;
+            next_pair_id += 1;
+            id
+        };
+        seed_price(s, NOW, iso_code, pair_id, ENTRY_PRICE * u128::from(iso_code));
+    }
     runtime::schedule_tick(s, NOW).unwrap();
     runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
     arm_clearing(s);
@@ -2519,22 +2664,11 @@ fn rate_lock_matches_the_escrow_vectors() {
 #[cfg(not(feature = "e2e-test"))]
 fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
     with_storage(|s| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(10 * LOAD_MINOR),
-                vec![crate::schema::ReferenceCurrencyPrice {
-                    iso_code: 978,
-                    entry_price_minor: U256::from(ENTRY_PRICE),
-                }],
-                true,
-                NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
+        brief_at(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
+        // The day closes with a price in EUR and none in the anchor currency.
+        unprice_day(&s, NOW);
+        seed_price(&s, NOW, 978, OTHER_PAIR_ID, ENTRY_PRICE);
+        runtime::schedule_tick(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -2556,19 +2690,8 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(4 * LOAD_MINOR),
-                Vec::new(),
-                true,
-                NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
-        );
+        brief_at(&s, WORLDWIDE_DAY, 4 * LOAD_MINOR, true);
+        unprice_day(&s, NOW);
 
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
@@ -2774,7 +2897,6 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::MAX,
-            entry_price_rows(),
             true,
             NOW,
             crate::api::BriefOverflowPolicy::Reject,

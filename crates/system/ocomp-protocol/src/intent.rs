@@ -35,8 +35,11 @@ wire_enum_u8! {
 }
 
 wire_struct! {
-    /// One reference currency's frozen auction entry price, with where it came from,
-    /// so a fallback stays visible in the receipt.
+    /// One reference currency's price as the oracle read it at pre-admission.
+    /// No auction runs on it: Desis prices a day at auction start, from the oracle
+    /// as it reads then. The row is kept because it is part of the canonical
+    /// encoding of the envelope and receipt, and of the receipt hash, so dropping
+    /// it changes those bytes and needs a fork.
     pub struct ReferenceEntryPriceV1 {
         pub reference_currency: u16,
         pub entry_price_minor: U256,

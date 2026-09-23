@@ -48,7 +48,7 @@ pub struct IntexCallTrigger {
     pub call_notice_period: u32,
 }
 
-/// Entry price of one reference currency, captured at the brief.
+/// Entry price of one reference currency, chosen at auction start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
@@ -75,11 +75,11 @@ pub struct AuctionConfig {
 
 impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices and
-    /// the load the day was briefed at. `min_intex_bid_rate = 0` means no bid
-    /// floor. `call_trigger`, `min_intex_bid_quantity` and `commit_bond_minor` are
-    /// left at their defaults here and populated at auction start
-    /// (`start_auction`), where the genesis `IntexParams` and the prior-clearing
-    /// count are in reach.
+    /// the load the ladder stepped to. `min_intex_bid_rate = 0` means no bid floor.
+    /// `call_trigger`, `min_intex_bid_quantity` and `commit_bond_minor` are left at
+    /// their defaults here and folded in by `fold_profile`. Every field is settled
+    /// inside `start_auction`, from one read of the oracle, so the day never runs
+    /// on terms mixed from two different days.
     pub fn from_reference_prices(
         reference_prices: Vec<ReferenceCurrencyPrice>,
         promis_load_minor: u128,
@@ -277,7 +277,7 @@ pub struct DesisContract {
     #[attribute(order = 34)]
     pub sched_active_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // --- Entry price per reference currency, captured at the brief ---
+    // --- Entry price per reference currency, chosen at auction start ---
     /// worldwide_day -> number of priced reference currencies.
     #[attribute(order = 35)]
     pub reference_price_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
