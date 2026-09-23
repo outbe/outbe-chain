@@ -3,13 +3,14 @@ pragma solidity 0.8.30;
 
 import {console} from "forge-std/console.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {VwapSourceWiring} from "./VwapSourceWiring.sol";
+import {BaseScript} from "./BaseScript.s.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title DeployTarget
 /// @author Outbe
@@ -21,7 +22,10 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE (proceeds
 ///      route). The deployer is admin + delegate; app wiring (escrow/compact, roles) is a
 ///      separate step. Peers are CREATE3-deterministic across chains.
-contract DeployTarget is VwapSourceWiring {
+contract DeployTarget is BaseScript {
+    /// @dev The IntexFactory precompile: the origin chain's own daily VWAP source.
+    address internal constant INTEX_FACTORY = address(0x1015);
+
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -74,8 +78,21 @@ contract DeployTarget is VwapSourceWiring {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
-        address vwapSource = local == originChainId ? INTEX_FACTORY : deployVwapRegistry(factory, deployer, router);
-        wireVwapSource(nft, router, vwapSource);
+        // Idempotent, so a re-run after an upgrade is what points a chain at its source.
+        address vwapSource = INTEX_FACTORY;
+        if (local != originChainId) {
+            vwapSource = deployProxy(
+                factory,
+                deployer,
+                "VwapRegistry",
+                address(new VwapRegistry()),
+                abi.encodeCall(VwapRegistry.initialize, (deployer, router))
+            );
+            if (address(TargetRouter(payable(router)).vwapRegistry()) != vwapSource) {
+                TargetRouter(payable(router)).setVwapRegistry(vwapSource);
+            }
+        }
+        if (IntexNFT1155(nft).vwapSource() != vwapSource) IntexNFT1155(nft).setVwapSource(vwapSource);
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
