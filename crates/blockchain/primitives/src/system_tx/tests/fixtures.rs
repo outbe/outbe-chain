@@ -199,7 +199,7 @@ pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
             payload: sample_tee_bootstrap(),
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
-        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents { hyperlane: None },
         SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     }
 }

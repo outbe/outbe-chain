@@ -952,7 +952,7 @@ mod tests {
         assert!(header_witness(&header).is_err());
         // A boundary record with invalid payload must fail decoding too; it
         // cannot turn into a successfully decoded absence of activation.
-        header.inner.extra_data = b"OART\x0b\x02\x00\x00".to_vec().into();
+        header.inner.extra_data = b"OART\x0c\x02\x00\x00".to_vec().into();
         assert!(header_witness(&header).is_err());
     }
 

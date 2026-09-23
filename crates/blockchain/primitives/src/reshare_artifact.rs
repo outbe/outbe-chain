@@ -1,12 +1,21 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 
 use crate::{
-    consensus::{DkgBoundaryArtifact, ReshareResult, OUTBE_MAX_EXTRA_DATA_SIZE},
+    consensus::{
+        DkgBoundaryArtifact, HyperlaneAttestation, HyperlaneCheckpoint, ReshareResult,
+        HYPERLANE_CHECKPOINT_LEN, HYPERLANE_MAX_ATTESTED_DOMAINS, OUTBE_MAX_EXTRA_DATA_SIZE,
+    },
     error::{PrecompileError, Result},
     validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
 
 const MAGIC: &[u8; 4] = b"OART";
+/// Version 0x0C adds tag 0x09 carrying a proposer-supplied
+/// [`HyperlaneAttestation`] (the proposer's latest signed Hyperlane
+/// checkpoints), mirrored into the `HookEvents` begin-zone system tx body and
+/// verified by the `hyperlanecontroller` precompile. Hard fork: the version
+/// bump changes the block hash.
+///
 /// Version 0x0B adds the bounded ordered `tee_expired_target_exclusions` list
 /// and its domain-separated commitment to the `DkgBoundaryArtifact` payload.
 /// This pre-genesis hard fork makes the exact freeze-height expiry authority
@@ -40,7 +49,7 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Pre-genesis hard fork; nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
-const VERSION: u8 = 0x0B;
+const VERSION: u8 = 0x0C;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
@@ -51,6 +60,7 @@ const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
 const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
 pub const COMPRESSED_ENTITIES_ROOT_TAG: u8 = 0x08;
+const HYPERLANE_ATTESTATION_TAG: u8 = 0x09;
 const EXECUTION_SUMMARY_LEN: usize = 32;
 const TIMESTAMP_MILLIS_PART_LEN: usize = 8;
 pub const COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN: usize = 4 + 32;
@@ -99,6 +109,10 @@ pub struct OutbeBlockArtifacts {
     /// Structurally optional; mandatory presence for block 1+ is enforced by
     /// block execution rather than this height-independent codec.
     pub compressed_entities_root: Option<CompressedEntitiesRootArtifact>,
+    /// Proposer-supplied latest signed Hyperlane checkpoints (tag 0x09). Best
+    /// effort: absent when the proposer has nothing fresh; verified, never
+    /// re-derived, by other nodes.
+    pub hyperlane_attestation: Option<HyperlaneAttestation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +357,13 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
         }
     }
 
+    if let Some(attestation) = &artifacts.hyperlane_attestation {
+        records.push((
+            HYPERLANE_ATTESTATION_TAG,
+            encode_hyperlane_attestation(attestation)?,
+        ));
+    }
+
     if artifacts.timestamp_millis_part != 0 {
         // Range check (`< 1000`) is owned by the consensus header
         // validator (`validate_header_timestamp_millis_part`); the
@@ -538,6 +559,14 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
                     r_sealed: B256::from_slice(&payload[4..]),
                 });
             }
+            HYPERLANE_ATTESTATION_TAG => {
+                if artifacts.hyperlane_attestation.is_some() {
+                    return Err(PrecompileError::Fatal(
+                        "duplicate hyperlane attestation artifact".into(),
+                    ));
+                }
+                artifacts.hyperlane_attestation = Some(decode_hyperlane_attestation(payload)?);
+            }
             _ => {
                 return Err(PrecompileError::Fatal(format!(
                     "unsupported block artifact tag: {tag}"
@@ -584,6 +613,7 @@ pub fn encode_consensus_header_artifact(artifact: &ConsensusHeaderArtifact) -> R
         timestamp_millis_part: 0,
         late_finalize_credits: None,
         compressed_entities_root: None,
+        hyperlane_attestation: None,
     })?;
     sanitize_prefinal_outbe_block_artifacts(&encoded)
 }
@@ -668,6 +698,84 @@ pub fn decode_late_finalize_credits_artifact(
     extra_data: &[u8],
 ) -> Result<Option<LateFinalizeCreditsArtifact>> {
     Ok(decode_outbe_block_artifacts(extra_data)?.late_finalize_credits)
+}
+
+/// Encode a standalone `HyperlaneAttestation` for the `HookEvents` system-tx
+/// body (mirrors [`encode_late_finalize_credits_artifact`]).
+pub fn encode_hyperlane_attestation_artifact(artifact: &HyperlaneAttestation) -> Result<Bytes> {
+    encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        hyperlane_attestation: Some(artifact.clone()),
+        ..Default::default()
+    })
+}
+
+/// Decode a standalone `HyperlaneAttestation` from a system-tx body. Empty
+/// input decodes to `None` (the proposer attached nothing).
+pub fn decode_hyperlane_attestation_artifact(
+    extra_data: &[u8],
+) -> Result<Option<HyperlaneAttestation>> {
+    Ok(decode_outbe_block_artifacts(extra_data)?.hyperlane_attestation)
+}
+
+/// Tag 0x09 payload: `HYPERLANE_CHECKPOINT_LEN` bytes per checkpoint, domains
+/// strictly ascending so equal attestations encode to equal bytes.
+fn encode_hyperlane_attestation(attestation: &HyperlaneAttestation) -> Result<Vec<u8>> {
+    let count = attestation.checkpoints.len();
+    if count == 0 || count > HYPERLANE_MAX_ATTESTED_DOMAINS {
+        return Err(PrecompileError::Fatal(format!(
+            "hyperlane attestation domain count: {count} (expected 1..={HYPERLANE_MAX_ATTESTED_DOMAINS})"
+        )));
+    }
+    let mut payload = Vec::with_capacity(count * HYPERLANE_CHECKPOINT_LEN);
+    let mut previous: Option<u32> = None;
+    for checkpoint in &attestation.checkpoints {
+        if previous.is_some_and(|prev| checkpoint.domain <= prev) {
+            return Err(PrecompileError::Fatal(
+                "hyperlane attestation domains must be strictly ascending".into(),
+            ));
+        }
+        previous = Some(checkpoint.domain);
+        payload.extend_from_slice(&checkpoint.domain.to_be_bytes());
+        payload.extend_from_slice(checkpoint.root.as_slice());
+        payload.extend_from_slice(&checkpoint.index.to_be_bytes());
+        payload.extend_from_slice(checkpoint.message_id.as_slice());
+        payload.extend_from_slice(&checkpoint.signature);
+    }
+    Ok(payload)
+}
+
+fn decode_hyperlane_attestation(payload: &[u8]) -> Result<HyperlaneAttestation> {
+    let count = payload.len() / HYPERLANE_CHECKPOINT_LEN;
+    if payload.is_empty()
+        || !payload.len().is_multiple_of(HYPERLANE_CHECKPOINT_LEN)
+        || count > HYPERLANE_MAX_ATTESTED_DOMAINS
+    {
+        return Err(PrecompileError::Fatal(format!(
+            "hyperlane attestation payload length: {}",
+            payload.len()
+        )));
+    }
+    let mut checkpoints = Vec::with_capacity(count);
+    let mut previous: Option<u32> = None;
+    for record in payload.chunks_exact(HYPERLANE_CHECKPOINT_LEN) {
+        let domain = u32::from_be_bytes([record[0], record[1], record[2], record[3]]);
+        if previous.is_some_and(|prev| domain <= prev) {
+            return Err(PrecompileError::Fatal(
+                "hyperlane attestation domains must be strictly ascending".into(),
+            ));
+        }
+        previous = Some(domain);
+        let mut signature = [0u8; 65];
+        signature.copy_from_slice(&record[72..]);
+        checkpoints.push(HyperlaneCheckpoint {
+            domain,
+            root: B256::from_slice(&record[4..36]),
+            index: u32::from_be_bytes([record[36], record[37], record[38], record[39]]),
+            message_id: B256::from_slice(&record[40..72]),
+            signature,
+        });
+    }
+    Ok(HyperlaneAttestation { checkpoints })
 }
 
 fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummaryArtifact> {
@@ -1031,14 +1139,19 @@ mod tests {
     use alloy_primitives::{address, Address, Bytes, B256, U256};
 
     use super::{
-        decode_boundary_artifact, decode_consensus_header_artifact, decode_outbe_block_artifacts,
-        encode_boundary_artifact, encode_consensus_header_artifact, encode_outbe_block_artifacts,
+        decode_boundary_artifact, decode_consensus_header_artifact,
+        decode_hyperlane_attestation_artifact, decode_outbe_block_artifacts,
+        encode_boundary_artifact, encode_consensus_header_artifact,
+        encode_hyperlane_attestation_artifact, encode_outbe_block_artifacts,
         sanitize_prefinal_outbe_block_artifacts, tee_expired_target_exclusions_hash,
         CompressedEntitiesRootArtifact, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
         OutbeBlockArtifacts, COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN,
         COMPRESSED_ENTITIES_ROOT_RECORD_LEN, OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE,
     };
-    use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
+    use crate::consensus::{
+        DkgBoundaryArtifact, HyperlaneAttestation, HyperlaneCheckpoint, ReshareResult,
+        HYPERLANE_MAX_ATTESTED_DOMAINS,
+    };
 
     fn boundary_with_expiry_exclusions(exclusions: Vec<Address>) -> DkgBoundaryArtifact {
         let exclusions_hash = tee_expired_target_exclusions_hash(&exclusions).unwrap();
@@ -1161,6 +1274,7 @@ mod tests {
             timestamp_millis_part: 0,
             late_finalize_credits: None,
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         })
         .unwrap();
         let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
@@ -1442,6 +1556,7 @@ mod tests {
                             timestamp_millis_part: ts,
                             late_finalize_credits: None,
                             compressed_entities_root: root,
+                            hyperlane_attestation: None,
                         });
                     }
                 }
@@ -1488,6 +1603,7 @@ mod tests {
                 timestamp_millis_part,
                 late_finalize_credits: None,
                 compressed_entities_root: None,
+                hyperlane_attestation: None,
             };
 
             let encoded = encode_outbe_block_artifacts(&artifacts).expect("encode");
@@ -1532,6 +1648,7 @@ mod tests {
             timestamp_millis_part: 0,
             late_finalize_credits: None,
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         };
         let err = encode_outbe_block_artifacts(&oversize)
             .expect_err("encoding past the extra_data budget must be rejected");
@@ -1555,6 +1672,7 @@ mod tests {
             timestamp_millis_part: 0,
             late_finalize_credits: None,
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         };
         let encoded =
             encode_outbe_block_artifacts(&at_limit).expect("at-limit artifact must encode");
@@ -1595,6 +1713,7 @@ mod tests {
             timestamp_millis_part: 0,
             late_finalize_credits: None,
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         })
         .expect("boundary encode");
         // Byte 6 is the first record's tag (after MAGIC[0..4] + version + count).
@@ -1609,6 +1728,7 @@ mod tests {
             timestamp_millis_part: 0,
             late_finalize_credits: None,
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         })
         .expect("dealer encode");
         assert_eq!(dealer_encoded[6], super::DEALER_LOG_TAG);
@@ -1656,6 +1776,7 @@ mod tests {
                 batches: vec![sample_credit(5, 0x55)],
             }),
             compressed_entities_root: None,
+            hyperlane_attestation: None,
         };
         let encoded = encode_outbe_block_artifacts(&original).expect("encode");
         assert_eq!(
@@ -1756,7 +1877,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut expected = b"OART\x0B\x01\x08\x00\x24\x00\x00\x00\x01".to_vec();
+        let mut expected = b"OART\x0C\x01\x08\x00\x24\x00\x00\x00\x01".to_vec();
         expected.extend_from_slice(&[0xAB; 32]);
         assert_eq!(encoded.as_ref(), expected);
         assert_eq!(COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, 36);
@@ -1784,7 +1905,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let mut expected = b"OART\x0B\x02\x01\x00\x20".to_vec();
+        let mut expected = b"OART\x0C\x02\x01\x00\x20".to_vec();
         expected.extend_from_slice(&[0_u8; 32]);
         expected.extend_from_slice(b"\x08\x00\x24\x00\x00\x00\x01");
         expected.extend_from_slice(root.as_slice());
@@ -1888,5 +2009,66 @@ mod tests {
         })
         .unwrap();
         assert!(sanitize_prefinal_outbe_block_artifacts(&one_over).is_err());
+    }
+
+    fn checkpoint(domain: u32, seed: u8) -> HyperlaneCheckpoint {
+        HyperlaneCheckpoint {
+            domain,
+            root: B256::repeat_byte(seed),
+            index: u32::from(seed) * 10,
+            message_id: B256::repeat_byte(seed.wrapping_add(1)),
+            signature: [seed; 65],
+        }
+    }
+
+    #[test]
+    fn hyperlane_attestation_roundtrips_in_header_and_system_tx_body() {
+        let attestation = HyperlaneAttestation {
+            checkpoints: vec![checkpoint(97, 1), checkpoint(54_322_345, 2)],
+        };
+        assert_roundtrip(&OutbeBlockArtifacts {
+            hyperlane_attestation: Some(attestation.clone()),
+            timestamp_millis_part: 7,
+            ..Default::default()
+        });
+
+        let body = encode_hyperlane_attestation_artifact(&attestation).unwrap();
+        assert_eq!(
+            decode_hyperlane_attestation_artifact(&body).unwrap(),
+            Some(attestation)
+        );
+        assert_eq!(decode_hyperlane_attestation_artifact(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn hyperlane_attestation_rejects_empty_unsorted_and_oversized() {
+        let empty = HyperlaneAttestation::default();
+        assert!(encode_hyperlane_attestation_artifact(&empty).is_err());
+
+        let unsorted = HyperlaneAttestation {
+            checkpoints: vec![checkpoint(2, 1), checkpoint(1, 2)],
+        };
+        assert!(encode_hyperlane_attestation_artifact(&unsorted).is_err());
+
+        let duplicate = HyperlaneAttestation {
+            checkpoints: vec![checkpoint(1, 1), checkpoint(1, 2)],
+        };
+        assert!(encode_hyperlane_attestation_artifact(&duplicate).is_err());
+
+        let oversized = HyperlaneAttestation {
+            checkpoints: (1..=HYPERLANE_MAX_ATTESTED_DOMAINS as u32 + 1)
+                .map(|domain| checkpoint(domain, 1))
+                .collect(),
+        };
+        assert!(encode_hyperlane_attestation_artifact(&oversized).is_err());
+
+        // A truncated tag-0x09 payload fails structurally.
+        let mut truncated = encode_hyperlane_attestation_artifact(&HyperlaneAttestation {
+            checkpoints: vec![checkpoint(1, 1)],
+        })
+        .unwrap()
+        .to_vec();
+        truncated.pop();
+        assert!(decode_outbe_block_artifacts(&truncated).is_err());
     }
 }
