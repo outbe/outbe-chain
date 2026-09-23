@@ -161,6 +161,18 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
     }
 
+    function test_isQualified_ReadsTheSameSourceTheCardDoes() public {
+        assertFalse(token.isQualified(SERIES_ID), "no source, no qualification");
+        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
+        assertTrue(token.isQualified(SERIES_ID));
+
+        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE);
+        assertFalse(token.isQualified(SERIES_ID), "a day at the floor does not qualify");
+
+        source.setReverts(true);
+        assertFalse(token.isQualified(SERIES_ID), "a failing source answers no rather than reverting");
+    }
+
     function test_TheIntexFactoryAnswersAsAVwapSource() public pure {
         assertEq(IIntexFactory.maxUtcDayVwapSince.selector, IVwapSource.maxUtcDayVwapSince.selector);
     }

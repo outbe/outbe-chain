@@ -256,6 +256,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
+    /// @notice Whether a finalized daily VWAP from the series' first full UTC day on closed above its floor,
+    ///         as the card renders it. A missing or failing source reads as not qualified.
+    /// @param seriesId Series identifier.
+    function isQualified(bytes14 seriesId) external view returns (bool);
+
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure helper.
