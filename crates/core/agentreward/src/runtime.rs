@@ -3,7 +3,7 @@ use alloy_primitives::{Address, U256};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
 
 /// ISO 4217 code both currency axes of an agent reward Gem carry. Agent rewards
@@ -223,23 +223,10 @@ impl AgentRewardContract<'_> {
     }
 }
 
-/// The COEN price an agent reward Gem is issued at: the newest closed UTC day's
-/// VWAP, falling back to the live quote. The agent picks the moment it claims,
-/// so a price frozen on the day of accrual would be a look-back option.
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let last_finalized_day = oracle.utc_day_vwap_last_finalized.read()?;
-    if last_finalized_day != 0 {
-        if let Some(vwap) = outbe_oracle::api::get_utc_day_vwap_for_iso(
-            storage.clone(),
-            last_finalized_day,
-            AGENT_GEM_CURRENCY,
-        )? {
-            return Ok(Some(vwap));
-        }
-    }
-
-    outbe_oracle::api::fresh_coen_rate_for_opt(storage.clone(), AGENT_GEM_CURRENCY)
+    let now = storage.timestamp()?.to::<u64>();
+    let day = previous_date_key(timestamp_to_date_key(now));
+    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, AGENT_GEM_CURRENCY)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.
