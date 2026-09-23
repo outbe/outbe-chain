@@ -23,7 +23,6 @@ pub struct GemAddParams {
     pub call_rate: u16,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub initial_state: GemState,
     pub issued_at: u64,
 }
 

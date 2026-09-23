@@ -65,7 +65,6 @@ fn sample_params(owner: Address) -> GemAddParams {
         call_rate: 228,
         issuance_currency: 840,
         reference_currency: 840,
-        initial_state: GemState::Issued,
         issued_at: T_NOW,
     }
 }

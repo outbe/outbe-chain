@@ -19,12 +19,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         storage.block_number()?,
     );
 
-    // A gem born Settled reached it at issuance, so backfill its timestamp.
-    let settled_at = match params.initial_state {
-        GemState::Settled => params.issued_at,
-        _ => 0,
-    };
-
     let item = GemData {
         gem_id,
         owner: params.owner,
@@ -38,12 +32,12 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         call_threshold_seconds: params_profile.call_threshold_seconds,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
-        state: params.initial_state as u8,
+        state: GemState::Issued as u8,
         issued_at: params.issued_at,
         called_at: 0,
         call_notice_period_seconds: params_profile.call_notice_period_seconds,
         retired_qualified_at: 0,
-        settled_at,
+        settled_at: 0,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)
