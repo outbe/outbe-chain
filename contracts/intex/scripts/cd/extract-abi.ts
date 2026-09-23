@@ -33,7 +33,6 @@ const INTERFACES = [
   // Both chains
   "shared/interfaces/IIntexNFT1155",
   "shared/interfaces/IIntexNFT1155Bridge",
-  "shared/interfaces/IVwapSource",
 ];
 
 interface ArtifactJson {

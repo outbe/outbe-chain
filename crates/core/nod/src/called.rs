@@ -1,8 +1,18 @@
-//! Daily call scan: calls Nod buckets off finalized daily VWAPs and forfeit-burns the Nods of a
-//! called bucket whose notice lapsed; later CycleTicks continue the pinned day.
+//! Daily call scan: force-calls Nod buckets off the Oracle's finalized
+//! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
+//! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
+//! first slice; later CycleTicks continue the same day.
 //!
-//! A slice calls off each currency's call-price trie, then forfeits among the
-//! called buckets, on one visit budget.
+//! One pass applies at most one transition per bucket, in lifecycle order, over
+//! two arms sharing one visit budget:
+//!
+//! - *not called* -> *called*, walking each currency's call-price trie, when
+//!   the reference price exceeded the bucket's call price on at least its
+//!   `call_threshold` of the trailing `call_window`.
+//! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
+//!   `call_notice_period` has lapsed with Nods still unpaid. The two can never
+//!   fire in one pass, since a bucket called now cannot also be a notice period
+//!   past its call.
 //!
 //! All four terms are sealed onto the bucket at issuance and read back from it
 //! here, so retuning a constant leaves every issued bucket on the terms it was

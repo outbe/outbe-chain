@@ -15,4 +15,3 @@ export { default as IVwapRegistryABI } from './IVwapRegistry.json';
 export { default as IOriginRouterABI } from './IOriginRouter.json';
 export { default as IIntexNFT1155ABI } from './IIntexNFT1155.json';
 export { default as IIntexNFT1155BridgeABI } from './IIntexNFT1155Bridge.json';
-export { default as IVwapSourceABI } from './IVwapSource.json';
