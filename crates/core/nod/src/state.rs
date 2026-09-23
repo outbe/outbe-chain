@@ -268,6 +268,7 @@ impl NodContract<'_> {
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
+                    // The body format keeps the field; qualification is derived and nothing reads it.
                     is_qualified: false,
                     entry_price_minor,
                     reference_currency: item.reference_currency,
