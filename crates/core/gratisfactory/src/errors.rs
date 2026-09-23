@@ -10,6 +10,8 @@ pub enum GratisFactoryError {
     InvalidAsset,
     #[error("pledge amount is zero")]
     InvalidAmount,
+    #[error("pledge entry price rounds to zero")]
+    EntryPriceZero,
     #[error("asset does not report a decodable ISO 4217 code")]
     AssetIsoUndecodable,
     #[error("oracle conversion overflow")]

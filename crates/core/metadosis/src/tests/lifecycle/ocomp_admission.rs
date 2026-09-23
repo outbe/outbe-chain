@@ -12,6 +12,22 @@ fn seed_positive_ocomp_admission_fixture(
     });
     let (scope, parent) = begin_persistent_active_scope(provider);
     StorageHandle::enter(provider, |storage| {
+        let oracle = OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::DAY_TYPE_PAIR;
+        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        oracle.reference_currencies.push(840).unwrap();
+        let previous_day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(scheduled),
+        );
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&previous_day)
+            .write(&index, U256::from(250_000))
+            .unwrap();
+        oracle
+            .exchange_rate
+            .write(&index, U256::from(900_000))
+            .unwrap();
         issue_one_tribute_in_scope(
             &storage,
             &scope,
@@ -42,6 +58,15 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
     )
     .unwrap();
     let mutation_count = control.clear_mutation_failure();
+    StorageHandle::enter(&mut control, |storage| {
+        assert_eq!(
+            outbe_nod::api::entry_price_snapshot(storage, wwd).unwrap(),
+            Some(std::collections::BTreeMap::from([(
+                840,
+                U256::from(250_000)
+            )]))
+        );
+    });
     assert!(
         mutation_count >= 6,
         "positive OCOMP admission must persist pre-admission, scheduler, outer state and events"

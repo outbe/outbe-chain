@@ -1,6 +1,6 @@
 //! ABI dispatch for the credisfactory precompile at `CREDIS_FACTORY_ADDRESS`.
 //!
-//! `issueCredis` consumes a confidential Gratis pledge (pledge handle + spend
+//! `issueCredis` consumes a confidential Gratis pledge (pledge note + spend
 //! authorization) and opens a credis position bound to `smartAccount`.
 //! `settle` applies an arbitrary amount interest-first and releases the matching
 //! share of the pledged collateral back to the original pledger's encrypted
@@ -46,7 +46,7 @@ pub fn dispatch(
                             storage.clone(),
                             sender,
                             c.smartAccount,
-                            c.pledgeHandle,
+                            c.pledgeNote,
                             c.spendAuth.0,
                             c.referenceCurrency,
                             c.reservationId,

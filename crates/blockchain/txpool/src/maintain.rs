@@ -191,55 +191,7 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
 mod tests {
     use super::*;
 
-    use std::{
-        io,
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
-
-    #[derive(Clone, Default)]
-    struct CapturedLogWriter {
-        bytes: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl CapturedLogWriter {
-        fn contents(&self) -> String {
-            String::from_utf8(
-                self.bytes
-                    .lock()
-                    .expect("txpool trace capture mutex")
-                    .clone(),
-            )
-            .expect("txpool trace output must be UTF-8")
-        }
-    }
-
-    struct CapturedLogGuard {
-        bytes: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl io::Write for CapturedLogGuard {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            io::Write::write(
-                &mut *self.bytes.lock().expect("txpool trace capture mutex"),
-                buf,
-            )
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
-        type Writer = CapturedLogGuard;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            CapturedLogGuard {
-                bytes: self.bytes.clone(),
-            }
-        }
-    }
+    use std::time::Duration;
 
     fn hash(byte: u8) -> B256 {
         B256::repeat_byte(byte)
@@ -355,11 +307,10 @@ mod tests {
         assert!(remaining.contains(&newcomer_hash));
     }
 
-    /// Regression for ADR-B-TXP-001's no-silent-drop contract. This deliberately
-    /// drives Reth's queued-lifetime maintenance task rather than Outbe's
-    /// separate two-snapshot pending-staleness task above.
+    /// Upstream queued-lifetime maintenance must remove expired transactions.
+    /// Per-transaction eviction logs are not part of this contract.
     #[tokio::test]
-    async fn queued_lifetime_eviction_emits_structured_identity_and_reason() {
+    async fn queued_lifetime_eviction_removes_expired_transaction() {
         use alloy_consensus::{SignableTransaction as _, TxEip1559};
         use alloy_primitives::{Signature, TxKind, U256};
         use futures::stream;
@@ -373,7 +324,6 @@ mod tests {
             validate::EthTransactionValidatorBuilder, EthPooledTransaction, Pool, PoolTransaction,
             TransactionOrigin,
         };
-        use tracing::instrument::WithSubscriber as _;
 
         const NONCE_GAP: u64 = 64;
         let signed: TransactionSigned = TxEip1559 {
@@ -423,13 +373,6 @@ mod tests {
         let lifetime = Duration::from_millis(20);
         tokio::time::sleep(lifetime + Duration::from_millis(10)).await;
 
-        let writer = CapturedLogWriter::default();
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(writer.clone())
-            .finish();
         let runtime = Runtime::test();
         let maintenance = reth_transaction_pool::maintain::maintain_transaction_pool_future::<
             EthPrimitives,
@@ -446,8 +389,7 @@ mod tests {
                 no_local_exemptions: true,
                 ..Default::default()
             },
-        )
-        .with_subscriber(subscriber);
+        );
         let maintenance = tokio::spawn(maintenance);
 
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -458,17 +400,5 @@ mod tests {
         .await
         .expect("queued-lifetime maintenance must remove the exact transaction");
         maintenance.abort();
-
-        let logs = writer.contents();
-        let expected_hash = format!("tx_hash={tx_hash}");
-        let expected_sender = format!("sender={sender}");
-        assert!(
-            logs.contains("outbe::txpool")
-                && logs.contains(&expected_hash)
-                && logs.contains(&expected_sender)
-                && logs.contains("nonce=64")
-                && logs.contains("reason=\"queued_lifetime\""),
-            "queued-lifetime eviction must emit exact structured identity and reason; logs:\n{logs}"
-        );
     }
 }

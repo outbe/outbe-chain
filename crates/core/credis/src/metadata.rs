@@ -34,6 +34,10 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
             nft_card::amount_grouped(position.entry_price, PRICE_PRECISION),
         ),
         (
+            "Call Anchor",
+            nft_card::amount_grouped(position.call_anchor_price, PRICE_PRECISION),
+        ),
+        (
             "Call Price",
             nft_card::amount_grouped(position.call_price, PRICE_PRECISION),
         ),
@@ -44,6 +48,7 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         Trait::amount("Outstanding", position.outstanding, AMOUNT_PRECISION),
         Trait::amount("Accrued Interest", accrued_interest, AMOUNT_PRECISION),
         Trait::amount("Entry Price", position.entry_price, PRICE_PRECISION),
+        Trait::amount("Call Anchor", position.call_anchor_price, PRICE_PRECISION),
         Trait::amount("Call Price", position.call_price, PRICE_PRECISION),
         Trait::amount("Policy Rate", position.policy_rate, PRICE_PRECISION),
         Trait::amount("Collateral", position.collateral, AMOUNT_PRECISION),
@@ -56,7 +61,7 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         Trait::integer("Reference Currency", position.reference_currency),
         Trait::text("Asset", position.asset.to_string()),
         Trait::text("CCA", position.cca.to_string()),
-        Trait::date("Originated At", position.originated_at),
+        Trait::date("Issued At", position.issued_at),
     ];
     if lifecycle == CredisState::Called {
         let deadline = settlement_deadline(position);

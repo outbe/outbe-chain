@@ -151,6 +151,7 @@ mod tests {
     const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     const DAY: WorldwideDay = WorldwideDay::new(20250115);
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
+    const NIFLHEIM_CHAIN_ID: u64 = 9_900_501;
     /// Encrypt a payload the way a client would (ephemeral_secret x tribute_offer_pub).
     /// Day, currencies and price are cleartext offer fields; tests that care mutate
     /// them on the returned struct.
@@ -206,6 +207,7 @@ mod tests {
         TributeZkContext {
             derived_owner: B256::from([0x01; 32]),
             chain_id: 19_280_501,
+            l2_chain_id: 0xdead,
         }
     }
 
@@ -326,6 +328,13 @@ mod tests {
         assert_ne!(expected.nft_hash, B256::ZERO);
         assert_ne!(expected.binding_hash, B256::ZERO);
 
+        let mut other_l2 = offer.clone();
+        other_l2.zk_context.as_mut().unwrap().l2_chain_id = NIFLHEIM_CHAIN_ID;
+        let (different_l2, _) = process_tribute_offer_batch(&key(), &[other_l2]);
+        let different_l2 = different_l2[0].zk_expected_hashes.as_ref().unwrap();
+        assert_ne!(different_l2.binding_hash, expected.binding_hash);
+        assert_eq!(different_l2.nft_hash, expected.nft_hash);
+
         offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
         let (different_owner, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
         assert_ne!(
@@ -440,8 +449,12 @@ mod tests {
         assert_ne!(original, different_owner);
 
         offer.zk_context.as_mut().unwrap().chain_id += 1;
-        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
         assert_ne!(different_owner, different_chain);
+
+        offer.zk_context.as_mut().unwrap().l2_chain_id += 1;
+        let different_l2 = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        assert_ne!(different_chain, different_l2);
     }
 
     /// A host that hands over a zero price must not reach the division in

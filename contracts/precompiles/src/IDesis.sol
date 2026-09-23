@@ -65,6 +65,8 @@ interface IDesis {
     /// @notice The day was cancelled because the oracle could price none of its reference
     /// currencies, so no bid could have been measured against anything.
     event AuctionCancelledUnpriced(uint32 indexed worldwideDay);
+    /// @notice The day was cancelled because its Desis limit buys less than one Intex at the day's load.
+    event AuctionCancelledBelowOneUnit(uint32 indexed worldwideDay, uint256 desisLimitMinor, uint128 promisLoadMinor);
     /// @notice The day dropped a reference currency because it already prices as many as the
     /// auction start message can carry.
     event ReferenceCurrencyOverCap(uint32 indexed worldwideDay, uint16 indexed isoCode, uint8 cap);

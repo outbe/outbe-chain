@@ -1922,7 +1922,6 @@ def apply_seed(
                 f"{_encrypted_key} is no longer supported: this token is TEE-encrypted "
                 f"and cannot be plaintext-seeded at genesis. Seed a `gems` entry instead "
                 f"and mine Gem -> Promis -> Gratis "
-                f"(see examples/credis-flow/src/0-setup-gratis.ts)."
             )
 
     # Seed Gems (Settled) so a demo account can mine Gem -> Promis -> Gratis.

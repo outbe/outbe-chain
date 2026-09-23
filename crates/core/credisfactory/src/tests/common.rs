@@ -40,8 +40,8 @@ pub const ISSUANCE_ISO: u16 = 840;
 
 /// Reference currency every position here elects. Deliberately distinct from
 /// [`ISSUANCE_ISO`] so a test that passes on the wrong series cannot pass by
-/// coincidence. Both pairs are seeded at the same spot rate, so the position
-/// geometry (entry 2.0, call 3.28) is unchanged by the choice.
+/// coincidence. Both pairs are seeded at the same rate, so the default call
+/// anchor is 2.0 and the call price is 3.28.
 pub const REFERENCE_ISO: u16 = 978;
 
 pub const DAY: u64 = 86_400;
@@ -72,8 +72,9 @@ pub fn policy_rate() -> U256 {
     U256::from(43_000u64)
 }
 
-/// COEN rate these tests seed on BOTH pairs: 2.0 at scale 1e6. The COEN/978 leg
-/// is what a position's entry price is struck from, so call = 3.28.
+/// COEN rate these tests seed on BOTH pairs: 2.0 at scale 1e6. Yesterday's VWAP
+/// and the current price both start here, so the call anchor is 2.0 and the
+/// call price is 3.28. The default pledge's entry price is also 2.0.
 pub fn oracle_rate() -> U256 {
     U256::from(2u64) * SCALE_1E6_U256
 }
@@ -202,9 +203,10 @@ pub fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-/// Registers the `COEN/840` and `COEN/978` pairs, seeds both spot rates, the USD
-/// policy rate, and the reference-currency registry `issue_credis` validates
-/// the elected anchor against. Idempotent - `bootstrap_for` calls it once per owner.
+/// Registers the `COEN/840` and `COEN/978` pairs, seeds both current prices, the
+/// previous closed UTC-day VWAP, the USD policy rate, and the reference-currency
+/// registry `issue_credis` validates the elected anchor against. Idempotent -
+/// `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
         .unwrap()
@@ -216,6 +218,8 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     register_reference_pair(&storage, REFERENCE_ISO);
     set_coen_rate(&storage, coen_iso_rate);
     set_coen_rate_for(&storage, REFERENCE_ISO, coen_iso_rate);
+    seed_previous_closed_day(&storage, ISSUANCE_ISO, coen_iso_rate);
+    seed_previous_closed_day(&storage, REFERENCE_ISO, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
         .policy_rate
@@ -242,15 +246,14 @@ pub fn register_reference_pair(storage: &StorageHandle<'_>, iso: u16) {
     }
 }
 
-/// Re-publishes the COEN/840 spot rate - how these tests move the live price
-/// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
-/// which is what the daily scan reads.
+/// Re-publishes the COEN/840 current price. Distinct from the finalized daily
+/// series ([`set_vwap`]), which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
     set_coen_rate_for(storage, ISSUANCE_ISO, coen_iso_rate);
 }
 
-/// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the one
-/// `issue_credis` strikes a position's entry price from.
+/// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the
+/// current price `issue_credis` compares with yesterday's VWAP.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
@@ -314,6 +317,13 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
         set_vwap_for(storage, iso, day, value);
         day = previous_date_key(day);
     }
+}
+
+/// Publishes `price` as the finalized VWAP of the UTC day closed at the
+/// storage clock, which is the day issuance reads.
+fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
+    let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
+    set_vwap_for(storage, iso, day, price);
 }
 
 /// Mirrors the oracle begin-block hook: the watermark covers every seeded day.
@@ -408,10 +418,10 @@ pub fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
-pub fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
+/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || smart_account)`).
+pub fn credis_spend_auth(eoa: Address, handle: B256, smart_account: Address) -> [u8; 32] {
     let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
-    spend_auth_mac(&pledge_secret(&mk, handle), bundle)
+    spend_auth_mac(&pledge_secret(&mk, handle), smart_account)
 }
 
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.

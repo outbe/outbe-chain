@@ -6,10 +6,10 @@ interface ICredisFactory {
     event CredisIssued(address indexed smartAccount, address indexed cca, uint256 amount);
 
     /// @notice Open a credis position against a confidential Gratis pledge. Called by
-    ///         the CCA, which presents `pledgeHandle` (the public id returned by
+    ///         the CCA, which presents `pledgeNote` (the public id returned by
     ///         `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
     ///         "credis-bind" || smartAccount), where the pledger EOA derived
-    ///         `pledgeSecret` from its modify key + the handle off-chain. The
+    ///         `pledgeSecret` from its modify key + the pledge note off-chain. The
     ///         pledge-lock ticket is consumed once and bound to `smartAccount`.
     ///         The disbursed amount and the asset are NOT calldata: both were sealed
     ///         into the ticket at `pledgeGratis` time, so the loan is issued at the
@@ -17,8 +17,7 @@ interface ICredisFactory {
     ///         as the originating CCA.
     ///
     /// `msg.sender` must be a CCA in `Active` standing at the registry, and
-    /// `smartAccount` must already be deployed - the loan is delivered by a
-    /// call into it, which would silently succeed against a codeless account.
+    /// `smartAccount` must already be deployed.
     ///
     /// The call is payable and `msg.value` must equal the pledged collateral
     /// exactly, in COEN: the CCA matches the borrower's stake one for one. That
@@ -29,7 +28,9 @@ interface ICredisFactory {
     ///
     /// `reservationId` is the hold created by `IVaultRouter.reserveStables` for this
     /// smart account. If the reservation is larger than the pledged credit, the
-    /// unused remainder is returned to the origin vault.
+    /// unused remainder is returned to the origin vault. The principal is paid directly
+    /// to the recorded issuing CCA to cover COEN delivered to the user's smart account;
+    /// the smart account's stablecoin balance is unchanged.
     /// @param referenceCurrency ISO 4217 numeric code of the threshold-evaluation
     ///        anchor, elected here and fixed for the position's life. Must be a
     ///        registered reference currency; the call price is struck from the
@@ -38,11 +39,11 @@ interface ICredisFactory {
     ///        at `pledgeGratis`, so the threshold cannot drift between pledge and
     ///        origination; any other currency is quoted at origination instead. It does
     ///        not denominate the position.
-    /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
+    /// @return positionId Derived from `pledgeNote` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function issueCredis(
         address smartAccount,
-        bytes32 pledgeHandle,
+        bytes32 pledgeNote,
         bytes32 spendAuth,
         uint16 referenceCurrency,
         uint256 reservationId

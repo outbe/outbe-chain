@@ -9,6 +9,8 @@ Feature: Transaction-pool eviction
   #     finalized, re-injected forever" loop.
   # Eviction is node-local pool policy: it never affects block validity, and a
   # healthy transaction submitted alongside must keep being mined.
+  # Per-transaction queued-eviction logs are optional diagnostics, not a
+  # correctness requirement; use the upstream Reth pool without a logging fork.
 
   @queued-lifetime
   Scenario: A transaction that can never be mined is evicted from every pool
@@ -19,7 +21,6 @@ Feature: Transaction-pool eviction
     And an ordinary transfer submitted alongside is mined
     When the pool lifetime elapses
     Then the unreachable transaction is gone from every validator's pool
-    And the submitting validator logged the exact eviction identity and reason
     When the submitting validator restarts after the queued eviction
     Then the evicted transaction stays absent and the restarted committee finalizes
     And the committee is still producing blocks

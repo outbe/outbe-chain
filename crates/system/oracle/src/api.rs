@@ -431,17 +431,6 @@ pub fn store_worldwide_day_vwap_snapshot(
     oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
 }
 
-/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or
-/// `None` when the pair is not registered or the day has no finalized value.
-pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
-    if index == 0 {
-        return Ok(None);
-    }
-    oracle.get_utc_day_vwap_for_pair(utc_day, index)
-}
-
 /// Returns the finalized VWAP for `pair` on the given UTC calendar day
 /// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
 /// day is not finalized or had no oracle data for that pair. Distinguishing
@@ -454,6 +443,20 @@ pub fn get_utc_day_vwap(
 ) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
+}
+
+/// Returns the finalized UTC-day VWAP for `COEN/<iso_code>` at its original `10^6` scale.
+/// `utc_day` is a yyyymmdd UTC date key. Missing pairs, unavailable daily prices,
+/// and stored zero prices return `None`. Oracle and storage errors propagate unchanged.
+pub fn get_utc_day_vwap_for_iso(
+    storage: StorageHandle,
+    utc_day: u32,
+    iso_code: u16,
+) -> Result<Option<U256>> {
+    let Some(index) = coen_pair_index_opt(storage.clone(), iso_code)? else {
+        return Ok(None);
+    };
+    get_utc_day_vwap(storage, utc_day, index)
 }
 
 pub fn get_max_active_scurve_value(

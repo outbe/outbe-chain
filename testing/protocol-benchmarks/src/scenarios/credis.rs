@@ -10,6 +10,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
+    time::{previous_date_key, timestamp_to_date_key},
     units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -48,7 +49,7 @@ impl CredisScenario {
 
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
-    pledge_handle: B256,
+    pledge_note: B256,
     spend_auth: [u8; 32],
     reservation_id: U256,
 }
@@ -133,10 +134,24 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         .map_err(|error| error.to_string())?;
     // The elected threshold anchor must be a registered reference currency. This
     // scenario anchors to the issuance currency, whose COEN pair is already seeded
-    // above, so the measured path stays one origination without extra oracle setup.
-    OracleContract::new(storage.clone())
+    // above. Issuance also requires that pair's previous closed UTC-day VWAP.
+    let oracle = OracleContract::new(storage.clone());
+    oracle
         .reference_currencies
         .push(REFERENCE_ISO)
+        .map_err(|error| error.to_string())?;
+    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_ISO)
+        .map_err(|error| error.to_string())?
+        .ok_or("benchmark COEN pair is not registered")?;
+    let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT));
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&closed_day)
+        .write(&index, oracle_rate())
+        .map_err(|error| error.to_string())?;
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(closed_day)
         .map_err(|error| error.to_string())?;
     storage
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
@@ -156,7 +171,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
             expires_at: CREATED_AT + 15 * 60,
         })
         .map_err(|error| error.to_string())?;
-    let (pledge_handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+    let (pledge_note, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
         storage.clone(),
         ALICE,
         pledge_stables(),
@@ -173,8 +188,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         .map_err(|error| error.to_string())?;
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .map_err(|error| error.to_string())?;
-    let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_handle), ALICE);
-    Ok((pledge_handle, spend_auth, reservation_id))
+    let spend_auth = spend_auth_mac(&pledge_secret(&modify_key, pledge_note), ALICE);
+    Ok((pledge_note, spend_auth, reservation_id))
 }
 
 impl BenchmarkScenario for CredisScenario {
@@ -199,11 +214,11 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_sub_call_stub();
         provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
         provider.stub_sub_call_at(ASSET, iso_word(ISSUANCE_ISO));
-        let (pledge_handle, spend_auth, reservation_id) =
+        let (pledge_note, spend_auth, reservation_id) =
             StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {
             provider,
-            pledge_handle,
+            pledge_note,
             spend_auth,
             reservation_id,
         })
@@ -217,7 +232,7 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             smartAccount: ALICE,
-            pledgeHandle: prepared.pledge_handle,
+            pledgeNote: prepared.pledge_note,
             spendAuth: B256::from(prepared.spend_auth),
             referenceCurrency: REFERENCE_ISO,
             reservationId: prepared.reservation_id,

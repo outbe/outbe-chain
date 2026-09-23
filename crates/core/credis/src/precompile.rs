@@ -108,9 +108,10 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         policyRate: p.policy_rate,
         entryPrice: p.entry_price,
         callPrice: p.call_price,
-        originatedAt: p.originated_at,
+        issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         calledAt: p.called_at,
         state: p.state,
+        callAnchorPrice: p.call_anchor_price,
     }
 }

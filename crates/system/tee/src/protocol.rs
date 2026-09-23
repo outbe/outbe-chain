@@ -44,7 +44,7 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 /// operator, validates the root signature, resolves the exact circuit version,
 /// and checks proof framing. After decryption it compares the enclave's expected
 /// hashes and verifies with the selected key. Raw proof/signature bytes and
-/// circuit selectors are not forwarded to the enclave.
+/// circuit versions are not forwarded; the L2 chain id binds the decrypted claim.
 ///
 /// Every field here is public and host-supplied, so the enclave never echoes any
 /// of them back - [`TributeOfferResult`] carries only what the enclave itself
@@ -87,8 +87,8 @@ pub struct EncryptedTributeOffer {
     /// active curve and is valid.
     pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied for every admitted offer. The owner is
-    /// the first public input in `zkProof`; the chain id comes from the local
-    /// execution context.
+    /// the first public input in `zkProof`; the host chain id comes from the
+    /// local execution context, and the L2 chain id from the verified network.
     #[serde(default)]
     pub zk_context: Option<TributeZkContext>,
 }
@@ -97,6 +97,31 @@ pub struct EncryptedTributeOffer {
 pub struct TributeZkContext {
     pub derived_owner: B256,
     pub chain_id: u64,
+    pub l2_chain_id: u64,
+}
+
+/// Shared four-word public claim for Demo Tribute and Niflheim Tribute.
+/// The first word is `derived_owner` in Demo's ABI and `owner` in Niflheim's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TributePublicInputs {
+    pub derived_owner: B256,
+    pub nft_hash: B256,
+    pub binding_hash: B256,
+    pub merkle_root: B256,
+}
+
+impl TributePublicInputs {
+    /// Map ABI-ordered words after the caller validates canonical field encoding.
+    pub fn from_raw_parts(
+        [derived_owner, nft_hash, binding_hash, merkle_root]: [[u8; 32]; 4],
+    ) -> Self {
+        Self {
+            derived_owner: B256::from(derived_owner),
+            nft_hash: B256::from(nft_hash),
+            binding_hash: B256::from(binding_hash),
+            merkle_root: B256::from(merkle_root),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -210,7 +235,7 @@ pub enum GratisOp {
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
     /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
-    /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
+    /// With `pledge_note = Some(handle)` the blob in `current_pledge_record` is a live
     /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
     /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
     /// (used at settlement/void to recover the EOA that keys the pledged ledger).
@@ -245,9 +270,8 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/ISO rate (scale 1e6) used for the conversion; pinned as the Credis
-    /// position's `entry_price_minor` without changing the field shape.
-    pub entry_rate: U256,
+    /// COEN/ISO rate (scale 1e6) used to size `gratis_amount`.
+    pub entry_price: U256,
 }
 
 /// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
@@ -283,8 +307,8 @@ pub struct GratisOpRequest {
     /// Modify-key authorization (required for Mint/Burn/Pledge/Unpledge; ignored for
     /// the credis-driven `ConsumePledge`/`ReleaseToEoa`/`BurnPledged`).
     pub modify_auth: ModifyAuth,
-    /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
-    pub pledge_handle: Option<B256>,
+    /// Pledge note identifying the ticket (set for `Unpledge`/`ConsumePledge`).
+    pub pledge_note: Option<B256>,
     /// Destination smart account (set for `ConsumePledge`).
     pub smart_account: Option<Address>,
     /// Spend authorization binding the pledge to `smart_account`
@@ -395,8 +419,8 @@ pub struct GratisOpResult {
     /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
     /// ticket slot). Empty and untouched for all other ops.
     pub new_pledge_record: Vec<u8>,
-    /// Deterministic pledge handle for a `Pledge` (zero otherwise).
-    pub pledge_handle: B256,
+    /// Deterministic pledge note for a `Pledge` (zero otherwise).
+    pub pledge_note: B256,
     /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
     /// The loan terms sealed in the consumed ticket (`ConsumePledge`); `None`
@@ -408,7 +432,7 @@ pub struct GratisOpResult {
     pub revealed_owner: Address,
     /// Self-contained sealed EOA blob (`nonce(12) || ChaCha20Poly1305(owner 20B)` under the
     /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
-    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_handle = None`).
+    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_note = None`).
     pub eoa_ct: Vec<u8>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
@@ -1027,6 +1051,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
                 buf.push(1);
                 buf.extend_from_slice(context.derived_owner.as_slice());
                 buf.extend_from_slice(&context.chain_id.to_be_bytes());
+                buf.extend_from_slice(&context.l2_chain_id.to_be_bytes());
             }
             None => buf.push(0),
         }
@@ -1339,7 +1364,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
     // Optional linkage fields: length/flag-prefixed so presence is unambiguous.
-    match req.pledge_handle {
+    match req.pledge_note {
         Some(h) => {
             buf.push(1);
             buf.extend_from_slice(h.as_slice());
@@ -1366,7 +1391,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
             buf.extend_from_slice(&t.stables_amount.to_be_bytes::<32>());
             buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
             buf.extend_from_slice(t.asset.as_slice());
-            buf.extend_from_slice(&t.entry_rate.to_be_bytes::<32>());
+            buf.extend_from_slice(&t.entry_price.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }

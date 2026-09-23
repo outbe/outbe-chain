@@ -71,7 +71,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         current_pledged: Vec::new(),
         current_pledge_record: Vec::new(),
         modify_auth: no_auth(),
-        pledge_handle: None,
+        pledge_note: None,
         smart_account: None,
         spend_auth: None,
         pledge_terms: None,
@@ -233,7 +233,7 @@ pub(crate) fn burn_with_fidelity(
 /// `PledgeLockTicket`, sealing the loan terms alongside it. The gratis leaves the
 /// liquid balance but is NOT yet credited to the pledged ledger (that happens at
 /// `consume_pledge`). `amount_stables` is the MAC-bound figure; the gratis actually
-/// debited comes from `terms`. Returns the pledge handle the CCA later presents at
+/// debited comes from `terms`. Returns the pledge note the CCA later presents at
 /// `requestCredis`.
 fn pledge_impl(
     storage: StorageHandle<'_>,
@@ -258,7 +258,7 @@ fn pledge_impl(
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
-    gratis.write_pledge_ticket_ct(result.pledge_handle, &result.new_pledge_record)?;
+    gratis.write_pledge_ticket_ct(result.pledge_note, &result.new_pledge_record)?;
     gratis.set_op_nonce(caller, result.next_op_nonce)?;
     let total_pledged = gratis
         .pledged_total_supply()?
@@ -273,7 +273,7 @@ fn pledge_impl(
             totalPledged: total_pledged,
         }),
     )?;
-    Ok((result.pledge_handle, result.fidelity))
+    Ok((result.pledge_note, result.fidelity))
 }
 
 pub(crate) fn pledge(
@@ -287,7 +287,7 @@ pub(crate) fn pledge(
 }
 
 /// Pledge and carry a co-located fidelity **probe** (read-only league) in the
-/// same round-trip; returns the pledge handle + the caller's league outcome for
+/// same round-trip; returns the pledge note + the caller's league outcome for
 /// the eligibility gate.
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
@@ -310,7 +310,7 @@ pub(crate) fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
     amount_stables: U256,
-    pledge_handle: B256,
+    pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
     let gratis = Gratis::new(storage.clone());
@@ -322,14 +322,14 @@ pub(crate) fn unpledge(
         amount_stables,
     );
     req.current_balance = gratis.balance_ct_of(caller)?;
-    req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_handle)?;
+    req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_note)?;
     req.modify_auth = auth;
-    req.pledge_handle = Some(pledge_handle);
+    req.pledge_note = Some(pledge_note);
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
     // `new_pledge_record` is empty -> this clears (deletes) the ticket slot.
-    gratis.write_pledge_ticket_ct(pledge_handle, &result.new_pledge_record)?;
+    gratis.write_pledge_ticket_ct(pledge_note, &result.new_pledge_record)?;
     gratis.set_op_nonce(caller, result.next_op_nonce)?;
     let total_pledged = gratis
         .pledged_total_supply()?
@@ -365,7 +365,7 @@ fn reveal_owner_inner(
         U256::ZERO,
     );
     req.current_pledge_record = blob.to_vec();
-    req.pledge_handle = handle;
+    req.pledge_note = handle;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     Ok(result.revealed_owner)
@@ -377,8 +377,8 @@ pub(crate) fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<
     reveal_owner_inner(&storage, eoa_ct, None)
 }
 
-/// requestCredis: consume `pledge_handle`'s ticket (authorized by `spend_auth`, which
-/// binds it to `bundle`), crediting the collateral into the EOA's OWN pledged ledger
+/// requestCredis: consume `pledge_note`'s ticket (authorized by `spend_auth`, which
+/// binds it to `smart_account`), crediting the collateral into the EOA's OWN pledged ledger
 /// and deleting the ticket. No escrow account and no aggregate change (it stays
 /// pledged, pending -> active). The EOA is not passed in calldata: the enclave carries it
 /// in the ticket, so we first `RevealOwner` it (to key its pledged ledger) and the
@@ -387,14 +387,14 @@ pub(crate) fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<
 /// re-prices the collateral.
 pub(crate) fn consume_pledge(
     storage: StorageHandle<'_>,
-    pledge_handle: B256,
-    bundle: Address,
+    pledge_note: B256,
+    smart_account: Address,
     spend_auth: [u8; 32],
 ) -> Result<(PledgeTerms, Vec<u8>)> {
     let gratis = Gratis::new(storage.clone());
-    let ticket_ct = gratis.pledge_ticket_ct_of(pledge_handle)?;
+    let ticket_ct = gratis.pledge_ticket_ct_of(pledge_note)?;
     // Recover the pledger EOA from the ticket so we can read/write its own pledged ledger.
-    let eoa = reveal_owner_inner(&storage, &ticket_ct, Some(pledge_handle))?;
+    let eoa = reveal_owner_inner(&storage, &ticket_ct, Some(pledge_note))?;
     let mut req = base_request(
         GratisOp::ConsumePledge,
         chain_id_b256(&storage)?,
@@ -403,14 +403,14 @@ pub(crate) fn consume_pledge(
     );
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
     req.current_pledge_record = ticket_ct;
-    req.pledge_handle = Some(pledge_handle);
-    req.smart_account = Some(bundle);
+    req.pledge_note = Some(pledge_note);
+    req.smart_account = Some(smart_account);
     req.spend_auth = Some(spend_auth);
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     // Credit the EOA's own pledged ledger and delete the consumed ticket.
     write_account_blobs(&gratis, eoa, &result)?;
-    gratis.write_pledge_ticket_ct(pledge_handle, &result.new_pledge_record)?;
+    gratis.write_pledge_ticket_ct(pledge_note, &result.new_pledge_record)?;
     let terms = result.pledge_terms.ok_or_else(|| {
         PrecompileError::Fatal("enclave dropped the consumed pledge terms".to_string())
     })?;

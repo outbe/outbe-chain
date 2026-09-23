@@ -45,7 +45,8 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 /// Convert canonical six-decimal stablecoin raw units to six-decimal GRATIS,
 /// rounded down in the user's favor (C34).
 /// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
-/// Returns `(gratis_cost, rate)`.
+/// Returns `(gratis_cost, entry_price)`, where `entry_price` is the COEN rate
+/// that sized the gratis.
 fn convert_stables_to_gratis(
     storage: StorageHandle<'_>,
     amount_stables: U256,
@@ -65,7 +66,7 @@ fn convert_stables_to_gratis(
 /// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
 /// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
-/// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
+/// `(pledge_note, gratis_cost)`; the handle is what the CCA presents at
 /// `issueCredis`. The loan's own terms - the policy rate, the floor and call prices -
 /// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
@@ -83,7 +84,7 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
-    let (gratis_amount, entry_rate) =
+    let (gratis_amount, entry_price) =
         convert_stables_to_gratis(storage.clone(), stables_amount, asset)?;
     if gratis_amount.is_zero() {
         return Err(GratisFactoryError::InvalidAmount.into());
@@ -95,7 +96,7 @@ pub fn pledge_gratis(
         stables_amount,
         gratis_amount,
         asset,
-        entry_rate,
+        entry_price,
     };
 
     // Fold a read-only league probe into the pledge round-trip (no separate
@@ -119,10 +120,10 @@ pub fn unpledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
     amount_stables: U256,
-    pledge_handle: B256,
+    pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    gratis::unpledge(storage, caller, amount_stables, pledge_note, auth)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
