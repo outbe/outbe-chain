@@ -70,7 +70,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool>
     if item.state == GemState::Qualified as u8 {
         return Ok(true);
     }
-    outbe_oracle::api::crossed_floor(
+    outbe_oracle::api::closed_above_floor(
         storage.clone(),
         item.reference_currency,
         item.floor_price_minor,

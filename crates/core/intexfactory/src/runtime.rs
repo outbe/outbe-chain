@@ -960,7 +960,7 @@ pub fn is_qualified(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
 ) -> Result<bool> {
-    outbe_oracle::api::crossed_floor(
+    outbe_oracle::api::closed_above_floor(
         storage.clone(),
         series.reference_currency,
         series.floor_price_minor,

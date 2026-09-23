@@ -42,7 +42,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
     if issued_at == 0 {
         return Ok(false);
     }
-    outbe_oracle::api::crossed_floor(
+    outbe_oracle::api::closed_above_floor(
         storage.clone(),
         bucket.reference_currency,
         bucket.floor_price_minor,

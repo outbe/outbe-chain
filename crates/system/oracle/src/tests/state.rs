@@ -1635,7 +1635,7 @@ fn seed_closed_days(oracle: &mut OracleContract, iso: u16, days: &[(u32, u64)], 
 }
 
 #[test]
-fn crossed_floor_needs_a_finalized_day_strictly_above_the_floor() {
+fn closed_above_floor_needs_a_finalized_day_strictly_above_the_floor() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         seed_closed_days(
@@ -1651,7 +1651,8 @@ fn crossed_floor_needs_a_finalized_day_strictly_above_the_floor() {
             .unwrap();
 
         let crossed = |floor: u64| {
-            crate::api::crossed_floor(storage.clone(), 840, U256::from(floor), 20260301).unwrap()
+            crate::api::closed_above_floor(storage.clone(), 840, U256::from(floor), 20260301)
+                .unwrap()
         };
         assert!(crossed(149));
         assert!(!crossed(150), "a day at the floor does not cross it");
@@ -1660,7 +1661,7 @@ fn crossed_floor_needs_a_finalized_day_strictly_above_the_floor() {
 }
 
 #[test]
-fn crossed_floor_counts_only_days_from_the_first_full_one() {
+fn closed_above_floor_counts_only_days_from_the_first_full_one() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         seed_closed_days(
@@ -1671,7 +1672,7 @@ fn crossed_floor_counts_only_days_from_the_first_full_one() {
         );
 
         let crossed = |from: u32| {
-            crate::api::crossed_floor(storage.clone(), 840, U256::from(200u64), from).unwrap()
+            crate::api::closed_above_floor(storage.clone(), 840, U256::from(200u64), from).unwrap()
         };
         assert!(
             crossed(20260228),
@@ -1683,7 +1684,7 @@ fn crossed_floor_counts_only_days_from_the_first_full_one() {
 }
 
 #[test]
-fn max_utc_day_vwap_since_reads_the_days_crossed_floor_reads() {
+fn max_utc_day_vwap_since_reads_the_same_days_as_the_floor_check() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         seed_closed_days(
@@ -1718,18 +1719,19 @@ fn max_utc_day_vwap_since_reads_the_days_crossed_floor_reads() {
         ] {
             assert_eq!(
                 max(840, from) > U256::from(floor),
-                crate::api::crossed_floor(storage.clone(), 840, U256::from(floor), from).unwrap()
+                crate::api::closed_above_floor(storage.clone(), 840, U256::from(floor), from)
+                    .unwrap()
             );
         }
     });
 }
 
 #[test]
-fn crossed_floor_is_false_for_an_unregistered_currency() {
+fn closed_above_floor_is_false_for_an_unregistered_currency() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         seed_closed_days(&mut oracle, 840, &[(20260301, 500)], 20260301);
 
-        assert!(!crate::api::crossed_floor(storage, 978, U256::from(1u64), 20260301).unwrap());
+        assert!(!crate::api::closed_above_floor(storage, 978, U256::from(1u64), 20260301).unwrap());
     });
 }

@@ -457,7 +457,7 @@ pub fn get_utc_day_vwap(
 }
 
 /// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly above `floor_minor`.
-pub fn crossed_floor(
+pub fn closed_above_floor(
     storage: StorageHandle,
     iso_code: u16,
     floor_minor: U256,
