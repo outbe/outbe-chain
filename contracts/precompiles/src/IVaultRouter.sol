@@ -202,10 +202,12 @@ interface IVaultRouter {
         external
         returns (uint256 reservationId);
 
-    /// @notice Delivers `amount` of a reservation to `receiver` (a token bundle) and
+    /// @notice Validates `receiver` as the reserved smart account, pays `amount` to
+    ///         the recorded CCA to cover COEN delivered to that account, and
     ///         returns any unused remainder to the origin vault. Caller must be a
     ///         registered liquidity target. `receiver` must be the reserved smart
     ///         account. Reverts if the reservation is missing, expired, or too small.
+    /// @dev Only CredisFactory may call. `receiver` binds the account; it cannot redirect the payout.
     function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
 
     /// @notice Deposits an unused reservation back into its origin vault and deletes it.

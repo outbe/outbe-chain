@@ -16,7 +16,7 @@ fn rust_vault_boundary_is_explicitly_partial_and_never_claims_smart_account_gas(
 
     assert_eq!(report.metadata.execution_layer, ExecutionLayer::Marginal);
     assert_eq!(report.metadata.fidelity, ScenarioFidelity::PartialStubbed);
-    assert_eq!(report.child_frames.len(), 5);
+    assert_eq!(report.child_frames.len(), 4);
     assert!(report
         .child_frames
         .iter()

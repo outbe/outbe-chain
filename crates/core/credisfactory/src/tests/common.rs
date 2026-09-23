@@ -418,10 +418,10 @@ pub fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
-pub fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
+/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || smart_account)`).
+pub fn credis_spend_auth(eoa: Address, handle: B256, smart_account: Address) -> [u8; 32] {
     let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
-    spend_auth_mac(&pledge_secret(&mk, handle), bundle)
+    spend_auth_mac(&pledge_secret(&mk, handle), smart_account)
 }
 
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
