@@ -212,6 +212,18 @@ fn qualification_is_never_stored() {
 }
 
 #[test]
+fn only_a_genesis_gem_is_issued_without_a_floor() {
+    with_storage(|storage| {
+        let mut p = sample_params(ALICE);
+        p.floor_price_minor = U256::ZERO;
+        assert!(api::add_gem(storage, p.clone()).is_err());
+
+        p.gem_type = crate::GENESIS_GEM_TYPE;
+        assert!(api::add_gem(storage, p).is_ok());
+    });
+}
+
+#[test]
 fn set_state_only_settles() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();

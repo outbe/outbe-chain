@@ -194,6 +194,11 @@ fn find_valid_nonce(gem_id: U256) -> u64 {
 }
 
 #[test]
+fn the_gem_crate_names_the_genesis_type_this_factory_issues() {
+    assert_eq!(GemTypes::Genesis as u8, outbe_gem::GENESIS_GEM_TYPE);
+}
+
+#[test]
 fn issue_genesis_pays_like_agents_but_carries_no_floor() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
