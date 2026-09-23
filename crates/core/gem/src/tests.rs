@@ -294,13 +294,13 @@ fn removing_a_gem_its_bin_does_not_hold_is_a_no_op() {
     });
 }
 
-/// A Genesis gem is born Qualified: it needs no closed day and waits for a call too.
+/// A Genesis gem carries no floor: it qualifies with no closed day and waits for a call too.
 #[test]
-fn a_gem_born_qualified_needs_no_closed_day() {
+fn a_gem_without_a_floor_needs_no_closed_day() {
     with_storage(|storage| {
         let mut p = sample_params(ALICE);
         p.gem_type = 0;
-        p.initial_state = GemState::Qualified;
+        p.floor_price_minor = U256::ZERO;
         let gem_id = api::add_gem(storage, p.clone()).unwrap();
         assert!(is_qualified(storage, gem_id));
         let gem = GemContract::new(storage.clone());

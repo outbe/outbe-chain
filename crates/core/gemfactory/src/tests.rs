@@ -194,7 +194,7 @@ fn find_valid_nonce(gem_id: U256) -> u64 {
 }
 
 #[test]
-fn issue_genesis_pays_like_agents_but_born_qualified() {
+fn issue_genesis_pays_like_agents_but_carries_no_floor() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
@@ -211,7 +211,8 @@ fn issue_genesis_pays_like_agents_but_born_qualified() {
             item.call_price_minor,
             rate * U256::from(228u64) / U256::from(100u64)
         );
-        assert_eq!(item.state, GemState::Qualified as u8);
+        assert_eq!(item.state, GemState::Issued as u8);
+        assert!(gem_api::is_qualified(storage, &item).unwrap());
         assert_eq!(item.gem_type, GemTypes::Genesis as u8);
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -219,7 +220,7 @@ fn issue_genesis_pays_like_agents_but_born_qualified() {
     });
 }
 
-/// Born Qualified, a Genesis gem settles before any day has closed above its floor.
+/// Without a floor, a Genesis gem settles before any day has closed.
 #[test]
 fn a_genesis_gem_settles_with_no_closed_day() {
     let rate = U256::from(2u64) * six_decimal_unit();
@@ -1033,7 +1034,7 @@ fn mine_promis_full_genesis_flow() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        // Genesis is born Qualified. settle now carries a non-zero cost and
+        // Genesis carries no floor. settle now carries a non-zero cost and
         // deposits into the Reserve vault, which the storage-only harness
         // can't service - force `Settled` directly so this test still covers
         // the mine -> burn -> Promis path. The paid settle is exercised on

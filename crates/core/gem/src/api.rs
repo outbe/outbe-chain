@@ -65,9 +65,9 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
     gem.set_state(gem_id, new_state)
 }
 
-/// Born Qualified (Genesis), or derived from finalized daily VWAPs.
+/// Qualified from birth without a floor (Genesis), or once a finalized daily VWAP closed above it.
 pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
-    if item.state == GemState::Qualified as u8 {
+    if item.floor_price_minor.is_zero() {
         return Ok(true);
     }
     outbe_oracle::api::closed_above_floor(
