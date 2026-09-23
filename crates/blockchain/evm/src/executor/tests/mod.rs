@@ -25,7 +25,7 @@ use fixtures::{
     execution_ctx_with_tee_bootstrap, metadata_with, numbered_test_address, persistent_test_tree,
     persistent_test_tree_with_marker, register_and_activate_with_ocomp_registration,
     sample_tee_bootstrap_payload, sample_tee_bootstrap_payload_at,
-    sample_tee_bootstrap_payload_for, seed_compressed_entities_genesis,
+    sample_tee_bootstrap_payload_for, seed_compressed_entities_genesis, seed_previous_day_vwap,
     seed_registered_active_validator, seed_test_committee_snapshot, seed_test_ocomp_profile,
     signer_balance, state_with_active_proposer, state_with_active_proposer_and_funded_account,
     state_with_active_proposer_and_funded_account_fixture,

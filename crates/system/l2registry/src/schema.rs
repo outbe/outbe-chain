@@ -1,13 +1,19 @@
 use alloy_primitives::{Address, B256};
+use commonware_codec::Encode;
+use commonware_cryptography::bls12381::primitives::group::G2;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
+use outbe_primitives::error::Result;
 
-/// Byte length of a compressed BLS MinSig group public key (G2).
-pub const BLS_PUBLIC_KEY_LEN: usize = 96;
+/// Byte length of the EIP-2537 G2 public key used by all registry APIs.
+pub const BLS_PUBLIC_KEY_LEN: usize = 256;
 
 /// Registered L2 network keyed by `chain_id`.
 ///
-/// The 96-byte BLS MinSig group public key is chunked into three 32-byte words.
+/// Storage remains three compressed 32-byte words, preserving existing records.
+/// Public inputs and outputs use the 256-byte EIP-2537 representation.
+/// All three words zero selects live `IDaInbox(l1_address).groupPubKey()` lookup;
+/// the registration still exists because `l1_address` remains nonzero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = l1_address)]
 pub struct L2NetworkRecord {
@@ -33,17 +39,27 @@ pub struct L2NetworkRecord {
 }
 
 impl L2NetworkRecord {
-    /// Reassembles the 96-byte BLS MinSig group public key.
-    pub fn public_key_bytes(&self) -> [u8; BLS_PUBLIC_KEY_LEN] {
-        let mut out = [0u8; BLS_PUBLIC_KEY_LEN];
+    /// Returns the registered EIP-2537 key, or 256 zero bytes for inbox mode.
+    pub fn public_key_bytes(&self) -> Result<[u8; BLS_PUBLIC_KEY_LEN]> {
+        let compressed = self.compressed_public_key_bytes();
+        if compressed == [0; 96] {
+            return Ok([0; BLS_PUBLIC_KEY_LEN]);
+        }
+        crate::public_key::expand(&compressed)
+    }
+
+    /// Internal compressed encoding for storage and native BLS verification.
+    pub(crate) fn compressed_public_key_bytes(&self) -> [u8; 96] {
+        let mut out = [0u8; 96];
         out[..32].copy_from_slice(self.pubkey_lo.as_slice());
         out[32..64].copy_from_slice(self.pubkey_mid.as_slice());
         out[64..].copy_from_slice(self.pubkey_hi.as_slice());
         out
     }
 
-    /// Splits a 96-byte BLS MinSig group public key into storage words.
-    pub fn split_public_key(pubkey: &[u8; BLS_PUBLIC_KEY_LEN]) -> (B256, B256, B256) {
+    /// Splits a validated G2 point into the existing compact storage words.
+    pub(crate) fn split_public_key(pubkey: &G2) -> (B256, B256, B256) {
+        let pubkey = pubkey.encode();
         (
             B256::from_slice(&pubkey[..32]),
             B256::from_slice(&pubkey[32..64]),

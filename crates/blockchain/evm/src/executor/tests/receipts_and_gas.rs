@@ -926,11 +926,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 block_ts,
             )
             .unwrap();
-            // Close the reward day so delivery prices the batch instead of waiting.
-            outbe_oracle::schema::OracleContract::new(storage.clone())
-                .utc_day_vwap_last_finalized
-                .write(29_991_231)
-                .unwrap();
+            seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
             let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
             rewards
                 .daily_voter_count

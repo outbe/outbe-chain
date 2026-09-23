@@ -10,7 +10,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_zk_canonical::L2CircuitVersion;
 
 use crate::errors::L2RegistryError;
-use crate::runtime::decode_public_key;
 use crate::schema::L2RegistryContract;
 
 /// Domain-separation namespace for L2 signatures over `zkMerkleRoot`.
@@ -33,6 +32,7 @@ pub enum ZkOfferCheck {
 /// - Registered chain: `zk_merkle_root` must be 32 bytes and `signature`
 ///   must be a valid BLS MinSig G1 signature over it under
 ///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
+/// - An unset stored key is resolved from the registered inbox on every check.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
     l2_chain_id: u64,
@@ -48,7 +48,7 @@ pub fn check_zk_merkle_root_signature(
         return Err(L2RegistryError::ZkMerkleRootRequired.into());
     }
 
-    let pubkey = decode_public_key(&record.public_key_bytes())?;
+    let pubkey = registry.resolve_public_key(&record)?;
     let sig = G1::decode(signature).map_err(|_| L2RegistryError::InvalidZkSignature)?;
     verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
         .map_err(|_| L2RegistryError::InvalidZkSignature)?;

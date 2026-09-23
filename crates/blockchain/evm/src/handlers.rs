@@ -156,7 +156,6 @@ pub mod vote {
     mod tests {
         use super::*;
         use alloy_sol_types::SolEvent;
-        use commonware_codec::Encode;
         use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
         use outbe_l2registry::L2RegistryContract;
         use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
@@ -216,11 +215,13 @@ pub mod vote {
             let (_, public_key) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
                 rand_commonware::rngs::SysRng,
             ));
+            let public_key = outbe_l2registry::public_key::encode(&public_key)
+                .expect("fixture L2 key encodes as EIP-2537");
             serde_json::json!({
                 "operation": "register",
                 "chainId": chain_id,
                 "l1Address": format!("{l1_address:#x}"),
-                "publicKey": format!("0x{}", hex::encode(public_key.encode())),
+                "publicKey": format!("0x{}", hex::encode(public_key)),
             })
             .to_string()
         }

@@ -30,11 +30,16 @@ pub fn dispatch(
             removeNetwork(c) => mutate_void(c, caller, |sender, c| {
                 registry.remove_network(sender, c.chainId)
             }),
+            updatePublicKey(c) => mutate_void(c, caller, |sender, c| {
+                registry.update_public_key(sender, c.chainId, &c.publicKey)
+            }),
             getNetwork(c) => view(c, |c| {
                 let record = registry.load_network(c.chainId)?;
                 Ok(IL2Registry::getNetworkReturn {
                     l1Address: record.l1_address,
-                    publicKey: Bytes::copy_from_slice(&record.public_key_bytes()),
+                    publicKey: Bytes::copy_from_slice(&crate::public_key::encode(
+                        &registry.resolve_public_key(&record)?,
+                    )?),
                 })
             }),
             chainIdByL1Address(c) => view(c, |c| registry.l1_to_chain.read(&c.l1Address)),
