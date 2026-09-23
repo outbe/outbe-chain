@@ -899,6 +899,23 @@ fn close_days_before(world: &mut World, utc_day: u32) {
                 sleep(Duration::from_millis(500));
             }
         }
+        // The ratchet closes the jump over the next blocks, so the clock is read back
+        // once it carries the new day rather than straight after the restart.
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let now = world
+                .rpc
+                .latest_block_timestamp(port)
+                .expect("committee clock after the day transition");
+            if now >= target {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "committee clock stalled at {now} short of {target}"
+            );
+            sleep(Duration::from_millis(500));
+        }
     }
     let now = world
         .rpc
@@ -936,6 +953,15 @@ fn publish_nod_qualification_quote(world: &mut World) {
         .expect("qualification quote fits scale-6 amount");
     assert!(rate > body.floorPriceMinor);
     crate::features::price_oracle::publish_controlled_quote(world, rate);
+    // Qualification reads the day this quote lands in, so that day is recorded and closed
+    // by the settlement step rather than guessed from wherever the checkpoint lands.
+    let quote_day = outbe_primitives::time::timestamp_to_date_key(
+        world
+            .rpc
+            .latest_block_timestamp(world.validators.primary_port())
+            .expect("committee clock at the qualification quote"),
+    );
+    world.state.nod_qualification_utc_day = Some(quote_day);
 }
 
 #[then("the public Tribute owner settles its Nod and redeems its exact Gratis into COEN")]
@@ -954,6 +980,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let (nod_id, _) = wait_for_materialized_nod(world, port, owner);
+    // The quote's own day carries no finalized VWAP until it closes, and the scenario's
+    // next transition comes after this step.
+    if let Some(day) = world.state.nod_qualification_utc_day {
+        close_days_before(world, outbe_primitives::time::next_date_key(day));
+    }
     let ports = world.validators.committee_ports();
     let height = world
         .rpc
@@ -967,9 +998,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         .rpc
         .block_timestamp(port, checkpoint.height)
         .expect("Nod qualification checkpoint timestamp");
-    let previous_day = outbe_primitives::time::timestamp_to_date_key(
-        timestamp.checked_sub(86_400).expect("previous UTC day"),
-    );
+    let previous_day = world.state.nod_qualification_utc_day.unwrap_or_else(|| {
+        outbe_primitives::time::timestamp_to_date_key(
+            timestamp.checked_sub(86_400).expect("previous UTC day"),
+        )
+    });
     let mut expected_vwap = None;
     let mut qualified_body = None;
     for &peer in &ports {
