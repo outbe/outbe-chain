@@ -6,6 +6,7 @@ use outbe_primitives::addresses::GEM_ADDRESS;
 #[repr(u8)]
 pub enum GemState {
     Issued = 0,
+    /// Nothing writes it; records from before qualification was derived still carry it.
     Qualified = 1,
     Called = 2,
     Settled = 3,
