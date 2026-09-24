@@ -618,6 +618,7 @@ fn complete_fresh_v2_tribute(world: &mut World, successor_wwd_value: u32, owner_
     arm_case_one_artifact_phase(
         world,
         successor_bundle_hash,
+        request.intent_id,
         completion_deadline
             .checked_duration_since(Instant::now())
             .expect("V2 artifact budget expired before worker release"),

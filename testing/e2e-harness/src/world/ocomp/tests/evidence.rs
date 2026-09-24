@@ -16,7 +16,12 @@ fn canonical_artifacts_accept_four_voters_and_both_successful_late_dispositions(
     for disposition in [None, Some("checkpoint_pruned"), Some("protocol_owned")] {
         let (mut topology, mut proof, pids) = canonical_artifact_fixture();
         topology
-            .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+            .arm_completed_artifact_phase(
+                proof.bundle_hash,
+                proof.result.job_id,
+                pids.clone(),
+                Duration::from_secs(60),
+            )
             .unwrap();
         if let Some(disposition) = disposition {
             fs::remove_file(artifact_fixture_vote_path(
@@ -58,7 +63,12 @@ fn canonical_artifacts_accept_four_voters_and_both_successful_late_dispositions(
 fn canonical_artifacts_never_exempt_a_missing_voter_journal() {
     let (mut topology, proof, pids) = canonical_artifact_fixture();
     topology
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
         .unwrap();
     let path = artifact_fixture_vote_path(&topology, 0, proof.result.job_id);
     fs::remove_file(&path).unwrap();
@@ -97,7 +107,12 @@ fn canonical_artifacts_reject_stale_wrong_job_wrong_digest_and_failure_logs() {
     );
     append_artifact_fixture_log(&topology, 3, &valid);
     topology
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
         .unwrap();
     assert!(topology
         .verify_completed_artifacts_canonical(&proof, &pids)
@@ -138,7 +153,12 @@ fn canonical_artifacts_reject_stale_wrong_job_wrong_digest_and_failure_logs() {
 fn canonical_artifacts_wait_for_missing_cas_but_fail_on_corruption() {
     let (mut topology, proof, pids) = canonical_artifact_fixture();
     topology
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
         .unwrap();
     let bytes = proof.result.encode_canonical(&poc_schema_limits()).unwrap();
     let digest = hex::encode(keccak256(&bytes));
@@ -176,10 +196,20 @@ fn canonical_artifacts_preserve_incarnation_job_quorum_and_deadline_guards() {
         .verify_completed_artifacts_canonical(&proof, &pids)
         .is_err());
     topology
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
         .unwrap();
     assert!(topology
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60)
+        )
         .is_err());
     let mut replacement = pids.clone();
     replacement.insert(3, 2_003);
@@ -204,7 +234,12 @@ fn canonical_artifacts_preserve_incarnation_job_quorum_and_deadline_guards() {
 
     let (mut expired, proof, pids) = canonical_artifact_fixture();
     expired
-        .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::ZERO)
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::ZERO,
+        )
         .unwrap();
     assert!(expired
         .verify_completed_artifacts_canonical(&proof, &pids)
@@ -212,7 +247,12 @@ fn canonical_artifacts_preserve_incarnation_job_quorum_and_deadline_guards() {
         .to_string()
         .contains("deadline elapsed"));
     assert!(expired
-        .arm_completed_artifact_phase(proof.bundle_hash, pids, Duration::from_secs(60))
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids,
+            Duration::from_secs(60)
+        )
         .is_err());
 }
 
@@ -223,7 +263,12 @@ fn canonical_artifacts_reject_replaced_or_truncated_phase_logs() {
         let (mut topology, proof, pids) = canonical_artifact_fixture();
         append_artifact_fixture_log(&topology, 3, "old launch prefix");
         topology
-            .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+            .arm_completed_artifact_phase(
+                proof.bundle_hash,
+                proof.result.job_id,
+                pids.clone(),
+                Duration::from_secs(60),
+            )
             .unwrap();
         let path = topology.cfg.validator_dir(3).join("node.log");
         if replace {
@@ -414,4 +459,74 @@ fn fork_mismatch_evidence_rejects_a_node_that_imported_h() {
         .unwrap()
         .fork_mismatch
         .is_none());
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[test]
+fn canonical_artifact_phases_retain_distinct_jobs_using_the_same_bundle() {
+    let (mut topology, mut proof, pids) = canonical_artifact_fixture();
+    proof.voters.push(3);
+    topology
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            proof.result.job_id,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    let second_job = B256::repeat_byte(0xfe);
+    assert_ne!(second_job, proof.result.job_id);
+    topology
+        .arm_completed_artifact_phase(
+            proof.bundle_hash,
+            second_job,
+            pids.clone(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    assert_eq!(topology.artifact_phases.len(), 2);
+    let original_job = proof.result.job_id;
+    proof.result.job_id = second_job;
+    assert!(
+        !matches!(
+            topology.verify_completed_artifacts_canonical(&proof, &pids),
+            Ok(Some(_))
+        ),
+        "another job must not inherit the first job's artifacts"
+    );
+    stage_completed_job_footprint(&topology, second_job);
+    let bytes = proof.result.encode_canonical(&poc_schema_limits()).unwrap();
+    for &index in pids.keys() {
+        use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
+        let cas = FilesystemCas::open(
+            topology.domain_root(index).unwrap().join("cas-v1"),
+            CasWriterRole::Supervisor,
+            CasLimits {
+                max_object_bytes: bytes.len() as u64,
+                max_total_bytes: u64::MAX,
+            },
+        )
+        .unwrap();
+        cas.publish_bytes(&bytes).unwrap();
+    }
+    assert!(topology
+        .verify_completed_artifacts_canonical(&proof, &pids)
+        .unwrap()
+        .is_some());
+    proof.result.job_id = original_job;
+    assert!(topology
+        .verify_completed_artifacts_canonical(&proof, &pids)
+        .unwrap()
+        .is_some());
+    assert!(
+        topology
+            .arm_completed_artifact_phase(
+                proof.bundle_hash,
+                proof.result.job_id,
+                pids,
+                Duration::from_secs(60)
+            )
+            .is_err(),
+        "re-arming must not erase earlier job evidence"
+    );
 }

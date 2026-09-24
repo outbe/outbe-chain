@@ -42,7 +42,7 @@ pub struct OcompTopology {
     #[cfg(feature = "ocomp-integration")]
     pub(super) successor_identity: Option<OcompLaunchIdentityV1>,
     #[cfg(feature = "ocomp-integration")]
-    pub(super) artifact_phases: BTreeMap<B256, OcompArtifactPhase>,
+    pub(super) artifact_phases: BTreeMap<(B256, B256), OcompArtifactPhase>,
     pub(super) tribute_correlation: TributeCorrelationBuilder,
     pub(super) correlated_tribute: Option<CorrelatedTributeFixtureV1>,
 }

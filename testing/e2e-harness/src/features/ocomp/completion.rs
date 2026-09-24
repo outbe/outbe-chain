@@ -210,6 +210,7 @@ fn release_pending_v1_workers_after_exact_exports(world: &mut World) {
     arm_case_one_artifact_phase(
         world,
         install.request_profile.protocol_bundle_hash,
+        request.intent_id,
         Duration::from_secs(600),
     )
     .expect("arm exact V1 incarnations before releasing workers");
@@ -645,6 +646,7 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
 pub(crate) fn arm_case_one_artifact_phase(
     world: &mut World,
     bundle_hash: B256,
+    job_id: B256,
     budget: Duration,
 ) -> eyre::Result<()> {
     world.localnet.ensure_committee_alive()?;
@@ -662,5 +664,5 @@ pub(crate) fn arm_case_one_artifact_phase(
         .collect::<eyre::Result<std::collections::BTreeMap<_, _>>>()?;
     world
         .ocomp
-        .arm_completed_artifact_phase(bundle_hash, pids, budget)
+        .arm_completed_artifact_phase(bundle_hash, job_id, pids, budget)
 }

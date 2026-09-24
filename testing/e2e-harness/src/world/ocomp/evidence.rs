@@ -38,6 +38,7 @@ impl OcompTopology {
     pub(crate) fn arm_completed_artifact_phase(
         &mut self,
         bundle_hash: B256,
+        job_id: B256,
         node_pids: BTreeMap<u8, u32>,
         budget: Duration,
     ) -> Result<()> {
@@ -59,7 +60,7 @@ impl OcompTopology {
             "artifact phase has invalid or duplicate node identities"
         );
         eyre::ensure!(
-            !self.artifact_phases.contains_key(&bundle_hash),
+            !self.artifact_phases.contains_key(&(bundle_hash, job_id)),
             "artifact phase is already armed; refusing to erase earlier evidence"
         );
         let mut nodes = BTreeMap::new();
@@ -73,12 +74,8 @@ impl OcompTopology {
             .checked_add(budget)
             .ok_or_else(|| eyre::eyre!("artifact observation budget overflows"))?;
         self.artifact_phases.insert(
-            bundle_hash,
-            OcompArtifactPhase {
-                job_id: None,
-                deadline,
-                nodes,
-            },
+            (bundle_hash, job_id),
+            OcompArtifactPhase { deadline, nodes },
         );
         Ok(())
     }
@@ -105,18 +102,13 @@ impl OcompTopology {
         );
         let phase = self
             .artifact_phases
-            .get_mut(&proof.bundle_hash)
+            .get_mut(&(proof.bundle_hash, job_id))
             .ok_or_else(|| eyre::eyre!("artifact phase was not armed before work"))?;
         let deadline = phase.deadline;
         eyre::ensure!(
             Instant::now() < deadline,
             "artifact observation deadline elapsed"
         );
-        eyre::ensure!(
-            phase.job_id.is_none_or(|previous| previous == job_id),
-            "artifact phase cannot be reused for another job"
-        );
-        phase.job_id = Some(job_id);
         eyre::ensure!(
             node_pids.len() == phase.nodes.len(),
             "artifact node inventory changed"
@@ -656,7 +648,6 @@ pub struct OcompProcessRecordV1 {
 #[cfg(feature = "ocomp-integration")]
 #[derive(Debug)]
 pub(in crate::world::ocomp) struct OcompArtifactPhase {
-    job_id: Option<B256>,
     deadline: Instant,
     nodes: BTreeMap<u8, (u32, crate::internal::launch_log::LaunchLog)>,
 }
