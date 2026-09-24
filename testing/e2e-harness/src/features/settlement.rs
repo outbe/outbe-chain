@@ -959,9 +959,24 @@ fn publish_nod_qualification_quote(world: &mut World) {
 
 #[then("the public Tribute owner settles its Nod and redeems its exact Gratis into COEN")]
 fn owner_redeems_materialized_nod(world: &mut World) {
+    redeem_materialized_nod_for_validator(world, 0);
+}
+
+#[then(
+    expr = "validator {int} settles its post-upgrade Nod and redeems its exact Gratis into COEN"
+)]
+fn post_upgrade_owner_redeems_materialized_nod(world: &mut World, owner_index: usize) {
+    assert!(
+        matches!(owner_index, 2 | 3),
+        "post-upgrade owner must be unused"
+    );
+    redeem_materialized_nod_for_validator(world, owner_index);
+}
+
+fn redeem_materialized_nod_for_validator(world: &mut World, owner_index: usize) {
     let key = world
         .validators
-        .get(0)
+        .get(owner_index)
         .evm_key()
         .expect("public Tribute owner key");
     let owner = world

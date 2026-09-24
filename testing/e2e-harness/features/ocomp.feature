@@ -66,6 +66,13 @@ Feature: Off-chain computation and Metadosis
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
     And validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN
     And a third party pays another public Nod in ERC20 and mines Gratis only for its owner
+    When the operators install node release version "0.3" before enclave governance
+    And the four validators upgrade their enclaves to version "0.2" using "target/e2e-upgrades/enclave-0.2/outbe-tee-enclave" in round 1
+    And validator 2 completes a fresh real-ZKP Tribute after the hardware upgrade
+    Then validator 2 settles its post-upgrade Nod and redeems its exact Gratis into COEN
+    When the four validators upgrade their enclaves to version "0.3" using "target/e2e-upgrades/enclave-0.3/outbe-tee-enclave" in round 2
+    And validator 3 completes a fresh real-ZKP Tribute after the hardware upgrade
+    Then validator 3 settles its post-upgrade Nod and redeems its exact Gratis into COEN
 
   @ocomp-materialization @price-oracle
   Scenario: A certified generation is materialized into user NODs in bounded batches

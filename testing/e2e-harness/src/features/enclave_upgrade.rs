@@ -39,6 +39,24 @@ fn install_node_release(world: &mut World, version: String) {
     let ports = world.validators.committee_ports();
     let key = permanent_key(world, ports[0]);
     let height = world.rpc.finalized(ports[0]).expect("pre-update finality");
+    let price = crate::features::price_oracle::stop_before_clock_restart(world);
+    let clients = suspend_computation(world);
+    let full_node = if world.state.ocomp_successor_bundle_hash.is_some() {
+        let index = world.validators.joiner_index();
+        let (pid, exit) = world
+            .localnet
+            .owned_full_node_process(index)
+            .expect("owned FullNode before node update");
+        assert!(exit.is_none());
+        world
+            .ocomp
+            .stop_keyless_full_node_roles(index.try_into().unwrap())
+            .expect("stop FullNode clients");
+        Some((index, pid))
+    } else {
+        None
+    };
+
     world
         .localnet
         .restart_committee_with_upgraded_binary(&version)
@@ -47,6 +65,29 @@ fn install_node_release(world: &mut World, version: String) {
         .rpc
         .wait_finalized_checkpoint(&ports, height + 3, 180)
         .expect("replacement nodes resume finality");
+    if let Some((index, pid)) = full_node {
+        let (_, new_pid) = world
+            .localnet
+            .restart_keyless_full_node_preserving_enclave(index, pid, 0)
+            .expect("update FullNode binary with its existing identity and data");
+        *world
+            .state
+            .ocomp_successor_node_pids_after_activation
+            .last_mut()
+            .expect("FullNode observation") = new_pid;
+        world
+            .ocomp
+            .start_keyless_full_node_roles(index.try_into().unwrap())
+            .expect("restore FullNode clients");
+        let mut all = ports.clone();
+        all.push(world.validators.http_port(index));
+        world
+            .rpc
+            .wait_finalized_checkpoint(&all, height + 3, 180)
+            .expect("updated FullNode catches up");
+    }
+    resume_computation(world, clients, price);
+
     for port in ports {
         assert_eq!(
             permanent_key(world, port),
@@ -68,6 +109,8 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
     let binary = crate::env::environment().repo.join(Path::new(&binary));
     let ports = world.validators.committee_ports();
     let permanent = permanent_key(world, ports[0]);
+    let price = crate::features::price_oracle::stop_before_clock_restart(world);
+    let clients = suspend_computation(world);
     assert!(
         !permanent.is_zero(),
         "existing DKG must already own the permanent key"
@@ -392,5 +435,40 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
         )
         .expect("post-retirement readiness"));
     }
+    resume_computation(world, clients, price);
     eprintln!("HARDWARE_ENCLAVE_UPGRADE round={round} version={version} proposal={proposal} activation={activation} mrenclave={measurement} permanent_key={permanent:#x}");
+}
+
+fn suspend_computation(
+    world: &mut World,
+) -> Option<crate::world::ocomp::OcompNodeFacingResumePlan> {
+    world.state.ocomp_successor_bundle_hash.map(|_| {
+        world
+            .ocomp
+            .suspend_node_facing_roles()
+            .expect("suspend exact computation clients during hardware rollout")
+    })
+}
+
+fn resume_computation(
+    world: &mut World,
+    clients: Option<crate::world::ocomp::OcompNodeFacingResumePlan>,
+    price: Option<u64>,
+) {
+    if let Some(clients) = clients {
+        world
+            .ocomp
+            .resume_node_facing_roles(clients)
+            .expect("restore exact computation clients after hardware rollout");
+    }
+    if let Some(pending) = crate::features::price_oracle::resume_after_clock_restart(world, price) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            assert!(
+                Instant::now() < deadline,
+                "feeder did not resume after hardware rollout"
+            );
+            sleep(Duration::from_millis(500));
+        }
+    }
 }

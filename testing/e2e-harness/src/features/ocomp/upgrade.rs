@@ -417,10 +417,6 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .expect("read V1 authority before retirement")
         .request_profile
         .protocol_bundle_hash;
-    let successor_bundle_hash = world
-        .state
-        .ocomp_successor_bundle_hash
-        .expect("V2 activation evidence");
     let ports = world.validators.committee_ports();
     let completed_height = world
         .state
@@ -462,7 +458,40 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
             .checked_add(86_400)
             .expect("next WorldwideDay timestamp"),
     );
-    let successor_wwd_value = successor_wwd.value();
+    complete_fresh_v2_tribute(world, successor_wwd.value(), 1);
+}
+
+#[when(expr = "validator {int} completes a fresh real-ZKP Tribute after the hardware upgrade")]
+fn post_hardware_upgrade_tribute(world: &mut World, owner_index: usize) {
+    assert!(
+        matches!(owner_index, 2 | 3),
+        "each post-upgrade owner must be unused"
+    );
+    let primary = world.validators.primary_port();
+    let now = world
+        .rpc
+        .latest_block_timestamp(primary)
+        .expect("post-upgrade chain clock");
+    let today = WorldwideDay::from_timestamp(now).start_timestamp();
+    let day = (0..=3)
+        .find_map(|offset| {
+            let day = WorldwideDay::from_timestamp(today + offset * 86_400).value();
+            let state = world.rpc.metadosis_wwd_state_on(primary, day)?;
+            (state.status <= 1
+                && state.lookback_end > now
+                && state.scheduled_process_time > state.lookback_end)
+                .then_some(day)
+        })
+        .expect("a canonically created future WorldwideDay must have an unused OFFERING window");
+    complete_fresh_v2_tribute(world, day, owner_index);
+}
+
+fn complete_fresh_v2_tribute(world: &mut World, successor_wwd_value: u32, owner_index: usize) {
+    let ports = world.validators.committee_ports();
+    let successor_bundle_hash = world
+        .state
+        .ocomp_successor_bundle_hash
+        .expect("active V2 worker lane");
     let primary = world.validators.primary_port();
     let schedule = world
         .rpc
@@ -516,10 +545,9 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
 
     let offerer = world
         .validators
-        .by_name("validator-1")
-        .expect("validator-1 V2 Tribute owner")
+        .get(owner_index)
         .evm_key()
-        .expect("validator-1 V2 Tribute key");
+        .expect("fresh Tribute owner key");
     let tribute_tx = world
         .rpc
         .tribute_offer_for_network_with_params(

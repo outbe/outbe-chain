@@ -27,8 +27,9 @@ pub mod update;
 pub mod contributor_payout;
 pub mod dcap_onboarding;
 pub mod dkg;
-pub mod enclave_upgrade;
 pub mod downtime;
+#[cfg(feature = "ocomp-integration")]
+pub mod enclave_upgrade;
 pub mod follower;
 mod follower_handoff;
 mod l2_registration;
