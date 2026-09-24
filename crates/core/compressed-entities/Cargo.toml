@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+default = []
+snapshot-integration = []
 test-utils = []
 
 [dependencies]
@@ -40,6 +42,11 @@ harness = false
 [[bench]]
 name = "adr009"
 harness = false
+
+[[test]]
+name = "offline_audit"
+path = "tests/offline_audit.rs"
+required-features = ["snapshot-integration"]
 
 [lints]
 workspace = true

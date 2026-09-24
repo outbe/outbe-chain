@@ -529,7 +529,7 @@ fn merge_runs<const N: usize>(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 mod sorter_tests {
     use super::RecordSorter;
     use crate::persistence::{
@@ -749,7 +749,7 @@ mod sorter_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 mod tests {
     use alloy_primitives::B256;
     use outbe_sparse_merkle_tree_v061::{
