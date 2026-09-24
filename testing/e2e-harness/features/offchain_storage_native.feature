@@ -8,9 +8,10 @@ Feature: Off-chain storage through Lysis with the native mock enclave
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
+    When an L2 network is registered through governance with an inbox contract and no pinned key
     When the committee logical clock reaches the fresh capacity OFFERING window
     Then the same fresh capacity day advances through LOOKBACK to OFFERING
-    When an operator submits one encrypted tribute offer with WAA and SRA beneficiaries
+    When a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute

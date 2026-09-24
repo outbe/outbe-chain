@@ -8,6 +8,7 @@ build = "build.rs"
 
 [features]
 default = []
+snapshot-integration = []
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
 e2e-test = ["outbe-evm/e2e-test"]
 test-protocol-overrides = [
@@ -91,6 +92,21 @@ reqwest.workspace = true
 [build-dependencies]
 vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }
 vergen-git2 = "9.1.0"
+
+[[test]]
+name = "snapshot_create"
+path = "tests/snapshot_create.rs"
+required-features = ["snapshot-integration"]
+
+[[test]]
+name = "snapshot_files"
+path = "tests/snapshot_files.rs"
+required-features = ["snapshot-integration"]
+
+[[test]]
+name = "snapshot_validate"
+path = "tests/snapshot_validate.rs"
+required-features = ["snapshot-integration"]
 
 [lints]
 workspace = true

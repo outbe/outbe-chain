@@ -961,7 +961,15 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         .expect("canonical public Tribute owner address");
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
-    let (nod_id, _) = wait_for_materialized_nod(world, port, owner);
+    let (nod_id, initial) = wait_for_materialized_nod(world, port, owner);
+    erc20_nod::qualify_public_nod(
+        world,
+        outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())
+            .expect("original public Nod identity"),
+        owner,
+        initial.floorPriceMinor,
+        initial.issuedAt,
+    );
     let ports = world.validators.committee_ports();
     let height = world
         .rpc
