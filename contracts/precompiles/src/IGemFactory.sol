@@ -21,7 +21,8 @@ interface IGemFactory {
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        owner, carry a settlement asset the gem accepts, and cover the cost.
+    ///        owner, carry a settlement asset the gem accepts, and spend exactly
+    ///        the cost.
     function settleGemWithPayNote(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. Authorized
@@ -29,6 +30,8 @@ interface IGemFactory {
     ///         where `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
+    /// @dev    `nonce` solves SHA256(`gemId` || owner || uint64(0) || `nonce`) to the
+    ///         protocol difficulty; the owner is the gem's, not the caller's.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalGemFactoryUnits` counts every
     ///         Promis unit ever sent there; it is not reduced when a position drains

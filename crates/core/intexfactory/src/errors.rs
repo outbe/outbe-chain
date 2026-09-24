@@ -28,6 +28,8 @@ pub enum IntexFactoryError {
     InsufficientProofOfWork,
     #[error("{0}")]
     Rounding(RoundingError),
+    #[error("oracle nominal unavailable")]
+    OracleUnavailable,
     #[error("payment token {0} has no registered vault")]
     PaymentTokenNotRegistered(alloy_primitives::Address),
     #[error("payment token currency {0} does not match the series")]
@@ -78,7 +80,7 @@ pub enum IntexFactoryError {
     },
 
     #[error("PayNote spends {covered}, settlement costs {required}")]
-    PayNoteUndercoversCost {
+    PayNoteCostMismatch {
         covered: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },

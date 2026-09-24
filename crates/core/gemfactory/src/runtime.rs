@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for, get_utc_day_vwap_for_iso};
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -315,8 +315,9 @@ pub fn settle_gem_with_paynote(
 
         let currency = accept_payment_asset(storage, claim.asset, item)?;
         let amount_paid = cost_in_token(storage, item, claim.asset, currency)?;
-        if claim.spend_amount < amount_paid {
-            return Err(GemFactoryError::PayNoteUndercoversCost {
+        // Exact: the surplus of an over-spend is already in the reserve vault.
+        if claim.spend_amount != amount_paid {
+            return Err(GemFactoryError::PayNoteCostMismatch {
                 covered: claim.spend_amount,
                 required: amount_paid,
             }
@@ -480,7 +481,8 @@ fn accept_payment_asset(
 }
 
 /// Cost of one gem in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate into the same fraction, so the whole thing is floored once.
+/// cross rate of the last closed UTC day into the same fraction, so the whole
+/// thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -490,10 +492,14 @@ fn cost_in_token(
     let asset_decimals = read_decimals(storage, asset)?;
     let rate = match currency {
         PaymentCurrency::Reference => None,
-        PaymentCurrency::Issuance => Some((
-            fresh_coen_rate_for(storage.clone(), item.issuance_currency)?,
-            fresh_coen_rate_for(storage.clone(), item.reference_currency)?,
-        )),
+        PaymentCurrency::Issuance => {
+            // One timestamp, so both legs come from the same closed day.
+            let now = storage.timestamp()?.to::<u64>();
+            Some((
+                read_market_price(storage, item.issuance_currency, now)?,
+                read_market_price(storage, item.reference_currency, now)?,
+            ))
+        }
     };
     settlement_units(item, rate, asset_decimals)
 }
@@ -605,7 +611,7 @@ pub fn mine_promis(
         return Err(GemFactoryError::InvalidState.into());
     }
 
-    validate_pow(gem_id, nonce)?;
+    validate_pow(gem_id, item.owner, nonce)?;
 
     gem_api::burn(storage, gem_id)?;
 
@@ -626,13 +632,10 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-fn read_market_price(
-    storage: &StorageHandle<'_>,
-    reference_currency: u16,
-    now: u64,
-) -> Result<U256> {
+/// COEN price of `iso_code` from the last closed UTC day.
+fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)?
+    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
@@ -708,8 +711,9 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// PoW gate for `mine_promis`, delegating to the shared
-/// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
-    pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
+/// PoW gate for `mine_promis`. The preimage is
+/// `gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
+    pow::validate_mining_pow(gem_id, owner, pow::SINGLE_EXERCISE_SEQUENCE, nonce)
+        .map_err(|e| GemFactoryError::from(e).into())
 }

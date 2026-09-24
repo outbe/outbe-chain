@@ -24,10 +24,10 @@ use outbe_gemfactory::GemTypes;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
+    time::{date_key_to_utc_timestamp, next_date_key},
 };
 
 use crate::constants::REWARD_GEM_CURRENCY;
-use crate::runtime::day_number_since_genesis;
 use crate::schema::Rewards;
 
 /// Returns the raw fee total accumulated for the given UTC day. This is
@@ -146,10 +146,12 @@ fn prepare_daily_validator_gem_batch_inner(
         ));
     }
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    let gem_type = if day_number_since_genesis(ctx, utc_day)? < 21 {
-        GemTypes::Genesis
-    } else {
-        GemTypes::Validator
+    // The type is frozen into the batch digest, so it reads the rewarded day's
+    // close, never the block that happens to prepare or retry the batch.
+    let day_close = date_key_to_utc_timestamp(next_date_key(utc_day));
+    let gem_type = match outbe_metadosis::api::bootstrap_end_time(ctx.storage.clone())? {
+        Some(end) if day_close > end => GemTypes::Validator,
+        _ => GemTypes::Genesis,
     };
 
     let total_count = voters.iter().try_fold(0u64, |total, (_, count)| {
@@ -937,6 +939,13 @@ mod tests {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
             bootstrap_genesis(&ctx);
             seed_oracle(&ctx, U256::from(2u64) * one_coen840());
+            // The bootstrap closes as the first rewarded day does, so that day is
+            // still Genesis and the next one is not.
+            outbe_metadosis::test_support::seed_bootstrap_end_time(
+                ctx.storage.clone(),
+                date_key_to_utc_timestamp(20240102),
+            )
+            .unwrap();
 
             prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(50u64), &[(VAL_X, 1)])
                 .unwrap();
