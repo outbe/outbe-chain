@@ -162,10 +162,24 @@ pub async fn run_renewal_once_v1(
         }
     }
 
+    if let Some(super::UpgradeJournalSnapshotV1 {
+        lifecycle: super::UpgradeJournalStateV1::CandidatePrepared { context },
+        ..
+    }) = &upgrade
+    {
+        let committed = config
+            .manifest
+            .authorization_hash()
+            .map_err(|error| eyre::eyre!("hash predecessor manifest: {error}"))?;
+        if committed != context.predecessor_manifest_hash {
+            eyre::bail!("renewal does not match the prepared upgrade predecessor");
+        }
+    }
+
     let mut renewal = journal.load()?;
     if let (Some(upgrade), Some(snapshot)) = (&upgrade, &renewal) {
-        if completed_predecessor_renewal(&upgrade.lifecycle, snapshot, config, &view)? {
-            journal.archive_finalized(snapshot)?;
+        if terminal_predecessor_renewal(&upgrade.lifecycle, snapshot, config, &view)? {
+            journal.archive_terminal(snapshot)?;
             renewal = None;
         }
     }
@@ -256,31 +270,38 @@ pub async fn run_renewal_once_v1(
     .await
 }
 
-/// Only a completed renewal from the same chain and persistent NodeHost may
+/// Only a finalized or permanently stale abandoned renewal from the same NodeHost may
 /// be retired. Pending bytes and records from another identity remain conflicts.
 /// The caller first authenticates the committed promoted manifest against the
 /// finalized Registry; monotonic replacement counters establish the newer era.
-fn completed_predecessor_renewal(
+fn terminal_predecessor_renewal(
     upgrade: &super::UpgradeJournalStateV1,
     renewal: &RenewalJournalSnapshotV1,
     config: &RenewalServiceConfigV1,
     view: &FinalizedRenewalChainViewV1,
 ) -> Result<bool> {
-    let super::UpgradeJournalStateV1::Promoted {
-        finalized_height: promoted_at,
-        ..
-    } = upgrade
-    else {
-        return Ok(false);
+    let predecessor_ceiling = match upgrade {
+        super::UpgradeJournalStateV1::Promoted {
+            finalized_height, ..
+        } => *finalized_height,
+        super::UpgradeJournalStateV1::CandidatePrepared { .. } => view.schedule.finalized_height,
+        _ => return Ok(false),
     };
-    let RenewalJournalStateV1::Finalized {
-        attempt,
-        finalized_binding: old,
-        finalized_height,
-        ..
-    } = &renewal.lifecycle
-    else {
-        return Ok(false);
+    let (attempt, old, finalized_height) = match &renewal.lifecycle {
+        RenewalJournalStateV1::Finalized {
+            attempt,
+            finalized_binding,
+            finalized_height,
+            ..
+        } => (attempt.as_ref(), finalized_binding, *finalized_height),
+        RenewalJournalStateV1::Abandoned {
+            attempt,
+            abandoned_at_finalized_height,
+            ..
+        } if permanent_staleness(attempt, view.schedule.finalized_timestamp).is_some() => {
+            (attempt, &attempt.source, *abandoned_at_finalized_height)
+        }
+        _ => return Ok(false),
     };
     let current = &view.binding;
     let intent = RegistrationIntentV1::decode_canonical(&attempt.intent)
@@ -295,7 +316,7 @@ fn completed_predecessor_renewal(
         && old.transition_nonce < current.transition_nonce
         && old.registration_version < current.registration_version
         && old.renewal_nonce <= current.renewal_nonce
-        && finalized_height <= promoted_at)
+        && finalized_height <= predecessor_ceiling)
 }
 
 fn validate_identity(
@@ -1531,7 +1552,15 @@ mod tests {
 
     #[tokio::test]
     async fn promoted_enclave_can_check_renewal_without_replaying_its_predecessor() {
-        for predecessor_state in ["none", "finalized", "prepared", "wrong-chain"] {
+        for predecessor_state in [
+            "none",
+            "finalized",
+            "prepared",
+            "wrong-chain",
+            "abandoned",
+            "abandoned-not-stale",
+            "next-prepared",
+        ] {
             let node_data_dir = tempfile::tempdir().unwrap();
             let (mut rpc, relay, mut config, attempt) =
                 replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
@@ -1549,6 +1578,12 @@ mod tests {
                     RenewalJournalStateV1::Prepared {
                         attempt: attempt.clone(),
                     }
+                } else if predecessor_state.starts_with("abandoned") {
+                    RenewalJournalStateV1::Abandoned {
+                        attempt: attempt.clone(),
+                        abandoned_at_finalized_height: 90,
+                        reason: "expired predecessor intent".into(),
+                    }
                 } else {
                     RenewalJournalStateV1::Finalized {
                         attempt: Box::new(attempt.clone()),
@@ -1561,6 +1596,12 @@ mod tests {
                     .unwrap()
                     .store(RenewalJournalSnapshotV1::new(lifecycle))
                     .unwrap();
+                if predecessor_state == "abandoned" {
+                    rpc.schedule.finalized_timestamp = attempt.requested_valid_until;
+                    rpc.binding.lease_started_at = rpc.schedule.finalized_timestamp;
+                    rpc.binding.valid_until =
+                        rpc.schedule.finalized_timestamp + rpc.policy.maximum_lease;
+                }
                 config.manifest.recipient_x25519 = [0x97; 32];
                 rpc.binding.recipient_x25519 = config.manifest.recipient_x25519.into();
                 rpc.binding.enclave_id = config.manifest.enclave_id().unwrap();
@@ -1575,11 +1616,17 @@ mod tests {
                         config.manifest.node_host_authorization_hash().unwrap();
                 }
             }
+            let mut checkpoint = promoted_checkpoint(&rpc, &config, &attempt);
+            if predecessor_state == "next-prepared" {
+                let mut context = checkpoint.context().clone();
+                context.predecessor_manifest_hash = config.manifest.authorization_hash().unwrap();
+                context.candidate_manifest_hash = B256::repeat_byte(0xad);
+                context.activation_height = rpc.schedule.finalized_height + 100;
+                checkpoint = super::super::UpgradeJournalStateV1::CandidatePrepared { context };
+            }
             super::super::UpgradeJournalGuardV1::acquire(node_data_dir.path())
                 .unwrap()
-                .store(super::super::UpgradeJournalSnapshotV1::new(
-                    promoted_checkpoint(&rpc, &config, &attempt),
-                ))
+                .store(super::super::UpgradeJournalSnapshotV1::new(checkpoint))
                 .unwrap();
             let mut enclave = ReplayMustNotPrepare;
             let node_signer = |_hash: B256| -> Result<[u8; 65]> {
@@ -1588,7 +1635,10 @@ mod tests {
             let outcome =
                 run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config).await;
             let journal = RenewalJournalGuard::acquire(node_data_dir.path()).unwrap();
-            if matches!(predecessor_state, "prepared" | "wrong-chain") {
+            if matches!(
+                predecessor_state,
+                "prepared" | "wrong-chain" | "abandoned-not-stale"
+            ) {
                 assert!(
                     outcome.is_err(),
                     "{predecessor_state} must remain a conflict"
@@ -1597,11 +1647,19 @@ mod tests {
             } else {
                 assert!(matches!(outcome.unwrap(), RenewalOutcomeV1::NotDue { .. }));
                 assert!(journal.load().unwrap().is_none());
-                if predecessor_state == "finalized" {
-                    let archive = node_data_dir
-                        .path()
-                        .join("tee-renewal-v1")
-                        .join(format!("finalized-{:x}.json", attempt.intent_hash));
+                if matches!(
+                    predecessor_state,
+                    "finalized" | "abandoned" | "next-prepared"
+                ) {
+                    let archive = node_data_dir.path().join("tee-renewal-v1").join(format!(
+                        "{}-{:x}.json",
+                        if predecessor_state == "abandoned" {
+                            "abandoned"
+                        } else {
+                            "finalized"
+                        },
+                        attempt.intent_hash
+                    ));
                     let retained: RenewalJournalSnapshotV1 =
                         serde_json::from_slice(&std::fs::read(archive).unwrap()).unwrap();
                     assert_eq!(retained.lifecycle.attempt(), &attempt);

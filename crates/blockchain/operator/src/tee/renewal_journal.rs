@@ -341,14 +341,17 @@ impl RenewalJournalGuard {
     /// Retain the completed predecessor's exact record before starting a
     /// successor journal. A hard link is atomic and keeps the original private
     /// inode durable; a crash before unlinking the active name is replayable.
-    pub(crate) fn archive_finalized(&self, expected: &RenewalJournalSnapshotV1) -> Result<()> {
-        if !matches!(expected.lifecycle, RenewalJournalStateV1::Finalized { .. })
-            || self.load()?.as_ref() != Some(expected)
+    pub(crate) fn archive_terminal(&self, expected: &RenewalJournalSnapshotV1) -> Result<()> {
+        if !matches!(
+            expected.lifecycle,
+            RenewalJournalStateV1::Finalized { .. } | RenewalJournalStateV1::Abandoned { .. }
+        ) || self.load()?.as_ref() != Some(expected)
         {
             eyre::bail!("only the exact completed renewal can be archived");
         }
         let archive = self.paths.root.join(format!(
-            "finalized-{:x}.json",
+            "{}-{:x}.json",
+            expected.lifecycle.label(),
             expected.lifecycle.attempt().intent_hash,
         ));
         match fs::hard_link(&self.paths.journal, &archive) {
@@ -744,7 +747,7 @@ mod tests {
             }
             drop(guard);
             let restarted = RenewalJournalGuard::acquire(directory.path()).unwrap();
-            restarted.archive_finalized(&snapshot).unwrap();
+            restarted.archive_terminal(&snapshot).unwrap();
             assert!(restarted.load().unwrap().is_none());
             assert_eq!(read_snapshot(&archive).unwrap(), Some(snapshot));
             assert_eq!(
@@ -790,7 +793,7 @@ mod tests {
             .unwrap();
         file.write_all(&bytes).unwrap();
         file.sync_all().unwrap();
-        assert!(guard.archive_finalized(&snapshot).is_err());
+        assert!(guard.archive_terminal(&snapshot).is_err());
         assert_eq!(guard.load().unwrap(), Some(snapshot));
         assert_eq!(read_snapshot(&archive).unwrap(), Some(other));
     }
@@ -803,7 +806,7 @@ mod tests {
             attempt: direct_attempt(),
         });
         guard.store(snapshot.clone()).unwrap();
-        assert!(guard.archive_finalized(&snapshot).is_err());
+        assert!(guard.archive_terminal(&snapshot).is_err());
         assert_eq!(guard.load().unwrap(), Some(snapshot));
     }
 
