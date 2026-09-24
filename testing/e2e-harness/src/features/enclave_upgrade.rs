@@ -255,13 +255,18 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             .rpc
             .block_timestamp(port, world.rpc.finalized(port).unwrap())
             .unwrap();
+        // Match normal NodeHost admission: the business scenario advances the
+        // consensus clock across UTC days after each enclave replacement.
+        let valid_until = timestamp
+            .checked_add(outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1)
+            .expect("replacement NodeHost lease deadline");
         let provision = vec![
             "--genesis".into(),
             genesis.display().to_string(),
             "--binding-id".into(),
             format!("{id:#x}"),
             "--valid-until".into(),
-            (timestamp + 7200).to_string(),
+            valid_until.to_string(),
         ];
         world
             .localnet
@@ -381,7 +386,7 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
                     "--binding-id".into(),
                     format!("{id:#x}"),
                     "--valid-until".into(),
-                    (timestamp + 7200).to_string(),
+                    valid_until.to_string(),
                 ],
             )
             .expect("submit resident-key transition");
