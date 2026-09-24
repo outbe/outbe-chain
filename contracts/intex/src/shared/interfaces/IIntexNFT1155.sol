@@ -28,9 +28,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is read-only:
-    ///      storage keeps `Called` so the transfer and bridge freezes, which compare the
-    ///      stored field, keep applying.
+    /// @dev Issued -> Called -> Expired; `Qualified` is derived and no longer written. `Expired` is read-only:
+    ///      storage keeps `Called`, so the freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
         Qualified,
@@ -136,7 +135,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens burned.
     event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
-    /// @notice Emitted when the collection's daily VWAP source is set.
     event VwapSourceSet(address indexed source);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
@@ -163,8 +161,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroAmount();
     /// @notice A mint or crosschainMint quantity exceeds the range its packed storage field can hold.
     error QuantityTooLarge(uint256 quantity);
-    /// @notice Settle attempted in a series state that does not allow it.
-    error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
     /// @notice Owner-to-owner transfer attempted while the series is Called.
@@ -214,17 +210,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     function issue(address to, uint256 quantity, bytes14 seriesId) external;
 
-    /// @notice Mark a series as Qualified (Issued -> Qualified).
-    /// @param seriesId Series identifier.
-    function markQualified(bytes14 seriesId) external;
-
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
+    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification; a Called
+    ///      series settles only until its deadline.
     /// @param seriesId Series identifier.
     /// @param from Owner whose Issued tokens are burned.
     /// @param to Recipient of the newly minted Settled tokens.
@@ -248,12 +241,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The amount of burned tokens.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
-    /// @notice Point the collection at the daily VWAP source its cards read. Admin only; zero derives none.
+    /// @notice Zero derives no qualification.
     function setVwapSource(address source) external;
 
     // --- Reads ---
 
-    /// @notice The daily VWAP source the cards read; zero until set.
     function vwapSource() external view returns (address);
 
     /// @notice Whether the series has been created here.
@@ -264,6 +256,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
+    /// @notice Whether a finalized daily VWAP from the series' first full UTC day on closed above its floor,
+    ///         as the card renders it. A missing or failing source reads as not qualified.
+    /// @param seriesId Series identifier.
+    function isQualified(bytes14 seriesId) external view returns (bool);
+
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure helper.

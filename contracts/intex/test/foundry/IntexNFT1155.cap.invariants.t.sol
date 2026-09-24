@@ -60,9 +60,6 @@ contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
         handler = new NFT1155CapHandler(intex, SERIES_ID, bidders);
         // Handler drives mint/crosschainBurn directly; both are RELAYER_ROLE-gated.
         intex.grantRole(intex.RELAYER_ROLE(), address(handler));
-        // crosschainBurn is rejected while a series is Issued; Qualified opens the bridge path so the
-        // burn action can actually free cap room during the run.
-        intex.markQualified(SERIES_ID);
 
         bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = NFT1155CapHandler.mint.selector;

@@ -68,15 +68,8 @@ interface ITargetRouter {
     /// @param seriesId Series identifier.
     event MarkCalledReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
-    /// @notice Emitted when a mark-qualified message is received from Outbe.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
-    event MarkQualifiedReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
-
-    /// @notice Emitted when one finalized day is recorded into the VWAP registry.
     event DailyVwapReceived(uint32 indexed srcChainId, uint32 indexed utcDay, uint256 rows);
 
-    /// @notice Emitted when the VWAP registry this router records into is set.
     event VwapRegistrySet(address registry);
 
     /// @notice Emitted when a round of the day's bids relay leaves chunks behind: the gas it was given
@@ -119,9 +112,9 @@ interface ITargetRouter {
     /// @notice Emitted when `applyParkedIssuance` successfully retries a parked issuance.
     event ParkedIssuanceApplied(uint256 indexed idx, bytes14 indexed seriesId);
 
-    /// @notice Emitted when a lifecycle mark waits in its series' slot because the series has not landed here yet.
+    /// @notice Emitted when a Called mark waits in its series' slot because the series has not landed here yet.
     /// @param seriesId Series the mark is for.
-    /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
+    /// @param msgType Codec message type: MARK_CALLED.
     event MarkParked(bytes14 indexed seriesId, uint8 indexed msgType);
     /// @notice Emitted when a slotted mark is applied to its series.
     event ParkedMarkApplied(bytes14 indexed seriesId, uint8 indexed msgType);
@@ -175,7 +168,6 @@ interface ITargetRouter {
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
-    /// @notice Point the router at the VWAP registry it records finalized days into. Admin only.
     function setVwapRegistry(address registry) external;
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
