@@ -220,43 +220,6 @@ fn reads_on_missing_series() {
 }
 
 // ---------------------------------------------------------------------
-// state machine: mark_qualified
-// ---------------------------------------------------------------------
-
-#[test]
-fn mark_qualified_from_issued() {
-    with_registry(|s| {
-        api::create_series(&s, sample_params(1)).unwrap();
-        api::mark_qualified(&s, sid(1)).unwrap();
-        assert_eq!(
-            api::read_series(&s, sid(1))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            IntexState::Qualified
-        );
-    });
-}
-
-#[test]
-fn mark_qualified_rejected_when_not_issued() {
-    with_registry(|s| {
-        api::create_series(&s, sample_params(1)).unwrap();
-        api::mark_qualified(&s, sid(1)).unwrap();
-        // Already Qualified -> rejected.
-        let err = api::mark_qualified(&s, sid(1)).unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("state"));
-    });
-}
-
-#[test]
-fn mark_qualified_rejected_on_missing() {
-    with_registry(|s| {
-        assert!(api::mark_qualified(&s, sid(1)).is_err());
-    });
-}
-
-// ---------------------------------------------------------------------
 // state machine: mark_called
 // ---------------------------------------------------------------------
 
@@ -275,7 +238,10 @@ fn mark_called_from_issued_sets_called_at() {
 fn mark_called_from_qualified() {
     with_registry(|s| {
         api::create_series(&s, sample_params(1)).unwrap();
-        api::mark_qualified(&s, sid(1)).unwrap();
+        let registry = crate::IntexContract::new(s.clone());
+        let mut record = registry.series.get(sid(1)).unwrap().unwrap();
+        record.state = IntexState::Qualified as u8;
+        registry.series.update(&record).unwrap();
         api::mark_called(&s, sid(1), ISSUED_AT + 10).unwrap();
         assert_eq!(
             api::read_series(&s, sid(1))
@@ -340,7 +306,6 @@ fn intex_state_encoding_matches_solidity() {
 fn precompile_series_data_round_trip() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
-        api::mark_qualified(&s, sid(7)).unwrap();
 
         let call = IIntex::seriesDataCall {
             seriesId: sid(7).into(),
@@ -357,7 +322,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
         assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
-        assert_eq!(data.state, IntexState::Qualified as u8);
+        assert_eq!(data.state, IntexState::Issued as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);
         assert_eq!(data.callNoticePeriod, CALL_NOTICE_PERIOD);
     });
@@ -1093,7 +1058,6 @@ fn empty_population_and_empty_batch_are_rejected() {
 /// Create a series and drive it to `Called` so expiry can be exercised.
 fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
     api::create_series(storage, sample_params(worldwide_day)).unwrap();
-    api::mark_qualified(storage, sid(worldwide_day)).unwrap();
     api::mark_called(storage, sid(worldwide_day), ISSUED_AT).unwrap();
     sid(worldwide_day)
 }
@@ -1176,9 +1140,6 @@ fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex:
 fn expiry_is_rejected_before_the_series_is_called() {
     with_registry(|s| {
         api::create_series(&s, sample_params(43)).unwrap();
-        assert!(api::expire_series(&s, sid(43)).is_err());
-
-        api::mark_qualified(&s, sid(43)).unwrap();
         assert!(api::expire_series(&s, sid(43)).is_err());
     });
 }

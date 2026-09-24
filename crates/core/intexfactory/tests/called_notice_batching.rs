@@ -6,9 +6,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
-use outbe_intexfactory::qualified::{
-    drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
-};
+use outbe_intexfactory::notify::{drain_notices, joins_run, pack_called_notice, NOTICE_CALLED};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -137,11 +135,11 @@ fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
 }
 
 #[test]
-fn a_qualified_entry_ends_the_run() {
+fn an_entry_of_another_kind_ends_the_run_and_is_dropped() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         push_called(&handle, 0, CALLED_AT);
-        push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
+        push(&handle, 0, U256::from(1u64));
         push_called(&handle, 1, CALLED_AT);
 
         drain(&handle);
