@@ -104,7 +104,7 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified Nod's known cost directly in ERC20 base units.
+/// Pays a qualified or called Nod's known cost directly in ERC20 base units.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -156,7 +156,7 @@ pub fn settle_nod(
     })
 }
 
-/// Pays a qualified Nod's exact cost by spending a PayNote.
+/// Pays a qualified or called Nod's exact cost by spending a PayNote.
 pub fn settle_nod_with_paynote(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -189,12 +189,16 @@ fn settle(
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
-    if !bucket.body().is_qualified {
-        return Err(NodFactoryError::NodNotQualified.into());
-    }
-    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
-    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
-        return Err(NodFactoryError::CallDeadlineExpired.into());
+    // The call check is one read; the qualification walk goes last.
+    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
+        0 if !nod_api::is_qualified(storage, bucket.body())? => {
+            return Err(NodFactoryError::NodNotQualified.into());
+        }
+        0 => {}
+        deadline if storage.timestamp()?.to::<u64>() > deadline => {
+            return Err(NodFactoryError::CallDeadlineExpired.into());
+        }
+        _ => {}
     }
     storage.clone().with_checkpoint(|| {
         let owner = item.body().owner;

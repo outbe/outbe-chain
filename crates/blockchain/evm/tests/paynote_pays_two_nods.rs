@@ -78,6 +78,29 @@ const COST: u128 = 500;
 const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
+/// Closes the bucket's first full day above its floor, which qualifies it.
+fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
+    let issued_at = NodContract::new(storage.clone())
+        .callable_bucket_issued_at
+        .read(&bucket_key)
+        .unwrap();
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let mut index = oracle.pair_index_of(pair).unwrap();
+    if index == 0 {
+        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+    }
+    let day = outbe_primitives::time::first_full_day(issued_at);
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, floor + U256::ONE)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
+}
+
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner: each proof names that address as its owner,
 /// matching the Nod owner as `settleNodWithPayNote` requires. The depositor can be different.
@@ -221,9 +244,12 @@ fn fixture() -> (
                 params.floor_price_minor,
                 params.reference_currency,
             );
-            NodContract::new(storage.clone())
-                .qualify_bucket(&scope, &parent, bucket_key)
-                .unwrap();
+            qualify(
+                &storage,
+                bucket_key,
+                params.floor_price_minor,
+                params.reference_currency,
+            );
             nod_id
         })
     });

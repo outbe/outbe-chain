@@ -15,6 +15,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
+    math::constants::MAX_BIN_ID,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key},
 };
@@ -23,7 +24,8 @@ use crate::{
     api,
     constants::{
         CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP, CALL_THRESHOLD,
-        CALL_THRESHOLD_DAYS, CALL_WINDOW, MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
+        CALL_THRESHOLD_DAYS, CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK,
+        MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -118,12 +120,17 @@ fn nod_item_issued(
     }
 }
 
+/// Registers `COEN/<iso>` and lists `iso` as a reference currency.
 fn register(storage: &StorageHandle<'_>, iso: u16) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .is_none()
     {
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso)).unwrap();
+        OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(iso)
+            .unwrap();
     }
 }
 
@@ -170,8 +177,8 @@ fn finalize_through(storage: &StorageHandle<'_>, timestamp: u64) {
     bump_watermark(storage, last_closed_day(timestamp));
 }
 
-/// Issues one Nod owned by `owner` and qualifies its bucket, which is what arms
-/// the bucket for the call scan.
+/// Issues one Nod owned by `owner` and qualifies its bucket, so its members may
+/// settle before any call.
 fn issue_qualified(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -189,9 +196,7 @@ fn issue_qualified_item(
     item: NodItemState,
 ) -> NodItemState {
     api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
-    NodContract::new(storage.clone())
-        .qualify_bucket(scope, parent, item.bucket_key)
-        .unwrap();
+    crate::tests::qualify(storage, &item);
     item
 }
 
@@ -267,9 +272,7 @@ fn arm_lapsed(
         })
         .collect();
     let bucket_key = items[0].bucket_key;
-    NodContract::new(storage.clone())
-        .qualify_bucket(scope, parent, bucket_key)
-        .unwrap();
+    crate::tests::qualify(storage, &items[0]);
     let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, bucket_key);
     for (item, &(_, _, paid)) in items.iter().zip(specs) {
         if paid {
@@ -336,9 +339,8 @@ fn reterm(
     }
 }
 
-/// Issuance seals the terms; the constants are read exactly once, there.
-/// Qualification must not be required for the snapshot to exist, and must not
-/// put the bucket on the callable list by itself.
+/// Issuance seals the terms, the constants are read exactly once there, and
+/// enrolls the bucket in the call index.
 #[test]
 fn issuance_seals_the_call_terms_on_the_bucket() {
     harness(|storage, scope, parent| {
@@ -376,10 +378,10 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
                 .unwrap(),
             START
         );
-        assert_eq!(
-            nod.callable_buckets.len().unwrap(),
+        assert_ne!(
+            nod.call_bucket_bin.read(&item.bucket_key).unwrap(),
             0,
-            "issuance seals terms without arming the call scan"
+            "issuance puts the bucket in its call bin"
         );
     });
 }
@@ -401,53 +403,6 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
                 .read(&first.bucket_key)
                 .unwrap(),
             START
-        );
-    });
-}
-
-/// Q022: a parameter change between issuance and qualification must not re-term
-/// an already-issued bucket. Rewrite the stored copy, then qualify; the scan
-/// and deadline follow the issuance-time terms, not the live constants.
-#[test]
-fn qualification_does_not_reterm_an_already_issued_bucket() {
-    harness(|storage, scope, parent| {
-        let item = nod_item(Address::repeat_byte(0x11), ISO);
-        api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
-        reterm(storage, item.bucket_key, ISO, 3, 3, 1);
-
-        NodContract::new(storage.clone())
-            .qualify_bucket(scope, parent, item.bucket_key)
-            .unwrap();
-
-        let nod = NodContract::new(storage.clone());
-        assert_eq!(
-            nod.callable_bucket_call_window
-                .read(&item.bucket_key)
-                .unwrap(),
-            3 * SECS_PER_DAY
-        );
-        assert_eq!(
-            nod.callable_bucket_call_threshold
-                .read(&item.bucket_key)
-                .unwrap(),
-            3 * SECS_PER_DAY
-        );
-        assert_eq!(
-            nod.callable_bucket_call_notice_period
-                .read(&item.bucket_key)
-                .unwrap(),
-            SECS_PER_DAY
-        );
-
-        let at = START + 30 * DAY;
-        let latest = last_closed_day(at);
-        fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
-        fill_days(storage, latest, 3, above_call());
-        assert_eq!(scan(storage, scope, parent, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
-        assert_eq!(
-            api::settlement_deadline(storage, item.bucket_key).unwrap(),
-            at + DAY
         );
     });
 }
@@ -881,24 +836,23 @@ fn the_notice_period_expires_strictly_after_the_deadline() {
 }
 
 #[test]
-fn forfeiting_the_last_member_drops_the_bucket_from_the_callable_index() {
+fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
     harness(|storage, scope, parent| {
         let at = START + 30 * DAY;
         let item = call_bucket(storage, scope, parent, Address::repeat_byte(0x11), at);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.called_buckets.len().unwrap(), 1);
         assert_eq!(
-            NodContract::new(storage.clone())
-                .callable_buckets
-                .len()
-                .unwrap(),
-            1
+            nod.call_bucket_bin.read(&item.bucket_key).unwrap(),
+            0,
+            "the call moved the bucket out of its bin"
         );
 
         let past = at + NOTICE + 1;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 1);
 
-        let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.callable_buckets.len().unwrap(), 0);
+        assert_eq!(nod.called_buckets.len().unwrap(), 0);
         assert_eq!(nod.bucket_called_at.read(&item.bucket_key).unwrap(), 0);
         assert_eq!(nod.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
@@ -962,10 +916,13 @@ fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
     });
 }
 
+/// A bucket is callable from issuance, whether or not it has qualified, and a
+/// called bucket's members settle without qualifying.
 #[test]
-fn an_unqualified_bucket_is_never_visited_by_the_call_scan() {
+fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
     harness(|storage, scope, parent| {
-        let item = nod_item(Address::repeat_byte(0x11), ISO);
+        // A floor above every breach day, so the bucket never qualifies.
+        let item = nod_item_at(Address::repeat_byte(0x11), ISO, U256::from(10_000_000u64));
         api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
 
         let at = START + 30 * DAY;
@@ -975,9 +932,23 @@ fn an_unqualified_bucket_is_never_visited_by_the_call_scan() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
+        assert_eq!(scan(storage, scope, parent, at), 1);
+        assert_eq!(called_at(storage, item.bucket_key), at);
 
-        assert_eq!(scan(storage, scope, parent, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        let id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        let bucket = api::load_bucket(storage, scope, parent, id)
+            .unwrap()
+            .unwrap();
+        assert!(!api::is_qualified(storage, bucket.body()).unwrap());
+        api::settle_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, item.nod_id)
+                .unwrap()
+                .unwrap(),
+            bucket,
+        )
+        .unwrap();
     });
 }
 
@@ -994,10 +965,6 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
                 item
             })
             .collect();
-        let bucket_key = items[0].bucket_key;
-        NodContract::new(storage.clone())
-            .qualify_bucket(scope, parent, bucket_key)
-            .unwrap();
 
         let at = START + 30 * DAY;
         fill_days(
@@ -1037,10 +1004,6 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
                 item
             })
             .collect();
-        let bucket_key = items[0].bucket_key;
-        NodContract::new(storage.clone())
-            .qualify_bucket(scope, parent, bucket_key)
-            .unwrap();
 
         let at = START + 30 * DAY;
         fill_days(
@@ -1067,25 +1030,15 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
 fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
     harness(|storage, scope, parent| {
         // Three distinct buckets: distinct floor prices on one worldwide day.
-        let specs = [
-            (Address::repeat_byte(0x11), U256::from(11)),
-            (Address::repeat_byte(0x22), U256::from(22)),
-            (Address::repeat_byte(0x33), U256::from(33)),
-        ];
-        let items: Vec<NodItemState> = specs
-            .iter()
-            .map(|(owner, floor)| {
-                let item = nod_item_at(*owner, ISO, *floor);
+        let items: Vec<NodItemState> = [11u64, 22, 33]
+            .into_iter()
+            .zip([0x11u8, 0x22, 0x33])
+            .map(|(floor, owner)| {
+                let item = nod_item_at(Address::repeat_byte(owner), ISO, U256::from(floor));
                 api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
-                NodContract::new(storage.clone())
-                    .qualify_bucket(scope, parent, item.bucket_key)
-                    .unwrap();
                 item
             })
             .collect();
-
-        // Call only the middle bucket, by breaching while the others are unarmed.
-        // Arming order is issuance order, so index 1 is the middle of the list.
         let at = START + 30 * DAY;
         fill_days(
             storage,
@@ -1095,45 +1048,221 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
         );
         assert_eq!(scan(storage, scope, parent, at), 3, "all three call");
 
-        // Drop the outer two back to uncalled so only the middle one lapses; the
-        // pass must still visit the neighbours the swap-pop moves around.
+        // Keep the one on top of the called list inside its notice, so the walk
+        // swap-pops it down into each hole the two lapsed ones leave below it.
         let nod = NodContract::new(storage.clone());
-        nod.bucket_called_at.write(&items[0].bucket_key, 0).unwrap();
-        nod.bucket_called_at.write(&items[2].bucket_key, 0).unwrap();
-
+        let top = nod
+            .called_buckets
+            .get(nod.called_buckets.len().unwrap() - 1)
+            .unwrap()
+            .unwrap();
         let past = at + NOTICE + 1;
+        nod.bucket_called_at.write(&top, past).unwrap();
+        finalize_through(storage, past);
+        assert_eq!(scan(storage, scope, parent, past), 2);
+
+        for item in &items {
+            assert_eq!(
+                api::get_item(storage, scope, parent, item.nod_id)
+                    .unwrap()
+                    .is_some(),
+                item.bucket_key == top,
+                "only the bucket still inside its notice survives"
+            );
+        }
+        assert_eq!(nod.called_buckets.len().unwrap(), 1);
+        assert_eq!(nod.called_buckets.get(0).unwrap(), Some(top));
+    });
+}
+
+/// A walk that runs out of visits inside a bin resumes there, and the bucket a
+/// call swap-pops into each hole is neither visited twice nor skipped.
+#[test]
+fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
+    harness(|storage, scope, parent| {
+        let at = START + 30 * DAY;
+        // One call bin; the last bucket is too young to hold the threshold.
+        let items: Vec<NodItemState> = [
+            (11u64, 0x11u8, START),
+            (22, 0x22, START),
+            (33, 0x33, at - 5 * DAY),
+        ]
+        .into_iter()
+        .map(|(floor, owner, issued_at)| {
+            let item = nod_item_issued(
+                Address::repeat_byte(owner),
+                ISO,
+                U256::from(floor),
+                WWD,
+                issued_at,
+            );
+            api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+            item
+        })
+        .collect();
+        let latest = last_closed_day(at);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
+        let mut day = latest;
+        let window: Vec<(u32, Option<U256>)> = (0..CALL_LOOKBACK_DAYS)
+            .map(|_| {
+                let entry = (day, Some(above_call()));
+                day = previous_date_key(day);
+                entry
+            })
+            .collect();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            storage.clone(),
+        );
+        let mut nod = NodContract::new(storage.clone());
+
+        // Two visits: the young bucket on top, then the middle one, which is called.
+        let mut visits = MAX_NOD_CALL_VISITS_PER_BLOCK - 2;
+        assert_eq!(
+            crate::called::call_currency(
+                &ctx,
+                &mut nod,
+                ISO,
+                &window,
+                MAX_BIN_ID,
+                &mut visits,
+                &mut std::collections::BTreeSet::new(),
+            )
+            .unwrap(),
+            (1, false)
+        );
+        let mut visits = 0;
+        assert_eq!(
+            crate::called::call_currency(
+                &ctx,
+                &mut nod,
+                ISO,
+                &window,
+                MAX_BIN_ID,
+                &mut visits,
+                &mut std::collections::BTreeSet::new(),
+            )
+            .unwrap(),
+            (1, true)
+        );
+        assert_eq!(visits, 1, "the resumed walk visits only what was left");
+        assert_eq!(called_at(storage, items[0].bucket_key), at);
+        assert_eq!(called_at(storage, items[1].bucket_key), at);
+        assert_eq!(called_at(storage, items[2].bucket_key), 0);
+        let bin = NodContract::price_to_bin(at_call()).unwrap();
+        assert_eq!(
+            nod.call_bin_count
+                .read(&NodContract::scoped(ISO, bin))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            nod.call_bin_buckets
+                .read(&NodContract::bin_index_key(ISO, bin, 0))
+                .unwrap(),
+            items[2].bucket_key
+        );
+        nod.remove_call_bin(items[2].bucket_key).unwrap();
+        assert_eq!(
+            nod.call_bin_count
+                .read(&NodContract::scoped(ISO, bin))
+                .unwrap(),
+            0
+        );
+    });
+}
+
+fn slice(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    timestamp: u64,
+) -> u32 {
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        storage.clone(),
+    );
+    crate::called::run_call_slice(&ctx, scope, parent).unwrap()
+}
+
+#[test]
+fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
+    harness(|storage, scope, parent| {
+        let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK + 1)
+            .map(|owner| {
+                let item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
+                api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+                item
+            })
+            .collect();
+        let bucket_key = items[0].bucket_key;
+        let at = START + 30 * DAY;
         fill_days(
             storage,
-            last_closed_day(past),
+            last_closed_day(at),
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
-        // One forfeit for the middle bucket plus two fresh calls for the others.
-        assert_eq!(scan(storage, scope, parent, past), 3);
+        assert_eq!(scan(storage, scope, parent, at), 1);
 
-        assert!(api::get_item(storage, scope, parent, items[1].nod_id)
-            .unwrap()
-            .is_none());
-        for index in [0usize, 2] {
-            assert!(
-                api::get_item(storage, scope, parent, items[index].nod_id)
-                    .unwrap()
-                    .is_some(),
-                "neighbour bucket {index} was wrongly burned"
-            );
-            assert_eq!(
-                called_at(storage, items[index].bucket_key),
-                past,
-                "neighbour bucket {index} was skipped by the pass"
-            );
-        }
+        let past = at + NOTICE + 1;
+        finalize_through(storage, past);
         assert_eq!(
-            NodContract::new(storage.clone())
-                .callable_buckets
-                .len()
-                .unwrap(),
-            2
+            scan(storage, scope, parent, past),
+            MAX_NOD_FORFEITS_PER_BLOCK
         );
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
+        assert_eq!(slice(storage, scope, parent, past), 1);
+        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_call_arm_out_of_visits_resumes_on_its_currency_before_any_forfeit() {
+    harness(|storage, scope, parent| {
+        register(storage, OTHER_ISO);
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        let lapsed = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &lapsed, entry_price()).unwrap();
+        assert_eq!(scan(storage, scope, parent, at), 1);
+
+        // Settled buckets still take a visit each and use up the budget in the first currency.
+        let mut nod = NodContract::new(storage.clone());
+        for index in 1..=MAX_NOD_CALL_VISITS_PER_BLOCK {
+            let key = B256::left_padding_from(&index.to_be_bytes());
+            nod.callable_bucket_currency.write(&key, ISO).unwrap();
+            nod.callable_bucket_call_price
+                .write(&key, at_call())
+                .unwrap();
+            nod.insert_call_bin(key).unwrap();
+        }
+        let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
+        api::add_nod(storage, scope, parent, &fresh, entry_price()).unwrap();
+        let past = at + NOTICE + 1;
+        let latest = last_closed_day(past);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
+        fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
+
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(
+            nod.call_currency_cursor.read().unwrap(),
+            u32::from(OTHER_ISO)
+        );
+        assert_eq!(called_at(storage, fresh.bucket_key), 0);
+        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 1);
+
+        assert_eq!(slice(storage, scope, parent, past), 2);
+        assert_eq!(called_at(storage, fresh.bucket_key), past);
+        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 0);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
 
@@ -1150,8 +1279,8 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             .collect();
         let key = items[0].bucket_key;
         let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, key);
-        let mut nod = NodContract::new(storage.clone());
-        nod.qualify_bucket(scope, parent, key).unwrap();
+        let nod = NodContract::new(storage.clone());
+        crate::tests::qualify(storage, &items[0]);
         // Settle the middle member, exercising swap-remove of the unpaid tail.
         api::settle_nod(
             storage,
@@ -1246,7 +1375,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
             .unwrap()
             .is_none());
         assert_eq!(nod.total_supply().unwrap(), 0);
-        assert_eq!(nod.callable_buckets.len().unwrap(), 0);
+        assert_eq!(nod.called_buckets.len().unwrap(), 0);
         assert_eq!(reserve(storage), expected);
     });
 }
@@ -1348,7 +1477,6 @@ fn a_running_call_sweep_keeps_its_day() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(day).unwrap();
-        nod.call_scan_cursor.write(0).unwrap();
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
@@ -1383,7 +1511,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(closed[0]).unwrap();
-        nod.call_scan_cursor.write(1).unwrap();
+        nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
         crate::called::scan_and_call(
             &BlockRuntimeContext::new(
@@ -1405,7 +1533,11 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         .unwrap();
         assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
         assert_eq!(nod.call_pending_day.read().unwrap(), closed[2]);
-        assert_eq!(nod.call_scan_cursor.read().unwrap(), 1);
+        assert_eq!(
+            nod.call_bin_cursor.read(&ISO).unwrap(),
+            1,
+            "the walk in flight was not restarted"
+        );
         (closed[0], closed[1])
     });
 

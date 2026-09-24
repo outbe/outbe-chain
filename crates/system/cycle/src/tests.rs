@@ -1709,7 +1709,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 }
 
 #[test]
-fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
+fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
     use outbe_nod::{api, NodContract, NodItemState, NodRepositoryReader};
     use outbe_oracle::{api::AddressPair, schema::OracleContract};
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
@@ -1758,48 +1758,28 @@ fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
                     issued_at: GENESIS_TS,
                 };
                 api::add_nod(&storage, scope, &parent, &body, U256::from(5)).unwrap();
-                outbe_compressed_entities::WwdEntityId::from_day_and_digest(
-                    worldwide_day,
-                    body.bucket_key,
-                )
+                body.bucket_key
+            };
+            let called_at = |bucket_key| {
+                NodContract::new(storage.clone())
+                    .bucket_called_at
+                    .read(&bucket_key)
+                    .unwrap()
             };
             let first = issue(Address::repeat_byte(0x51), 13);
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
-            assert!(
-                !api::get_bucket(&storage, scope, &parent, first)?
-                    .unwrap()
-                    .is_qualified
-            );
+            assert_eq!(called_at(first), 0);
 
             let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
-            assert!(
-                api::get_bucket(&storage, scope, &parent, first)?
-                    .unwrap()
-                    .is_qualified
-            );
-            let first_key = NodContract::bucket_key(
-                WorldwideDay::from_timestamp(GENESIS_TS),
-                U256::from(13),
-                840,
-            );
-            assert_eq!(
-                NodContract::new(storage.clone())
-                    .bucket_called_at
-                    .read(&first_key)?,
-                midnight
-            );
+            assert_eq!(called_at(first), midnight);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
 
             // New work created after the daily run waits for the next UTC slot.
             let second = issue(Address::repeat_byte(0x52), 14);
             let ctx = BlockRuntimeContext::new(block_ctx(4, midnight + 1), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
-            assert!(
-                !api::get_bucket(&storage, scope, &parent, second)?
-                    .unwrap()
-                    .is_qualified
-            );
+            assert_eq!(called_at(second), 0);
 
             // A multi-day halt runs once against the latest completed day,
             // rather than replaying the same latest price on subsequent blocks.
@@ -1812,20 +1792,12 @@ fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
-            assert!(
-                api::get_bucket(&storage, scope, &parent, second)?
-                    .unwrap()
-                    .is_qualified
-            );
+            assert_eq!(called_at(second), late);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
             let third = issue(Address::repeat_byte(0x53), 15);
             let ctx = BlockRuntimeContext::new(block_ctx(6, late + 1), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
-            assert!(
-                !api::get_bucket(&storage, scope, &parent, third)?
-                    .unwrap()
-                    .is_qualified
-            );
+            assert_eq!(called_at(third), 0);
             Ok(())
         })
         .unwrap();

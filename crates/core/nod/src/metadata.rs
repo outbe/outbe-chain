@@ -5,11 +5,12 @@ use crate::api;
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{NodBucketState, NodContract, NodItemState};
 
-/// Qualification, the call and the sealed call terms live on the bucket, as in `nodData`.
+/// The call and the sealed call terms live on the bucket, as in `nodData`; `qualified` is derived.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,
     bucket: &NodBucketState,
+    qualified: bool,
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
     let terms = nod.read_call_terms(item.bucket_key)?;
@@ -20,7 +21,7 @@ pub(crate) fn token_uri(
         nft_card::SETTLED
     } else if called {
         nft_card::CALLED
-    } else if bucket.is_qualified {
+    } else if qualified {
         nft_card::QUALIFIED
     } else {
         nft_card::ISSUED
