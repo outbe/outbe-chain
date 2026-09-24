@@ -520,10 +520,21 @@ pub(super) fn qualify_public_nod(
     floor: U256,
     issued_at: u64,
 ) {
-    assert_ne!(
-        issued_at, 0,
-        "public Nod must have a sealed issuance timestamp"
-    );
+    qualify_after_closed_day(world, floor, issued_at, "successor", |world, height| {
+        successor_is_qualified(world, owner, id, height)
+    });
+}
+
+/// Close real oracle days and observe qualification at a common finalized block.
+/// The issuance day may be partial and may contain quotes from earlier steps.
+pub(super) fn qualify_after_closed_day(
+    world: &mut World,
+    floor: U256,
+    issued_at: u64,
+    evidence_kind: &str,
+    is_qualified: impl Fn(&World, u64) -> bool,
+) {
+    assert_ne!(issued_at, 0, "asset must have a sealed issuance timestamp");
     let first_full_day = outbe_primitives::time::first_full_day(issued_at);
     let port = world.validators.primary_port();
     let ports = world.validators.committee_ports();
@@ -532,7 +543,7 @@ pub(super) fn qualify_public_nod(
         .rpc
         .wait_finalized_checkpoint(&ports, head, 120)
         .expect("qualification precondition finality");
-    if successor_is_qualified(world, owner, id, head) {
+    if is_qualified(world, head) {
         return;
     }
     let rate = floor
@@ -542,7 +553,7 @@ pub(super) fn qualify_public_nod(
     let mut first_boundary_day = None;
     // The first closed day can be the partial issuance day or contain earlier
     // low-price samples. The next entire UTC day uses only the declared quote.
-    // Two transitions are sufficient; no Nod state or Oracle history is injected.
+    // Two transitions are sufficient; no asset state or Oracle history is injected.
     for boundary in 0..2 {
         crate::features::price_oracle::publish_controlled_quote(world, rate);
         let publication = world
@@ -622,13 +633,16 @@ pub(super) fn qualify_public_nod(
                         );
                     }
                     if closed_day < first_full_day || vwap <= floor {
-                        assert_eq!(boundary, 0, "isolated high-price day must exceed Nod floor");
+                        assert_eq!(
+                            boundary, 0,
+                            "isolated high-price day must exceed asset floor"
+                        );
                         eprintln!("settlement_evidence kind=qualification_fallback day={closed_day} first_full_day={first_full_day} vwap={vwap} floor={floor}");
                         first_boundary_day = Some(target / 86_400);
                         break;
                     }
-                    if successor_is_qualified(world, owner, id, checkpoint.height) {
-                        eprintln!("settlement_evidence kind=successor_qualified day={closed_day} vwap={vwap} floor={floor} boundary={} height={}", boundary + 1, checkpoint.height);
+                    if is_qualified(world, checkpoint.height) {
+                        eprintln!("settlement_evidence kind={evidence_kind}_qualified day={closed_day} vwap={vwap} floor={floor} boundary={} height={}", boundary + 1, checkpoint.height);
                         return;
                     }
                 }
@@ -639,7 +653,7 @@ pub(super) fn qualify_public_nod(
             sleep(Duration::from_millis(500));
         }
     }
-    panic!("successor remained unqualified after two closed UTC days");
+    panic!("asset remained unqualified after two closed UTC days");
 }
 
 /// The Nod owner is an active voter and may receive delayed native fee credits.

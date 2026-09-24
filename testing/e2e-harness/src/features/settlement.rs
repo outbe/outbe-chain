@@ -632,30 +632,34 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .wait_finalized_checkpoint(&ports, delivery, 120)
         .expect("all validators finalize the reward Gem delivery");
     if gem.state == 0 {
-        crate::features::price_oracle::publish_controlled_quote(
+        erc20_nod::qualify_after_closed_day(
             world,
-            gem.floorPrice
-                .checked_add(U256::ONE)
-                .expect("qualifying quote"),
+            gem.floorPrice,
+            gem.issuedAt.into(),
+            "reward_gem",
+            |world, height| {
+                ports.iter().all(|&peer| {
+                    let observed = eth::read_call_at(
+                        &world.rpc.url(peer),
+                        addresses::GEM_ADDR,
+                        &eth::IGem::getGemStatusCall { gemId: gem_id },
+                        height,
+                    )
+                    .expect("read the same reward Gem at the common finalized checkpoint");
+                    assert!(
+                        matches!(observed.state, 0 | 1),
+                        "unexpected reward Gem lifecycle transition"
+                    );
+                    observed.state == 1
+                })
+            },
         );
-        let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            gem = eth::read_call(
-                &url,
-                addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
-            )
-            .expect("read the same reward Gem during qualification");
-            if gem.state == 1 {
-                break;
-            }
-            assert_eq!(gem.state, 0, "unexpected reward Gem lifecycle transition");
-            assert!(
-                Instant::now() < deadline,
-                "reward Gem qualification timed out"
-            );
-            sleep(Duration::from_millis(250));
-        }
+        gem = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: gem_id },
+        )
+        .expect("read qualified reward Gem");
     }
     assert_eq!(gem.state, 1, "reward Gem must be Qualified");
 
