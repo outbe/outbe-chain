@@ -38,8 +38,8 @@ if [[ "${REMOTE_ATTESTATION}" == dcap && "${HAS_SGX}" != 1 ]]; then
   echo "test entrypoint: DCAP requires an SGX enclave device" >&2
   exit 2
 fi
-if [[ "${REMOTE_ATTESTATION}" == dcap && ! -f "${NETWORK_DESCRIPTOR}" ]]; then
-  echo "test entrypoint: DCAP requires ${NETWORK_DESCRIPTOR}" >&2
+if [[ "${HAS_SGX}" == 1 && ! -f "${NETWORK_DESCRIPTOR}" ]]; then
+  echo "test entrypoint: SGX requires ${NETWORK_DESCRIPTOR}" >&2
   exit 2
 fi
 
@@ -51,6 +51,7 @@ gramine-manifest \
   -Dremote_attestation="${REMOTE_ATTESTATION}" \
   -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
+  -Dnetwork_descriptor_enabled="${HAS_SGX}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 

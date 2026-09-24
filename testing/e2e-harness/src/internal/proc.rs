@@ -571,6 +571,7 @@ pub(crate) fn inspect_test_sgx_measurement(
     network_descriptor: &Path,
     image_id: &DockerImageId,
     sudo: bool,
+    dcap: bool,
 ) -> Result<TestSgxMeasurement> {
     let enclave_bin = enclave_bin
         .canonicalize()
@@ -585,9 +586,20 @@ pub(crate) fn inspect_test_sgx_measurement(
         .join("bin/outbe-tee-enclave/gramine/inspect-test-measurement.sh")
         .canonicalize()
         .wrap_err("resolve test SGX measurement inspector")?;
-    let output = base_cmd("docker", sudo)
-        .args(["run", "--rm", "--entrypoint", "/inspect-test-measurement"])
-        .args(pinned_qvl_mount_args()?)
+    let mut command = base_cmd("docker", sudo);
+    command.args(["run", "--rm", "--entrypoint", "/inspect-test-measurement"]);
+    if dcap {
+        command.args(pinned_qvl_mount_args()?);
+    }
+    let output = command
+        .args([
+            "-e",
+            if dcap {
+                "OUTBE_TEST_REMOTE_ATTESTATION=dcap"
+            } else {
+                "OUTBE_TEST_REMOTE_ATTESTATION=none"
+            },
+        ])
         .args([
             "-v",
             &format!("{}:/app/outbe-tee-enclave:ro", enclave_bin.display()),

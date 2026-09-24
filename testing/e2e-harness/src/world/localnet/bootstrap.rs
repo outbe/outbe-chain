@@ -327,6 +327,39 @@ fn positive(value: u64, label: &str) -> Result<NonZeroU64> {
 }
 
 impl Localnet {
+    fn write_tee_network_descriptor(&self, genesis: &Path) -> Result<Option<std::path::PathBuf>> {
+        if self.cfg.tee_mode.passes_sgx_devices() {
+            let binding = DcapSeededChainSpecBindingV1::from_genesis_path(genesis)
+                .map_err(|error| eyre!("derive seeded DCAP network descriptor: {error}"))?;
+            let descriptor = TrustedNetworkDescriptorV1 {
+                network_binding: NetworkBindingV1 {
+                    chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
+                    genesis_hash: binding.genesis_hash,
+                    attestation_mode: if self.cfg.tee_mode == TeeMode::Real {
+                        AttestationMode::DcapRequired
+                    } else {
+                        AttestationMode::GramineDirectDev
+                    },
+                },
+                genesis_consensus_keys: binding.genesis_consensus_keys,
+            }
+            .encode_canonical()
+            .map_err(|error| eyre!("encode seeded DCAP network descriptor: {error}"))?;
+            let path = self.cfg.dir.join("network-descriptor-v1.bin");
+            if path.exists() {
+                eyre::ensure!(
+                    fs::read(&path)? == descriptor,
+                    "existing measured network descriptor differs from genesis"
+                );
+            } else {
+                fs::write(&path, descriptor)?;
+            }
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Add the canonical block-1 TEE manifest after every scenario has finished
     /// mutating genesis. The DCAP lane binds the exact test SIGSTRUCT into a
     /// `DcapRequired` policy. SGX without DCAP and the non-hardware lanes use an
@@ -341,6 +374,7 @@ impl Localnet {
             .and_then(|config| config.get("teeAttestationV1"))
             .is_some()
         {
+            self.write_tee_network_descriptor(&genesis)?;
             return Ok(());
         }
         let seeded = self.cfg.dir.join("genesis.seeded.json");
@@ -351,25 +385,7 @@ impl Localnet {
             );
         }
         fs::rename(&genesis, &seeded)?;
-        let network_descriptor = if self.cfg.tee_mode == TeeMode::Real {
-            let binding = DcapSeededChainSpecBindingV1::from_genesis_path(&seeded)
-                .map_err(|error| eyre!("derive seeded DCAP network descriptor: {error}"))?;
-            let descriptor = TrustedNetworkDescriptorV1 {
-                network_binding: NetworkBindingV1 {
-                    chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
-                    genesis_hash: binding.genesis_hash,
-                    attestation_mode: AttestationMode::DcapRequired,
-                },
-                genesis_consensus_keys: binding.genesis_consensus_keys,
-            }
-            .encode_canonical()
-            .map_err(|error| eyre!("encode seeded DCAP network descriptor: {error}"))?;
-            let path = self.cfg.dir.join("network-descriptor-v1.bin");
-            fs::write(&path, descriptor)?;
-            Some(path)
-        } else {
-            None
-        };
+        let network_descriptor = self.write_tee_network_descriptor(&seeded)?;
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .arg("tee")
@@ -397,6 +413,7 @@ impl Localnet {
                         .expect("real SGX creates a measured network descriptor"),
                     &image_id,
                     self.cfg.sudo,
+                    true,
                 )?;
                 command
                     .arg("dcap-required")

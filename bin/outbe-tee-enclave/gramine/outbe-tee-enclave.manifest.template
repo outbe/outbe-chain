@@ -21,6 +21,8 @@ fs.mounts = [
   { uri = "file:{{ gramine.runtimedir() }}", path = "/lib" },
 {% if remote_attestation == 'dcap' %}
   { uri = "file:{{ qvl_host_dir }}", path = "/qvl" },
+{% endif %}
+{% if remote_attestation == 'dcap' or network_descriptor_enabled|default('0') == '1' %}
   { uri = "file:{{ network_descriptor }}", path = "{{ network_descriptor }}" },
 {% endif %}
   { uri = "file:{{ arch_libdir }}", path = "{{ arch_libdir }}" },
@@ -48,8 +50,8 @@ sgx.max_threads = 16
 # with SGX devices. The non-hardware gramine-direct lanes render "none" and
 # remain a separate dev-only path.
 sgx.remote_attestation = "{{ remote_attestation }}"
-# Enclave identity (MRSIGNER-policy sealing survives an update of the same SVN
-# family). Bump isvsvn on a security-relevant rebuild to enforce anti-rollback.
+# New seals bind both MRENCLAVE and MRSIGNER. An identity change requires
+# authorized key transfer; the SVN remains part of the hardware key request.
 sgx.isvprodid = 1
 sgx.isvsvn = 1
 
@@ -59,8 +61,10 @@ sgx.trusted_files = [
   "file:{{ gramine.runtimedir() }}/",
   "file:{{ arch_libdir }}/",
   "file:/usr/{{ arch_libdir }}/",
-{% if remote_attestation == 'dcap' %}
+{% if remote_attestation == 'dcap' or network_descriptor_enabled|default('0') == '1' %}
   "file:{{ network_descriptor }}",
+{% endif %}
+{% if remote_attestation == 'dcap' %}
   "file:{{ qvl_host_dir }}/libsgx_dcap_quoteverify.so.1",
   "file:{{ qvl_host_dir }}/libstdc++.so.6",
   "file:{{ qvl_host_dir }}/libgcc_s.so.1",

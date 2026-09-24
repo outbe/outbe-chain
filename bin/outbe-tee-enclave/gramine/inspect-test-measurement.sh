@@ -13,15 +13,22 @@ if [[ ! -f "${NETWORK_DESCRIPTOR}" ]]; then
   exit 2
 fi
 
+REMOTE_ATTESTATION="${OUTBE_TEST_REMOTE_ATTESTATION:-dcap}"
+case "${REMOTE_ATTESTATION}" in
+  none|dcap) ;;
+  *) echo "measurement inspection requires none or dcap" >&2; exit 2 ;;
+esac
+
 cd /app
 gramine-manifest \
   -Dlog_level="${GRAMINE_LOG_LEVEL:-error}" \
   -Darch_libdir="${ARCH_LIBDIR}" \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir=/tee \
-  -Dremote_attestation=dcap \
+  -Dremote_attestation="${REMOTE_ATTESTATION}" \
   -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
+  -Dnetwork_descriptor_enabled=1 \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 gramine-sgx-sign \

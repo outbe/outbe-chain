@@ -984,7 +984,10 @@ impl Localnet {
                 tee_port: port,
                 enclave_bin,
                 signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
-                network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
+                network_descriptor: self
+                    .cfg
+                    .tee_mode
+                    .passes_sgx_devices()
                     .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
                 dev_network_binding: self.dev_network_binding_hex()?,
                 launch: self.enclave_launch()?,
