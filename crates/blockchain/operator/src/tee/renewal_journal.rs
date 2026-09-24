@@ -338,6 +338,33 @@ impl RenewalJournalGuard {
         read_snapshot(&self.paths.journal)
     }
 
+    /// Retain the completed predecessor's exact record before starting a
+    /// successor journal. A hard link is atomic and keeps the original private
+    /// inode durable; a crash before unlinking the active name is replayable.
+    pub(crate) fn archive_finalized(&self, expected: &RenewalJournalSnapshotV1) -> Result<()> {
+        if !matches!(expected.lifecycle, RenewalJournalStateV1::Finalized { .. })
+            || self.load()?.as_ref() != Some(expected)
+        {
+            eyre::bail!("only the exact completed renewal can be archived");
+        }
+        let archive = self.paths.root.join(format!(
+            "finalized-{:x}.json",
+            expected.lifecycle.attempt().intent_hash,
+        ));
+        match fs::hard_link(&self.paths.journal, &archive) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if read_snapshot(&archive)?.as_ref() != Some(expected) {
+                    eyre::bail!("completed renewal archive conflicts with the active journal");
+                }
+            }
+            Err(error) => return Err(error).wrap_err("archive completed renewal"),
+        }
+        sync_directory(&self.paths.root)?;
+        fs::remove_file(&self.paths.journal).wrap_err("retire archived renewal journal")?;
+        sync_directory(&self.paths.root)
+    }
+
     pub(crate) fn store(&self, mut snapshot: RenewalJournalSnapshotV1) -> Result<()> {
         if let Some(current) = self.load()? {
             snapshot.generation = current
@@ -689,6 +716,95 @@ mod tests {
         attempt.collateral_valid_until = u64::MAX;
         attempt.collateral_margin = 0;
         attempt
+    }
+
+    #[test]
+    fn finalized_archive_survives_restart_between_link_and_unlink() {
+        for interrupted in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let attempt = direct_attempt();
+            let mut finalized_binding = attempt.source.clone();
+            finalized_binding.intent_hash = attempt.intent_hash;
+            finalized_binding.evidence_hash = attempt.evidence_hash;
+            let snapshot = RenewalJournalSnapshotV1::new(RenewalJournalStateV1::Finalized {
+                attempt: Box::new(attempt.clone()),
+                finalized_binding,
+                finalized_height: 100,
+                finalized_hash: B256::repeat_byte(0xab),
+            });
+            let guard = RenewalJournalGuard::acquire(directory.path()).unwrap();
+            guard.store(snapshot.clone()).unwrap();
+            let archive = guard
+                .paths
+                .root
+                .join(format!("finalized-{:x}.json", attempt.intent_hash));
+            if interrupted {
+                fs::hard_link(&guard.paths.journal, &archive).unwrap();
+                sync_directory(&guard.paths.root).unwrap();
+            }
+            drop(guard);
+            let restarted = RenewalJournalGuard::acquire(directory.path()).unwrap();
+            restarted.archive_finalized(&snapshot).unwrap();
+            assert!(restarted.load().unwrap().is_none());
+            assert_eq!(read_snapshot(&archive).unwrap(), Some(snapshot));
+            assert_eq!(
+                fs::metadata(&archive).unwrap().permissions().mode() & 0o777,
+                FILE_MODE
+            );
+            restarted
+                .store(RenewalJournalSnapshotV1::new(
+                    RenewalJournalStateV1::Prepared { attempt },
+                ))
+                .unwrap();
+            assert!(read_snapshot(&archive).unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn conflicting_archive_preserves_both_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let guard = RenewalJournalGuard::acquire(directory.path()).unwrap();
+        let attempt = direct_attempt();
+        let mut binding = attempt.source.clone();
+        binding.intent_hash = attempt.intent_hash;
+        binding.evidence_hash = attempt.evidence_hash;
+        let snapshot = RenewalJournalSnapshotV1::new(RenewalJournalStateV1::Finalized {
+            attempt: Box::new(attempt.clone()),
+            finalized_binding: binding,
+            finalized_height: 100,
+            finalized_hash: B256::repeat_byte(0xab),
+        });
+        guard.store(snapshot.clone()).unwrap();
+        let archive = guard
+            .paths
+            .root
+            .join(format!("finalized-{:x}.json", attempt.intent_hash));
+        let mut other = snapshot.clone();
+        other.generation += 1;
+        let bytes = serde_json::to_vec(&other).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(FILE_MODE)
+            .open(&archive)
+            .unwrap();
+        file.write_all(&bytes).unwrap();
+        file.sync_all().unwrap();
+        assert!(guard.archive_finalized(&snapshot).is_err());
+        assert_eq!(guard.load().unwrap(), Some(snapshot));
+        assert_eq!(read_snapshot(&archive).unwrap(), Some(other));
+    }
+
+    #[test]
+    fn archive_rejects_pending_renewal_without_removing_active_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let guard = RenewalJournalGuard::acquire(directory.path()).unwrap();
+        let snapshot = RenewalJournalSnapshotV1::new(RenewalJournalStateV1::Prepared {
+            attempt: direct_attempt(),
+        });
+        guard.store(snapshot.clone()).unwrap();
+        assert!(guard.archive_finalized(&snapshot).is_err());
+        assert_eq!(guard.load().unwrap(), Some(snapshot));
     }
 
     #[test]

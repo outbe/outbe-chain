@@ -117,7 +117,8 @@ pub async fn run_renewal_once_v1(
     // this host-only lock across the reducer prevents the two exact-next
     // Registry counter flows from being prepared concurrently.
     let upgrade_guard = super::UpgradeJournalGuardV1::acquire(&config.node_data_dir)?;
-    if let Some(upgrade) = upgrade_guard.load()? {
+    let upgrade = upgrade_guard.load()?;
+    if let Some(upgrade) = &upgrade {
         if matches!(
             upgrade.lifecycle,
             super::UpgradeJournalStateV1::KeyProvisioned { .. }
@@ -125,7 +126,6 @@ pub async fn run_renewal_once_v1(
                 | super::UpgradeJournalStateV1::SubmissionPrepared { .. }
                 | super::UpgradeJournalStateV1::Submitted { .. }
                 | super::UpgradeJournalStateV1::Finalized { .. }
-                | super::UpgradeJournalStateV1::Promoted { .. }
                 | super::UpgradeJournalStateV1::TerminalMissedCutoff { .. }
         ) {
             eyre::bail!(
@@ -137,8 +137,39 @@ pub async fn run_renewal_once_v1(
     let journal = RenewalJournalGuard::acquire(&config.node_data_dir)?;
     let view = read_finalized_bound_renewal_view_v1(rpc, &config.selector).await?;
     validate_identity(config, &view)?;
+    if let Some(super::UpgradeJournalSnapshotV1 {
+        lifecycle:
+            super::UpgradeJournalStateV1::Promoted {
+                context,
+                finalized_height,
+                ..
+            },
+        ..
+    }) = &upgrade
+    {
+        let committed = config
+            .manifest
+            .authorization_hash()
+            .map_err(|error| eyre::eyre!("hash promoted manifest: {error}"))?;
+        if committed != context.candidate_manifest_hash
+            || view.binding.policy_hash != context.successor_policy_hash
+            || view.schedule.finalized_height < context.activation_height
+            || view.schedule.finalized_height < *finalized_height
+            || view.binding.binding_version < 2
+            || view.binding.transition_nonce == 0
+        {
+            eyre::bail!("renewal does not match the finalized promoted enclave");
+        }
+    }
 
-    if let Some(snapshot) = journal.load()? {
+    let mut renewal = journal.load()?;
+    if let (Some(upgrade), Some(snapshot)) = (&upgrade, &renewal) {
+        if completed_predecessor_renewal(&upgrade.lifecycle, snapshot, config, &view)? {
+            journal.archive_finalized(snapshot)?;
+            renewal = None;
+        }
+    }
+    if let Some(snapshot) = renewal {
         match snapshot.lifecycle {
             RenewalJournalStateV1::Prepared { attempt }
             | RenewalJournalStateV1::Submitted { attempt, .. } => {
@@ -223,6 +254,48 @@ pub async fn run_renewal_once_v1(
         false,
     )
     .await
+}
+
+/// Only a completed renewal from the same chain and persistent NodeHost may
+/// be retired. Pending bytes and records from another identity remain conflicts.
+/// The caller first authenticates the committed promoted manifest against the
+/// finalized Registry; monotonic replacement counters establish the newer era.
+fn completed_predecessor_renewal(
+    upgrade: &super::UpgradeJournalStateV1,
+    renewal: &RenewalJournalSnapshotV1,
+    config: &RenewalServiceConfigV1,
+    view: &FinalizedRenewalChainViewV1,
+) -> Result<bool> {
+    let super::UpgradeJournalStateV1::Promoted {
+        finalized_height: promoted_at,
+        ..
+    } = upgrade
+    else {
+        return Ok(false);
+    };
+    let RenewalJournalStateV1::Finalized {
+        attempt,
+        finalized_binding: old,
+        finalized_height,
+        ..
+    } = &renewal.lifecycle
+    else {
+        return Ok(false);
+    };
+    let current = &view.binding;
+    let intent = RegistrationIntentV1::decode_canonical(&attempt.intent)
+        .map_err(|error| eyre::eyre!("decode predecessor renewal intent: {error}"))?;
+    Ok(intent.chain_id == config.manifest.chain_id
+        && intent.genesis_hash == config.manifest.genesis_hash
+        && old.node_id_hash == current.node_id_hash
+        && old.node_host_authorization_hash == current.node_host_authorization_hash
+        && old.enclave_id != current.enclave_id
+        && old.binding_id != current.binding_id
+        && old.binding_version < current.binding_version
+        && old.transition_nonce < current.transition_nonce
+        && old.registration_version < current.registration_version
+        && old.renewal_nonce <= current.renewal_nonce
+        && finalized_height <= promoted_at)
 }
 
 fn validate_identity(
@@ -762,6 +835,7 @@ mod tests {
     }
 
     struct ReplayRpc {
+        allow_preparation: bool,
         policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
         binding: RenewalBindingV1,
         schedule: TeeRenewalScheduleV1,
@@ -830,14 +904,23 @@ mod tests {
         }
 
         async fn gas_price(&self) -> Result<U256> {
+            if self.allow_preparation {
+                return PreparationRpc.gas_price().await;
+            }
             eyre::bail!("restart replay regenerated gas price");
         }
 
         async fn transaction_count(&self, _address: Address) -> Result<u64> {
+            if self.allow_preparation {
+                return PreparationRpc.transaction_count(_address).await;
+            }
             eyre::bail!("restart replay regenerated account nonce");
         }
 
         async fn balance(&self, _address: Address) -> Result<U256> {
+            if self.allow_preparation {
+                return PreparationRpc.balance(_address).await;
+            }
             eyre::bail!("restart replay rechecked preparation balance");
         }
 
@@ -941,6 +1024,19 @@ mod tests {
         RenewalServiceConfigV1,
         PreparedRenewalV1,
     ) {
+        replay_fixture_with_transition(node_data_dir, mode, false)
+    }
+
+    fn replay_fixture_with_transition(
+        node_data_dir: &std::path::Path,
+        mode: AttestationMode,
+        promoted: bool,
+    ) -> (
+        ReplayRpc,
+        RelaySignerV1,
+        RenewalServiceConfigV1,
+        PreparedRenewalV1,
+    ) {
         let genesis_hash = B256::repeat_byte(0x82);
         let profile = match mode {
             AttestationMode::DcapRequired => {
@@ -997,10 +1093,10 @@ mod tests {
             intent_hash: B256::repeat_byte(0x8c),
             evidence_hash: B256::repeat_byte(0x8d),
             policy_hash,
-            binding_version: 1,
+            binding_version: if promoted { 2 } else { 1 },
             registration_version: 1,
             renewal_nonce: 1,
-            transition_nonce: 0,
+            transition_nonce: u64::from(promoted),
             lease_started_at: valid_until - policy.maximum_lease,
             valid_until,
             collateral_valid_until: source_collateral_valid_until,
@@ -1138,6 +1234,7 @@ mod tests {
         };
         let sent = Arc::new(Mutex::new(Vec::new()));
         let rpc = ReplayRpc {
+            allow_preparation: false,
             policy,
             binding: source,
             schedule,
@@ -1281,64 +1378,308 @@ mod tests {
         )));
     }
 
+    fn promoted_checkpoint(
+        rpc: &ReplayRpc,
+        config: &RenewalServiceConfigV1,
+        attempt: &PreparedRenewalV1,
+    ) -> super::super::UpgradeJournalStateV1 {
+        let context = super::super::UpgradeContextV1 {
+            predecessor_manifest_hash: B256::repeat_byte(0x91),
+            candidate_manifest_hash: config.manifest.authorization_hash().unwrap(),
+            successor_policy_hash: rpc.binding.policy_hash,
+            activation_height: 100,
+            active_tee_dir: config.node_data_dir.join("old-enclave"),
+            candidate_tee_dir: config.node_data_dir.join("new-enclave"),
+        };
+        super::super::UpgradeJournalStateV1::Promoted {
+            context,
+            sealed_root_hash: B256::repeat_byte(0x92),
+            resident_offer_public: B256::repeat_byte(0x93),
+            proof_hash: B256::repeat_byte(0x94),
+            submission: super::super::PreparedUpgradeSubmissionV1 {
+                intent_hash: rpc.binding.intent_hash,
+                evidence_hash: rpc.binding.evidence_hash,
+                calldata_hash: attempt.calldata_hash,
+                relay: attempt.relay,
+                relay_variants: attempt.relay_variants.clone(),
+            },
+            finalized_height: 100,
+            finalized_hash: B256::repeat_byte(0x95),
+        }
+    }
+
     #[tokio::test]
-    async fn prepared_and_submitted_restarts_replay_exact_transaction_in_both_modes() {
-        for mode in [
-            AttestationMode::DcapRequired,
+    async fn promoted_enclave_prepares_then_replays_a_fresh_due_renewal() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut rpc, relay, config, template) = replay_fixture_with_transition(
+            directory.path(),
             AttestationMode::GramineDirectDev,
+            true,
+        );
+        rpc.allow_preparation = true;
+        super::super::UpgradeJournalGuardV1::acquire(directory.path())
+            .unwrap()
+            .store(super::super::UpgradeJournalSnapshotV1::new(
+                promoted_checkpoint(&rpc, &config, &template),
+            ))
+            .unwrap();
+        let key = k256::ecdsa::SigningKey::from_bytes((&[0x85; 32]).into()).unwrap();
+        let signer = |hash: B256| -> Result<[u8; 65]> {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+                key.sign_prehash(hash.as_slice())?;
+            let mut bytes = [0; 65];
+            bytes[..64].copy_from_slice(&signature.to_bytes());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let mut enclave = DirectOnlyEnclave {
+            signer: ed25519_dalek::SigningKey::from_bytes(&[0x86; 32]),
+            dcap_calls: 0,
+            direct_calls: 0,
+        };
+        let first = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config)
+            .await
+            .unwrap();
+        assert!(matches!(
+            first,
+            RenewalOutcomeV1::Submitted {
+                replayed: false,
+                ..
+            }
+        ));
+        assert_eq!(enclave.direct_calls, 1);
+        rpc.allow_preparation = false;
+        let mut replay_enclave = ReplayMustNotPrepare;
+        let replay_signer =
+            |_hash: B256| -> Result<[u8; 65]> { panic!("retry must reuse signature") };
+        let second =
+            run_renewal_once_v1(&rpc, &relay, &mut replay_enclave, &replay_signer, &config)
+                .await
+                .unwrap();
+        assert!(matches!(
+            second,
+            RenewalOutcomeV1::Submitted { replayed: true, .. }
+        ));
+        let sent = rpc.sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0], sent[1]);
+    }
+
+    #[tokio::test]
+    async fn renewal_rejects_mismatched_promotion_and_inflight_upgrade() {
+        for mismatch in [
+            "manifest",
+            "policy",
+            "activation",
+            "finality",
+            "key-provisioned",
+            "finalized",
         ] {
-            for starts_submitted in [false, true] {
-                let node_data_dir = tempfile::tempdir().unwrap();
-                let (rpc, relay, config, attempt) = replay_fixture(node_data_dir.path(), mode);
-                let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
-                let expected_hash = attempt.relay_variants[0].transaction_hash;
-                let lifecycle = if starts_submitted {
-                    RenewalJournalStateV1::Submitted {
-                        attempt: attempt.clone(),
-                        submitted_at_finalized_height: 119,
-                        transaction_hashes: vec![expected_hash],
+            let directory = tempfile::tempdir().unwrap();
+            let (rpc, relay, config, attempt) = replay_fixture_with_transition(
+                directory.path(),
+                AttestationMode::GramineDirectDev,
+                true,
+            );
+            let mut checkpoint = promoted_checkpoint(&rpc, &config, &attempt);
+            if let super::super::UpgradeJournalStateV1::Promoted {
+                context,
+                finalized_height,
+                sealed_root_hash,
+                resident_offer_public,
+                proof_hash,
+                submission,
+                finalized_hash,
+            } = &mut checkpoint
+            {
+                match mismatch {
+                    "manifest" => context.candidate_manifest_hash = B256::repeat_byte(0xaa),
+                    "policy" => context.successor_policy_hash = B256::repeat_byte(0xab),
+                    "activation" => context.activation_height = rpc.schedule.finalized_height + 1,
+                    "finality" => *finalized_height = rpc.schedule.finalized_height + 1,
+                    "key-provisioned" => {
+                        checkpoint = super::super::UpgradeJournalStateV1::KeyProvisioned {
+                            context: context.clone(),
+                            sealed_root_hash: *sealed_root_hash,
+                        }
                     }
-                } else {
+                    "finalized" => {
+                        checkpoint = super::super::UpgradeJournalStateV1::Finalized {
+                            context: context.clone(),
+                            sealed_root_hash: *sealed_root_hash,
+                            resident_offer_public: *resident_offer_public,
+                            proof_hash: *proof_hash,
+                            submission: submission.clone(),
+                            finalized_height: *finalized_height,
+                            finalized_hash: *finalized_hash,
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            super::super::UpgradeJournalGuardV1::acquire(directory.path())
+                .unwrap()
+                .store(super::super::UpgradeJournalSnapshotV1::new(checkpoint))
+                .unwrap();
+            let mut enclave = ReplayMustNotPrepare;
+            let signer = |_hash: B256| -> Result<[u8; 65]> { panic!("conflict must not sign") };
+            let result = run_renewal_once_v1(&rpc, &relay, &mut enclave, &signer, &config).await;
+            assert!(result.is_err(), "{mismatch} must fail closed");
+            assert!(rpc.sent.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn promoted_enclave_can_check_renewal_without_replaying_its_predecessor() {
+        for predecessor_state in ["none", "finalized", "prepared", "wrong-chain"] {
+            let node_data_dir = tempfile::tempdir().unwrap();
+            let (mut rpc, relay, mut config, attempt) =
+                replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+            rpc.schedule.finalized_timestamp = rpc.binding.lease_started_at;
+            rpc.binding.binding_version = 2;
+            rpc.binding.transition_nonce = 1;
+            if predecessor_state != "none" {
+                let mut finalized_binding = attempt.source.clone();
+                finalized_binding.intent_hash = attempt.intent_hash;
+                finalized_binding.evidence_hash = attempt.evidence_hash;
+                finalized_binding.registration_version += 1;
+                finalized_binding.renewal_nonce += 1;
+                finalized_binding.valid_until = attempt.requested_valid_until;
+                let lifecycle = if predecessor_state == "prepared" {
                     RenewalJournalStateV1::Prepared {
                         attempt: attempt.clone(),
+                    }
+                } else {
+                    RenewalJournalStateV1::Finalized {
+                        attempt: Box::new(attempt.clone()),
+                        finalized_binding,
+                        finalized_height: 90,
+                        finalized_hash: B256::repeat_byte(0x96),
                     }
                 };
                 RenewalJournalGuard::acquire(node_data_dir.path())
                     .unwrap()
                     .store(RenewalJournalSnapshotV1::new(lifecycle))
                     .unwrap();
-
-                let mut enclave = ReplayMustNotPrepare;
-                let node_signer = |_hash: B256| -> Result<[u8; 65]> {
-                    panic!("restart replay regenerated a NodeHost signature")
-                };
-                let outcome =
-                    run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
-                        .await
-                        .unwrap();
-                assert_eq!(
-                    outcome,
-                    RenewalOutcomeV1::Submitted {
-                        transaction_hash: expected_hash,
-                        replayed: true,
-                    }
+                config.manifest.recipient_x25519 = [0x97; 32];
+                rpc.binding.recipient_x25519 = config.manifest.recipient_x25519.into();
+                rpc.binding.enclave_id = config.manifest.enclave_id().unwrap();
+                rpc.binding.binding_id = B256::repeat_byte(0x98);
+                rpc.binding.registration_version = 3;
+                rpc.binding.renewal_nonce = 2;
+                if predecessor_state == "wrong-chain" {
+                    config.manifest.genesis_hash = B256::repeat_byte(0x99);
+                    rpc.policy.genesis_hash = config.manifest.genesis_hash;
+                    rpc.binding.policy_hash = rpc.policy.policy_hash().unwrap();
+                    rpc.binding.node_host_authorization_hash =
+                        config.manifest.node_host_authorization_hash().unwrap();
+                }
+            }
+            super::super::UpgradeJournalGuardV1::acquire(node_data_dir.path())
+                .unwrap()
+                .store(super::super::UpgradeJournalSnapshotV1::new(
+                    promoted_checkpoint(&rpc, &config, &attempt),
+                ))
+                .unwrap();
+            let mut enclave = ReplayMustNotPrepare;
+            let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+                panic!("renewal outside its window must not sign an intent")
+            };
+            let outcome =
+                run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config).await;
+            let journal = RenewalJournalGuard::acquire(node_data_dir.path()).unwrap();
+            if matches!(predecessor_state, "prepared" | "wrong-chain") {
+                assert!(
+                    outcome.is_err(),
+                    "{predecessor_state} must remain a conflict"
                 );
-                assert_eq!(rpc.sent.lock().unwrap().as_slice(), [expected_raw]);
-                let replayed = RenewalJournalGuard::acquire(node_data_dir.path())
-                    .unwrap()
-                    .load()
-                    .unwrap()
-                    .unwrap();
-                let RenewalJournalStateV1::Submitted {
-                    attempt: replayed_attempt,
-                    transaction_hashes,
-                    ..
-                } = replayed.lifecycle
-                else {
-                    panic!("replay did not persist Submitted state");
-                };
-                assert_eq!(replayed_attempt, attempt);
-                assert_eq!(transaction_hashes, vec![expected_hash]);
+                assert!(journal.load().unwrap().is_some());
+            } else {
+                assert!(matches!(outcome.unwrap(), RenewalOutcomeV1::NotDue { .. }));
+                assert!(journal.load().unwrap().is_none());
+                if predecessor_state == "finalized" {
+                    let archive = node_data_dir
+                        .path()
+                        .join("tee-renewal-v1")
+                        .join(format!("finalized-{:x}.json", attempt.intent_hash));
+                    let retained: RenewalJournalSnapshotV1 =
+                        serde_json::from_slice(&std::fs::read(archive).unwrap()).unwrap();
+                    assert_eq!(retained.lifecycle.attempt(), &attempt);
+                }
+            }
+            assert!(rpc.sent.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn prepared_and_submitted_restarts_replay_exact_transaction_in_both_modes() {
+        for mode in [
+            AttestationMode::DcapRequired,
+            AttestationMode::GramineDirectDev,
+        ] {
+            for promoted in [false, true] {
+                for starts_submitted in [false, true] {
+                    let node_data_dir = tempfile::tempdir().unwrap();
+                    let (rpc, relay, config, attempt) =
+                        replay_fixture_with_transition(node_data_dir.path(), mode, promoted);
+                    if promoted {
+                        super::super::UpgradeJournalGuardV1::acquire(node_data_dir.path())
+                            .unwrap()
+                            .store(super::super::UpgradeJournalSnapshotV1::new(
+                                promoted_checkpoint(&rpc, &config, &attempt),
+                            ))
+                            .unwrap();
+                    }
+                    let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
+                    let expected_hash = attempt.relay_variants[0].transaction_hash;
+                    let lifecycle = if starts_submitted {
+                        RenewalJournalStateV1::Submitted {
+                            attempt: attempt.clone(),
+                            submitted_at_finalized_height: 119,
+                            transaction_hashes: vec![expected_hash],
+                        }
+                    } else {
+                        RenewalJournalStateV1::Prepared {
+                            attempt: attempt.clone(),
+                        }
+                    };
+                    RenewalJournalGuard::acquire(node_data_dir.path())
+                        .unwrap()
+                        .store(RenewalJournalSnapshotV1::new(lifecycle))
+                        .unwrap();
+
+                    let mut enclave = ReplayMustNotPrepare;
+                    let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+                        panic!("restart replay regenerated a NodeHost signature")
+                    };
+                    let outcome =
+                        run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
+                            .await
+                            .unwrap();
+                    assert_eq!(
+                        outcome,
+                        RenewalOutcomeV1::Submitted {
+                            transaction_hash: expected_hash,
+                            replayed: true,
+                        }
+                    );
+                    assert_eq!(rpc.sent.lock().unwrap().as_slice(), [expected_raw]);
+                    let replayed = RenewalJournalGuard::acquire(node_data_dir.path())
+                        .unwrap()
+                        .load()
+                        .unwrap()
+                        .unwrap();
+                    let RenewalJournalStateV1::Submitted {
+                        attempt: replayed_attempt,
+                        transaction_hashes,
+                        ..
+                    } = replayed.lifecycle
+                    else {
+                        panic!("replay did not persist Submitted state");
+                    };
+                    assert_eq!(replayed_attempt, attempt);
+                    assert_eq!(transaction_hashes, vec![expected_hash]);
+                }
             }
         }
     }
