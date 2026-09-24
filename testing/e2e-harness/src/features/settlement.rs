@@ -79,7 +79,13 @@ fn validator_receives_reward_gem(world: &mut World) {
         "validator-owned reward Gem {gem_id} has non-reward type {}",
         gem.gemType
     );
-    assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
+    assert!(
+        crate::features::gem_lifecycle::gem_is_qualified(
+            &world.rpc.url(world.validators.primary_port()),
+            gem_id
+        ),
+        "reward Gem must be qualified for settlement"
+    );
     assert!(
         !gem.promisLoad.is_zero(),
         "reward Gem load must be non-zero"
@@ -555,7 +561,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     let ports = world.validators.committee_ports();
     let url = world.rpc.url(port);
     let key = world.validators.get(0).evm_key().expect("validator 0 key");
-    let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
+    let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     assert_eq!(gem.owner, owner);
     assert!(
         matches!(gem.gemType, 0 | 1),
@@ -568,7 +574,8 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .rpc
         .wait_finalized_checkpoint(&ports, delivery, 120)
         .expect("all validators finalize the reward Gem delivery");
-    if gem.state == 0 {
+    let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
+    if !qualified() {
         crate::features::price_oracle::publish_controlled_quote(
             world,
             gem.floorPrice
@@ -576,17 +583,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
                 .expect("qualifying quote"),
         );
         let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            gem = eth::read_call(
-                &url,
-                addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
-            )
-            .expect("read the same reward Gem during qualification");
-            if gem.state == 1 {
-                break;
-            }
-            assert_eq!(gem.state, 0, "unexpected reward Gem lifecycle transition");
+        while !qualified() {
             assert!(
                 Instant::now() < deadline,
                 "reward Gem qualification timed out"
@@ -594,7 +591,6 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             sleep(Duration::from_millis(250));
         }
     }
-    assert_eq!(gem.state, 1, "reward Gem must be Qualified");
 
     // The preceding Nod redemption already registered a real settlement vault.
     // Reuse it and assert a balance delta, not an empty-vault fixture balance.
