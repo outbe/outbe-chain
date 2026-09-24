@@ -34,7 +34,7 @@ pub fn dispatch(
             let mut controller = HyperlaneControllerContract::new(storage);
             match call {
                 initialize(c) => mutate_void(c, caller, |sender, c| {
-                    controller.initialize(sender, c.router, &c.domains, &c.isms, &c.hooks)
+                    controller.initialize(sender, c.icaRouter, &c.domains, &c.isms, &c.hooks)
                 }),
                 fund(c) => {
                     mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, _, amount| {
@@ -55,7 +55,7 @@ pub fn dispatch(
                         &c.signature,
                     )
                 }),
-                router(c) => view(c, |_| controller.router.read()),
+                icaRouter(c) => view(c, |_| controller.ica_router.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),
                 domains(c) => view(c, |_| controller.domains.read_all()),

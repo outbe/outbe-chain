@@ -39,7 +39,7 @@ impl HyperlaneControllerContract<'_> {
     }
 
     pub fn is_initialized(&self) -> Result<bool> {
-        Ok(self.router.read()? != Address::ZERO)
+        Ok(self.ica_router.read()? != Address::ZERO)
     }
 
     // ----------------------------------------------------------------------
@@ -47,15 +47,15 @@ impl HyperlaneControllerContract<'_> {
     // ----------------------------------------------------------------------
 
     /// One-shot bootstrap: accepts the pending ownership of the local ISM,
-    /// verifies the router is already owned by the controller, and stores the
-    /// router plus the whole `domain -> ISM` table.
+    /// verifies the ICA router is already owned by the controller, and stores
+    /// it plus the whole `domain -> ISM` table.
     ///
     /// Only the current owner of the local ISM (the deployer that staged
     /// `transferOwnership` to this precompile) may call it.
     pub fn initialize(
         &mut self,
         caller: Address,
-        router: Address,
+        ica_router: Address,
         domains: &[u32],
         isms: &[Address],
         hooks: &[Address],
@@ -85,7 +85,7 @@ impl HyperlaneControllerContract<'_> {
         if pending != self.address {
             return Err(HyperlaneControllerError::IsmNotPendingToController { pending }.into());
         }
-        self.require_owned(router)?;
+        self.require_owned(ica_router)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -96,11 +96,13 @@ impl HyperlaneControllerContract<'_> {
                     .abi_encode()
                     .into(),
             )?;
-            self.router.write(router)?;
+            self.ica_router.write(ica_router)?;
             for ((domain, ism), hook) in domains.iter().zip(isms).zip(hooks) {
                 self.write_domain(*domain, *ism, *hook)?;
             }
-            self.emit(IHyperlaneController::Initialized { router })
+            self.emit(IHyperlaneController::Initialized {
+                icaRouter: ica_router,
+            })
         })
     }
 
@@ -457,7 +459,7 @@ impl HyperlaneControllerContract<'_> {
     // ----------------------------------------------------------------------
 
     fn dispatch_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
-        let router = self.router.read()?;
+        let router = self.ica_router.read()?;
         let fee = self.quote(router, domain)?;
         self.require_balance(fee)?;
         let calls = calls

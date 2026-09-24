@@ -9,7 +9,7 @@ pragma solidity ^0.8.30;
 /// in the ISMs themselves. Every mutation except `initialize` and `fund` is
 /// applied by the validator vote target (see the crate README for the JSON payloads).
 interface IHyperlaneController {
-    event Initialized(address indexed router);
+    event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
     event DomainRemoved(uint32 indexed domain);
     event ValidatorsAndThresholdApplied(uint8 threshold, uint256 validatorCount);
@@ -26,9 +26,9 @@ interface IHyperlaneController {
     /// checkpoints the validators sign. Caller must be the current owner of the
     /// Outbe ISM (the deployer that staged `transferOwnership` to this
     /// precompile); the precompile accepts that pending ownership and verifies
-    /// it owns `router`.
+    /// it owns `icaRouter`.
     function initialize(
-        address router,
+        address icaRouter,
         uint32[] calldata domains,
         address[] calldata isms,
         address[] calldata hooks
@@ -60,7 +60,8 @@ interface IHyperlaneController {
     /// Returns whether a rotation was dispatched.
     function sync() external returns (bool changed);
 
-    function router() external view returns (address);
+    /// InterchainAccountRouter on Outbe.
+    function icaRouter() external view returns (address);
 
     /// ISM for `domain`, or zero when not configured.
     function ismByDomain(uint32 domain) external view returns (address);

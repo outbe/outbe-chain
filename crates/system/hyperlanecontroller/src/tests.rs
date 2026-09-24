@@ -29,7 +29,7 @@ fn deployer() -> Address {
 fn stranger() -> Address {
     address!("0x00000000000000000000000000000000000000b0")
 }
-fn router() -> Address {
+fn ica_router() -> Address {
     address!("0x0000000000000000000000000000000000000626")
 }
 fn local_ism() -> Address {
@@ -54,7 +54,7 @@ fn provider() -> HashMapStorageProvider {
 }
 
 /// Deployer still owns the local ISM, controller is its pending owner and
-/// already owns the router: the state right after `mise run owner:transfer`.
+/// already owns the ICA router: the state right after `mise run owner:transfer`.
 fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
     p.stub_sub_call_at_selector(
         local_ism(),
@@ -67,7 +67,7 @@ fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
         word_addr(HYPERLANE_CONTROLLER_ADDRESS),
     );
     p.stub_sub_call_at_selector(
-        router(),
+        ica_router(),
         IOwnable::ownerCall::SELECTOR,
         word_addr(HYPERLANE_CONTROLLER_ADDRESS),
     );
@@ -83,7 +83,7 @@ fn hook(n: u8) -> Address {
 
 fn initialize_call() -> Bytes {
     IHyperlaneController::initializeCall {
-        router: router(),
+        icaRouter: ica_router(),
         domains: vec![LOCAL, SEPOLIA, BSC],
         isms: vec![local_ism(), sepolia_ism(), bsc_ism()],
         hooks: vec![hook(1), hook(2), hook(3)],
@@ -108,12 +108,12 @@ fn stub_router_and_ism(
     threshold: u8,
 ) {
     p.stub_sub_call_at_selector(
-        router(),
+        ica_router(),
         IInterchainAccountRouter::quoteGasPaymentCall::SELECTOR,
         Bytes::from(fee.abi_encode()),
     );
     p.stub_sub_call_at_selector(
-        router(),
+        ica_router(),
         IInterchainAccountRouter::callRemoteCall::SELECTOR,
         Bytes::from(B256::repeat_byte(0xaa).abi_encode()),
     );
@@ -151,7 +151,7 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
     let mut p = p;
     StorageHandle::enter(&mut p, |storage| {
         let c = HyperlaneControllerContract::new(storage);
-        assert_eq!(c.router.read().unwrap(), router());
+        assert_eq!(c.ica_router.read().unwrap(), ica_router());
         assert_eq!(c.ism_by_domain.read(&LOCAL).unwrap(), local_ism());
         assert_eq!(c.ism_by_domain.read(&SEPOLIA).unwrap(), sepolia_ism());
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC]);
@@ -196,7 +196,7 @@ fn initialize_is_gated_and_one_shot() {
     let mut p = provider();
     stub_pre_initialize(&mut p);
     p.stub_sub_call_at_selector(
-        router(),
+        ica_router(),
         IOwnable::ownerCall::SELECTOR,
         word_addr(deployer()),
     );
@@ -210,7 +210,7 @@ fn initialize_is_gated_and_one_shot() {
     stub_pre_initialize(&mut p);
     StorageHandle::enter(&mut p, |storage| {
         let call: Bytes = IHyperlaneController::initializeCall {
-            router: router(),
+            icaRouter: ica_router(),
             domains: vec![SEPOLIA],
             isms: vec![sepolia_ism()],
             hooks: vec![hook(2)],
@@ -236,7 +236,7 @@ fn fund_is_the_only_payable_selector() {
         let fund: Bytes = IHyperlaneController::fundCall {}.abi_encode().into();
         dispatch(storage.clone(), &fund, stranger(), U256::from(5)).unwrap();
         assert!(dispatch(storage.clone(), &fund, stranger(), U256::ZERO).is_err());
-        let view: Bytes = IHyperlaneController::routerCall {}.abi_encode().into();
+        let view: Bytes = IHyperlaneController::icaRouterCall {}.abi_encode().into();
         assert!(dispatch(storage, &view, stranger(), U256::from(1)).is_err());
     });
     assert_eq!(
@@ -558,7 +558,7 @@ mod liveness {
         stub_pre_initialize(&mut p);
         StorageHandle::enter(&mut p, |storage| {
             let call: Bytes = IHyperlaneController::initializeCall {
-                router: router(),
+                icaRouter: ica_router(),
                 domains: vec![LOCAL, SEPOLIA],
                 isms: vec![local_ism(), sepolia_ism()],
                 hooks: vec![FIXTURE_HOOK, hook(2)],

@@ -5,7 +5,7 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 /// EVM storage layout for the Hyperlane controller.
 ///
 /// Storage slots:
-///   0: router - InterchainAccountRouter on Outbe (zero = not initialized)
+///   0: ica_router - InterchainAccountRouter on Outbe (zero = not initialized)
 ///   1: ism_by_domain - mapping(domain => StorageMessageIdMultisigIsm on that
 ///      chain), the Outbe chain included under its own domain (= chain id);
 ///      zero = absent
@@ -23,7 +23,7 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
     #[attribute(order = 0)]
-    pub router: outbe_primitives::storage::dsl::Value<Address>,
+    pub ica_router: outbe_primitives::storage::dsl::Value<Address>,
 
     #[attribute(order = 1)]
     pub ism_by_domain: outbe_primitives::storage::dsl::Map<u32, Address>,
