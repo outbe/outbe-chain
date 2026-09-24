@@ -8,6 +8,8 @@ use alloy_sol_types::SolCall;
 
 use crate::precompile::ICredisFactory;
 use outbe_credis::{CredisContract, CredisState};
+use outbe_oracle::{api::AddressPair, lifecycle::OracleLifecycle, schema::OracleContract};
+use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
@@ -462,91 +464,178 @@ fn issue_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn the_void_burns_only_the_unpaid_share() {
+fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
+        let credis = CredisContract::new(storage.clone());
+        let issued = credis.get_position(position_id).unwrap();
+        assert_eq!(issued.lifecycle_state().unwrap(), CredisState::Open);
+        assert_eq!(view_pledged(&storage, alice()), issued.collateral);
 
-        // Settle half the principal, reclaiming half the collateral.
-        advance_to(&storage, CREATED_AT + 30 * DAY);
-        settle_principal(
-            &storage,
-            alice(),
-            position_id,
-            pledge_stables() / U256::from(2u64),
-        );
-        let unpaid_collateral = pledge_cost() / U256::from(2u64);
-        assert_eq!(view_pledged(&storage, alice()), unpaid_collateral);
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.config_is_initialized.write(true).unwrap();
+        // Snapshots are supplied directly; no validator vote tally is needed.
+        oracle.config_vote_period.write(0).unwrap();
+        let pair = AddressPair::new_coen_to(issued.reference_currency);
+        let price = issued.call_price + U256::ONE;
+        let threshold_days = u64::from(issued.call_threshold) / DAY;
+        assert!(threshold_days > 1);
+        assert!(issued.call_threshold <= issued.call_window);
+        let first_midnight = issued.issued_at - issued.issued_at % DAY;
+        let tick = |timestamp| {
+            advance_to(&storage, timestamp);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+                storage.clone(),
+            );
+            OracleLifecycle::begin_block(&ctx).unwrap();
+            crate::called::run_daily(&ctx).unwrap();
+        };
 
-        // Call it, then let the settlement window lapse.
-        let called_at = now_of(&storage);
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_called(position_id, called_at).unwrap());
+        // Only closed reference-currency VWAP days count. The current day's
+        // price cannot call the position before the final qualifying rollover.
+        for day in 0..threshold_days {
+            let now = now_of(&storage);
+            set_coen_rate_for(&storage, issued.reference_currency, price);
+            oracle
+                .write_snapshot(now, &[(pair, price, U256::ONE)])
+                .unwrap();
+            tick(now);
+            assert_eq!(
+                credis
+                    .get_position(position_id)
+                    .unwrap()
+                    .lifecycle_state()
+                    .unwrap(),
+                CredisState::Open
+            );
+            let next_day = first_midnight + (day + 1) * DAY;
+            tick(next_day);
+            assert_eq!(
+                oracle
+                    .get_utc_day_vwap_for_pair(
+                        last_closed_day(next_day),
+                        oracle.pair_index_of(pair).unwrap()
+                    )
+                    .unwrap(),
+                Some(price)
+            );
+            assert_eq!(
+                credis
+                    .get_position(position_id)
+                    .unwrap()
+                    .lifecycle_state()
+                    .unwrap(),
+                if day + 1 == threshold_days {
+                    CredisState::Called
+                } else {
+                    CredisState::Open
+                }
+            );
         }
 
-        // Encrypted cohort ledger before the burn - the burn records a sale
-        // cohort, so the ciphertext must change afterwards.
+        let called = credis.get_position(position_id).unwrap();
+        assert_eq!(called.called_at, now_of(&storage));
+        assert!(credis.has_called_position(alice()).unwrap());
+        let deadline = outbe_credis::settlement_deadline(&called);
+        let half = issued.principal / U256::from(2u64);
+        let interest = CredisContract::accrued_interest(&called, now_of(&storage)).unwrap();
+        assert!(!interest.is_zero());
+        assert_eq!(
+            settle_principal(&storage, alice(), position_id, half),
+            (half, interest)
+        );
+        let repaid = credis.get_position(position_id).unwrap();
+        let unpaid_collateral = issued.collateral / U256::from(2u64);
+        let released = issued.collateral - unpaid_collateral;
+        assert_eq!(repaid.lifecycle_state().unwrap(), CredisState::Called);
+        assert_eq!(repaid.outstanding, issued.principal - half);
+        assert_eq!(repaid.collateral_locked, unpaid_collateral);
+        assert_eq!(repaid.called_at, called.called_at);
+        assert_eq!(outbe_credis::settlement_deadline(&repaid), deadline);
+        assert!(credis.has_called_position(alice()).unwrap());
+        assert_eq!(view_pledged(&storage, alice()), unpaid_collateral);
+        assert_eq!(view_balance(&storage, alice()), released);
+
+        let ledger = || {
+            (
+                view_balance(&storage, alice()),
+                view_pledged(&storage, alice()),
+                outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+                outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                PromisLimitContract::new(storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+            )
+        };
+        let before = ledger();
+        assert_eq!(
+            before.2, issued.collateral,
+            "repayment releases without burning"
+        );
+        assert_eq!(before.3, unpaid_collateral);
         let cohorts_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
         assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
-        // One second inside the window the sweep must find nothing.
-        let deadline = called_at + NOTICE;
-        advance_to(&storage, deadline - 1);
-        finalize_through(&storage, deadline - 1);
-        assert_eq!(scan(&storage, deadline - 1), 0, "window still open");
-
-        advance_to(&storage, deadline);
-        finalize_through(&storage, deadline);
-        assert_eq!(scan(&storage, deadline), 1);
-
-        // Only the unpaid share was burned; the settled half stays with alice.
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
-        assert_eq!(view_balance(&storage, alice()), unpaid_collateral);
+        tick(deadline - 1);
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            pledge_cost() - unpaid_collateral
-        );
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
-
-        // The equivalent value was deposited 1:1 into the Promis Reserve.
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
                 .unwrap(),
-            unpaid_collateral
+            CredisState::Called
         );
+        assert_eq!(ledger(), before, "no burn before the settlement deadline");
 
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
-            .unwrap();
+        tick(deadline);
+        let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Void);
         assert!(position.outstanding.is_zero());
         assert!(position.collateral_locked.is_zero());
-
-        // A sale cohort was recorded for the burned collateral, so alice's
-        // encrypted cohort ledger changed (the RCFI-drop semantics itself is
-        // covered by the fidelity + enclave tests).
+        assert_eq!(credis.active_len().unwrap(), 0);
+        assert!(!credis.has_called_position(alice()).unwrap());
+        // Burn only the pledged remainder; preserve the returned liquid half
+        // and credit the same amount to the Promis reserve.
+        let expected = (
+            released,
+            U256::ZERO,
+            before.2 - unpaid_collateral,
+            before.3 - unpaid_collateral,
+            before.4 + unpaid_collateral,
+        );
+        assert_eq!(ledger(), expected);
         let cohorts_after = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
         assert_ne!(
             cohorts_before, cohorts_after,
-            "the void burn should record a sale cohort"
+            "the burn records a sale cohort"
         );
 
-        // Idempotent: a second sweep at the same height finds nothing to burn.
-        assert_eq!(scan(&storage, deadline), 0);
+        tick(deadline);
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0,
-            "a voided position leaves the active index"
+            ledger(),
+            expected,
+            "a repeated sweep must not burn or credit twice"
+        );
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Void
+        );
+        assert_eq!(
+            outbe_fidelity::FidelityContract::new(storage.clone())
+                .cohorts_ct_of(alice())
+                .unwrap(),
+            cohorts_after
         );
     });
     teardown();
