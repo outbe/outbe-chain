@@ -367,11 +367,17 @@ impl Localnet {
                 validator.pid()
             );
         }
-        for enclave in self.enclaves.values_mut() {
-            enclave.stop_and_reap()?;
+        // Followers retain their node processes during a committee restart.
+        // Keep their enclave owners alive too; start() only restores validators.
+        for index in self.validators.keys() {
+            if let Some(enclave) = self.enclaves.get_mut(index) {
+                enclave.stop_and_reap()?;
+            }
+        }
+        for index in self.validators.keys() {
+            self.enclaves.remove(index);
         }
         self.validators.clear();
-        self.enclaves.clear();
         before_launch(self)?;
         let opts = self.start_opts.clone();
         self.start(&opts)
