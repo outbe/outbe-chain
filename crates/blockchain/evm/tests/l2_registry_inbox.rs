@@ -444,3 +444,36 @@ fn inbox_cannot_write_its_own_state_through_the_resolver() {
         U256::from(WRITTEN_VALUE)
     );
 }
+
+#[test]
+fn unset_or_invalid_inbox_point_rejects_until_the_inbox_recovers() {
+    let key = network_key(8);
+    let mut db = database(&key.public_key);
+    register(&mut db, L2_CHAIN_ID, INBOX, &[]);
+
+    // A zero key is a sentinel only in registry storage. An inbox must return
+    // an actual, non-identity EIP-2537 point, even with the right ABI/length.
+    for invalid in [[0u8; 256], [0xabu8; 256]] {
+        store_key(&mut db, INBOX, &invalid);
+        for outcome in [
+            get_network(&mut db, L2_CHAIN_ID),
+            offer(&mut db, L2_CHAIN_ID, &key),
+        ] {
+            assert_eq!(
+                revert_reason(&outcome),
+                Some(L2RegistryError::InvalidPublicKey.to_string()),
+            );
+        }
+    }
+
+    // A failed resolution must not cache the bad answer or remove registration.
+    store_key(&mut db, INBOX, &key.public_key);
+    assert_eq!(
+        network_of(&mut db, L2_CHAIN_ID).publicKey.as_ref(),
+        &key.public_key
+    );
+    assert_eq!(
+        revert_reason(&offer(&mut db, L2_CHAIN_ID, &key)),
+        Some(TributeFactoryError::ZkProofRequired.to_string()),
+    );
+}

@@ -524,7 +524,7 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .rpc
         .tribute_offer_for_network_with_params(
             &offerer,
-            57_005,
+            crate::internal::l2_fixture::FIXTURE_L2_CHAIN_ID,
             &successor_wwd_value.to_string(),
             "100",
             "0",

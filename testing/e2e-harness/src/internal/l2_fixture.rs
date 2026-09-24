@@ -48,6 +48,9 @@ pub(crate) const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT"
 /// generated proof verifies under the enabled version's key.
 pub(crate) const FIXTURE_CIRCUIT_VERSION: &str = "1.1.0";
 
+/// Registered once before the public Tribute-to-COEN flow, then shared by its offers.
+pub(crate) const FIXTURE_L2_CHAIN_ID: u64 = 57_005;
+
 /// The `uint32` circuit selector argument of `offerTribute`.
 pub(crate) fn circuit_selector(l2_chain_id: u64) -> u32 {
     u32::try_from(l2_chain_id).expect("sandbox L2 chain id fits the uint32 offer selector")
@@ -397,5 +400,37 @@ mod tests {
         assert_eq!(public.merkle_root, zk.merkle_root);
         assert_eq!(zk.l2_chain_id, circuit_selector(57_005));
         assert_eq!(zk.circuit_version, FIXTURE_CIRCUIT_VERSION);
+        let host = outbe_primitives::chain::DEVNET_CHAIN_ID;
+        let binding = |caller: Address, draft: B256, host, l2| {
+            B256::from(field_bytes(
+                &OutbeV1::binding(&caller.into_array(), draft.as_ref(), host, l2)
+                    .expect("offer binding"),
+            ))
+        };
+        assert_eq!(
+            public.binding_hash,
+            binding(caller, draft_id, host, FIXTURE_L2_CHAIN_ID)
+        );
+        // Keep the valid proof and every other public input, but try to reuse
+        // it with a binding for a different recipient, draft or chain.
+        for (recipient, draft, host_chain, l2) in [
+            (
+                Address::repeat_byte(0x45),
+                draft_id,
+                host,
+                FIXTURE_L2_CHAIN_ID,
+            ),
+            (caller, B256::with_last_byte(1), host, FIXTURE_L2_CHAIN_ID),
+            (caller, draft_id, host + 1, FIXTURE_L2_CHAIN_ID),
+            (caller, draft_id, host, FIXTURE_L2_CHAIN_ID + 1),
+        ] {
+            let other = binding(recipient, draft, host_chain, l2);
+            assert_ne!(other, public.binding_hash);
+            let mut replay = proof.clone();
+            // Four-byte public count, then derived_owner, nft_hash, binding_hash.
+            replay[4 + 2 * 32..4 + 3 * 32].copy_from_slice(other.as_slice());
+            assert!(!verify_circuit::<DemoTribute>(&replay)
+                .expect("well-formed proof with a changed binding"));
+        }
     }
 }
