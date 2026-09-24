@@ -469,4 +469,11 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
         historical_q_vote_observed: true,
         forbidden_calculation_entries: 0,
     });
+    // This diagnostic node has finished its historical replay. The permanent
+    // non-voting FullNode remains owned for the subsequent release rollouts.
+    world
+        .localnet
+        .stop_follower("follower")
+        .expect("historical replay follower shuts down successfully after trace verification");
+    world.localnet.stop_node_enclave(OCOMP_TRACE_FOLLOWER_SLOT);
 }
