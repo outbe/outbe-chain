@@ -923,6 +923,36 @@ fn send_call_inner<C: SolCall>(
     })
 }
 
+/// Deploy fixture init code through an ordinary signed CREATE transaction.
+pub(crate) fn deploy_bytecode(url: &str, key: &str, init_code: Vec<u8>) -> Result<Address> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_owned();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest {
+            to: Some(alloy_primitives::TxKind::Create),
+            ..Default::default()
+        }
+        .input(Bytes::from(init_code).into())
+        .gas_limit(1_000_000)
+        .max_fee_per_gas(max_fee)
+        .max_priority_fee_per_gas(0);
+        let receipt = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            provider.send_transaction(tx).await?.get_receipt().await
+        })
+        .await
+        .map_err(|_| eyre!("timed out deploying fixture contract"))??;
+        ensure!(receipt.status(), "fixture deployment reverted");
+        receipt
+            .contract_address
+            .ok_or_else(|| eyre!("CREATE receipt omitted contract address"))
+    })
+}
+
 /// Sign and send exact calldata through the ordinary public transaction path,
 /// waiting for the mined receipt. This is used by adversarial protocol tests
 /// that must preserve a production ABI envelope while changing its payload.

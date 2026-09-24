@@ -27,7 +27,7 @@ const BENEFICIARY_GAS_FUNDING_COEN: u64 = 25;
 const AGENT_REWARD_WAIT: Duration = Duration::from_secs(300);
 const SECONDS_PER_DAY: u64 = 86_400;
 
-#[when("an operator submits one encrypted tribute offer with WAA and SRA beneficiaries")]
+#[when("a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries")]
 fn submit_reward_bearing_tribute(world: &mut World) {
     assert!(
         world.state.ocomp_agent_reward.is_none(),
@@ -35,10 +35,7 @@ fn submit_reward_bearing_tribute(world: &mut World) {
     );
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
     let funder = world.validators.get(0);
-    let operator_key = funder.evm_key().expect("validator-0 EVM key");
-    // This reward fixture uses the network administrator as its submitting
-    // user. The independent-user scenario covers a different caller identity.
-    crate::features::l2_registration::ensure_tribute_offer_operator(world, &operator_key);
+    let user_key = funder.evm_key().expect("validator-0 EVM key");
     wait_for_offering(world, &wwd);
 
     for key in [WAA_BENEFICIARY_KEY, SRA_BENEFICIARY_KEY] {
@@ -57,7 +54,8 @@ fn submit_reward_bearing_tribute(world: &mut World) {
     let transaction_hash = world
         .rpc
         .submit_tribute_offer_with_agent_rewards(
-            &operator_key,
+            &user_key,
+            crate::internal::l2_fixture::FIXTURE_L2_CHAIN_ID,
             &wwd,
             &[waa_beneficiary],
             &[sra_beneficiary],
