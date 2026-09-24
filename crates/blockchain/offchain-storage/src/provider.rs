@@ -12,6 +12,16 @@ pub struct StorageOwnershipGuard {
     _inner: Ownership,
 }
 
+impl StorageOwnershipGuard {
+    /// Observe native close without extending the writer or reader lifetime.
+    pub fn close_observer(&self) -> Option<crate::StorageCloseObserver> {
+        match &self._inner {
+            Ownership::Rocks { _storage } => Some(_storage.close_observer()),
+            Ownership::Mongo { .. } => None,
+        }
+    }
+}
+
 enum Ownership {
     Mongo { _lease: MongoWriterLease },
     Rocks { _storage: Arc<RocksDbStorage> },

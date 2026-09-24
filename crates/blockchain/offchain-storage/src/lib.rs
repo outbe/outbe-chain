@@ -7,6 +7,7 @@ mod pending;
 mod provider;
 mod rocks;
 mod rocks_codec;
+mod shutdown;
 mod types;
 
 pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
@@ -15,6 +16,7 @@ pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
 pub use pending::PendingOverlayStorage;
 pub use provider::{OpenedStorage, StorageOwnershipGuard, StorageProvider, StorageReadSource};
 pub use rocks::{RocksDbReader, RocksDbStorage};
+pub use shutdown::StorageCloseObserver;
 pub use types::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
     StorageError, StorageErrorKind, StorageMetadata, StoredValue, Value, MAX_ATOMIC_BATCH_BYTES,

@@ -84,6 +84,7 @@ pub struct NodeShutdown {
 #[derive(Default)]
 struct State {
     payload_events: Option<broadcast::Sender<Events<OutbePayloadTypes>>>,
+    storage_close: Option<outbe_offchain_storage::StorageCloseObserver>,
     observing: bool,
     engine_result: Option<Result<()>>,
     failures: Vec<eyre::Report>,
@@ -96,6 +97,23 @@ impl std::fmt::Debug for NodeShutdown {
 }
 
 impl NodeShutdown {
+    /// Register native teardown before publishing storage handles to execution.
+    pub fn retain_storage_close(
+        &self,
+        close: Option<outbe_offchain_storage::StorageCloseObserver>,
+    ) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| eyre!("shutdown state poisoned"))?;
+        eyre::ensure!(
+            state.storage_close.is_none(),
+            "storage close already registered"
+        );
+        state.storage_close = close;
+        Ok(())
+    }
+
     pub(crate) fn retain_payload_events(
         &self,
         sender: broadcast::Sender<Events<OutbePayloadTypes>>,
@@ -217,6 +235,22 @@ impl NodeShutdown {
     /// This is not a persistence certificate: stock Reth may log persistence
     /// errors without forwarding them through its engine-exit future.
     pub fn finish(self, command_result: Result<()>) -> Result<()> {
+        // Reth's termination acknowledgement precedes EngineApiTreeHandler::drop.
+        // Its last EVM reader can still own RocksDB on the detached engine thread.
+        // Wait before libc exit tears down the native filesystem and timer globals.
+        let storage_close = self
+            .inner
+            .lock()
+            .map_err(|_| eyre!("shutdown state poisoned"))?
+            .storage_close
+            .take();
+        if let Some(close) = storage_close {
+            if !close.wait_closed(std::time::Duration::from_secs(30)) {
+                self.record_failure(eyre!(
+                    "native offchain storage did not close after runtime teardown"
+                ));
+            }
+        }
         let mut state = self
             .inner
             .lock()
@@ -259,6 +293,47 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
 mod tests {
     use super::*;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn process_finish_waits_for_native_storage_close_after_engine_acknowledgement() {
+        use std::{sync::mpsc, thread, time::Duration};
+        let directory = tempfile::tempdir().unwrap();
+        let storage = outbe_offchain_storage::RocksDbStorage::open(directory.path()).unwrap();
+        let close = storage.close_observer();
+        let owner = NodeShutdown::default();
+        owner.retain_storage_close(Some(close.clone())).unwrap();
+        let (release, released) = mpsc::channel();
+        let engine = thread::spawn(move || {
+            // Reth sends its completion before EngineApiTreeHandler::drop releases
+            // the last RuntimeBodyReaders/DB owner. Keep that exact interval open.
+            released.recv().unwrap();
+            drop(storage);
+        });
+        let (entered, entering) = mpsc::channel();
+        let (finished, completion) = mpsc::channel();
+        let process = thread::spawn(move || {
+            entered.send(()).unwrap();
+            finished.send(owner.finish(Ok(()))).unwrap();
+        });
+        entering.recv().unwrap();
+        let premature = completion.recv_timeout(Duration::from_millis(100)).ok();
+        release.send(()).unwrap();
+        engine.join().unwrap();
+        assert!(close.wait_closed(Duration::from_secs(5)));
+        // Completion also guarantees that RocksDB's primary lock was released.
+        drop(outbe_offchain_storage::RocksDbStorage::open(directory.path()).unwrap());
+        if premature.is_none() {
+            completion
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+        }
+        process.join().unwrap();
+        assert!(
+            premature.is_none(),
+            "process returned while the engine still owned native storage"
+        );
+    }
 
     #[test]
     fn runtime_teardown_waits_for_the_engine_outcome_observer() {

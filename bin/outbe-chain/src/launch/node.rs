@@ -705,6 +705,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         })
         .await
         .wrap_err("offchain-data startup validation worker failed")??;
+        shutdown.retain_storage_close(prepared_projection.storage_close_observer())?;
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();

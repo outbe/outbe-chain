@@ -21,6 +21,8 @@ const PROBE_KEY: &[u8] = b"\0outbe-write-probe";
 /// Sole process-owned durable projection writer. Its DB lifetime owns the primary lock.
 pub struct RocksDbStorage {
     db: DB,
+    // Rust drops fields in declaration order: native close must precede notification.
+    close_signal: crate::shutdown::StorageCloseSignal,
 }
 
 /// One secondary view. It deliberately exposes no catch-up or write capability.
@@ -65,7 +67,14 @@ impl RocksDbStorage {
                     .map_err(map_error)?;
             }
         }
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            close_signal: Default::default(),
+        })
+    }
+
+    pub fn close_observer(&self) -> crate::StorageCloseObserver {
+        self.close_signal.0.clone()
     }
 }
 

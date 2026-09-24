@@ -64,6 +64,11 @@ pub struct PreparedOffchainDataProjection {
 }
 
 impl PreparedOffchainDataProjection {
+    /// Native storage must finish closing before the process exits.
+    pub fn storage_close_observer(&self) -> Option<outbe_offchain_storage::StorageCloseObserver> {
+        self.storage.ownership.close_observer()
+    }
+
     /// Typed read-only capabilities injected into EVM execution.
     #[must_use]
     pub fn runtime_body_readers(&self) -> RuntimeBodyReaders {
