@@ -35,8 +35,9 @@ wire_enum_u8! {
 }
 
 wire_struct! {
-    /// One reference currency's frozen auction entry price, with where it came from,
-    /// so a fallback stays visible in the receipt.
+    /// One reference currency's price as the oracle read it at pre-admission. No
+    /// auction uses it - Desis prices a day at its start - but the receipt hash
+    /// commits it.
     pub struct ReferenceEntryPriceV1 {
         pub reference_currency: u16,
         pub entry_price_minor: U256,

@@ -2,7 +2,6 @@
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_desis::ReferenceCurrencyPrice;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
@@ -218,7 +217,7 @@ fn process_local_terminal_outcome(
             day_type,
             day_limit,
         } => {
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, U256::ZERO)?;
+            let to_promis = dispatch_brief(ctx, day_type, wwd, U256::ZERO)?;
             // A day with no tributes allocates nothing, so its whole limit stays on the warehouse.
             let returned = to_promis.checked_add(day_limit).ok_or_else(|| {
                 crate::errors::storage_corruption("Metadosis day limit return overflow".into())
@@ -242,7 +241,7 @@ fn process_local_terminal_outcome(
             calculation,
         } => {
             let desis_limit_minor = calculation.desis_limit_minor;
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, desis_limit_minor)?;
+            let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
             // The limit headroom above the day's own nominal is issued by nobody, so it stays on
             // the warehouse together with whatever the brief did not take.
             let returned = current
@@ -275,12 +274,10 @@ fn process_local_terminal_outcome(
 
 fn dispatch_brief(
     ctx: &BlockRuntimeContext,
-    metadosis: &mut MetadosisContract,
     dtype: WwdDayType,
     wwd: WorldwideDay,
     desis_limit_minor: U256,
 ) -> Result<U256> {
-    let reference_prices = day_entry_prices(metadosis, ctx, wwd)?;
     // A day with nothing to sell is briefed as cancelled: an auction opened over
     // a zero limit would run its whole cross-chain cycle with no winner possible.
     let is_green = dtype == WwdDayType::Green && !desis_limit_minor.is_zero();
@@ -293,7 +290,6 @@ fn dispatch_brief(
         ctx.storage.clone(),
         wwd,
         briefed_desis_limit_minor,
-        reference_prices,
         is_green,
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,
@@ -321,42 +317,6 @@ fn dispatch_brief(
             Ok(rejected_desis_limit_minor)
         }
     }
-}
-
-/// The day's entry prices, from the same projection the OCOMP request seals into
-/// its envelope: the previous closed UTC day's VWAP per pair. A currency the
-/// projection cannot price is announced and left out.
-pub(crate) fn day_entry_prices(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
-) -> Result<Vec<ReferenceCurrencyPrice>> {
-    let projection = outbe_oracle::api::ocomp_pre_admission_projection(
-        ctx.storage.clone(),
-        ctx.block.timestamp,
-    )?;
-    // An empty table is how Desis is told the day is unpriced: it cancels and
-    // refunds rather than opening an auction nobody can bid in.
-    let priced: Vec<_> = projection
-        .auction_entry_prices
-        .into_iter()
-        .filter(|row| !row.entry_price_minor.is_zero())
-        .collect();
-    for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
-        if !priced.iter().any(|row| row.reference_currency == iso_code) {
-            metadosis.emit(IMetadosis::ReferenceCurrencyUnpriced {
-                worldwideDay: wwd.into(),
-                isoCode: iso_code,
-            })?;
-        }
-    }
-    Ok(priced
-        .into_iter()
-        .map(|row| ReferenceCurrencyPrice {
-            iso_code: row.reference_currency,
-            entry_price_minor: row.entry_price_minor,
-        })
-        .collect())
 }
 
 fn emit_failed_execution(
