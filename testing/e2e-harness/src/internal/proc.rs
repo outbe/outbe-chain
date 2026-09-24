@@ -298,7 +298,11 @@ impl EnclaveGuard {
     }
 
     pub(crate) fn stop_and_reap(&mut self) -> Result<ExitStatus> {
-        self.child.stop_and_reap()
+        let status = self.child.stop_and_reap()?;
+        // Release the old container before its name can be reused. Otherwise
+        // dropping this guard after replacement would remove the new enclave.
+        drop(self.docker.take());
+        Ok(status)
     }
 }
 
