@@ -1,7 +1,7 @@
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 3 {
-        eprintln!("usage: probe seal|unseal|quote FILE");
+        eprintln!("usage: probe seal|legacy-seal|unseal|reseal|quote FILE");
         std::process::exit(2);
     }
     let result = (|| -> Result<(), String> {

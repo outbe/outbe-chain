@@ -97,10 +97,15 @@ def suite():
         data = (ROOT / blob).read_bytes()
         assert data[:5] == b"TSGX1" and int.from_bytes(data[7:9], "little") == 3
         case(f"{mode}/restart_unseal", "unseal", blob, 0, baseline)
+        legacy = f"public/{mode}.legacy"
+        case(f"{mode}/legacy_seal", "legacy-seal", legacy, 0, baseline)
+        assert (ROOT / legacy).read_bytes()[:5] == b"TSEAL"
+        case(f"{mode}/legacy_restart_unseal", "unseal", legacy, 0, baseline)
         changed_signer = sign("b")
         assert changed_signer["mrenclave"] == baseline["mrenclave"]
         assert changed_signer["mrsigner"] != baseline["mrsigner"]
         case(f"{mode}/different_signer_rejected", "unseal", blob, 6, changed_signer)
+        case(f"{mode}/legacy_different_signer_rejected", "unseal", legacy, 6, changed_signer)
         case(f"{mode}/different_signer_own_seal", "seal", "public/other.sealed", 0, changed_signer)
         case(f"{mode}/different_signer_own_unseal", "unseal", "public/other.sealed", 0, changed_signer)
         changed = original.replace("[loader.env]", '[loader.env]\nOUTBE_PROBE_MEASUREMENT = "changed"')
@@ -112,9 +117,15 @@ def suite():
         case(f"{mode}/different_measurement_rejected", "unseal", blob, 6, changed_measurement)
         case(f"{mode}/different_measurement_own_seal", "seal", "public/other.sealed", 0, changed_measurement)
         case(f"{mode}/different_measurement_own_unseal", "unseal", "public/other.sealed", 0, changed_measurement)
+        case(f"{mode}/legacy_new_measurement_unseal", "unseal", legacy, 0, changed_measurement)
+        case(f"{mode}/legacy_reseal_combined", "reseal", legacy, 0, changed_measurement)
+        migrated = (ROOT / legacy).read_bytes()
+        assert migrated[:5] == b"TSGX1" and int.from_bytes(migrated[7:9], "little") == 3
+        case(f"{mode}/legacy_combined_restart_unseal", "unseal", legacy, 0, changed_measurement)
         (ROOT / "probe.manifest").write_text(original)
         assert sign("a") == baseline
         case(f"{mode}/restored_identity_unseal", "unseal", blob, 0, baseline)
+        case(f"{mode}/legacy_migrated_old_measurement_rejected", "unseal", legacy, 6, baseline)
         if mode == "dcap":
             case("dcap/quote", "quote", "public/quote.bin", 0, baseline)
             quote = (ROOT / "public/quote.bin").read_bytes()

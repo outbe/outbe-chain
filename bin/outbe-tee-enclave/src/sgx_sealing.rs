@@ -226,7 +226,7 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
     use alloy_primitives::{B256, U256};
     use outbe_primitives::tee_attestation_v1::AttestationMode;
     let binding = NetworkBindingV1 {
-        chain_id: U256::from(70860602_u64).to_be_bytes(),
+        chain_id: U256::from(54322345_u64).to_be_bytes(),
         genesis_hash: B256::repeat_byte(0x71),
         attestation_mode: AttestationMode::GramineDirectDev,
     };
@@ -236,8 +236,8 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
     }
     let svn = u16::from_le_bytes([report[258], report[259]]);
     match action {
-        "seal" => {
-            let header = SealHeader {
+        "seal" | "legacy-seal" => {
+            let mut header = SealHeader {
                 format_version: seal::SEAL_FORMAT,
                 key_policy: KeyPolicy::MrEnclaveAndSigner,
                 isv_svn: svn,
@@ -245,13 +245,31 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
                 tribute_offer_epoch: 0,
                 nonce: [0x33; 12],
             };
-            let blob = seal_payload(&[0x55; 32], b"public hardware test data", binding, &header)?;
-            if !blob.starts_with(MAGIC) {
+            let blob = if action == "legacy-seal" {
+                let (key, policy) = crate::transport::sealing_key()
+                    .ok_or_else(|| "legacy SGX sealing key unavailable".to_string())?;
+                let key = Zeroizing::new(key);
+                if policy != KeyPolicy::MrSigner {
+                    return Err("legacy probe requires hardware MRSIGNER sealing".into());
+                }
+                header.key_policy = policy;
+                seal::seal_tribute_offer_and_group_sig(
+                    &[0x55; 32],
+                    b"public hardware test data",
+                    &key,
+                    binding,
+                    &header,
+                )
+                .map_err(|error| error.to_string())?
+            } else {
+                seal_payload(&[0x55; 32], b"public hardware test data", binding, &header)?
+            };
+            if action == "seal" && !blob.starts_with(MAGIC) {
                 return Err("probe did not use hardware sealing".into());
             }
             std::fs::write(path, blob).map_err(|e| e.to_string())?;
         }
-        "unseal" => {
+        "unseal" | "reseal" => {
             let blob = std::fs::read(path).map_err(|e| e.to_string())?;
             let value = unseal_bound(&blob, binding, svn)?;
             if *value.tribute_offer_secret != [0x55; 32]
@@ -259,8 +277,28 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
             {
                 return Err("probe payload differs".into());
             }
+            if action == "reseal" {
+                if !blob.starts_with(seal::SEAL_MAGIC)
+                    || value.header.key_policy != KeyPolicy::MrSigner
+                {
+                    return Err("reseal probe requires a legacy MRSIGNER payload".into());
+                }
+                let mut header = value.header;
+                header.isv_svn = svn;
+                header.nonce = [0x44; 12];
+                let migrated = seal_payload(
+                    &value.tribute_offer_secret,
+                    value.group_sig.as_slice(),
+                    binding,
+                    &header,
+                )?;
+                if !migrated.starts_with(MAGIC) {
+                    return Err("legacy migration did not produce combined hardware sealing".into());
+                }
+                std::fs::write(path, migrated).map_err(|error| error.to_string())?;
+            }
         }
-        _ => return Err("expected seal or unseal".into()),
+        _ => return Err("expected seal, legacy-seal, unseal or reseal".into()),
     }
     Ok(())
 }
