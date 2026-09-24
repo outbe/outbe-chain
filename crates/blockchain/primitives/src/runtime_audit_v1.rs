@@ -17,6 +17,8 @@ pub const PROCESS_INSTANCE_FIELD: &str = "process_instance";
 pub const PROPOSAL_VIEW_CANCELLED: &str = "proposal_view_cancelled_v1";
 pub const PAYLOAD_EXECUTION_FAILED: &str = "payload_execution_failed_v1";
 
+pub const EXECUTION_BODY_READ_CANCELLED: &str = "execution_body_read_cancelled_v1";
+
 pub const BODY_READ_REQUEST_DEADLINE: &str = "body_read_request_deadline";
 pub const OTHER_PAYLOAD_EXECUTION_FAILURE: &str = "other_payload_execution_failure";
 
@@ -34,6 +36,13 @@ pub fn process_instance_id() -> B256 {
             .as_nanos();
         keccak256(format!("{}:{started_at}", std::process::id()))
     })
+}
+
+/// Unique local observation, scoped to this process boot; never protocol authority.
+pub fn next_failure_id() -> B256 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    keccak256(format!("{}:{sequence}", process_instance_id()))
 }
 
 #[cfg(test)]

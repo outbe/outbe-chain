@@ -76,6 +76,13 @@ impl ExecutionReadBudgets {
         }
     }
 
+    fn has_cancelled_request(&self) -> bool {
+        self.active
+            .lock()
+            .map(|active| active.values().any(ExecutionReadBudget::is_cancelled))
+            .unwrap_or(false)
+    }
+
     fn is_cancelled(&self) -> bool {
         self.active
             .lock()
@@ -281,6 +288,12 @@ impl RuntimeBodyReaders {
         }
     }
 
+    /// True only for a positively observed cancelled execution token. A
+    /// poisoned lock still fails reads closed, but is not cancellation evidence.
+    pub fn has_cancelled_execution_request(&self) -> bool {
+        self.budgets.has_cancelled_request()
+    }
+
     /// Applies the caller's remaining execution budget to every body read in this executor.
     #[must_use]
     pub fn enter_execution_budget(&self, budget: ExecutionReadBudget) -> ExecutionReadBudgetGuard {
@@ -459,5 +472,19 @@ fn map_nod_parent_error(error: NodRepositoryError) -> ParentBodySourceError {
     match &error {
         NodRepositoryError::Storage(storage) => map_storage_parent_error(storage.kind(), message),
         _ => ParentBodySourceError::Corruption(message),
+    }
+}
+
+#[cfg(test)]
+mod cancellation_evidence_tests {
+    #[test]
+    fn poisoned_budget_lock_fails_reads_closed_without_claiming_cancellation() {
+        let budgets = super::ExecutionReadBudgets::default();
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = budgets.active.lock().unwrap();
+            panic!("poison the test budget lock");
+        });
+        assert!(budgets.is_cancelled());
+        assert!(!budgets.has_cancelled_request());
     }
 }

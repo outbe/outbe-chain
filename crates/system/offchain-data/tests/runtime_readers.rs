@@ -419,6 +419,7 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
     let readers = RuntimeBodyReaders::new_supervised(storage, failure_tx);
     let request_budget = outbe_primitives::projection::ExecutionReadBudget::new();
     let _budget = readers.enter_execution_budget(request_budget.clone());
+    assert!(!readers.has_cancelled_execution_request());
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(25));
         request_budget.cancel();
@@ -430,6 +431,8 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
         Err(error) => error,
     };
     assert!(started.elapsed() < Duration::from_millis(150));
+    assert!(readers.has_cancelled_execution_request());
+    assert!(!readers.fork_execution().has_cancelled_execution_request());
     assert!(matches!(
         error,
         outbe_tribute::TributeRepositoryError::Storage(error)

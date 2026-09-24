@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use alloy_primitives::B256;
 use eyre::{Result, WrapErr};
 use outbe_primitives::runtime_audit_v1::{
-    BODY_READ_REQUEST_DEADLINE, EVENT_FIELD, FAILURE_KIND_FIELD, PAYLOAD_EXECUTION_FAILED,
-    PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_FIELD, SCHEMA_VERSION,
+    BODY_READ_REQUEST_DEADLINE, EVENT_FIELD, EXECUTION_BODY_READ_CANCELLED, FAILURE_KIND_FIELD,
+    PAYLOAD_EXECUTION_FAILED, PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_FIELD,
+    SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
 
@@ -257,7 +258,12 @@ fn audit_loaded_logs_with_all_expectations(
     };
     let mut cancellations = BTreeSet::new();
     let mut failures = BTreeMap::<PayloadIdentity, BTreeMap<(B256, String), String>>::new();
-    let expected_request_deadlines = legacy_request_deadline_cancellations(logs, validators);
+    let mut expected_request_deadlines = legacy_request_deadline_cancellations(logs, validators);
+    let correlated = correlated_body_read_cancellations(logs, validators);
+    expected_request_deadlines.cancellations += correlated.cancellations;
+    expected_request_deadlines
+        .accepted_fatal_records
+        .extend(correlated.accepted_fatal_records);
     let expected_ocomp_mismatch_records = expected_ocomp_full_node_mismatch
         .map(|job_id| expected_ocomp_full_node_mismatch_records(logs, validators, job_id))
         .transpose();
@@ -363,6 +369,7 @@ fn audit_loaded_logs_with_all_expectations(
                 }
             };
             match event {
+                RuntimeAuditEvent::ExecutionBodyReadCancelled => {}
                 RuntimeAuditEvent::ProposalViewCancelled(identity) => {
                     cancellations.insert(identity);
                 }
@@ -543,6 +550,7 @@ fn looks_like_runtime_timestamp(value: &str) -> bool {
 }
 
 enum RuntimeAuditEvent {
+    ExecutionBodyReadCancelled,
     ProposalViewCancelled(PayloadIdentity),
     PayloadExecutionFailed(PayloadFailure),
 }
@@ -561,6 +569,10 @@ fn parse_audit_event(
         .ok_or("missing or invalid process_instance")?
         .parse::<B256>()
         .map_err(|_| "missing or invalid process_instance")?;
+    if event == EXECUTION_BODY_READ_CANCELLED {
+        body_read_cancellation_fields(line).ok_or("invalid execution cancellation identity")?;
+        return Ok(RuntimeAuditEvent::ExecutionBodyReadCancelled);
+    }
     let payload_id = canonical_payload_id(
         structured_field(line, "payload_id").ok_or("missing or invalid payload_id")?,
     )
@@ -690,6 +702,77 @@ fn legacy_request_deadline_cancellations(
         }
     }
 
+    LegacyRequestDeadlineCancellations {
+        cancellations: complete.len(),
+        accepted_fatal_records: accepted,
+    }
+}
+
+fn body_read_cancellation_fields(line: &str) -> Option<(B256, B256, u64)> {
+    if structured_field(line, SCHEMA_FIELD)?.parse::<u8>().ok()? != SCHEMA_VERSION
+        || structured_field(line, EVENT_FIELD)? != EXECUTION_BODY_READ_CANCELLED
+    {
+        return None;
+    }
+    let process: B256 = structured_field(line, PROCESS_INSTANCE_FIELD)?
+        .parse()
+        .ok()?;
+    let failure: B256 = structured_field(line, "failure_id")?.parse().ok()?;
+    let block = structured_field(line, "audit_block")?.parse().ok()?;
+    (!process.is_zero() && !failure.is_zero()).then_some((process, failure, block))
+}
+
+/// A typed source observation carries a unique process-scoped token through
+/// revm's string adapter. Only the exact cancelled receiver trailer bearing
+/// that token is exempted; a deadline alone never establishes cancellation.
+fn correlated_body_read_cancellations(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+) -> LegacyRequestDeadlineCancellations {
+    let mut sources = BTreeSet::new();
+    for (path, content) in logs {
+        let Some(node) = validator_log_index(path, validators.saturating_add(1)) else {
+            continue;
+        };
+        for line in content.lines() {
+            if runtime_log_level(line) == Some("INFO")
+                && line.contains("outbe::runtime_audit:")
+                && !unexpected_log_line(line)
+            {
+                if let Some(identity) = body_read_cancellation_fields(line) {
+                    sources.insert((node, identity));
+                }
+            }
+        }
+    }
+    let mut accepted = BTreeSet::new();
+    let mut complete = BTreeSet::new();
+    for (path, content) in logs {
+        let Some(node) = validator_log_index(path, validators.saturating_add(1)) else {
+            continue;
+        };
+        for (index, line) in content.lines().enumerate() {
+            let Some(identity @ (process, failure, block)) = body_read_cancellation_fields(line)
+            else {
+                continue;
+            };
+            if !sources.contains(&(node, identity)) {
+                continue;
+            }
+            let exact_error = format!(
+                r#"error: Custom("fatal: body read request deadline exceeded audit_schema={SCHEMA_VERSION} audit_event={EXECUTION_BODY_READ_CANCELLED} process_instance={process:#x} failure_id={failure:#x} audit_block={block} ")"#
+            );
+            if runtime_log_level(line) == Some("WARN")
+                && line.contains("engine::tree: Failed to deliver newPayload response, receiver dropped (request cancelled): Err(Internal(BlockExecutionError(EVM { hash: ")
+                && line.contains(&exact_error)
+                && line.matches("fatal").count() == 1
+                && exact_request_deadline_fatal(line)
+                && terminal_payload_identity(line, node).is_some_and(|payload| payload.block_number == block) {
+                accepted.insert((path.clone(), index));
+                complete.insert((node, identity));
+            }
+        }
+    }
     LegacyRequestDeadlineCancellations {
         cancellations: complete.len(),
         accepted_fatal_records: accepted,
@@ -1251,8 +1334,8 @@ mod tests {
     };
     use alloy_primitives::B256;
     use outbe_primitives::runtime_audit_v1::{
-        BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE, PAYLOAD_EXECUTION_FAILED,
-        PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_VERSION,
+        BODY_READ_REQUEST_DEADLINE, EXECUTION_BODY_READ_CANCELLED, OTHER_PAYLOAD_EXECUTION_FAILURE,
+        PAYLOAD_EXECUTION_FAILED, PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_VERSION,
     };
 
     const PROCESS_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1516,6 +1599,76 @@ mod tests {
         let audit = audit_loaded_logs(&logs);
         assert!(!audit.is_clean());
         assert!(audit.findings.len() >= 4, "{:?}", audit.findings);
+    }
+
+    #[test]
+    fn tagged_body_cancellation_requires_its_exact_source_and_cancelled_receiver() {
+        let process = B256::repeat_byte(1);
+        let failure = B256::repeat_byte(2);
+        let hash = B256::repeat_byte(3);
+        let fields = format!("audit_schema=1 audit_event={EXECUTION_BODY_READ_CANCELLED} process_instance={process:#x} failure_id={failure:#x} audit_block=404");
+        let source = format!("INFO outbe::runtime_audit: {fields} execution body read stopped by its cancelled request");
+        let terminal = format!(
+            r#"WARN engine::tree: Failed to deliver newPayload response, receiver dropped (request cancelled): Err(Internal(BlockExecutionError(EVM {{ hash: {hash:#x}, error: Custom("fatal: body read request deadline exceeded {fields} ") }}))) payload=NumHash {{ number: 404, hash: {hash:#x} }} elapsed=31ms"#
+        );
+        let path = PathBuf::from("scenario-1/validator-2/node.log");
+        let clean = audit_loaded_logs_with_expectations(
+            &[(path.clone(), format!("{source}\n{terminal}"))],
+            4,
+            None,
+            None,
+            None,
+        );
+        assert!(clean.is_clean(), "{:?}", clean.findings);
+        assert_eq!(clean.counts.expected_request_deadline_cancellation, 1);
+        for wrong in [
+            terminal.replace(
+                &format!("process_instance={process:#x}"),
+                &format!("process_instance={:#x}", B256::repeat_byte(4)),
+            ),
+            terminal.replace(
+                &format!("failure_id={failure:#x}"),
+                &format!("failure_id={:#x}", B256::repeat_byte(5)),
+            ),
+            terminal.replace("number: 404", "number: 405"),
+            terminal.replace("request cancelled", "request active"),
+            terminal.replace(
+                "body read request deadline exceeded",
+                "body read unavailable",
+            ),
+            format!("{terminal} fatal: unrelated failure"),
+        ] {
+            let audit = audit_loaded_logs_with_expectations(
+                &[(path.clone(), format!("{source}\n{wrong}"))],
+                4,
+                None,
+                None,
+                None,
+            );
+            assert!(!audit.is_clean(), "accepted unrelated failure: {wrong}");
+        }
+        let wrong_node = vec![
+            (
+                PathBuf::from("scenario-1/validator-1/node.log"),
+                source.clone(),
+            ),
+            (path.clone(), terminal.clone()),
+        ];
+        assert!(!audit_loaded_logs_with_expectations(&wrong_node, 4, None, None, None).is_clean());
+        let mirrored = vec![
+            (path.clone(), format!("{source}\n{terminal}")),
+            (
+                PathBuf::from("scenario-1/validator-2/logs/54322345/reth.log"),
+                format!("{source}\n{terminal}"),
+            ),
+        ];
+        let audit = audit_loaded_logs_with_expectations(&mirrored, 4, None, None, None);
+        assert!(audit.is_clean(), "{:?}", audit.findings);
+        assert_eq!(audit.counts.expected_request_deadline_cancellation, 1);
+        assert!(
+            !audit_loaded_logs_with_expectations(&[(path, terminal)], 4, None, None, None)
+                .is_clean()
+        );
     }
 
     fn legacy_deadline_bundle(hash: &str, terminal_hash: &str) -> Vec<(PathBuf, String)> {

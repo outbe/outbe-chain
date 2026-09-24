@@ -143,6 +143,34 @@ pub fn map_outbe_precompile_result(
     }
 }
 
+fn cancelled_body_read_error(
+    result: &outbe_primitives::error::Result<Bytes>,
+    cancelled: bool,
+    block_number: u64,
+) -> Option<String> {
+    if !cancelled
+        || !matches!(
+            result,
+            Err(outbe_primitives::error::PrecompileError::BodyReadRequestDeadline)
+        )
+    {
+        return None;
+    }
+    use outbe_primitives::runtime_audit_v1::{
+        next_failure_id, process_instance_id, EXECUTION_BODY_READ_CANCELLED, SCHEMA_VERSION,
+    };
+    let process_instance = process_instance_id();
+    let failure_id = next_failure_id();
+    tracing::info!(target: "outbe::runtime_audit",
+            audit_schema = SCHEMA_VERSION, audit_event = %EXECUTION_BODY_READ_CANCELLED,
+            %process_instance, %failure_id, audit_block = block_number,
+            "execution body read stopped by its cancelled request");
+    // Preserve the fatal-to-this-execution result. The unique token survives
+    // revm's string error adapter and lets the log auditor correlate only
+    // the exact cancelled engine request, including across process restarts.
+    Some(format!("fatal: body read request deadline exceeded audit_schema={SCHEMA_VERSION} audit_event={EXECUTION_BODY_READ_CANCELLED} process_instance={process_instance:#x} failure_id={failure_id:#x} audit_block={block_number} "))
+}
+
 fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, value: U256) -> bool {
     address == outbe_ocomp_protocol::abi::METADOSIS_ADDRESS
         && data.get(..4).is_some_and(|selector| {
@@ -697,6 +725,15 @@ where
         is_err = result.is_err(),
         "precompile dispatch exit"
     );
+
+    if let Some(error) = cancelled_body_read_error(
+        &result,
+        runtime_body_readers
+            .is_some_and(outbe_offchain_data::RuntimeBodyReaders::has_cancelled_execution_request),
+        block_number,
+    ) {
+        return Err(error);
+    }
 
     let precompile_result = map_outbe_precompile_result(result, actual_gas);
 
@@ -1361,6 +1398,30 @@ mod lysis_activation_entitlement_tests {
                 ocomp_fork_install: None,
             }),
             MetadosisMutationEntitlements::NONE,
+        );
+    }
+}
+
+#[cfg(test)]
+mod cancellation_audit_tests {
+    #[test]
+    fn cancellation_annotation_requires_typed_deadline_and_cancelled_budget() {
+        use outbe_primitives::error::PrecompileError;
+        let deadline = Err(PrecompileError::BodyReadRequestDeadline);
+        assert!(super::cancelled_body_read_error(&deadline, false, 404).is_none());
+        assert!(super::cancelled_body_read_error(
+            &Err(PrecompileError::BodyReadUnavailable("offline".into())),
+            true,
+            404
+        )
+        .is_none());
+        let first = super::cancelled_body_read_error(&deadline, true, 404).unwrap();
+        let second = super::cancelled_body_read_error(&deadline, true, 404).unwrap();
+        assert!(first.starts_with("fatal: body read request deadline exceeded "));
+        assert!(first.contains("audit_block=404 "));
+        assert_ne!(
+            first, second,
+            "different failures must not share an audit identity"
         );
     }
 }
