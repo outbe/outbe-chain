@@ -52,6 +52,10 @@ target.mkdir(parents=True, exist_ok=True)
 pathlib.Path('Cargo.lock').write_text('version = "' + version + '"\\n')
 ''')
         cargo.chmod(0o755)
+        rustup = tools / "rustup"
+        rustup.write_text("#!/usr/bin/env python3\nimport pathlib, sys\n"
+                          "print(pathlib.Path(__file__).parent / sys.argv[-1])\n")
+        rustup.chmod(0o755)
         self.path = str(tools) + os.pathsep + os.environ["PATH"]
 
     def git(self, *args):

@@ -32,8 +32,14 @@ def build(repo, jobs):
     output.mkdir(parents=True, exist_ok=True)
     # Never overwrite the base release executables used by the first network.
     target = output / "build-target"
+    # Resolve the checkout's pinned toolchain before entering an archived tree.
+    # PATH may contain mise shims that reject newly created temporary directories.
+    toolchain = {tool: subprocess.check_output(
+        ["rustup", "which", tool], cwd=repo, text=True,
+    ).strip() for tool in ("cargo", "rustc", "rustdoc")}
     env = dict(os.environ, CARGO_BUILD_JOBS=str(jobs), RAYON_NUM_THREADS=str(jobs),
-               CARGO_TARGET_DIR=str(target))
+               CARGO_TARGET_DIR=str(target), RUSTC=toolchain["rustc"],
+               RUSTDOC=toolchain["rustdoc"])
     with tempfile.TemporaryDirectory(prefix="outbe-upgrade-source-") as temporary:
         directory = Path(temporary)
         archive = directory / "source.tar"
@@ -60,7 +66,7 @@ def build(repo, jobs):
             for package, name, features in packages:
                 # The intentional workspace version change updates Cargo.lock;
                 # preserve its exact diff in the artifact's build record.
-                command = ["cargo", "build", "--release", "-j", str(jobs),
+                command = [toolchain["cargo"], "build", "--release", "-j", str(jobs),
                            "-p", package, "--bin", package, *features]
                 subprocess.run(command, cwd=source, env=env, check=True)
                 destination = output / name
