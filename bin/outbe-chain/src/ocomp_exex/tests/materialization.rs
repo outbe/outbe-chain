@@ -179,6 +179,7 @@ fn all_requests_materialized(
 }
 
 // Reuses the existing native proof fixture shape from snapshot tests; not worker execution.
+#[cfg(feature = "snapshot-integration")]
 mod copied_public_work {
     use super::super::recovery::copied_native;
     use super::*;

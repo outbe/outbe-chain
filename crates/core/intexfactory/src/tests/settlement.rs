@@ -175,17 +175,19 @@ fn settlement_quote_dispatch() {
     });
 }
 
-/// A settle from a stranger must succeed and book the units to the owner.
-#[test]
-fn anyone_may_settle_and_the_units_stay_with_the_owner() {
-    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
-    use alloy_sol_types::SolEvent;
-    use outbe_vaultrouter::api::IVaultRouter;
+/// Two units of `sample(7)` cost this at six decimals.
+const TWO_UNIT_COST: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 
-    let payer = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-    let units = U256::from(2u64);
-    // Two units of `sample(7)` at six decimals; the note covers exactly that.
-    let cost = U256::from(2_000_000u64);
+/// Series 7 qualified with two units on its owner, settled by a stranger whose
+/// note spends `spend`.
+fn settle_two_units_spending(
+    spend: U256,
+) -> (
+    HashMapStorageProvider,
+    outbe_primitives::error::Result<U256>,
+) {
+    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
@@ -211,24 +213,41 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
     let fixture = outbe_paynote::test_support::note_and_spend_proof(
         CHAIN_ID,
         payment_token(),
-        payer,
-        cost,
-        cost,
+        PAYER,
+        spend,
+        spend,
     );
     outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
 
-    StorageHandle::enter(&mut storage, |s| {
+    let outcome = StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
-        runtime::settle_intex_with_paynote(&s, sid(7), owner(), payer, units, &fixture.proof)
-            .unwrap();
-
-        assert_eq!(
-            outbe_intex::api::settled_units(&s, sid(7)).unwrap(),
-            2,
-            "the units are booked settled"
-        );
+        runtime::settle_intex_with_paynote(
+            &s,
+            sid(7),
+            owner(),
+            PAYER,
+            U256::from(2u64),
+            &fixture.proof,
+        )
+        .map(|_| U256::from(outbe_intex::api::settled_units(&s, sid(7)).unwrap()))
     });
+    (storage, outcome)
+}
+
+const PAYER: Address = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+
+/// A settle from a stranger must succeed and book the units to the owner.
+#[test]
+fn anyone_may_settle_and_the_units_stay_with_the_owner() {
+    use alloy_sol_types::SolEvent;
+
+    let (storage, outcome) = settle_two_units_spending(TWO_UNIT_COST);
+    assert_eq!(
+        outcome.unwrap(),
+        U256::from(2u64),
+        "the units are booked settled"
+    );
 
     let sig = IIntexFactory::Settled::SIGNATURE_HASH;
     let settled: Vec<_> = storage
@@ -239,7 +258,21 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
         .collect();
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].intexOwner, owner(), "the payer keeps nothing");
-    assert_eq!(settled[0].amount, units);
+    assert_eq!(settled[0].amount, U256::from(2u64));
+}
+
+/// The surplus of an over-spend reaches the reserve vault with nothing left to
+/// return it, so settlement takes the cost or nothing.
+#[test]
+fn a_paynote_that_does_not_spend_the_cost_settles_nothing() {
+    for spend in [TWO_UNIT_COST + U256::ONE, TWO_UNIT_COST - U256::ONE] {
+        let (mut storage, outcome) = settle_two_units_spending(spend);
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("PayNote spends"), "{error}");
+        StorageHandle::enter(&mut storage, |s| {
+            assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        });
+    }
 }
 
 /// A qualified series 7 whose owner holds two units, and a registered six-decimal

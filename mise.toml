@@ -97,6 +97,15 @@ run = "cargo test --doc --workspace"
 description = "Run consensus crate tests via nextest"
 run = "cargo nextest run -p outbe-consensus"
 
+[tasks.test-snapshot-integration]
+description = "Run the native offline snapshot integration suite"
+env = { RUST_TEST_THREADS = "2", RAYON_NUM_THREADS = "2" }
+run = [
+  "cargo test --locked -p outbe-chain --features snapshot-integration",
+  "cargo test --locked -p outbe-engine --features snapshot-integration",
+  "cargo test --locked -p outbe-compressed-entities --features snapshot-integration",
+]
+
 [tasks.nextest-install]
 description = "Install cargo-nextest locally (one-shot helper)"
 run = "cargo install --locked cargo-nextest"

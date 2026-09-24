@@ -44,6 +44,12 @@ pub fn seed_ready_worldwide_days_for_capacity(
     Ok(())
 }
 
+/// Seeds the bootstrap boundary for cross-crate tests that classify by it,
+/// without standing up a genesis Worldwide Day.
+pub fn seed_bootstrap_end_time(storage: StorageHandle<'_>, end_time: u64) -> Result<()> {
+    crate::schema::MetadosisContract::new(storage).set_bootstrap_end_time(end_time)
+}
+
 /// Test/evidence-only sentinel probe for a fresh-devnet genesis snapshot.
 ///
 /// This is intentionally absent from the production API. The named sentinel

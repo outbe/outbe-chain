@@ -42,7 +42,6 @@ const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
 const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
 const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
-const LOCALNET_METADOSIS_BOOTSTRAP_SECONDS: u64 = 300;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
@@ -819,7 +818,6 @@ impl Localnet {
                         "offeringPeriodSeconds":
                             localnet_metadosis_offering_period_seconds(profile),
                         "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
-                        "bootstrapDurationSeconds": LOCALNET_METADOSIS_BOOTSTRAP_SECONDS,
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                     "ocomp": {

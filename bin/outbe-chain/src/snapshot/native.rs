@@ -149,7 +149,7 @@ impl RethReadOnlyView {
         Ok(tx)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub fn open(layout: &NativeLayout) -> eyre::Result<Self> {
         let mut protected = layout.protected.clone();
         protected.0.extend([

@@ -786,6 +786,7 @@ fn recovery_uses_recovered_committee_not_latest() {
     );
 }
 
+#[cfg(feature = "snapshot-integration")]
 mod copied_store_controls {
     use super::super::restart_recovery::copied_native::{
         open_native, recover_native, remove_native_header, DiskFixture, H,
@@ -942,6 +943,7 @@ mod copied_store_controls {
     }
 }
 
+#[cfg(feature = "snapshot-integration")]
 mod copied_genesis_validator_history {
     use super::super::restart_recovery::copied_native::{open_native, DiskFixture, H};
     use crate::validators::read_consensus_validators_at_block;
@@ -1151,6 +1153,7 @@ mod copied_genesis_validator_history {
     }
 }
 
+#[cfg(feature = "snapshot-integration")]
 mod copied_native_dkg_prerequisites {
     use super::super::restart_recovery::copied_native::{
         open_native, remove_native_header, replace_native_header, DiskFixture, H,

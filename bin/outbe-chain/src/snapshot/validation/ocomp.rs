@@ -45,9 +45,9 @@ pub(crate) struct NodInputsAudit {
 
 #[derive(Debug)]
 pub(crate) struct ExportInputsAudit {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub receipt: outbe_ocomp::export_receipt::VerifiedExportReceipt,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub binding: outbe_ocomp::export_binding::VerifiedExportedManifestBinding,
     pub input_chunks: u64,
 }
@@ -214,7 +214,7 @@ pub(crate) fn verify_present_admissions(
 
 /// Observe an optional local result for an authenticated finalized job. Network
 /// completion does not imply that this node produced a local result.
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) fn verify_local_result(
     ocomp_root: &Path,
     job: &OcompJobRecordV1,
@@ -420,9 +420,9 @@ pub(crate) fn verify_export_inputs(
         // load_exact already consumes the native exact verified input cursor.
         let input_chunks = u64::from(binding.manifest().input_chunk_count);
         Ok(ExportInputsAudit {
-            #[cfg(test)]
+            #[cfg(all(test, feature = "snapshot-integration"))]
             receipt,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "snapshot-integration"))]
             binding,
             input_chunks,
         })
@@ -964,7 +964,7 @@ fn observe_inventory_bound(
 }
 
 impl<'a, 'b> CanonicalInventory<'a, 'b> {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub(crate) fn scan(
         state: &'a CanonicalState<'b>,
         scratch_parent: &Path,

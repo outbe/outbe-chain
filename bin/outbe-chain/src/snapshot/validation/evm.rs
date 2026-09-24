@@ -30,7 +30,7 @@ use super::Incomplete;
 pub(crate) struct VerifiedState {
     pub db: DatabaseEnv,
     pub header: OutbeHeader,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub state_root: B256,
     _directory: tempfile::TempDir,
 }
@@ -84,7 +84,7 @@ pub(crate) fn verify_current_evm(
     Ok(VerifiedState {
         db,
         header,
-        #[cfg(test)]
+        #[cfg(all(test, feature = "snapshot-integration"))]
         state_root,
         _directory: directory,
     })

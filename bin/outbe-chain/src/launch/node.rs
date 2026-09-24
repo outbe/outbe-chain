@@ -338,8 +338,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             lookbackDelaySeconds = outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
             offeringPeriodSeconds = outbe_chain_constants::get_metadosis_offering_period_seconds(),
             waitingPeriodSeconds = outbe_chain_constants::get_metadosis_waiting_period_seconds(),
-            bootstrapDurationSeconds =
-                outbe_chain_constants::get_metadosis_bootstrap_duration_seconds(),
             advanceIntervalSeconds =
                 outbe_chain_constants::get_metadosis_advance_interval_seconds(),
             "effective genesis protocol parameters"
