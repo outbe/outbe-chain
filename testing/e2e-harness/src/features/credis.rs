@@ -289,7 +289,7 @@ fn reserved(world: &mut World) {
     assert_eq!(state.cca_stables, U256::ZERO);
 }
 
-#[when("the user pledges Gratis for that credit")]
+#[when("the user pledges Gratis")]
 fn pledge(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let f = world.state.credis.as_ref().expect("fixture");
