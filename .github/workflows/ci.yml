@@ -131,6 +131,8 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
+      RUST_TEST_THREADS: "2"
+      RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v6
       - name: Set up persistent local Rust cache
