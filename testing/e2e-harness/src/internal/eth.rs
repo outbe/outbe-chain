@@ -155,6 +155,8 @@ sol!("../../contracts/precompiles/src/IPromis.sol");
 sol!("../../contracts/precompiles/src/IPromisFactory.sol");
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IGem.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IIntexFactory.sol");
 
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IVaultRouter.sol");
