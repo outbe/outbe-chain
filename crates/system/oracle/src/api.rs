@@ -455,6 +455,61 @@ pub fn get_utc_day_vwap(
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
+/// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly above `floor_minor`.
+pub fn closed_above_floor(
+    storage: StorageHandle,
+    iso_code: u16,
+    floor_minor: U256,
+    from_utc_day: u32,
+) -> Result<bool> {
+    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| vwap > floor_minor)
+}
+
+/// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on; zero when none.
+pub fn max_utc_day_vwap_since(
+    storage: StorageHandle,
+    iso_code: u16,
+    from_utc_day: u32,
+) -> Result<U256> {
+    let mut max = U256::ZERO;
+    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| {
+        max = max.max(vwap);
+        false
+    })?;
+    Ok(max)
+}
+
+/// Walks the finalized days from the newest back to `from_utc_day` until `stop` holds; whether it did.
+fn scan_utc_day_vwaps(
+    storage: StorageHandle,
+    iso_code: u16,
+    from_utc_day: u32,
+    mut stop: impl FnMut(U256) -> bool,
+) -> Result<bool> {
+    if from_utc_day == 0 {
+        return Ok(false);
+    }
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(false);
+    }
+    let mut day = oracle.utc_day_vwap_last_finalized.read()?;
+    while day >= from_utc_day {
+        if oracle
+            .get_utc_day_vwap_for_pair(day, index)?
+            .is_some_and(&mut stop)
+        {
+            return Ok(true);
+        }
+        match previous_date_key(day) {
+            previous if previous < day => day = previous,
+            _ => break,
+        }
+    }
+    Ok(false)
+}
+
 /// Returns the finalized UTC-day VWAP for `COEN/<iso_code>` at its original `10^6` scale.
 /// `utc_day` is a yyyymmdd UTC date key. Missing pairs, unavailable daily prices,
 /// and stored zero prices return `None`. Oracle and storage errors propagate unchanged.

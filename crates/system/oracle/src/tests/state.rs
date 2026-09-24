@@ -1621,3 +1621,117 @@ fn coen_rate_for_opt_reports_unpriceable_currencies_instead_of_reverting() {
         );
     });
 }
+
+fn seed_closed_days(oracle: &mut OracleContract, iso: u16, days: &[(u32, u64)], watermark: u32) {
+    let index = oracle.register_pair(AddressPair::new_coen_to(iso)).unwrap();
+    for &(day, vwap) in days {
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&index, U256::from(vwap))
+            .unwrap();
+    }
+    oracle.utc_day_vwap_last_finalized.write(watermark).unwrap();
+}
+
+#[test]
+fn closed_above_floor_needs_a_finalized_day_strictly_above_the_floor() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        seed_closed_days(
+            &mut oracle,
+            840,
+            &[(20260301, 100), (20260302, 150)],
+            20260302,
+        );
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&20260303u32)
+            .write(&1u32, U256::from(500u64))
+            .unwrap();
+
+        let crossed = |floor: u64| {
+            crate::api::closed_above_floor(storage.clone(), 840, U256::from(floor), 20260301)
+                .unwrap()
+        };
+        assert!(crossed(149));
+        assert!(!crossed(150), "a day at the floor does not cross it");
+        assert!(!crossed(200), "a day past the watermark is not read");
+    });
+}
+
+#[test]
+fn closed_above_floor_counts_only_days_from_the_first_full_one() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        seed_closed_days(
+            &mut oracle,
+            840,
+            &[(20260228, 500), (20260302, 100)],
+            20260302,
+        );
+
+        let crossed = |from: u32| {
+            crate::api::closed_above_floor(storage.clone(), 840, U256::from(200u64), from).unwrap()
+        };
+        assert!(
+            crossed(20260228),
+            "the walk steps over a missing day and a month boundary"
+        );
+        assert!(!crossed(20260301));
+        assert!(!crossed(0));
+    });
+}
+
+#[test]
+fn max_utc_day_vwap_since_reads_the_same_days_as_the_floor_check() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        seed_closed_days(
+            &mut oracle,
+            840,
+            &[(20260228, 500), (20260302, 150)],
+            20260302,
+        );
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&20260303u32)
+            .write(&1u32, U256::from(900u64))
+            .unwrap();
+
+        let max = |iso: u16, from: u32| {
+            crate::api::max_utc_day_vwap_since(storage.clone(), iso, from).unwrap()
+        };
+        assert_eq!(max(840, 20260228), U256::from(500u64));
+        assert_eq!(max(840, 20260301), U256::from(150u64));
+        assert_eq!(
+            max(840, 20260303),
+            U256::ZERO,
+            "a day past the watermark is not read"
+        );
+        assert_eq!(max(840, 0), U256::ZERO);
+        assert_eq!(max(978, 20260228), U256::ZERO);
+        for (from, floor) in [
+            (20260228, 499u64),
+            (20260228, 500),
+            (20260301, 149),
+            (20260301, 150),
+        ] {
+            assert_eq!(
+                max(840, from) > U256::from(floor),
+                crate::api::closed_above_floor(storage.clone(), 840, U256::from(floor), from)
+                    .unwrap()
+            );
+        }
+    });
+}
+
+#[test]
+fn closed_above_floor_is_false_for_an_unregistered_currency() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        seed_closed_days(&mut oracle, 840, &[(20260301, 500)], 20260301);
+
+        assert!(!crate::api::closed_above_floor(storage, 978, U256::from(1u64), 20260301).unwrap());
+    });
+}

@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
+import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
@@ -460,6 +461,15 @@ library TargetInbound {
         for (uint256 i = 0; i < seriesIds.length; ++i) {
             _applyMark($, srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED, 0);
         }
+    }
+
+    /// @notice Record one finalized day into the registry. A chain without a registry refuses the day, so the
+    ///         transport redelivers it once one is wired.
+    function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
+        (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
+        if (address($.vwapRegistry) == address(0)) revert ITargetRouter.VwapRegistryUnset();
+        $.vwapRegistry.record(utcDay, rows);
+        emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
     /// @dev Apply one lifecycle mark through its self-call shim. A series this chain has not seen keeps the mark

@@ -11,6 +11,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title UpgradeBase
 /// @author Outbe
@@ -53,6 +54,11 @@ contract UpgradeTarget is UpgradeBase {
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
         upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
         upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, originChainId)));
+
+        // A chain without a registry gets one from DeployTarget, which also wires the source.
+        if (predictProxy(factory, deployer, "VwapRegistry").code.length != 0) {
+            upgradeProxy(factory, deployer, "VwapRegistry", address(new VwapRegistry()));
+        }
         vm.stopBroadcast();
     }
 }
