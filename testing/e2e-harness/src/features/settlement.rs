@@ -943,7 +943,7 @@ fn publish_nod_qualification_quote(world: &mut World) {
         .parse::<Address>()
         .expect("canonical owner address");
     let (_, body) = wait_for_materialized_nod(world, world.validators.primary_port(), owner);
-    // NodDaily consumes the completed previous UTC day's VWAP. Publish before
+    // Qualification consumes the completed previous UTC day's VWAP. Publish before
     // the scenario's existing V2 day transition, with room for earlier samples.
     let rate = body
         .floorPriceMinor

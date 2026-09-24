@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -16,7 +16,7 @@ use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
 #[must_use]
 pub fn effective_state(
     item: &NodItemState,
-    bucket: &NodBucketState,
+    qualified: bool,
     called_at: u64,
     deadline: u64,
     now: U256,
@@ -27,11 +27,27 @@ pub fn effective_state(
         EffectiveState::Forfeited
     } else if called_at != 0 {
         EffectiveState::Called
-    } else if bucket.is_qualified {
+    } else if qualified {
         EffectiveState::Qualified
     } else {
         EffectiveState::Issued
     }
+}
+
+/// A zero `issued_at` stamp is unsealed and never qualifies.
+pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
+    let issued_at = NodContract::new(storage.clone())
+        .callable_bucket_issued_at
+        .read(&bucket.bucket_key)?;
+    if issued_at == 0 {
+        return Ok(false);
+    }
+    outbe_oracle::api::closed_above_floor(
+        storage.clone(),
+        bucket.reference_currency,
+        bucket.floor_price_minor,
+        first_full_day(issued_at),
+    )
 }
 
 /// Frozen entry prices, or `None` before the snapshot has been captured.

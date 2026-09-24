@@ -1,17 +1,18 @@
-//! Daily call scan: force-calls qualified Nod buckets off the Oracle's
-//! finalized per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose
-//! notice period lapsed. The Cycle daily trigger pins the closed UTC day and
-//! runs the first slice; later CycleTicks continue the same day.
+//! Daily call scan: force-calls Nod buckets off the Oracle's finalized
+//! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
+//! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
+//! first slice; later CycleTicks continue the same day.
 //!
-//! One pass over the dense callable-bucket index applies at most one transition
-//! per bucket, in lifecycle order:
+//! One pass applies at most one transition per bucket, in lifecycle order, over
+//! two arms sharing one visit budget:
 //!
-//! - *not called* -> *called* when the reference price exceeded the bucket's
-//!   call price on at least its `call_threshold` of the trailing
-//!   `call_window`.
-//! - *called* -> *forfeited* when the bucket's `call_notice_period` has lapsed
-//!   with Nods still unpaid. The two can never fire in one pass, since a
-//!   bucket called now cannot also be a notice period past its call.
+//! - *not called* -> *called*, walking each currency's call-price trie, when
+//!   the reference price exceeded the bucket's call price on at least its
+//!   `call_threshold` of the trailing `call_window`.
+//! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
+//!   `call_notice_period` has lapsed with Nods still unpaid. The two can never
+//!   fire in one pass, since a bucket called now cannot also be a notice period
+//!   past its call.
 //!
 //! All four terms are sealed onto the bucket at issuance and read back from it
 //! here, so retuning a constant leaves every issued bucket on the terms it was
@@ -23,18 +24,18 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Qualification and calls both read finalized UTC-day VWAPs, and both stop
-//! at `first_full_day` of the bucket's sealed `issued_at`, so delayed
-//! materialization cannot inherit pre-issuance days and a partial issuance
-//! UTC day does not count.
+//! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
+
+use std::collections::BTreeSet;
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
-use outbe_oracle::schema::OracleContract;
+use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::{Scheduled, SweepDays},
     error::Result,
+    math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
     time::{first_full_day, previous_date_key, timestamp_to_date_key},
 };
@@ -47,7 +48,10 @@ use crate::{
     },
     precompile::INod,
     schema::{CallTerms, NodContract},
+    state::CallBins,
 };
+
+pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
 
 /// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
 /// `None` marks a day the pair published no reference price.
@@ -69,7 +73,7 @@ pub fn scan_and_call(
         return Ok(0);
     };
     let mut nod = NodContract::new(ctx.storage.clone());
-    if nod.call_sweep_day.read()? == 0 && nod.callable_buckets.len()? == 0 {
+    if nod.call_sweep_day.read()? == 0 && !has_call_work(ctx, &nod)? {
         return Ok(0);
     }
     let days = SweepDays {
@@ -78,7 +82,7 @@ pub fn scan_and_call(
     };
     match days.schedule(last_closed_day) {
         (next, Scheduled::Opened) => {
-            start_call_sweep(&nod, next)?;
+            start_call_sweep(ctx, &nod, next)?;
             run_call_slice(ctx, scope, parent)
         }
         (next, Scheduled::Queued) => {
@@ -96,6 +100,18 @@ pub fn scan_and_call(
         }
         (_, Scheduled::Ignored) => Ok(0),
     }
+}
+
+fn has_call_work(ctx: &BlockRuntimeContext, nod: &NodContract) -> Result<bool> {
+    if nod.called_buckets.len()? != 0 {
+        return Ok(true);
+    }
+    for iso_code in get_all_reference_currencies(ctx)? {
+        if !nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
@@ -116,15 +132,19 @@ pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     Ok(Some(last_closed_day))
 }
 
-/// Pin the sweep's current day and walk the callable list from the top.
-fn start_call_sweep(nod: &NodContract, days: SweepDays) -> Result<()> {
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, days: SweepDays) -> Result<()> {
     nod.call_sweep_day.write(days.current)?;
     nod.call_pending_day.write(days.pending)?;
-    nod.call_scan_cursor.write(0)?;
+    nod.call_currency_cursor.write(0)?;
+    nod.forfeit_cursor.write(0)?;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        nod.call_bin_cursor.write(&iso_code, 0)?;
+    }
     Ok(())
 }
 
-fn finish_call_sweep(nod: &NodContract, pinned_day: u32) -> Result<()> {
+fn finish_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, pinned_day: u32) -> Result<()> {
     let next = SweepDays {
         current: pinned_day,
         pending: nod.call_pending_day.read()?,
@@ -133,7 +153,7 @@ fn finish_call_sweep(nod: &NodContract, pinned_day: u32) -> Result<()> {
     if next.current == 0 {
         nod.call_sweep_day.write(0)
     } else {
-        start_call_sweep(nod, next)
+        start_call_sweep(ctx, nod, next)
     }
 }
 
@@ -150,11 +170,6 @@ pub fn run_call_slice(
     if pinned_day == 0 {
         return Ok(0);
     }
-    let len = nod.callable_buckets.len()?;
-    if len == 0 {
-        finish_call_sweep(&nod, pinned_day)?;
-        return Ok(0);
-    }
     let oracle = OracleContract::new(ctx.storage.clone());
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < pinned_day {
@@ -167,77 +182,217 @@ pub fn run_call_slice(
         return Ok(0);
     }
 
+    let mut visits: u32 = 0;
+    let mut mutated: u32 = 0;
+    if nod.call_currency_cursor.read()? != CALL_ARM_DONE {
+        let mut called_days = BTreeSet::new();
+        let (called, finished) = call_arm(
+            ctx,
+            &mut nod,
+            &oracle,
+            pinned_day,
+            &mut visits,
+            &mut called_days,
+        )?;
+        nod.emit_days_metadata_update(&called_days)?;
+        mutated = mutated.saturating_add(called);
+        if !finished {
+            return Ok(mutated);
+        }
+        nod.call_currency_cursor.write(CALL_ARM_DONE)?;
+    }
+    let (forfeited, finished) = forfeit_arm(ctx, scope, parent, &mut nod, &mut visits)?;
+    mutated = mutated.saturating_add(forfeited);
+    if finished {
+        finish_call_sweep(ctx, &nod, pinned_day)?;
+    }
+    Ok(mutated)
+}
+
+/// Returns the buckets called and whether every currency was walked.
+fn call_arm(
+    ctx: &BlockRuntimeContext,
+    nod: &mut NodContract<'_>,
+    oracle: &OracleContract<'_>,
+    pinned_day: u32,
+    visits: &mut u32,
+    called_days: &mut BTreeSet<u32>,
+) -> Result<(u32, bool)> {
+    let currencies = get_all_reference_currencies(ctx)?;
+    let start = currency_position(&currencies, nod.call_currency_cursor.read()?);
+    let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
+    let mut called: u32 = 0;
+    for &iso_code in currencies.iter().skip(start) {
+        if nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
+            continue;
+        }
+        let index = window_for(
+            nod,
+            &ctx.storage,
+            oracle,
+            &mut windows,
+            iso_code,
+            pinned_day,
+        )?;
+        let window = windows[index].1.as_slice();
+        // Nothing priced above the window's high can have breached.
+        let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
+            continue;
+        };
+        let ceiling = match NodContract::price_to_bin(high) {
+            Ok(bin) => bin,
+            Err(error) => {
+                tracing::warn!(
+                    target: "outbe::nod",
+                    iso_code,
+                    error = ?error,
+                    "nod call scan: window price out of range, skipping currency for the day"
+                );
+                continue;
+            }
+        };
+        let (calls, finished) =
+            call_currency(ctx, nod, iso_code, window, ceiling, visits, called_days)?;
+        called = called.saturating_add(calls);
+        if !finished {
+            nod.call_currency_cursor.write(u32::from(iso_code))?;
+            return Ok((called, false));
+        }
+    }
+    Ok((called, true))
+}
+
+/// Each bin is walked from the top, so a call's swap-pop only moves an entry already visited.
+pub(crate) fn call_currency(
+    ctx: &BlockRuntimeContext,
+    nod: &mut NodContract<'_>,
+    iso_code: u16,
+    window: &[(u32, Option<U256>)],
+    ceiling: u32,
+    visits: &mut u32,
+    called_days: &mut BTreeSet<u32>,
+) -> Result<(u32, bool)> {
+    let now = ctx.block.timestamp;
+    let (mut from_bin, mut remaining) = unpack_cursor(nod.call_bin_cursor.read(&iso_code)?);
+    let mut called: u32 = 0;
+    loop {
+        let bin_id = match tree_math::find_first_left_inclusive(&CallBins(nod, iso_code), from_bin)?
+        {
+            Some(bin) if bin <= ceiling => bin,
+            _ => {
+                nod.call_bin_cursor.write(&iso_code, 0)?;
+                return Ok((called, true));
+            }
+        };
+        let count = nod
+            .call_bin_count
+            .read(&NodContract::scoped(iso_code, bin_id))?;
+        remaining = if bin_id == from_bin && remaining != 0 {
+            remaining.min(count)
+        } else {
+            count
+        };
+        while remaining > 0 {
+            if *visits >= MAX_NOD_CALL_VISITS_PER_BLOCK {
+                nod.call_bin_cursor
+                    .write(&iso_code, pack_cursor(bin_id, remaining))?;
+                return Ok((called, false));
+            }
+            *visits += 1;
+            remaining -= 1;
+            let bucket_key = nod
+                .call_bin_buckets
+                .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
+            if try_call(ctx, nod, window, bucket_key, now)? {
+                called = called.saturating_add(1);
+                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+            }
+        }
+        from_bin = match bin_id.checked_add(1) {
+            Some(next) if next <= MAX_BIN_ID => next,
+            _ => {
+                nod.call_bin_cursor.write(&iso_code, 0)?;
+                return Ok((called, true));
+            }
+        };
+    }
+}
+
+fn try_call(
+    ctx: &BlockRuntimeContext,
+    nod: &mut NodContract<'_>,
+    window: &[(u32, Option<U256>)],
+    bucket_key: B256,
+    now: u64,
+) -> Result<bool> {
+    if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
+    {
+        return Ok(false);
+    }
+    // A zero stamp predates sealing and never counts.
+    let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
+    if issued_at == 0 {
+        return Ok(false);
+    }
+    let terms = nod.read_call_terms(bucket_key)?;
+    if !breached_enough(window, &terms, first_full_day(issued_at)) {
+        return Ok(false);
+    }
+    // A failing bucket rolls back alone, so it never halts the scan.
+    Ok(ctx
+        .storage
+        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period))
+        .is_ok())
+}
+
+/// Returns the Nods burned and whether the walk reached the bottom.
+fn forfeit_arm(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    nod: &mut NodContract<'_>,
+    visits: &mut u32,
+) -> Result<(u32, bool)> {
+    let len = nod.called_buckets.len()?;
+    if len == 0 {
+        return Ok((0, true));
+    }
     // Stored as `index + 1`; 0 means "start a fresh pass from the top".
-    let initial_cursor = nod.call_scan_cursor.read()?;
+    let initial_cursor = nod.forfeit_cursor.read()?;
     let mut cursor = match initial_cursor {
         0 => len - 1,
         resume => resume.saturating_sub(1).min(len - 1),
     };
-
-    // A VWAP window belongs to one `COEN/<iso>` pair, but the callable index
-    // mixes currencies. Cache the windows and keep the single pass; the registry
-    // holds a handful of codes, so a linear probe beats a map.
-    let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
-
     let now = ctx.block.timestamp;
-    let mut mutated: u32 = 0;
-    let mut visited: u32 = 0;
     let mut forfeited: u32 = 0;
-    let mut called_days = std::collections::BTreeSet::new();
 
     // Descending walk: removing a bucket swap-pops the tail into the hole, and
     // the tail is already behind a descending cursor, so no live entry is
     // skipped and none is visited twice.
     let completed = loop {
-        if visited >= MAX_NOD_CALL_VISITS_PER_BLOCK {
+        if *visits >= MAX_NOD_CALL_VISITS_PER_BLOCK {
             break false;
         }
-        if let Some(bucket_key) = nod.callable_buckets.get(cursor)? {
-            visited = visited.saturating_add(1);
+        if let Some(bucket_key) = nod.called_buckets.get(cursor)? {
+            *visits += 1;
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
-            // Paid entitlements retain their bucket terms, but cannot be called or forfeited.
+            // Paid entitlements retain their bucket terms, but cannot be forfeited.
             let has_unpaid = nod.bucket_nod_count.read(&bucket_key)? != 0;
-            if has_unpaid && called_at == 0 {
-                // Structural reads stay on `?` so infra errors still propagate.
-                let terms = nod.read_call_terms(bucket_key)?;
-                // Sealed at first issuance. Zero means the bucket predates the
-                // stamp: skip rather than treat epoch-midnight as a full day,
-                // which would count every observation. Such a bucket can be
-                // deleted through the existing empty-bucket path and reissued.
-                let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
-                let index = window_for(
-                    &nod,
-                    &ctx.storage,
-                    &oracle,
-                    &mut windows,
-                    terms.reference_currency,
-                    pinned_day,
-                )?;
-                if issued_at != 0
-                    && breached_enough(&windows[index].1, &terms, first_full_day(issued_at))
-                {
-                    // Isolate per-bucket: a deterministic Err rolls back this
-                    // bucket's checkpoint and is skipped, so one bad bucket never
-                    // halts the daily scan.
-                    let res = ctx.storage.with_checkpoint(|| {
-                        mark_called(&mut nod, bucket_key, now, terms.call_notice_period)
-                    });
-                    if res.is_ok() {
-                        mutated = mutated.saturating_add(1);
-                        called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
-                    }
-                }
-            } else if has_unpaid
-                && now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
+            if has_unpaid
+                && now > api::settlement_deadline_of(called_at, notice_period(nod, bucket_key)?)
             {
                 let budget = MAX_NOD_FORFEITS_PER_BLOCK.saturating_sub(forfeited);
-                if budget > 0 {
-                    let res = ctx.storage.with_checkpoint(|| {
-                        forfeit_members(&ctx.storage, &mut nod, scope, parent, bucket_key, budget)
-                    });
-                    if let Ok(burned) = res {
-                        forfeited = forfeited.saturating_add(burned);
-                        mutated = mutated.saturating_add(burned);
+                if budget == 0 {
+                    break false;
+                }
+                let res = ctx.storage.with_checkpoint(|| {
+                    forfeit_members(&ctx.storage, nod, scope, parent, bucket_key, budget)
+                });
+                if let Ok(burned) = res {
+                    forfeited = forfeited.saturating_add(burned);
+                    // The next slice resumes on this bucket.
+                    if burned == budget && nod.bucket_nod_count.read(&bucket_key)? != 0 {
+                        break false;
                     }
                 }
             }
@@ -248,20 +403,31 @@ pub fn run_call_slice(
         cursor -= 1;
     };
 
-    nod.emit_days_metadata_update(&called_days)?;
-
     let next_cursor = if completed {
         0
     } else {
         cursor.saturating_add(1)
     };
     if next_cursor != initial_cursor {
-        nod.call_scan_cursor.write(next_cursor)?;
+        nod.forfeit_cursor.write(next_cursor)?;
     }
-    if completed {
-        finish_call_sweep(&nod, pinned_day)?;
-    }
-    Ok(mutated)
+    Ok((forfeited, completed))
+}
+
+/// Index of the currency the cursor names, or the head when the registry dropped it.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
+}
+
+const fn pack_cursor(bin_id: u32, remaining: u32) -> u64 {
+    ((bin_id as u64) << 32) | remaining as u64
+}
+
+const fn unpack_cursor(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
 }
 
 /// True when the bucket's trailing `call_window` carries at least its
@@ -315,6 +481,8 @@ fn mark_called(
     now: u64,
     notice_period: u32,
 ) -> Result<()> {
+    nod.remove_call_bin(bucket_key)?;
+    nod.push_called_bucket(bucket_key)?;
     nod.bucket_called_at.write(&bucket_key, now)?;
     nod.emit(INod::NodBucketCalled {
         bucketKey: bucket_key,
@@ -329,7 +497,7 @@ fn mark_called(
 /// A bucket holding more members than the budget resumes on the next run, which
 /// cannot change an outcome: the deadline has already passed and settlement is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
-/// the bucket body and drops it from the callable index.
+/// the bucket body and drops it from the called list.
 ///
 /// Each burned load returns to the Promis Reserve. Lysis drew it out of the day
 /// limit and only mining converts it into Gratis, so a load that is destroyed
@@ -405,9 +573,8 @@ pub(crate) fn forfeit_members(
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
 /// newest first, filling it on first use.
 ///
-/// An unregistered pair caches an empty window: a bucket in that currency can
-/// never register a breach, but it must still reach the forfeit arm, so this is
-/// a skip of the call check rather than a skip of the bucket.
+/// An unregistered pair caches an empty window: a bucket in that currency never
+/// registers a breach.
 fn window_for(
     nod: &NodContract<'_>,
     storage: &StorageHandle<'_>,

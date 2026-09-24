@@ -256,7 +256,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
-            // Qualifies, calls and forfeits using the latest completed UTC day.
+            // Calls and forfeits using the latest completed UTC day.
             // Missed slots would repeat the same scan against the current clock.
             requires_accounting_window: false,
             coalesces_backlog: true,

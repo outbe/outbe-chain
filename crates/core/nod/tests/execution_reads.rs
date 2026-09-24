@@ -9,10 +9,7 @@ use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
-use outbe_nod::{
-    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, hooks, precompile::INod, NodContract,
-    NodItemState, NodRepositoryReader,
-};
+use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
@@ -104,7 +101,7 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
 }
 
 #[test]
-fn qualification_updates_the_overlay_and_keeps_the_product_event() {
+fn qualification_reads_the_finalized_day_and_writes_nothing() {
     let (mut provider, scope, parent) = active_world();
     let body = item(Address::repeat_byte(0x31), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
@@ -134,13 +131,12 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 .unwrap();
         }
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
-        hooks::run_daily(&context, &scope, &parent).unwrap();
-        assert!(
-            !api::get_bucket(&storage, &scope, &parent, bucket_id)
+        let bucket = || {
+            api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
                 .unwrap()
-                .is_qualified
-        );
+        };
+        assert!(!api::is_qualified(&storage, &bucket()).unwrap());
         outbe_oracle::lifecycle::OracleLifecycle::begin_block(&context).unwrap();
         assert_eq!(
             oracle
@@ -148,34 +144,23 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 .unwrap(),
             Some(U256::from(14))
         );
-        hooks::run_daily(&context, &scope, &parent).unwrap();
-        assert!(
-            api::get_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap()
-                .is_qualified
-        );
-
-        // A different reference currency walks its own trie and sees nothing,
-        // even though the floor value is identical.
-        assert_eq!(
-            hooks::qualify_buckets_with_rate(
-                &context,
-                &scope,
-                &parent,
-                840,
-                body.floor_price_minor + U256::from(1),
-                first_full_day(body.issued_at),
-                MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
-            )
-            .unwrap(),
-            0
-        );
+        assert!(api::is_qualified(&storage, &bucket()).unwrap());
+        assert!(!bucket().is_qualified, "nothing is stored");
     });
-    assert!(provider
+    // Only issuance logged: qualifying writes nothing.
+    let signatures: Vec<_> = provider
         .get_events(NOD_ADDRESS)
         .iter()
-        .any(|event| event.topics()[0] == INod::NodBucketQualified::SIGNATURE_HASH));
+        .map(|event| event.topics()[0])
+        .collect();
+    assert_eq!(
+        signatures,
+        [
+            INod::NodBodyStored::SIGNATURE_HASH,
+            INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::Transfer::SIGNATURE_HASH,
+        ]
+    );
 }
 
 #[test]
@@ -193,7 +178,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
         (0x56, 840, 1299),
     ];
     // Only the 840 buckets strictly below 1299 qualify: 1299/1300 are at or
-    // above the rate and the 978 buckets belong to another currency's trie.
+    // above the day price and the 978 buckets are priced in another currency.
     let expected = [true, false, true, false, false, false];
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -210,28 +195,25 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             })
             .collect();
 
-        let context = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, 1_752_534_000, 1),
-            storage.clone(),
-        );
-        hooks::qualify_buckets_with_rate(
-            &context,
-            &scope,
-            &parent,
-            840,
-            U256::from(1299),
-            first_full_day(1_752_534_000),
-            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
-        )
-        .unwrap();
+        // COEN/840 closes the first full day at 1299; COEN/978 has no pair at all.
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
+        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        let full_day = first_full_day(1_752_534_000);
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&full_day)
+            .write(&index, U256::from(1299))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(full_day).unwrap();
 
         let qualified: Vec<bool> = bucket_ids
             .iter()
             .map(|&bucket_id| {
-                api::get_bucket(&storage, &scope, &parent, bucket_id)
+                let bucket = api::get_bucket(&storage, &scope, &parent, bucket_id)
                     .unwrap()
-                    .unwrap()
-                    .is_qualified
+                    .unwrap();
+                api::is_qualified(&storage, &bucket).unwrap()
             })
             .collect();
         assert_eq!(qualified, expected);
@@ -311,11 +293,13 @@ fn idle_daily_scans_do_not_write_storage() {
             storage.clone(),
         );
         hooks::run_daily(&ctx, &scope, &parent).unwrap();
-        assert_eq!(NodContract::new(storage).callable_buckets.len().unwrap(), 1);
+        assert_eq!(
+            NodContract::new(storage).call_sweep_day.read().unwrap(),
+            0,
+            "both buckets wait below their call price, so the sweep closes at once"
+        );
     });
-    // One bucket is at the qualification floor; the other is qualified but
-    // below its call price. An idle CycleTick only continues in-flight sweeps,
-    // so neither unchanged scan should issue an SSTORE.
+    // An idle CycleTick only continues an in-flight sweep, so it issues no SSTORE.
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);

@@ -1084,7 +1084,7 @@ fn assert_index_transition(
 
 fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBucketBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
-    let (item, bucket) = bodies;
+    let item = &bodies.0;
     assert_eq!(body.nodId, item.nod_id.to_u256());
     assert_eq!(body.owner, item.owner);
     assert_eq!(body.worldwideDay, item.worldwide_day.value());
@@ -1095,14 +1095,17 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBu
     assert_eq!(body.referenceCurrency, item.reference_currency);
     assert_eq!(body.issuedAt, item.issued_at);
     assert_eq!(body.isSettled, item.is_settled);
-    assert_eq!(body.isQualified, bucket.is_qualified);
 }
 
 fn successor_is_qualified(world: &World, owner: Address, id: WwdEntityId, minimum: u64) -> bool {
     let snapshot = nod_snapshot(world, owner, id, minimum);
     let bodies = nod_bodies(world, id, minimum);
     assert_snapshot_bodies(&snapshot, &bodies);
-    bodies.1.is_qualified
+    snapshot
+        .body
+        .as_ref()
+        .expect("live Nod body present")
+        .isQualified
 }
 
 fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
