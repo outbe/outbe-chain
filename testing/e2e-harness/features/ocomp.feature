@@ -5,7 +5,7 @@ Feature: Off-chain computation and Metadosis
   WWD failure, or mutation transition. Validator membership is tested in the
   validator-lifecycle suite.
 
-  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01 @nod-settlement @price-oracle @tribute-inbox-key
+  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01 @nod-settlement @price-oracle @tribute-inbox-key @enclave-upgrade-hardware
   # OCOMP-TEST-ID: OCM-E2E-001
   # OCOMP-TEST-ID: OCM-E2E-008
   # OCOMP-TEST-ID: OCM-TRC-001

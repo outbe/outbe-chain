@@ -100,3 +100,33 @@ is distinct from collateral acquisition and production QVL verification.
 The optional `cross-host` invocation requires copying the same private probe
 directory to another physical SGX host; a same-host run does not prove platform
 isolation. This probe does not replace the four-node upgrade and Tribute tests.
+
+## Four-node hardware upgrade and business flow
+
+From a clean committed checkout, build the complete artifact set:
+
+```sh
+target/release/outbe-e2e-build --repo "$PWD" --lane sgx-no-attest \
+  --jobs 4 --enclave-upgrades --output /tmp/outbe-upgrade-artifacts.json
+target/release/outbe-e2e --repo "$PWD" --tee sgx-no-attest --sudo \
+  --validators 4 --all --concurrency 1 --tags @tribute-inbox-key \
+  --artifact-manifest /tmp/outbe-upgrade-artifacts.json \
+  --upgraded-chain-bin "$PWD/target/e2e-upgrades/node-0.3/outbe-chain" \
+  --scenario-timeout-secs 10800 --data-dir /tmp/outbe-hardware-upgrade
+```
+
+The builder archives the exact source commit and changes only the workspace
+package version in its temporary source tree. Its separate Cargo target protects
+the original node and enclave executables. Each replacement has a build record
+containing the source commit, version, Cargo.lock diff and executable hash; the
+common manifest covers both replacement enclaves, the node and those records.
+
+The main scenario registers the L2 inbox, generates a fresh real Tribute ZKP,
+completes OCOMP and redeems into COEN. It then installs node 0.3, performs enclave
+updates to 0.2 and 0.3 with fresh independent operator signatures, and repeats
+fresh Tribute-to-COEN settlement after each update. Candidate restart, provisioning
+retry, cancellation and a new attempt, permanent-key continuity and certified
+validator recovery are checked during rollout. Every owned process must also
+shut down successfully. Use `--tags @enclave-upgrade-hardware --name` with the
+standalone scenario name only when diagnosing rollout independently; that shorter
+run is not evidence of the complete business flow.

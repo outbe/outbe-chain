@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use eyre::Result;
-use outbe_e2e_harness::artifacts::{build_lane, BuildLane};
+use outbe_e2e_harness::artifacts::{build_lane_with_upgrades, BuildLane};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-e2e-build")]
@@ -21,8 +21,12 @@ struct Cli {
     output: PathBuf,
 
     /// Maximum Cargo build parallelism.
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 4)]
     jobs: usize,
+
+    /// Build and attest node 0.3 plus independently signable enclaves 0.2 and 0.3.
+    #[arg(long)]
+    enclave_upgrades: bool,
 }
 
 fn main() -> Result<()> {
@@ -34,5 +38,5 @@ fn main() -> Result<()> {
             .expect("e2e-harness belongs to the workspace")
             .to_path_buf()
     });
-    build_lane(&repo, cli.lane, cli.jobs, &cli.output)
+    build_lane_with_upgrades(&repo, cli.lane, cli.jobs, &cli.output, cli.enclave_upgrades)
 }

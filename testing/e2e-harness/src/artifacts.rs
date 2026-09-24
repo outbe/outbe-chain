@@ -182,6 +182,20 @@ struct ArtifactSpec {
 }
 
 pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> Result<()> {
+    build_lane_with_upgrades(repo, lane, jobs, output, false)
+}
+
+pub fn build_lane_with_upgrades(
+    repo: &Path,
+    lane: BuildLane,
+    jobs: usize,
+    output: &Path,
+    enclave_upgrades: bool,
+) -> Result<()> {
+    ensure!(
+        !enclave_upgrades || matches!(lane, BuildLane::SgxNoAttest),
+        "hardware enclave upgrades require --lane sgx-no-attest"
+    );
     ensure!((1..=8).contains(&jobs), "--jobs must be between 1 and 8");
     let repo = repo
         .canonicalize()
@@ -191,6 +205,20 @@ pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> R
     for arguments in &commands {
         run_cargo(&repo, arguments)?;
     }
+    if enclave_upgrades {
+        let status = Command::new("python3")
+            .arg(repo.join("scripts/tests/build_enclave_upgrade_artifacts.py"))
+            .arg("--repo")
+            .arg(&repo)
+            .arg("--jobs")
+            .arg(jobs.min(4).to_string())
+            .status()
+            .wrap_err("build versioned hardware upgrade releases")?;
+        ensure!(
+            status.success(),
+            "hardware upgrade release build failed: {status}"
+        );
+    }
     let source_after = source_fingerprint(&repo)?;
     ensure!(
         source_before == source_after,
@@ -198,7 +226,11 @@ pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> R
     );
 
     let mut artifacts = BTreeMap::new();
-    for spec in lane_artifacts(&repo, lane) {
+    let mut specs = lane_artifacts(&repo, lane);
+    if enclave_upgrades {
+        specs.extend(upgrade_artifacts(&repo));
+    }
+    for spec in specs {
         let identity = identify(&spec.path, spec.executable)
             .wrap_err_with(|| format!("record built E2E artifact {}", spec.name))?;
         ensure!(
@@ -444,10 +476,53 @@ fn required_artifacts(
             artifact("git_remote_rad", heartwood.join("git-remote-rad"), true),
         ]);
     }
+    if tagged(feature, scenario, "enclave-upgrade-hardware") {
+        ensure!(
+            env.upgraded_chain_bin.is_some(),
+            "hardware upgrades require --upgraded-chain-bin target/e2e-upgrades/node-0.3/outbe-chain"
+        );
+        artifacts.extend(upgrade_artifacts(&env.repo));
+    }
     if let Some(upgraded) = &env.upgraded_chain_bin {
         artifacts.push(artifact("outbe_chain_upgraded", upgraded.clone(), true));
     }
     Ok(artifacts)
+}
+
+fn upgrade_artifacts(repo: &Path) -> Vec<ArtifactSpec> {
+    let root = repo.join("target/e2e-upgrades");
+    vec![
+        artifact(
+            "enclave_upgrade_02",
+            root.join("enclave-0.2/outbe-tee-enclave"),
+            true,
+        ),
+        artifact(
+            "enclave_upgrade_03",
+            root.join("enclave-0.3/outbe-tee-enclave"),
+            true,
+        ),
+        artifact(
+            "outbe_chain_upgraded",
+            root.join("node-0.3/outbe-chain"),
+            true,
+        ),
+        artifact(
+            "enclave_upgrade_02_build",
+            root.join("enclave-0.2/build.json"),
+            false,
+        ),
+        artifact(
+            "enclave_upgrade_03_build",
+            root.join("enclave-0.3/build.json"),
+            false,
+        ),
+        artifact(
+            "outbe_chain_upgraded_build",
+            root.join("node-0.3/build.json"),
+            false,
+        ),
+    ]
 }
 
 fn artifact(name: &'static str, path: PathBuf, executable: bool) -> ArtifactSpec {
@@ -668,6 +743,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardware_upgrade_preflight_rejects_changed_candidates_and_build_records() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let (directory, mut env, mut feature, mut manifest) = manifest_fixture();
+        feature.tags.push("enclave-upgrade-hardware".to_owned());
+        assert!(required_artifacts(&env, &feature, &feature.scenarios[0]).is_err());
+        env.upgraded_chain_bin = Some(env.repo.join("target/e2e-upgrades/node-0.3/outbe-chain"));
+        for spec in upgrade_artifacts(&env.repo) {
+            fs::create_dir_all(spec.path.parent().unwrap()).unwrap();
+            fs::write(&spec.path, spec.name).unwrap();
+            if spec.executable {
+                fs::set_permissions(&spec.path, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            manifest.artifacts.insert(
+                spec.name.to_owned(),
+                identify(&spec.path, spec.executable).unwrap(),
+            );
+        }
+        let manifest_path = directory.path().join("artifacts.json");
+        publish_manifest(&manifest_path, &manifest).unwrap();
+        env.artifact_manifest = Some(manifest_path);
+        let mut ledger = ArtifactLedger::new(&env);
+        ledger.load(&env).unwrap();
+        ledger
+            .check_artifacts(upgrade_artifacts(&env.repo))
+            .unwrap();
+        for spec in upgrade_artifacts(&env.repo) {
+            fs::write(&spec.path, b"changed after build").unwrap();
+            let error = ledger
+                .check_artifacts(upgrade_artifacts(&env.repo))
+                .unwrap_err();
+            assert!(error.to_string().contains(spec.name), "{error}");
+            fs::write(&spec.path, spec.name).unwrap();
+        }
+        ledger
+            .check_artifacts(upgrade_artifacts(&env.repo))
+            .unwrap();
     }
 
     #[cfg(unix)]
