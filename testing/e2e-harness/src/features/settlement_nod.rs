@@ -757,6 +757,34 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
+fn exact_finalized_checkpoint(
+    world: &World,
+    height: u64,
+) -> crate::world::rpc::FinalizedCheckpoint {
+    let ports = world.validators.committee_ports();
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 120)
+        .expect("target height finalized on every validator");
+    // The wait may finish at a later common height. Receipts and stable reads
+    // must still be checked against their original, exact block.
+    let expected = world
+        .rpc
+        .checkpoint_at(ports[0], height)
+        .expect("exact finalized block");
+    for &port in &ports[1..] {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("peer exact finalized block"),
+            expected,
+            "validator disagrees at exact finalized height {height}"
+        );
+    }
+    expected
+}
+
 /// Read live CE views without mixing blocks. Only successful observations that
 /// straddle a head change are retried; RPC and decoding failures remain fatal.
 fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> T) -> T {
@@ -776,10 +804,7 @@ fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -
         if before != after {
             continue;
         }
-        let finalized = world
-            .rpc
-            .wait_finalized_checkpoint(&world.validators.committee_ports(), before.height, 120)
-            .expect("live Nod observation finalized with cohort parity");
+        let finalized = exact_finalized_checkpoint(world, before.height);
         assert_eq!(
             finalized, before,
             "live Nod observation changed before finality"
@@ -895,10 +920,7 @@ fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     let height = outcome
         .block_number()
         .expect("Nod rejection receipt height");
-    let checkpoint = world
-        .rpc
-        .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("Nod rejection finalized on every validator");
+    let checkpoint = exact_finalized_checkpoint(world, height);
     assert_eq!(
         outcome.receipt["blockHash"],
         serde_json::json!(format!("{:#x}", checkpoint.block_hash))
