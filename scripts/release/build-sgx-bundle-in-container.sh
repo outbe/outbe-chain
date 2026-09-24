@@ -37,6 +37,8 @@ prepare() {
     "${installed}/gramine/loader"
   install -m 0755 /usr/lib/x86_64-linux-gnu/gramine/sgx/libpal.so \
     "${installed}/gramine/libpal.so"
+  install -m 0755 /usr/lib/x86_64-linux-gnu/gramine/libsysdb.so \
+    "${installed}/gramine/libsysdb.so"
   cp -aL /usr/lib/x86_64-linux-gnu/gramine/runtime/glibc/. \
     "${installed}/gramine/runtime/glibc/"
   python3 /source/scripts/release/verify_dcap_native_qvl.py \
@@ -54,6 +56,7 @@ prepare() {
     -Dmax_threads="${SGX_MAX_THREADS}" \
     -Disv_prod_id="${SGX_ISV_PROD_ID}" \
     -Disv_svn="${SGX_ISV_SVN}" \
+    -Dlibsysdb_sha256="$(sha256sum "${installed}/gramine/libsysdb.so" | cut -d' ' -f1)" \
     /source/bin/outbe-tee-enclave/gramine/outbe-tee-enclave.release.manifest.template \
     "${installed}/outbe-tee-enclave.manifest"
 }

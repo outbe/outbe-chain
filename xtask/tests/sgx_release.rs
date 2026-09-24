@@ -735,6 +735,7 @@ fn signed_fixture(network: SgxReleaseNetwork) -> TempDir {
     for relative in [
         "rootfs/opt/outbe/sgx/bin/outbe-tee-enclave",
         "rootfs/opt/outbe/sgx/gramine/libpal.so",
+        "rootfs/opt/outbe/sgx/gramine/libsysdb.so",
         "rootfs/opt/outbe/sgx/gramine/loader",
         "rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest",
         "rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest.sgx",
@@ -796,11 +797,30 @@ fn canonical_manifest_binds_identity_measurements_and_every_bundle_file() {
 
     assert_eq!(manifest.authorization_scope, "testnet");
     assert_eq!(manifest.sigstruct_date, "2026-07-21");
-    assert_eq!(manifest.files.len(), 8);
+    assert_eq!(manifest.files.len(), 9);
     let bytes = canonical_json(&manifest).expect("canonical JSON");
     assert_eq!(bytes.last(), Some(&b'\n'));
     verify_signed_bundle(fixture.path(), &manifest, &repo_spec(), SIGSTRUCT)
         .expect("valid signed fixture");
+}
+
+#[test]
+fn signed_bundle_requires_packaged_libsysdb_and_rejects_its_substitution() {
+    let fixture = signed_fixture(SgxReleaseNetwork::Testnet);
+    let spec = repo_spec();
+    let source = SourceIdentity {
+        source_commit: "a".repeat(40),
+        source_date_epoch: 1_784_636_360,
+        release_tag: "v0.1.1-testnet.1".to_owned(),
+    };
+    let manifest = build_bundle_manifest(fixture.path(), &spec, &source, SIGSTRUCT).unwrap();
+    let runtime = fixture
+        .path()
+        .join("rootfs/opt/outbe/sgx/gramine/libsysdb.so");
+    fs::write(&runtime, b"different runtime").unwrap();
+    assert!(verify_signed_bundle(fixture.path(), &manifest, &spec, SIGSTRUCT).is_err());
+    fs::remove_file(runtime).unwrap();
+    assert!(build_bundle_manifest(fixture.path(), &spec, &source, SIGSTRUCT).is_err());
 }
 
 #[test]

@@ -4,6 +4,8 @@
 libos.entrypoint = "{{ install_root }}/bin/outbe-tee-enclave"
 
 loader.log_level = "error"
+loader.entrypoint.uri = "file:{{ install_root }}/gramine/libsysdb.so"
+loader.entrypoint.sha256 = "{{ libsysdb_sha256 }}"
 loader.insecure__use_cmdline_argv = true
 loader.env.LD_LIBRARY_PATH = "/qvl:/lib"
 # Avoid repeated 64 MiB glibc thread-arena attempts in the bounded SGX heap.
@@ -31,6 +33,7 @@ sgx.isvsvn = {{ isv_svn }}
 
 sgx.trusted_files = [
   "file:{{ install_root }}/gramine/libpal.so",
+  "file:{{ install_root }}/gramine/libsysdb.so",
   "file:{{ install_root }}/bin/outbe-tee-enclave",
   "file:{{ install_root }}/network-descriptor-v1.bin",
   "file:{{ install_root }}/gramine/runtime/glibc/",

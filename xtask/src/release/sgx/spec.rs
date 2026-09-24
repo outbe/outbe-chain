@@ -19,10 +19,11 @@ use std::fs;
 
 use std::path::Path;
 
-pub(super) const REQUIRED_BUNDLE_FILES: [&str; 8] = [
+pub(super) const REQUIRED_BUNDLE_FILES: [&str; 9] = [
     "metadata/network-descriptor-v1.bin",
     "rootfs/opt/outbe/sgx/bin/outbe-tee-enclave",
     "rootfs/opt/outbe/sgx/gramine/libpal.so",
+    "rootfs/opt/outbe/sgx/gramine/libsysdb.so",
     "rootfs/opt/outbe/sgx/gramine/loader",
     "rootfs/opt/outbe/sgx/network-descriptor-v1.bin",
     "rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest",
