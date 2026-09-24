@@ -236,6 +236,7 @@ fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
     assert_eq!(signer_address, Some(evm_signer.address()));
 }
 
+#[cfg(feature = "snapshot-integration")]
 pub(in crate::stack::tests) mod copied_native {
     use super::*;
     use crate::ce_finalizer::RethDurableCeState;

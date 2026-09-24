@@ -7,5 +7,5 @@ pub(crate) mod native;
 
 pub(crate) mod validation;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 mod tests;
