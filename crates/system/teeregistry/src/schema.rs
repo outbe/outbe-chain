@@ -196,4 +196,40 @@ pub struct TeeRegistry {
     /// slot 44: Update proposal that most recently promoted the active policy.
     #[attribute(order = 44)]
     pub active_v1_policy_proposal_id: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// Hard-retirement authority. Zero proposal preserves historical V1 semantics.
+    #[attribute(order = 45)]
+    pub strict_upgrade_proposal: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 46)]
+    pub strict_upgrade_height: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 47)]
+    pub strict_upgrade_mrenclave: outbe_primitives::storage::dsl::Value<B256>,
+    #[attribute(order = 48)]
+    pub strict_upgrade_successor: outbe_primitives::storage::dsl::Value<B256>,
+    #[attribute(order = 49)]
+    pub strict_upgrade_predecessor: outbe_primitives::storage::dsl::Value<B256>,
+    /// Replay guard for each proposal/validator, independent of jail/unjail state.
+    #[attribute(order = 50)]
+    pub strict_upgrade_penalized: outbe_primitives::storage::dsl::Map<B256, bool>,
+    #[attribute(order = 51)]
+    pub strict_upgrade_swept: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 52)]
+    pub last_enclave_retirement_height: outbe_primitives::storage::dsl::Value<u64>,
+    /// Finalized authorization to deliver the permanent key to a pending candidate.
+    #[attribute(order = 53)]
+    pub upgrade_candidate_context: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 54)]
+    pub upgrade_candidate_expiry: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 55)]
+    pub upgrade_candidate_source: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 56)]
+    pub upgrade_candidate_target: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Monotonic prepare nonce, retained after cancellation and promotion.
+    #[attribute(order = 57)]
+    pub upgrade_candidate_nonce: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 58)]
+    pub upgrade_candidate_evidence: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// A prepared binding can never fall back to the legacy copy-root transition.
+    #[attribute(order = 59)]
+    pub upgrade_binding_requires_candidate: outbe_primitives::storage::dsl::Map<B256, bool>,
 }

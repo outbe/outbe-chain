@@ -209,6 +209,7 @@ pub fn gramine_direct_bootstrap_v2(
             .map_err(|_| "GramineDirectDev test signature is not Ed25519-64")?;
         submissions.push(TeeBootstrapParticipantSubmissionV2 {
             evidence: AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                transition_key_ready_proof: None,
                 intent,
                 dev_attestation_public: attestation_public,
                 dev_signature: enclave_signature,

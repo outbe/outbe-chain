@@ -157,10 +157,10 @@ fn trusted_network_descriptor_is_canonical_and_dcap_only() {
 
     let mut direct = descriptor.clone();
     direct.network_binding.attestation_mode = AttestationMode::GramineDirectDev;
-    assert_eq!(
-        direct.encode_canonical().unwrap_err(),
-        CodecError::NonCanonical("trusted production network descriptor is not DCAP-required")
-    );
+    assert!(direct.encode_canonical().is_ok());
+    direct.network_binding.chain_id =
+        alloy_primitives::U256::from(outbe_primitives::chain::MAINNET_CHAIN_ID).to_be_bytes();
+    assert!(direct.encode_canonical().is_err());
 
     let mut unsorted = descriptor;
     unsorted.genesis_consensus_keys.reverse();
@@ -1178,6 +1178,87 @@ fn policy_schedule_rejects_duplicate_rules_and_broken_predecessor_chain() {
 }
 
 #[test]
+fn code_only_admission_keeps_code_version_and_height_checks() {
+    let mut candidate = policy(1, 1, B256::ZERO);
+    candidate.measurement_rules[0].mrsigner = B256::ZERO;
+    let rule = &candidate.measurement_rules[0];
+    for signer in [rule.mrsigner, B256::repeat_byte(0xee), B256::ZERO] {
+        assert_eq!(
+            candidate.measurement_rule_match_count(
+                rule.mrenclave,
+                signer,
+                rule.isv_prod_id,
+                rule.minimum_isv_svn,
+                10,
+            ),
+            1
+        );
+        for (measurement, product, svn, height) in [
+            (
+                B256::repeat_byte(0xff),
+                rule.isv_prod_id,
+                rule.minimum_isv_svn,
+                10,
+            ),
+            (
+                rule.mrenclave,
+                rule.isv_prod_id + 1,
+                rule.minimum_isv_svn,
+                10,
+            ),
+            (
+                rule.mrenclave,
+                rule.isv_prod_id,
+                rule.minimum_isv_svn - 1,
+                10,
+            ),
+            (rule.mrenclave, rule.isv_prod_id, rule.minimum_isv_svn, 0),
+            (
+                rule.mrenclave,
+                rule.isv_prod_id,
+                rule.minimum_isv_svn,
+                1_000,
+            ),
+        ] {
+            assert_eq!(
+                candidate.measurement_rule_match_count(measurement, signer, product, svn, height),
+                0
+            );
+        }
+    }
+}
+
+#[test]
+fn unspecified_signer_roundtrips_without_allowing_a_zero_mrenclave() {
+    let mut candidate = policy(1, 1, B256::ZERO);
+    candidate.measurement_rules[0].mrsigner = B256::ZERO;
+    let encoded = candidate.encode_canonical().unwrap();
+    assert_eq!(TeePolicyV1::decode_canonical(&encoded).unwrap(), candidate);
+    candidate.measurement_rules[0].mrenclave = B256::ZERO;
+    assert!(candidate.encode_canonical().is_err());
+}
+
+#[test]
+fn rules_differing_only_in_signer_are_ambiguous_for_admission() {
+    let mut candidate = policy(1, 1, B256::ZERO);
+    let rule = candidate.measurement_rules[0].clone();
+    let mut other_signer = rule.clone();
+    other_signer.mrsigner = B256::ZERO;
+    candidate.measurement_rules.insert(0, other_signer);
+    candidate.encode_canonical().unwrap();
+    assert_eq!(
+        candidate.measurement_rule_match_count(
+            rule.mrenclave,
+            rule.mrsigner,
+            rule.isv_prod_id,
+            rule.minimum_isv_svn,
+            10,
+        ),
+        2
+    );
+}
+
+#[test]
 fn measurement_admission_counts_overlapping_matches_instead_of_accepting_any() {
     let mut candidate = policy(1, 1, B256::ZERO);
     let original = candidate.measurement_rules[0].clone();
@@ -1196,4 +1277,23 @@ fn measurement_admission_counts_overlapping_matches_instead_of_accepting_any() {
         ),
         2
     );
+}
+
+#[test]
+fn legacy_measurement_rule_still_requires_its_exact_signer() {
+    let candidate = policy(1, 1, B256::ZERO);
+    let rule = &candidate.measurement_rules[0];
+    assert!(!rule.mrsigner.is_zero());
+    for signer in [rule.mrsigner, B256::repeat_byte(0xee), B256::ZERO] {
+        assert_eq!(
+            candidate.measurement_rule_match_count(
+                rule.mrenclave,
+                signer,
+                rule.isv_prod_id,
+                rule.minimum_isv_svn,
+                10
+            ),
+            usize::from(signer == rule.mrsigner)
+        );
+    }
 }

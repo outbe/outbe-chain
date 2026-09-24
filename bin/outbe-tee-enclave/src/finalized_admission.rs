@@ -41,6 +41,7 @@ pub struct FinalizedAdmissionVerifierV1 {
     chain: CommitteeChain,
     previous_height: u64,
     context: DcapOnboardingContextV1,
+    upgrade: bool,
 }
 
 impl FinalizedAdmissionVerifierV1 {
@@ -84,7 +85,13 @@ impl FinalizedAdmissionVerifierV1 {
             chain,
             previous_height: 0,
             context: *context,
+            upgrade: false,
         })
+    }
+
+    pub fn for_upgrade(mut self) -> Self {
+        self.upgrade = true;
+        self
     }
 
     pub fn advance_committee(&mut self, encoded: &[u8]) -> Result<(), String> {
@@ -147,8 +154,11 @@ impl FinalizedAdmissionVerifierV1 {
 
         let state_root = header.state_root();
         verify_registry_account(state_root, &proof.registry_account)?;
-        let expected =
-            expected_registry_claims(&self.context, header.timestamp(), &proof.registry_storage)?;
+        let expected = if self.upgrade {
+            expected_upgrade_claims(&self.context, header.timestamp(), &proof.registry_storage)?
+        } else {
+            expected_registry_claims(&self.context, header.timestamp(), &proof.registry_storage)?
+        };
         if proof.registry_storage.len() != expected.len() {
             return Err("finalized admission Registry proof has an unexpected slot count".into());
         }
@@ -239,6 +249,38 @@ fn verify_storage(root: B256, witness: &MptStorageProofV1) -> Result<(), String>
     .with_proof(witness.nodes.iter().cloned().map(Into::into).collect())
     .verify(root)
     .map_err(|error| format!("finalized admission Registry storage proof rejected: {error}"))
+}
+
+fn expected_upgrade_claims(
+    context: &DcapOnboardingContextV1,
+    timestamp: u64,
+    openings: &[MptStorageProofV1],
+) -> Result<Vec<(B256, U256)>, String> {
+    let slots = outbe_tee::finalized_admission::upgrade_registry_slots_v1(context);
+    let value = |i: usize| {
+        openings
+            .iter()
+            .find(|o| o.key == slots[i])
+            .map(|o| o.value)
+            .ok_or_else(|| "missing upgrade authorization slot".to_string())
+    };
+    let expiry = value(4)?;
+    let source = value(5)?;
+    let nonce = value(8)?;
+    if expiry <= U256::from(timestamp) || source.is_zero() || nonce.is_zero() {
+        return Err("upgrade authorization is absent or expired at the proved block".into());
+    }
+    Ok(vec![
+        (slots[0], U256::from_be_bytes(context.tribute_offer_public)),
+        (slots[1], U256::from(context.key_epoch)),
+        (slots[2], U256::from(context.tribute_offer_epoch)),
+        (slots[3], U256::from_be_bytes(context.context_hash().0)),
+        (slots[4], expiry),
+        (slots[5], source),
+        (slots[6], source),
+        (slots[7], U256::from_be_bytes(context.policy_hash.0)),
+        (slots[8], nonce),
+    ])
 }
 
 fn expected_registry_claims(
@@ -426,11 +468,13 @@ mod tests {
     #[test]
     fn real_e0_to_e1_finalization_chain_and_registry_mpt_verify_end_to_end() {
         for indirect in [false, true] {
-            verify_real_proof(indirect);
+            for upgrade in [false, true] {
+                verify_real_proof(indirect, upgrade);
+            }
         }
     }
 
-    fn verify_real_proof(indirect: bool) {
+    fn verify_real_proof(indirect: bool, upgrade: bool) {
         use std::collections::BTreeMap;
 
         use alloy_primitives::{keccak256, Bytes};
@@ -499,18 +543,36 @@ mod tests {
             },
             genesis_consensus_keys: epoch0.public_keys_min_pk(),
         };
-        let slots = onboarding_registry_slots_v1(&context);
-        let values = [
-            U256::from_be_bytes(context.tribute_offer_public),
-            U256::from(context.key_epoch),
-            U256::from(context.tribute_offer_epoch),
-            U256::from_be_bytes(context.enclave_id.0),
-            U256::from_be_bytes(context.binding_id.0),
-            U256::from_be_bytes(context.intent_hash.0),
-            U256::from_be_bytes(context.policy_hash.0),
-            U256::from(2_000_u64),
-            U256::from_be_bytes(context.recipient_x25519),
-        ];
+        let slots = if upgrade {
+            outbe_tee::finalized_admission::upgrade_registry_slots_v1(&context)
+        } else {
+            onboarding_registry_slots_v1(&context)
+        };
+        let values = if upgrade {
+            [
+                U256::from_be_bytes(context.tribute_offer_public),
+                U256::from(context.key_epoch),
+                U256::from(context.tribute_offer_epoch),
+                U256::from_be_bytes(context.context_hash().0),
+                U256::from(2_000_u64),
+                U256::from(123_u64),
+                U256::from(123_u64),
+                U256::from_be_bytes(context.policy_hash.0),
+                U256::from(1),
+            ]
+        } else {
+            [
+                U256::from_be_bytes(context.tribute_offer_public),
+                U256::from(context.key_epoch),
+                U256::from(context.tribute_offer_epoch),
+                U256::from_be_bytes(context.enclave_id.0),
+                U256::from_be_bytes(context.binding_id.0),
+                U256::from_be_bytes(context.intent_hash.0),
+                U256::from_be_bytes(context.policy_hash.0),
+                U256::from(2_000_u64),
+                U256::from_be_bytes(context.recipient_x25519),
+            ]
+        };
         let storage_leaves = slots
             .iter()
             .zip(values)
@@ -626,6 +688,9 @@ mod tests {
                 .unwrap_err()
                 .contains("current committee"));
         }
+        if upgrade {
+            verifier = verifier.for_upgrade();
+        }
         verifier.advance_committee(&transition_record).unwrap();
         let verified = verifier
             .verify_admission(&proof.encode_canonical().unwrap())
@@ -634,5 +699,15 @@ mod tests {
         assert_eq!(verified.block_hash, admission.block_hash);
         assert_eq!(verified.state_root, state_root);
         assert_eq!(verified.consensus_timestamp, 1_000);
+        // A valid finalization cannot authorize altered storage or another recipient.
+        let mut changed = proof.clone();
+        changed.registry_storage[3].value ^= U256::from(1);
+        assert!(verifier
+            .verify_admission(&changed.encode_canonical().unwrap())
+            .is_err());
+        verifier.context.recipient_x25519[0] ^= 1;
+        assert!(verifier
+            .verify_admission(&proof.encode_canonical().unwrap())
+            .is_err());
     }
 }

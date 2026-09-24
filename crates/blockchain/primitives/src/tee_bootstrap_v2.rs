@@ -186,6 +186,7 @@ impl TeeBootstrapV2 {
                     )
                 }
                 AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    transition_key_ready_proof: None,
                     intent,
                     dev_attestation_public,
                     dev_signature,
@@ -196,6 +197,11 @@ impl TeeBootstrapV2 {
                         dev_signature,
                     },
                 ),
+                AttestationEvidenceV1::GramineDirectDev(_) => {
+                    return Err(CodecError::NonCanonical(
+                        "bootstrap cannot carry transition evidence",
+                    ))
+                }
             };
             participants.push(TeeBootstrapParticipantV2 {
                 intent,
@@ -600,6 +606,7 @@ impl TeeBootstrapV2 {
                 dev_attestation_public,
                 dev_signature,
             } => AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                transition_key_ready_proof: None,
                 intent: participant.intent.clone(),
                 dev_attestation_public: *dev_attestation_public,
                 dev_signature: *dev_signature,

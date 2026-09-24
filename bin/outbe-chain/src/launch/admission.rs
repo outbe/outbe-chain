@@ -1,4 +1,6 @@
+use crate::tee_recovery::DurableTeeStateProvider;
 use crate::*;
+use reth_provider::{ChainStateBlockReader, StageCheckpointReader};
 
 const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
 
@@ -81,7 +83,7 @@ pub(crate) fn require_validator_tee_recovery_complete_v1(
         return Ok(());
     };
     eyre::bail!(
-        "validator recovery requires certified follower catch-up before authority startup: local finalized state has not reached the durable TEE join anchor at height {} ({}) in {}. Stop this process; start the same outbe-chain binary with this same datadir and the same network/TEE options, omit --validator and every validator signing/Radicle authority flag, and add --upstream <healthy-certified-rpc> (do not use --upstream.nocertify). Wait for `local TEE lease guard armed at authenticated catch-up anchor`, stop the follower, then restart the original validator command. Submit readiness only after the validator is caught up; signing authority returns only after a fresh DKG installs current private material",
+        "validator recovery requires certified follower catch-up before authority startup: local finalized state has not reached the durable TEE join anchor at height {} ({}) in {}. Stop this process; start the same outbe-chain binary with this same datadir and the same network/TEE options, omit --validator and every validator signing/Radicle authority flag, and add --upstream <healthy-certified-rpc> (do not use --upstream.nocertify). Wait for `local TEE recovery anchor durably persisted; validator restart ready`, stop the follower, then restart the original validator command. Submit readiness only after the validator is caught up; signing authority returns only after a fresh DKG installs current private material",
         anchor.finalized_height,
         anchor.finalized_hash,
         node_data_dir.display(),
@@ -142,6 +144,10 @@ fn local_tee_rejection_message(
         }
         LocalTeeRuntimeRejectionV1::ValidatorJailed => {
             "validator is jailed; complete ordinary unjail and then run tee join".to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::RetiredEnclave => {
+            "enclave upgrade deadline reached; complete tee upgrade before restarting TEE work"
+                .to_owned()
         }
         LocalTeeRuntimeRejectionV1::Expired { valid_until } => {
             format!("finalized TEE lease expired at {valid_until}; stop node and run tee join")
@@ -249,7 +255,12 @@ pub(crate) fn read_gated_finalized_local_tee_admission<P>(
     gate: &mut TeeLeaseGuardGateV1,
 ) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
 where
-    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + DurableTeeStateProvider,
+    P::Provider:
+        ChainStateBlockReader + HeaderProvider<Header = OutbeHeader> + StageCheckpointReader,
 {
     let Some(finalized) = provider
         .finalized_block_num_hash()
@@ -275,17 +286,47 @@ where
         identity,
         anchor.finalized_height,
     )?;
-    gate.validate_and_arm(anchor_hash, anchor_admission)?;
+    // Authenticate the live anchor immediately, even if disk persistence lags.
+    // Keep monitoring the current lease while waiting for restart readiness.
+    let mut authenticated = *gate;
+    authenticated.validate_and_arm(anchor_hash, anchor_admission)?;
+    let current_admission = if finalized.number == anchor.finalized_height {
+        Some(anchor_admission)
+    } else {
+        read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)?
+    };
+    if !matches!(
+        current_admission,
+        Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })
+    ) {
+        return Ok(current_admission);
+    }
+    let Some((timestamp, state)) = tee_recovery::durable_anchor_state(
+        provider,
+        anchor.finalized_height,
+        anchor.finalized_hash,
+    )?
+    else {
+        return Ok(current_admission);
+    };
+    let durable_admission = outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+        &state,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
+            chain_id,
+            genesis_hash,
+            block_number: anchor.finalized_height,
+            timestamp,
+        },
+        identity,
+    )?;
+    gate.validate_and_arm(anchor.finalized_hash, durable_admission)?;
     info!(
         anchor_height = anchor.finalized_height,
         anchor_hash = %anchor.finalized_hash,
         local_finalized_height = finalized.number,
-        "local TEE lease guard armed at authenticated catch-up anchor"
+        "local TEE recovery anchor durably persisted; validator restart ready"
     );
-    if finalized.number == anchor.finalized_height {
-        return Ok(Some(anchor_admission));
-    }
-    read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+    Ok(current_admission)
 }
 
 pub(crate) async fn require_upstream_fullnode_tee_admission(
@@ -334,16 +375,50 @@ where
     P: BlockIdReader
         + HeaderProvider<Header = OutbeHeader>
         + StateProviderFactory
+        + DurableTeeStateProvider
         + Send
         + Sync
         + 'static,
+    P::Provider:
+        ChainStateBlockReader + HeaderProvider<Header = OutbeHeader> + StageCheckpointReader,
 {
+    let mut retired_at = 0;
     let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return Ok(None),
             _ = interval.tick() => {}
+        }
+        if gate.is_armed()
+            && provider
+                .finalized_block_num_hash()?
+                .is_some_and(|head| head.number > 0)
+        {
+            let status =
+                outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+                    &provider,
+                    chain_id,
+                    genesis_hash,
+                )?;
+            if status.retirement_height > retired_at {
+                let activation_height = status.retirement_height;
+                let response = outbe_tee::try_with_enclave(|session| {
+                    session.request(
+                        &outbe_tee::protocol::EnclaveRequest::RetireRemoteSessionsV1 {
+                            activation_height,
+                        },
+                    )
+                })
+                .ok_or_else(|| {
+                    eyre::eyre!("TEE client unavailable during remote session retirement")
+                })??;
+                if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
+                {
+                    eyre::bail!("enclave did not acknowledge remote session retirement");
+                }
+                retired_at = activation_height;
+            }
         }
         match read_gated_finalized_local_tee_admission(
             &provider,

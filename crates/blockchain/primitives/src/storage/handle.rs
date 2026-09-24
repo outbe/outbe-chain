@@ -169,6 +169,9 @@ impl<'storage> StorageHandle<'storage> {
     pub fn sload(&self, address: Address, key: U256) -> Result<U256> {
         self.with_provider(|provider| provider.sload(address, key))
     }
+    pub fn enclave_upgrade_id(&self) -> Result<U256> {
+        self.with_provider(|provider| provider.enclave_upgrade_id())
+    }
 
     pub fn tload(&self, address: Address, key: U256) -> Result<U256> {
         self.with_provider(|provider| provider.tload(address, key))

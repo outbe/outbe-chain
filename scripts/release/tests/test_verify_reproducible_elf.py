@@ -110,6 +110,17 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
         self.assertEqual(len(evidence["artifacts"]), 6)
         self.assertEqual(evidence["differences"], [])
 
+    def test_version_features_follow_vergen_spelling_and_reject_different_features(self) -> None:
+        text = (self.first / "metadata/outbe-chain.version.txt").read_text()
+        text = text.replace("no features enabled", "alpha,test_protocol_overrides")
+        kwargs = dict(source_commit="a" * 40, source_date_epoch=1_784_000_000,
+                      target="x86_64-unknown-linux-gnu", profile="release")
+        self.assertEqual(verifier.version_verifier.verify_version_text(
+            text, features=["test-protocol-overrides", "alpha"], **kwargs), [])
+        self.assertTrue(verifier.version_verifier.verify_version_text(
+            text, features=["test-protocol-overrides"], **kwargs))
+        self.assertTrue(verifier.version_verifier.verify_version_text(text, **kwargs))
+
     def test_changed_artifact_fails_with_named_difference(self) -> None:
         with (self.second / "bin/outbe-cli").open("ab") as output:
             output.write(b"changed")

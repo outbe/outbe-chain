@@ -10,6 +10,10 @@ publish.workspace = true
 # quote). The production binary is built WITHOUT this feature and therefore
 # physically contains no mock key material. See plan section "Mock build-time isolation".
 mock = []
+# Hardware-free process E2E harness; never a release feature.
+local-e2e = ["mock"]
+# Isolated hardware validation binary; absent from release artifacts.
+sgx-sealing-probe = []
 # Production DCAP verifier feasibility path. This forwards the exact-pinned
 # native QVL feature into the enclave crate without enabling it in dev builds.
 native-dcap = ["outbe-tee/native-dcap"]
@@ -54,6 +58,11 @@ required-features = ["mock"]
 name = "dkg_ceremony_driver"
 path = "tests/dkg_ceremony_driver.rs"
 required-features = ["mock"]
+
+[[bin]]
+name = "outbe-sgx-sealing-probe"
+path = "src/bin/outbe-sgx-sealing-probe.rs"
+required-features = ["sgx-sealing-probe"]
 
 [dependencies]
 outbe-tee.workspace = true
@@ -129,3 +138,8 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "outbe-tee-enclave-local-e2e"
+path = "src/bin/outbe-tee-enclave-local-e2e.rs"
+required-features = ["local-e2e"]

@@ -518,6 +518,13 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.trace_storage(address, key, StorageTraceKind::Read);
         Ok(value)
     }
+    fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        Ok(self
+            .storage
+            .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45)))
+            .copied()
+            .unwrap_or(U256::ZERO))
+    }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
         Ok(self

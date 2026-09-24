@@ -204,3 +204,147 @@ fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
         );
     });
 }
+
+fn strict_upgrade_penalty_fixture(updated: bool) -> HashMapStorageProvider {
+    let mut provider = configured_storage(49, 10_000);
+    install_validator_lease(&mut provider, 100_000);
+    provider.enter(|storage| {
+        let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
+        registry
+            .strict_upgrade_proposal
+            .write(U256::from(7))
+            .unwrap();
+        registry.strict_upgrade_height.write(50).unwrap();
+        registry
+            .strict_upgrade_mrenclave
+            .write(B256::repeat_byte(0x71))
+            .unwrap();
+        registry
+            .strict_upgrade_successor
+            .write(B256::repeat_byte(0x72))
+            .unwrap();
+        registry
+            .strict_upgrade_predecessor
+            .write(B256::repeat_byte(0x73))
+            .unwrap();
+        registry
+            .active_v1_policy_proposal_id
+            .write(U256::from(7))
+            .unwrap();
+        if updated {
+            registry
+                .v1_node_policy_hash
+                .write(&B256::repeat_byte(0x61), B256::repeat_byte(0x72))
+                .unwrap();
+            registry
+                .v1_node_mrenclave
+                .write(&B256::repeat_byte(0x61), B256::repeat_byte(0x71))
+                .unwrap();
+        }
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        staking.config_min_stake.write(U256::from(1_000)).unwrap();
+        staking
+            .stake_amount
+            .write(&VALIDATOR, U256::from(8_000))
+            .unwrap();
+        staking.total_staked.write(U256::from(8_000)).unwrap();
+        staking.unbonding_count.write(1).unwrap();
+        staking.per_val_unbonding_head.write(&VALIDATOR, 1).unwrap();
+        staking.unbonding_validator.write(&0, VALIDATOR).unwrap();
+        staking
+            .unbonding_amount
+            .write(&0, U256::from(2_000))
+            .unwrap();
+        staking.unbonding_complete_time.write(&0, 10_000).unwrap();
+        storage
+            .set_balance(
+                outbe_primitives::addresses::STAKING_ADDRESS,
+                U256::from(10_000),
+            )
+            .unwrap();
+    });
+    provider
+}
+
+#[test]
+fn strict_upgrade_penalty_is_exact_height_once_and_includes_matured_unbonding() {
+    let mut provider = strict_upgrade_penalty_fixture(false);
+    let original = provider.storage.clone();
+    provider.enter(|storage| {
+        crate::executor::enforce_enclave_upgrade_deadline(&runtime_ctx(storage)).unwrap()
+    });
+    assert_eq!(provider.storage, original, "no penalty before H");
+    provider.set_block_number(50);
+    provider.enter(|storage| {
+        let ctx = runtime_ctx(storage.clone());
+        crate::executor::enforce_enclave_upgrade_deadline(&ctx).unwrap();
+        let mut staking = outbe_staking::contract::Staking::new(storage.clone());
+        assert_eq!(staking.get_stake(VALIDATOR).unwrap(), U256::from(7_200));
+        assert_eq!(
+            staking.unbonding_amount.read(&0).unwrap(),
+            U256::from(1_800)
+        );
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                .unwrap(),
+            U256::from(9_000)
+        );
+        staking.process_unbonding(10_000).unwrap();
+        assert_eq!(
+            staking.unbonding_amount.read(&0).unwrap(),
+            U256::from(1_800),
+            "slash postpones a matured claim before withdrawals run"
+        );
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+        assert_eq!(
+            validators.get_validator(VALIDATOR).unwrap().unwrap().status,
+            outbe_validatorset::runtime::status::JAILED
+        );
+    });
+    let once = provider.storage.clone();
+    provider.enter(|storage| {
+        crate::executor::enforce_enclave_upgrade_deadline(&runtime_ctx(storage)).unwrap()
+    });
+    assert_eq!(
+        provider.storage, once,
+        "deadline reexecution must not slash twice"
+    );
+}
+
+#[test]
+fn strict_upgrade_penalty_exempts_updated_validator_and_rolls_back_failed_burn() {
+    let mut updated = strict_upgrade_penalty_fixture(true);
+    updated.set_block_number(50);
+    updated.enter(|storage| {
+        crate::executor::enforce_enclave_upgrade_deadline(&runtime_ctx(storage.clone())).unwrap();
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        assert_eq!(
+            validators.get_validator(VALIDATOR).unwrap().unwrap().status,
+            outbe_validatorset::runtime::status::ACTIVE
+        );
+        assert_eq!(
+            outbe_staking::contract::Staking::new(storage)
+                .get_stake(VALIDATOR)
+                .unwrap(),
+            U256::from(8_000)
+        );
+    });
+    let mut failed = strict_upgrade_penalty_fixture(false);
+    failed.set_block_number(50);
+    failed.enter(|storage| {
+        storage
+            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, U256::ZERO)
+            .unwrap()
+    });
+    let before = failed.storage.clone();
+    let events = failed.events.clone();
+    failed.enter(|storage| {
+        assert!(crate::executor::enforce_enclave_upgrade_deadline(&runtime_ctx(storage)).is_err())
+    });
+    assert_eq!(failed.storage, before);
+    assert_eq!(
+        failed.events, events,
+        "failed sweep must roll back jail, slash and idempotency marker"
+    );
+}

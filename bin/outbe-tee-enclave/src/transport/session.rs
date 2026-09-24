@@ -262,6 +262,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
     // Remote traffic is checked both before and after every blocking read, so a
     // frame arriving at or after the exclusive lease deadline is never decoded.
     loop {
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;
@@ -292,6 +297,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
             }
             Err(error) => return Err(error),
         };
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;
@@ -308,7 +318,8 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
         let req_started = std::time::SystemTime::now();
         let is_onboarding_upload_request = matches!(
             req,
-            EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+            EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
+                | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
                 | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
                 | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
                 | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
@@ -408,7 +419,8 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
                     }
                 }
             }
-            request @ (EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+            request @ (EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
+            | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
             | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
             | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
             | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }) => {
@@ -471,6 +483,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
             crate::telemetry::format_request_log(ts, req_label, peer, outcome, dur_ms)
         );
 
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;

@@ -7,6 +7,7 @@
 
 pub mod runtime;
 pub mod schema;
+pub mod upgrade;
 pub mod v1;
 #[cfg(feature = "tee-attestation-v1")]
 pub mod v1_precompile;

@@ -123,6 +123,7 @@ pub enum LocalTeeRuntimeRejectionV1 {
     EnclaveIdentityMismatch,
     ValidatorBindingMismatch,
     ValidatorJailed,
+    RetiredEnclave,
     Expired { valid_until: u64 },
 }
 
@@ -209,6 +210,11 @@ pub fn read_local_tee_runtime_admission_from_state(
         }
     }
 
+    if !registry.binding_code_admitted_at_v1(&node_binding, context.block_number)? {
+        return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::RetiredEnclave,
+        ));
+    }
     if node_binding.valid_until <= context.timestamp {
         return Ok(LocalTeeRuntimeAdmissionV1::Rejected(
             LocalTeeRuntimeRejectionV1::Expired {
@@ -890,6 +896,73 @@ mod tests {
                 LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch
             )
         );
+    }
+
+    #[test]
+    fn finalized_runtime_retires_old_validator_and_full_node_despite_live_lease() {
+        let (access, public, validator, enclave_id) = tee_runtime_admission_state(100_000);
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.storage = access.data;
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            registry
+                .strict_upgrade_proposal
+                .write(U256::from(7))
+                .unwrap();
+            registry.strict_upgrade_height.write(50).unwrap();
+            registry
+                .strict_upgrade_successor
+                .write(B256::repeat_byte(0xe1))
+                .unwrap();
+            registry
+                .strict_upgrade_predecessor
+                .write(B256::repeat_byte(0xe2))
+                .unwrap();
+            let node = NodeIdV1 {
+                reth_p2p_public: public,
+            }
+            .node_id_hash()
+            .unwrap();
+            registry
+                .v1_node_policy_hash
+                .write(&node, B256::repeat_byte(0xe2))
+                .unwrap();
+        });
+        let access = TestStateAccess {
+            data: provider.storage,
+        };
+        for role in [None, Some(validator)] {
+            let identity = LocalTeeRuntimeIdentityV1 {
+                reth_p2p_public: public,
+                expected_enclave_id: Some(enclave_id),
+                validator: role,
+            };
+            for height in [49, 50] {
+                let result = read_local_tee_runtime_admission_from_state(
+                    &access,
+                    ReadOnlyBlockContext {
+                        chain_id: 1,
+                        genesis_hash: B256::repeat_byte(0x41),
+                        block_number: height,
+                        timestamp: 10_000,
+                    },
+                    identity,
+                )
+                .unwrap();
+                assert_eq!(
+                    result,
+                    if height == 49 {
+                        LocalTeeRuntimeAdmissionV1::Ready {
+                            valid_until: 100_000,
+                        }
+                    } else {
+                        LocalTeeRuntimeAdmissionV1::Rejected(
+                            LocalTeeRuntimeRejectionV1::RetiredEnclave,
+                        )
+                    }
+                );
+            }
+        }
     }
 
     #[test]

@@ -219,6 +219,7 @@ impl EnclaveSession {
                 | EnclaveRequest::DcapVerificationChunkV1 { .. }
                 | EnclaveRequest::FinishDcapVerificationV1 { .. }
                 | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+                | EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
                 | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
                 | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
                 | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
@@ -306,6 +307,22 @@ impl EnclaveSession {
             crate::metrics::record_request_error(op_label, error.metric_class());
         }
         result
+    }
+
+    pub(crate) fn export_upgrade_key_v1(
+        &mut self,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        artifact: &[u8],
+    ) -> Result<EnclaveResponse, TransportError> {
+        self.with_production_retry(
+            "export_upgrade_key_v1",
+            || {
+                TransportError::EnclaveError(
+                    "upgrade export requires an authenticated owner session".into(),
+                )
+            },
+            |client| client.transfer_upgrade_key_v1(proof, artifact, true),
+        )
     }
 
     /// Production-only: verify DCAP evidence (whole-operation retry). The
@@ -1048,12 +1065,22 @@ mod tests {
         let enclave = Arc::new(FakeEnclave::generate(Arc::clone(&script)));
         let server = spawn_server(Arc::clone(&enclave));
         let mut session = connect_session(&server);
-        let error = session
-            .request(&EnclaveRequest::FinishDcapVerificationV1 {
+        for request in [
+            EnclaveRequest::FinishDcapVerificationV1 {
                 request_hash: alloy_primitives::B256::ZERO,
-            })
-            .expect_err("guarded");
-        assert!(matches!(error, TransportError::DcapVerification(_)));
+            },
+            EnclaveRequest::BeginUpgradeKeyTransferV1 {
+                request_hash: alloy_primitives::B256::ZERO,
+                artifact: vec![],
+                anchor_outcome: vec![],
+                export: true,
+            },
+        ] {
+            let error = session
+                .request(&request)
+                .expect_err("guarded before sending any frame");
+            assert!(matches!(error, TransportError::DcapVerification(_)));
+        }
         server.stop.store(true, Ordering::Relaxed);
     }
 }

@@ -48,7 +48,8 @@ python3 scripts/release/verify_outbe_chain_version.py \
   --source-commit "${SOURCE_COMMIT}" \
   --source-date-epoch "${SOURCE_DATE_EPOCH}" \
   --target "${TARGET}" \
-  --profile "${PROFILE}"
+  --profile "${PROFILE}" \
+  --build-spec "${SPEC}"
 
 dpkg-query -W -f='${binary:Package}=${Version}\n' \
   | LC_ALL=C sort \

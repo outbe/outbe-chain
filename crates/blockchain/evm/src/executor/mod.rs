@@ -120,3 +120,6 @@ use boundary::hash_boundary_active_set;
 
 #[cfg(test)]
 use tests::harness::PHASE1_VERIFY_DISABLED;
+
+#[cfg(test)]
+pub(crate) use hooks::enforce_enclave_upgrade_deadline;

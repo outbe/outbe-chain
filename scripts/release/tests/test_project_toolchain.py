@@ -295,7 +295,10 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertNotIn("qpl", recipe)
         self.assertNotIn("pccs", recipe)
         self.assertNotRegex(recipe, r"from\s+\S+:(latest|main|master)(?:\s|$)")
-        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 4)
+        self.assertEqual(
+            re.findall(r"^from\s+(\S+)\s+as\s+(ci|builder|artifacts)$", recipe, re.MULTILINE),
+            [("toolchain", "ci"), ("toolchain", "builder"), ("scratch", "artifacts")],
+        )
         external_images = re.findall(
             r"^from\s+(\S+)\s+as\s+(?:rust|toolchain)$", recipe, re.MULTILINE
         )

@@ -1,6 +1,7 @@
 //! Whitelist for pre-exec hook events published via the `HookEvents` system tx.
 
 use alloy_primitives::{Address, Log};
+use alloy_sol_types::SolEvent;
 
 use crate::addresses::{
     GEM_ADDRESS, GOVERNANCE_ADDRESS, INTEX_FACTORY_ADDRESS, NOD_ADDRESS,
@@ -30,7 +31,11 @@ pub fn partition_hook_events(events: &[Log]) -> (Vec<Log>, Vec<Log>) {
     let mut receipt_visible = Vec::new();
     let mut tracing_only = Vec::new();
     for event in events {
-        if is_hook_event_receipt_address(event.address) {
+        // Only the new opt-in event: exposing all Registry hook logs would
+        // change receipts when replaying historical policy activations.
+        let upgrade_penalty = event.address == crate::addresses::TEE_REGISTRY_ADDRESS
+            && event.data.topics().first() == Some(&crate::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1::SIGNATURE_HASH);
+        if is_hook_event_receipt_address(event.address) || upgrade_penalty {
             receipt_visible.push(event.clone());
         } else {
             tracing_only.push(event.clone());

@@ -10,6 +10,16 @@ use serde_json::Value;
 
 /// Abstraction over JSON-RPC transport for testability.
 pub trait Rpc {
+    fn upgrade_key_v1(
+        &self,
+        context: &[u8],
+        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev: bool,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
+        let _ = (context, proof, legacy_direct_dev);
+        async { Err(eyre::eyre!("upgrade-key RPC unsupported")) }
+    }
+
     fn eth_call(
         &self,
         to: Address,
@@ -406,6 +416,26 @@ impl Rpc for RpcClient {
     async fn outbe_get_epoch_info(&self) -> Result<Value> {
         self.call_rpc("outbe_getEpochInfo", serde_json::json!([]))
             .await
+    }
+
+    async fn upgrade_key_v1(
+        &self,
+        context: &[u8],
+        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev: bool,
+    ) -> Result<Vec<u8>> {
+        let result = self
+            .call_rpc(
+                "outbe_upgradeKeyV1",
+                serde_json::json!([
+                    alloy_primitives::Bytes::copy_from_slice(context),
+                    proof,
+                    legacy_direct_dev
+                ]),
+            )
+            .await?;
+        let bytes: alloy_primitives::Bytes = serde_json::from_value(result)?;
+        Ok(bytes.to_vec())
     }
 
     async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {

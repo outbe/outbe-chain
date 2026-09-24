@@ -7,6 +7,9 @@ pub(in crate::transport) fn complete_onboarding_artifact_ingest_response(
     boot: Option<&EnclaveBootConfig>,
     initialization: &InitializationState,
 ) -> EnclaveResponse {
+    if request.upgrade_export == Some(true) {
+        return complete_upgrade_key_export(request, offer_key, initialization);
+    }
     let derived = initialization
         .manifest()
         .and_then(|manifest| {
@@ -176,4 +179,49 @@ pub(in crate::transport) fn derive_onboarding_offer_key_v1(
         DerivedTributeOfferKey::from_parts(secret, public, group_sig)
             .with_epochs(context.key_epoch, context.tribute_offer_epoch),
     )
+}
+
+fn complete_upgrade_key_export(
+    request: CompleteOnboardingArtifactIngestV1,
+    offer_key: &SharedTributeOfferKey,
+    initialization: &InitializationState,
+) -> EnclaveResponse {
+    let result = (|| -> Result<Vec<u8>, String> {
+        let context =
+            outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&request.artifact)
+                .map_err(|_| "invalid upgrade export context")?
+                .context;
+        let manifest = initialization
+            .manifest()?
+            .ok_or("source is not initialized")?;
+        if manifest.chain_id != context.chain_id
+            || manifest.genesis_hash != context.genesis_hash
+            || request.verified_admission.block_number == 0
+            || request.verified_admission.block_hash.is_zero()
+        {
+            return Err("upgrade export lost its verified network authorization".into());
+        }
+        let resident = offer_key.get().ok_or("source key is unavailable")?;
+        if resident.public() != context.tribute_offer_public
+            || resident.key_epoch() != context.key_epoch
+            || resident.tribute_offer_epoch() != context.tribute_offer_epoch
+        {
+            return Err("source key does not match the finalized network commitment".into());
+        }
+        crate::crypto::encrypt_onboarding_artifact_v1(
+            resident.secret(),
+            context,
+            resident.group_sig(),
+        )
+        .map_err(|e| e.to_string())?
+        .encode_canonical()
+        .map_err(|e| format!("artifact encoding: {e:?}"))
+    })();
+    match result {
+        Ok(artifact) => EnclaveResponse::UpgradeKeyExportedV1 {
+            request_hash: request.request_hash,
+            artifact,
+        },
+        Err(message) => EnclaveResponse::Error { message },
+    }
 }

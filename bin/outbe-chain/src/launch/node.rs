@@ -852,6 +852,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                             projection_readiness.clone(),
                         )
                     })
+                    .with_chain_identity(proof_chain_id, genesis_hash)
                     .with_point_reads(
                         compressed_tree_service.clone(),
                         proof_body_readers.clone(),

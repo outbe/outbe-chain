@@ -37,7 +37,7 @@ pub(super) const NOW: u64 = 10_000;
 
 const MRENCLAVE: B256 = B256::repeat_byte(0x81);
 
-const MRSIGNER: B256 = B256::repeat_byte(0x82);
+pub(super) const MRSIGNER: B256 = B256::repeat_byte(0x82);
 
 pub(super) const CONSENSUS_KEY: [u8; 48] = [0x32; 48];
 
@@ -137,7 +137,7 @@ pub(super) fn initialization_manifest_for_intent(
     }
 }
 
-fn bind_reachable_node_host_authorization(intent: &mut RegistrationIntentV1, challenge: [u8; 32]) {
+pub(super) fn bind_reachable_node_host_authorization(intent: &mut RegistrationIntentV1, challenge: [u8; 32]) {
     let manifest = initialization_manifest_for_intent(intent, challenge);
     intent.node_host_authorization_hash = manifest.node_host_authorization_hash().unwrap();
     manifest.validate_intent_binding(intent).unwrap();

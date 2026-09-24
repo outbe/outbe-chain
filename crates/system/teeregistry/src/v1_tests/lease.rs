@@ -1,13 +1,27 @@
+use super::fixtures::MRSIGNER;
 use super::*;
 
 #[test]
 fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
+    assert_full_node_lease_lifecycle(MRSIGNER, MRSIGNER);
+}
+
+#[test]
+fn independently_signed_enclaves_register_renew_and_replace_under_the_same_policy() {
+    assert_full_node_lease_lifecycle(B256::repeat_byte(0x91), B256::repeat_byte(0x92));
+    assert_full_node_lease_lifecycle(B256::repeat_byte(0x93), B256::repeat_byte(0x94));
+}
+
+fn assert_full_node_lease_lifecycle(initial_signer: B256, replacement_signer: B256) {
     let genesis_hash = B256::repeat_byte(0x25);
     let mut active_policy = policy(
         genesis_hash,
         PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
     );
     active_policy.maximum_lease = 3_600;
+    if initial_signer != MRSIGNER || replacement_signer != MRSIGNER {
+        active_policy.measurement_rules[0].mrsigner = B256::ZERO;
+    }
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x7B; 32]).into()).unwrap();
     let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7C; 32]);
     let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7D; 32]);
@@ -26,6 +40,7 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
         full_node_signatures(&replacement, &node_signer, &new_enclave);
     let p2p_public = full_node_public(&initial);
     let mut accepted = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    accepted.mrsigner = initial_signer;
     accepted.collateral_valid_until = NOW + 12_000;
     let mut provider = storage(genesis_hash);
 
@@ -40,6 +55,14 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
                 PostVerifierDcapCapabilityV1::new(accepted.clone()),
             )
             .unwrap();
+        assert_eq!(
+            registry
+                .node_host_enclave_binding_v1(p2p_public)
+                .unwrap()
+                .unwrap()
+                .mrsigner,
+            initial_signer
+        );
         storage
             .set_block_timestamp(U256::from(NOW + 2_400))
             .unwrap();
@@ -51,6 +74,9 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
                 PostVerifierDcapCapabilityV1::new(accepted.clone()),
             )
             .unwrap();
+        // Renewal preserves this instance's identity; replacement admits a
+        // fresh instance signed by another operator under the same policy.
+        accepted.mrsigner = replacement_signer;
         registry
             .replace_enclave_binding_after_verifier_for_test(
                 &replacement,
@@ -65,6 +91,7 @@ fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
             .unwrap()
             .unwrap();
         assert_eq!(binding.enclave_id, replacement.enclave_id);
+        assert_eq!(binding.mrsigner, replacement_signer);
         assert_eq!(binding.binding_version, 2);
         assert_eq!(binding.registration_version, 2);
         assert_eq!(binding.renewal_nonce, 1);

@@ -683,6 +683,7 @@ impl AuthorizedEnclaveClient {
         if matches!(
             request,
             EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+                | EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
                 | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
                 | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
                 | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
@@ -692,6 +693,22 @@ impl AuthorizedEnclaveClient {
             ));
         }
         self.request_internal(request)
+    }
+
+    /// Transfer a complete upgrade proof on one authenticated connection.
+    /// Never retry a frame: callers must restart the whole operation on failure.
+    pub fn transfer_upgrade_key_v1(
+        &mut self,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        artifact: &[u8],
+        export: bool,
+    ) -> Result<EnclaveResponse, TransportError> {
+        crate::upgrade_transfer::transfer(
+            |request| self.request_internal(request),
+            proof,
+            artifact,
+            export,
+        )
     }
 
     /// Upload and install one exact finalized onboarding admission over this
@@ -898,13 +915,25 @@ impl AuthorizedEnclaveClient {
             deadline: admission.deadline(),
             finalized_block_hash: admission.finalized_view().block_hash,
         };
-        let response = self.request_internal(&EnclaveRequest::AuthorizeRemoteSessionV1 {
-            ticket_id: ticket.ticket_id,
-            initiator_static_x25519: ticket.initiator_static_x25519,
-            responder_static_x25519: ticket.responder_static_x25519,
-            deadline: ticket.deadline,
-            finalized_block_hash: ticket.finalized_block_hash,
-        })?;
+        let request = if admission.retirement_height() == 0 {
+            EnclaveRequest::AuthorizeRemoteSessionV1 {
+                ticket_id: ticket.ticket_id,
+                initiator_static_x25519: ticket.initiator_static_x25519,
+                responder_static_x25519: ticket.responder_static_x25519,
+                deadline: ticket.deadline,
+                finalized_block_hash: ticket.finalized_block_hash,
+            }
+        } else {
+            EnclaveRequest::AuthorizeRemoteSessionV2 {
+                ticket_id: ticket.ticket_id,
+                initiator_static_x25519: ticket.initiator_static_x25519,
+                responder_static_x25519: ticket.responder_static_x25519,
+                deadline: ticket.deadline,
+                finalized_block_hash: ticket.finalized_block_hash,
+                retirement_height: admission.retirement_height(),
+            }
+        };
+        let response = self.request_internal(&request)?;
         match response {
             EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id }
                 if ticket_id == ticket.ticket_id =>

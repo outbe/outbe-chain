@@ -8288,6 +8288,7 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-server-types",
+ "reth-stages-types",
  "serde",
  "serde_json",
  "tar",
@@ -8328,6 +8329,7 @@ dependencies = [
  "outbe-protocol",
  "outbe-rpc",
  "outbe-tee",
+ "outbe-update",
  "outbe-zerofee",
  "outbe-zk-backend",
  "outbe-zk-canonical",
@@ -9701,6 +9703,7 @@ dependencies = [
  "outbe-slashindicator",
  "outbe-staking",
  "outbe-tee",
+ "outbe-teeregistry",
  "outbe-update",
  "outbe-validatorset",
  "outbe-vote",
@@ -9806,6 +9809,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-teeregistry",
  "outbe-validatorset",
 ]
 

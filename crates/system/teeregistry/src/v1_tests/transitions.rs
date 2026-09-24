@@ -32,7 +32,7 @@ fn transition_evidence(
     .unwrap()
 }
 
-fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
+pub(super) fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
     registry
         .write_bootstrap(&TeeBootstrapData {
             tribute_offer_public_key: B256::from(OFFER_PUBLIC),

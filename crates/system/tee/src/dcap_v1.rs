@@ -112,10 +112,11 @@ pub fn verify_dcap_evidence(
         return Err(DcapRejectCodeV1::PlatformIdentityMismatch);
     }
     let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
-        rule.mrenclave == B256::from(measurements.mrenclave)
-            && rule.mrsigner == B256::from(measurements.mrsigner)
-            && rule.isv_prod_id == measurements.isv_prod_id
-            && measurements.isv_svn >= rule.minimum_isv_svn
+        rule.matches_code_identity(
+            B256::from(measurements.mrenclave),
+            measurements.isv_prod_id,
+            measurements.isv_svn,
+        ) && (rule.mrsigner.is_zero() || rule.mrsigner == B256::from(measurements.mrsigner))
     });
     if !measurement_accepted {
         return Err(DcapRejectCodeV1::MeasurementRejected);

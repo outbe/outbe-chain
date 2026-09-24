@@ -144,13 +144,7 @@ pub fn unseal_tribute_offer_and_group_sig_on_boot(
             ));
         }
     };
-    let (key, _policy) = sealing_key().ok_or_else(|| {
-        format!(
-            "sealed permanent offer key {} exists but no SGX sealing key is available; no recovery or fallback exists",
-            path.display()
-        )
-    })?;
-    match unseal_tribute_offer_and_group_sig(&blob, &key, network_binding, cfg.isv_svn) {
+    match crate::sgx_sealing::unseal_bound(&blob, network_binding, cfg.isv_svn) {
         Ok(unsealed) => {
             eprintln!(
                 "outbe-tee-enclave: unsealed offer key + group signature <- {} (restart fast-path)",
@@ -180,23 +174,20 @@ pub(in crate::transport) fn persist_offer_key_required(
     derived: &DerivedTributeOfferKey,
 ) -> Result<(), String> {
     let path = cfg.sealed_root_path();
-    let (key, policy) = sealing_key()
-        .ok_or_else(|| "production onboarding requires an SGX sealing key".to_string())?;
     let mut nonce = [0u8; 12];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce)
         .map_err(|_| "offer-key seal nonce RNG failed".to_string())?;
     let header = SealHeader {
         format_version: SEAL_FORMAT,
-        key_policy: policy,
+        key_policy: KeyPolicy::MrEnclaveAndSigner,
         isv_svn: cfg.isv_svn,
         key_epoch: derived.key_epoch(),
         tribute_offer_epoch: derived.tribute_offer_epoch(),
         nonce,
     };
-    let blob = seal_tribute_offer_and_group_sig(
+    let blob = crate::sgx_sealing::seal_payload(
         derived.secret(),
         derived.group_sig(),
-        &key,
         network_binding,
         &header,
     )
@@ -207,7 +198,7 @@ pub(in crate::transport) fn persist_offer_key_required(
             let existing = std::fs::read(&path)
                 .map_err(|error| format!("read concurrent sealed offer key: {error}"))?;
             let existing =
-                unseal_tribute_offer_and_group_sig(&existing, &key, network_binding, cfg.isv_svn)
+                crate::sgx_sealing::unseal_bound(&existing, network_binding, cfg.isv_svn)
                     .map_err(|error| format!("verify existing sealed offer key: {error}"))?;
             if existing.tribute_offer_secret.as_ref() != derived.secret()
                 || existing.group_sig.as_slice() != derived.group_sig()

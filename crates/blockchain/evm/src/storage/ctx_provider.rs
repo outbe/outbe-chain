@@ -405,6 +405,15 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             .map_err(|e| PrecompileError::Storage(e.to_string()))?;
         Ok(value.data)
     }
+    fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        self.internals()
+            .sload(
+                outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+                U256::from(45),
+            )
+            .map(|value| value.data)
+            .map_err(|e| PrecompileError::Storage(e.to_string()))
+    }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
         Ok(self.internals().tload(address, key))

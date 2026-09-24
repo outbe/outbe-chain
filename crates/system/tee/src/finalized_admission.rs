@@ -3,7 +3,9 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-use crate::dcap_protocol::{DcapOnboardingContextV1, MAX_DCAP_ONBOARDING_ARTIFACT_BYTES};
+use crate::dcap_protocol::{
+    DcapOnboardingArtifactV1, DcapOnboardingContextV1, MAX_DCAP_ONBOARDING_ARTIFACT_BYTES,
+};
 
 pub const MAX_COMMITTEE_TRANSITION_RECORD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FINALITY_DESCENDANTS: usize = 64;
@@ -95,6 +97,50 @@ pub fn onboarding_registry_slots_v1(context: &DcapOnboardingContextV1) -> [B256;
         mapped(TEE_REGISTRY_NODE_VALID_UNTIL_SLOT_V1),
         mapped(TEE_REGISTRY_NODE_RECIPIENT_X25519_SLOT_V1),
     ]
+}
+
+/// Nine openings authenticate a pending recipient without making it an active node.
+pub fn upgrade_registry_slots_v1(context: &DcapOnboardingContextV1) -> [B256; 9] {
+    let direct = |slot: u64| B256::from(U256::from(slot).to_be_bytes::<32>());
+    let mapped = |slot: u64| {
+        let mut preimage = [0; 64];
+        preimage[..32].copy_from_slice(context.node_id_hash.as_slice());
+        preimage[32..].copy_from_slice(&U256::from(slot).to_be_bytes::<32>());
+        keccak256(preimage)
+    };
+    [
+        direct(1),
+        direct(3),
+        direct(4),
+        mapped(53),
+        mapped(54),
+        mapped(55),
+        mapped(16),
+        direct(48),
+        mapped(57),
+    ]
+}
+
+pub fn upgrade_key_transfer_request_hash_v1(
+    artifact: &[u8],
+    anchor: &[u8],
+    export: bool,
+) -> Result<B256, FinalizedAdmissionCodecError> {
+    let context = DcapOnboardingArtifactV1::decode_canonical(artifact)
+        .map_err(|_| FinalizedAdmissionCodecError::Malformed("upgrade artifact"))?
+        .context;
+    let base = onboarding_artifact_ingest_request_hash_v1(
+        artifact,
+        anchor,
+        context.intent_hash,
+        context.tribute_offer_public,
+        context.key_epoch,
+        context.tribute_offer_epoch,
+    )?;
+    let mut bytes = b"outbe/tee/upgrade-key-transfer/v1".to_vec();
+    bytes.push(u8::from(export));
+    bytes.extend_from_slice(base.as_slice());
+    Ok(keccak256(bytes))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

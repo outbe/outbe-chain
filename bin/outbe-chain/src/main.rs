@@ -64,6 +64,7 @@ mod launch;
 mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
+mod tee_recovery;
 
 mod snapshot;
 

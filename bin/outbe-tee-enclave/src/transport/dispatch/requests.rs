@@ -68,6 +68,19 @@ pub(in crate::transport) fn dispatch_with_initialization(
                     .to_string(),
             }
         }
+        EnclaveRequest::AuthorizeRemoteSessionV2 { ticket_id, initiator_static_x25519,
+            responder_static_x25519, deadline, finalized_block_hash, retirement_height } => {
+            let result = initialization.ok_or_else(|| "remote admission requires initialization".to_string())
+                .and_then(|state| {
+                    state.retire_remote_sessions(retirement_height)?;
+                    state.authorize_remote_session_at_generation(ticket_id, initiator_static_x25519,
+                        responder_static_x25519, deadline, finalized_block_hash, retirement_height, keys)
+                });
+            match result {
+                Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
         EnclaveRequest::AuthorizeRemoteSessionV1 {
             ticket_id,
             initiator_static_x25519,
@@ -222,6 +235,48 @@ pub(in crate::transport) fn dispatch_with_initialization(
                         transition_key_ready_proof,
                     }
                 }
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
+        EnclaveRequest::RetireRemoteSessionsV1 { activation_height } => {
+            match initialization.ok_or_else(|| "remote retirement requires initialized enclave".to_string())
+                .and_then(|state| state.retire_remote_sessions(activation_height)) {
+                Ok(()) => EnclaveResponse::RemoteSessionsRetiredV1 { activation_height },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
+        EnclaveRequest::GenerateTransitionEvidenceDevV1 { intent } => {
+            let result = (|| -> Result<Vec<u8>, String> {
+                let initialization = initialization.ok_or("transition requires initialized enclave")?;
+                if !initialization.gramine_direct_dev_evidence_allowed() {
+                    return Err("DirectDev transition is disabled for this enclave mode".into());
+                }
+                let decoded = RegistrationIntentV1::decode_canonical(&intent).map_err(|e| e.to_string())?;
+                if decoded.attestation_mode != AttestationMode::GramineDirectDev
+                    || decoded.operation != AttestationOperationV1::TransitionEnclaveMeasurement {
+                    return Err("expected a DirectDev measurement transition".into());
+                }
+                let manifest = initialization.manifest()?.ok_or("enclave is not initialized")?;
+                manifest.validate_intent_binding(&decoded).map_err(|e| e.to_string())?;
+                let resident_offer_public = offer_key.get().ok_or("transition requires the permanent offer key")?.public();
+                let intent_hash = decoded.intent_hash().map_err(|e| e.to_string())?;
+                let mut proof = TransitionKeyReadyProofV1 {
+                    chain_id: decoded.chain_id, genesis_hash: decoded.genesis_hash,
+                    transition_intent_hash: intent_hash,
+                    candidate_manifest_hash: manifest.authorization_hash().map_err(|e| e.to_string())?,
+                    transition_nonce: decoded.transition_nonce, resident_offer_public,
+                    candidate_attestation_signature: [0; 64],
+                };
+                proof.candidate_attestation_signature = keys.sign_attestation(proof.signing_hash().map_err(|e| e.to_string())?.as_slice());
+                outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::GramineDirectDev(
+                    outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+                        intent: decoded, dev_attestation_public: keys.attestation_pub(),
+                        dev_signature: keys.sign_attestation(intent_hash.as_slice()),
+                        transition_key_ready_proof: Some(proof),
+                    }).encode_canonical().map_err(|e| e.to_string())
+            })();
+            match result {
+                Ok(evidence) => EnclaveResponse::TransitionEvidenceDevV1 { evidence },
                 Err(message) => EnclaveResponse::Error { message },
             }
         }
@@ -521,7 +576,8 @@ pub(in crate::transport) fn dispatch_with_initialization(
                 },
             }
         }
-        EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+        EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
+            | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
         | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
         | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
         | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. } => EnclaveResponse::Error {

@@ -47,6 +47,9 @@ pub fn dispatch(
         {
             Some(RegistryMutatorV1::TransitionEnclaveMeasurement)
         }
+        Some(selector) if selector == ITeeRegistryV1::prepareEnclaveUpgradeCall::SELECTOR => {
+            Some(RegistryMutatorV1::PrepareEnclaveUpgrade)
+        }
         _ => None,
     };
     let mutation_preflight = if mutator.is_some() {
@@ -60,14 +63,14 @@ pub fn dispatch(
 
     let active_policy = if let (Some(kind), Some(preflight)) = (mutator, mutation_preflight) {
         let registry = TeeRegistry::new(storage.clone());
-        let policy = if kind == RegistryMutatorV1::TransitionEnclaveMeasurement {
-            registry
-                .staged_successor_policy_v1()?
-                .map(|(_, policy)| policy)
-                .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))?
-        } else {
-            registry.active_policy_v1()?
-        };
+        let policy = registry.policy_for_evidence_v1(
+            preflight.evidence,
+            matches!(
+                kind,
+                RegistryMutatorV1::TransitionEnclaveMeasurement
+                    | RegistryMutatorV1::PrepareEnclaveUpgrade
+            ),
+        )?;
         deduct_mutator_protocol_gas(
             &storage,
             kind,
@@ -113,6 +116,16 @@ pub fn dispatch(
                                 "active V1 policy cannot be encoded: {error}"
                             ))
                         })
+                }),
+                enclaveUpgradeV1(call) => view(call, |_| {
+                    let upgrade = registry.enclave_upgrade_v1()?;
+                    Ok(ITeeRegistryV1::enclaveUpgradeV1Return {
+                        proposalId: upgrade.proposal_id,
+                        activationHeight: upgrade.activation_height,
+                        mrenclave: upgrade.mrenclave,
+                        successorPolicyHash: upgrade.successor_policy_hash,
+                        predecessorPolicyHash: upgrade.predecessor_policy_hash,
+                    })
                 }),
                 stagedSuccessorPolicyV1(call) => view(call, |_| {
                     let Some((proposal_id, policy)) = registry.staged_successor_policy_v1()? else {
@@ -292,6 +305,49 @@ pub fn dispatch(
                         ),
                     ))
                 }
+                prepareEnclaveUpgrade(_) => {
+                    let preflight = mutation_preflight.ok_or_else(|| {
+                        PrecompileError::Fatal("upgrade preflight missing".into())
+                    })?;
+                    let node_signature = preflight
+                        .node_signature
+                        .try_into()
+                        .map_err(|_| PrecompileError::Fatal("node signature preflight".into()))?;
+                    let enclave_signature =
+                        preflight.enclave_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("enclave signature preflight".into())
+                        })?;
+                    let outcome = registry.prepare_enclave_upgrade_v1(
+                        caller,
+                        preflight.evidence,
+                        &node_signature,
+                        &enclave_signature,
+                    )?;
+                    Ok(Bytes::from(
+                        ITeeRegistryV1::prepareEnclaveUpgradeCall::abi_encode_returns(&matches!(
+                            outcome,
+                            V1RegistrationOutcome::Created
+                        )),
+                    ))
+                }
+                cancelEnclaveUpgrade(call) => {
+                    registry.cancel_enclave_upgrade_v1(
+                        caller,
+                        call.nodeIdHash,
+                        call.expectedContextHash,
+                    )?;
+                    Ok(Bytes::new())
+                }
+                pendingEnclaveUpgrade(call) => view(call, |call| {
+                    let n = call.nodeIdHash;
+                    Ok(ITeeRegistryV1::pendingEnclaveUpgradeReturn {
+                        contextHash: registry.upgrade_candidate_context.read(&n)?,
+                        validUntil: registry.upgrade_candidate_expiry.read(&n)?,
+                        sourceBindingId: registry.upgrade_candidate_source.read(&n)?,
+                        targetHash: registry.upgrade_candidate_target.read(&n)?,
+                        nonce: registry.upgrade_candidate_nonce.read(&n)?,
+                    })
+                }),
                 validatorEnclaveBinding(call) => view(call, |call| {
                     Ok(binding_view(
                         registry.validator_enclave_binding_v1(call.validator)?,
@@ -674,6 +730,9 @@ fn dispatch_mutator_after_verifier_for_test(
         registry.validate_transition_key_ready_proof_v1(&evidence)?;
     }
     match kind {
+        RegistryMutatorV1::PrepareEnclaveUpgrade => Err(PrecompileError::Fatal(
+            "prepare tests use the public verified-evidence path".into(),
+        )),
         RegistryMutatorV1::RegisterEnclave => {
             let binding = ValidatorNodeBindingV1::decode_canonical(
                 preflight.validator_node_binding.ok_or_else(|| {
@@ -973,6 +1032,12 @@ mod tests {
         let node_signature = Bytes::from(vec![0x51; node_len]);
         let enclave_signature = Bytes::from(vec![0x52; enclave_len]);
         match kind {
+            RegistryMutatorV1::PrepareEnclaveUpgrade => ITeeRegistryV1::prepareEnclaveUpgradeCall {
+                evidence: Bytes::from(evidence),
+                nodeSignature: node_signature,
+                enclaveSignature: enclave_signature,
+            }
+            .abi_encode(),
             RegistryMutatorV1::RegisterEnclave => ITeeRegistryV1::registerEnclaveCall {
                 evidence: Bytes::from(evidence),
                 nodeSignature: node_signature,
@@ -1016,6 +1081,9 @@ mod tests {
             chain_id: policy.chain_id,
             genesis_hash: policy.genesis_hash,
             operation: match kind {
+                RegistryMutatorV1::PrepareEnclaveUpgrade => {
+                    AttestationOperationV1::PrepareEnclaveUpgrade
+                }
                 RegistryMutatorV1::RegisterEnclave => AttestationOperationV1::RegisterEnclave,
                 RegistryMutatorV1::RenewEnclave => AttestationOperationV1::RenewEnclave,
                 RegistryMutatorV1::TransitionEnclaveMeasurement => {

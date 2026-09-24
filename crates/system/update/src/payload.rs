@@ -9,6 +9,7 @@
 //! values and undotted version strings are rejected. `teePolicy` is optional;
 //! unknown fields and non-canonical encodings are rejected.
 
+use alloy_primitives::B256;
 use outbe_ocompregistry::{poc_schema_limits, OcompSuccessorV1};
 use outbe_primitives::tee_attestation_v1::{TeePolicyV1, MAX_TEE_POLICY_BYTES};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,11 @@ pub struct ScheduleUpdatePayload {
     pub info: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tee_policy: Option<String>,
+    /// Compact, predecessor-bound enclave upgrade. This opts into hard retirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mrenclave: Option<B256>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_tee_policy_hash: Option<B256>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocomp_successor: Option<String>,
 }
@@ -41,6 +47,8 @@ impl ScheduleUpdatePayload {
             activation_height,
             info: info.into(),
             tee_policy: None,
+            mrenclave: None,
+            predecessor_tee_policy_hash: None,
             ocomp_successor: None,
         }
     }
@@ -62,6 +70,8 @@ impl ScheduleUpdatePayload {
             activation_height,
             info: info.into(),
             tee_policy: Some(hex::encode(canonical)),
+            mrenclave: None,
+            predecessor_tee_policy_hash: None,
             ocomp_successor: None,
         })
     }
@@ -147,6 +157,10 @@ impl ScheduleUpdatePayload {
         if self.activation_height < min_activation {
             return Err(UpdateError::HeightInPast);
         }
+        self.validate_measurement_upgrade()?;
+        if self.mrenclave.is_some() && self.activation_height <= current_height {
+            return Err(UpdateError::HeightInPast);
+        }
         if let Some(policy) = self.tee_policy()? {
             let mut expected_chain_id = [0u8; 32];
             expected_chain_id[24..].copy_from_slice(&chain_id.to_be_bytes());
@@ -166,6 +180,20 @@ impl ScheduleUpdatePayload {
             }
         }
         Ok(())
+    }
+
+    pub fn validate_measurement_upgrade(&self) -> std::result::Result<(), UpdateError> {
+        match (self.mrenclave, self.predecessor_tee_policy_hash) {
+            (None, None) => Ok(()),
+            (Some(measurement), Some(predecessor))
+                if !measurement.is_zero()
+                    && !predecessor.is_zero()
+                    && self.tee_policy.is_none() =>
+            {
+                Ok(())
+            }
+            _ => Err(UpdateError::InvalidTeePolicy),
+        }
     }
 
     /// Formats a protocol version as the vote-payload string `"major.minor"`.
@@ -366,6 +394,29 @@ mod tests {
             payload.validate(100, OTHER_CHAIN_ID).unwrap_err(),
             UpdateError::TeePolicyActivationMismatch
         );
+    }
+
+    #[test]
+    fn compact_measurement_payload_requires_exact_predecessor_and_future_height() {
+        let mut value = payload(100);
+        value.mrenclave = Some(B256::repeat_byte(1));
+        assert!(value.validate(99, LOCALNET_CHAIN_ID).is_err());
+        value.predecessor_tee_policy_hash = Some(B256::repeat_byte(2));
+        value.validate(99, LOCALNET_CHAIN_ID).unwrap();
+        assert!(value.validate(100, LOCALNET_CHAIN_ID).is_err());
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert!(encoded.contains("predecessorTeePolicyHash"));
+        assert_eq!(
+            serde_json::from_str::<ScheduleUpdatePayload>(&encoded).unwrap(),
+            value
+        );
+        value.tee_policy = Some("00".into());
+        assert!(value.validate(99, LOCALNET_CHAIN_ID).is_err());
+        value.tee_policy = None;
+        value.mrenclave = Some(B256::ZERO);
+        assert!(value.validate(99, LOCALNET_CHAIN_ID).is_err());
+        value.mrenclave = None;
+        assert!(value.validate(99, LOCALNET_CHAIN_ID).is_err());
     }
 
     #[test]

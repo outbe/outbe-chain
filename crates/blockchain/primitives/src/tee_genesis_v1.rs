@@ -3,9 +3,8 @@
 //! The development profile is selected explicitly in genesis, never as a
 //! fallback for an unavailable DCAP verifier. It is admitted on the devnet and
 //! testnet identities so the same fresh testnet topology can run without SGX.
-//! `DcapRequired` construction still requires the exact signed-enclave
-//! measurement tuple; no placeholder DCAP policy can be emitted through this
-//! API.
+//! `DcapRequired` construction requires the exact enclave code measurement.
+//! Zero signer opts into code-only admission; nonzero preserves signer-bound policy.
 
 use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
@@ -62,6 +61,7 @@ pub const PRODUCTION_TEE_LEASE_SECONDS_V1: u64 = 14 * 24 * 60 * 60;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProductionSgxMeasurementV1 {
     pub mrenclave: B256,
+    /// Zero selects code-only admission; nonzero binds the signer for legacy networks.
     pub mrsigner: B256,
     pub isv_prod_id: u16,
     pub minimum_isv_svn: u16,
@@ -124,8 +124,8 @@ pub fn initial_tee_policy_v1(
         .map_err(|error| format!("derive normative resource schedule: {error}"))?;
     let (minimum_tcb_evaluation_data_number, measurement_rule) = match profile {
         InitialTeeProfileV1::DcapRequired(measurement) => {
-            if measurement.mrenclave.is_zero() || measurement.mrsigner.is_zero() {
-                return Err("DcapRequired measurements must be non-zero".into());
+            if measurement.mrenclave.is_zero() {
+                return Err("DcapRequired MRENCLAVE must be non-zero".into());
             }
             if measurement.minimum_tcb_evaluation_data_number == 0 {
                 return Err(
@@ -312,15 +312,11 @@ mod tests {
     }
 
     #[test]
-    fn dcap_policy_rejects_zero_release_measurements() {
+    fn dcap_policy_rejects_zero_mrenclave_and_tcb_floor() {
         let genesis_hash = B256::repeat_byte(0x33);
         for measurement in [
             ProductionSgxMeasurementV1 {
                 mrenclave: B256::ZERO,
-                ..dcap_measurement()
-            },
-            ProductionSgxMeasurementV1 {
-                mrsigner: B256::ZERO,
                 ..dcap_measurement()
             },
             ProductionSgxMeasurementV1 {
@@ -335,6 +331,21 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn dcap_policy_allows_unspecified_signer_metadata() {
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
+                mrsigner: B256::ZERO,
+                ..dcap_measurement()
+            }),
+            TESTNET_CHAIN_ID,
+            B256::repeat_byte(0x33),
+        )
+        .unwrap();
+        assert_eq!(policy.measurement_rules[0].mrsigner, B256::ZERO);
+        assert!(policy.encode_canonical().is_ok());
     }
 
     #[test]

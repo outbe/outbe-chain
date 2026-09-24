@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset.workspace = true
+outbe-teeregistry.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 

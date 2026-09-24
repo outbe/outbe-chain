@@ -245,6 +245,14 @@ impl Staking<'_> {
     /// and is promoted PENDING->ACTIVE by the next DKG reshare. Self-only: `caller`
     /// is the validator (the precompile passes the tx sender).
     pub fn unjail_validator(&mut self, caller: Address) -> Result<()> {
+        let registry = outbe_teeregistry::TeeRegistry::new(self.storage.clone());
+        if !self.storage.enclave_upgrade_id()?.is_zero()
+            && !registry.is_validator_enclave_ready_v1(caller)?
+        {
+            return Err(PrecompileError::Revert(
+                "unjailValidator requires a live admitted enclave binding".into(),
+            ));
+        }
         let stake = self.stake_amount.read(&caller)?;
         let min_stake = self.config_min_stake.read()?;
         if stake < min_stake {

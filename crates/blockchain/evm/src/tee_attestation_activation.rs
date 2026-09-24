@@ -227,6 +227,8 @@ impl DcapChainSpecBindingV1 {
         })
     }
 
+    /// Bind release measurements to the policy, preserving historical signer-bound
+    /// rules. A zero policy signer explicitly permits independent signing.
     pub fn ensure_exact_release_measurements(
         &self,
         mrenclave: B256,
@@ -246,7 +248,7 @@ impl DcapChainSpecBindingV1 {
         }
         let matches_rule = policy.measurement_rules.iter().any(|rule| {
             rule.mrenclave == mrenclave
-                && rule.mrsigner == mrsigner
+                && (rule.mrsigner.is_zero() || rule.mrsigner == mrsigner)
                 && rule.isv_prod_id == isv_prod_id
                 && rule.minimum_isv_svn == isv_svn
                 && rule.admit_from_height == policy.activation_height
@@ -260,7 +262,9 @@ impl DcapChainSpecBindingV1 {
         let expected = initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
                 mrenclave,
-                mrsigner,
+                // Preserve the genesis bytes/hash while allowing a release to
+                // be re-signed independently with the same code measurement.
+                mrsigner: policy.measurement_rules[0].mrsigner,
                 isv_prod_id,
                 minimum_isv_svn: isv_svn,
                 minimum_tcb_evaluation_data_number: policy.minimum_tcb_evaluation_data_number,
@@ -613,6 +617,17 @@ mod tests {
                 2,
             )
             .unwrap();
+        // Legacy policies retain their signer constraint.
+        let original_policy_hash = binding.policy.policy_hash().unwrap();
+        binding
+            .ensure_exact_release_measurements(
+                B256::repeat_byte(0x22),
+                B256::repeat_byte(0xee),
+                1,
+                2,
+            )
+            .unwrap_err();
+        assert_eq!(binding.policy.policy_hash().unwrap(), original_policy_hash);
         assert!(binding
             .ensure_exact_release_measurements(
                 B256::repeat_byte(0x44),

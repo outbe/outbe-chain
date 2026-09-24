@@ -223,6 +223,86 @@ fn approved_software_update_atomically_stages_successor_tee_policy() {
 }
 
 #[test]
+fn compact_upgrade_vote_binds_predecessor_and_promotes_only_at_deadline() {
+    for stale in [false, true] {
+        with_vote(|storage| {
+            let current_height = 100;
+            let deadline = current_height + VOTING_WINDOW_BLOCKS + 1;
+            let activation = min_activation(deadline);
+            let current = tee_policy(
+                storage.genesis_hash().unwrap(),
+                1,
+                1,
+                B256::ZERO,
+                B256::repeat_byte(0x41),
+            );
+            TeeRegistry::new(storage.clone())
+                .install_initial_policy_v1(&current)
+                .unwrap();
+            let mut payload = ScheduleUpdatePayload::new(PV, activation, "measurement upgrade");
+            payload.mrenclave = Some(B256::repeat_byte(0x42));
+            payload.predecessor_tee_policy_hash = Some(if stale {
+                B256::repeat_byte(0xff)
+            } else {
+                current.policy_hash().unwrap()
+            });
+            let mut vote = Vote::new(storage.clone());
+            let proposal = vote
+                .create_proposal(
+                    PROPOSER,
+                    UPDATE_ADDRESS,
+                    &serde_json::to_string(&payload).unwrap(),
+                    current_height,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_A, true, current_height + 1)
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_B, true, current_height + 2)
+                .unwrap();
+            process_begin_block_test(storage.clone(), deadline);
+            let mut registry = TeeRegistry::new(storage.clone());
+            if stale {
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Error
+                );
+                assert!(registry.staged_successor_policy_v1().unwrap().is_none());
+                assert!(Update::new(storage)
+                    .read_scheduled_update(proposal)
+                    .unwrap()
+                    .is_none());
+                return;
+            }
+            assert_eq!(registry.enclave_upgrade_v1().unwrap().proposal_id, proposal);
+            assert!(registry.strict_upgrade_pending_v1().unwrap());
+            assert_eq!(registry.active_policy_v1().unwrap(), current);
+            assert!(registry
+                .promote_staged_successor_policy_v1(proposal, activation - 1)
+                .is_err());
+            let ctx = block_ctx(storage.clone(), activation);
+            Update::new(storage)
+                .process_begin_block_with_handlers(&ctx, &EMPTY_UPGRADE_HANDLER_REGISTRY)
+                .unwrap();
+            assert!(!registry.strict_upgrade_pending_v1().unwrap());
+            assert_eq!(
+                registry.active_v1_policy_hash.read().unwrap(),
+                registry.enclave_upgrade_v1().unwrap().successor_policy_hash
+            );
+            assert_eq!(
+                registry.last_enclave_retirement_height_v1().unwrap(),
+                activation
+            );
+        });
+    }
+}
+
+#[test]
 fn one_approved_update_atomically_stages_tee_and_ocomp_successors() {
     with_vote(|storage| {
         let current_height = 100u64;

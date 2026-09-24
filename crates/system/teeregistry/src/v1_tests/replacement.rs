@@ -1,3 +1,5 @@
+use super::fixtures::bind_reachable_node_host_authorization;
+use super::transitions::install_offer_key;
 use super::*;
 
 #[test]
@@ -501,4 +503,523 @@ fn renew_and_replace_abi_are_replica_deterministic_and_fit_normative_gas() {
         maximum_total - allowance_total + storage_gas
     );
     assert!(intrinsic_total + 2 * 200 + proposer.gas_used() <= maximum_total);
+}
+
+/// Exercise the real DirectDev ABI, including the resident network-key proof.
+#[test]
+fn strict_measurement_upgrade_allows_overlap_and_owner_recovery_after_retirement() {
+    use outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1;
+    for late in [false, true] {
+        let genesis = B256::repeat_byte(0xd1);
+        let mut current = policy(genesis, PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded);
+        current.attestation_mode = AttestationMode::GramineDirectDev;
+        let owner =
+            OutbeEvmSigner::from_secret_bytes([0xd2; 32]).unwrap();
+        let old = ed25519_dalek::SigningKey::from_bytes(&[0xd3; 32]);
+        let new = ed25519_dalek::SigningKey::from_bytes(&[0xd4; 32]);
+        let mut initial = registration_intent(&current, &owner, CONSENSUS_KEY, &old, 0x51, 0x61);
+        initial.attestation_mode = AttestationMode::GramineDirectDev;
+        bind_reachable_node_host_authorization(&mut initial, [0xa6; 32]);
+        let (node_sig, enclave_sig) = signatures(&initial, &owner, &old);
+        let mut provider = storage(genesis);
+        let successor = provider.enter(|storage| {
+            register_validator(storage.clone(), &owner, CONSENSUS_KEY);
+            if late {
+                let mut validators = ValidatorSet::new(storage.clone());
+                validators
+                    .activate_validator_via_boundary_for_test(owner.address())
+                    .unwrap();
+                validators
+                    .jail_validator_for_tee_expiry(owner.address())
+                    .unwrap();
+            }
+            let mut registry = TeeRegistry::new(storage);
+            registry.install_initial_policy_v1(&current).unwrap();
+            install_offer_key(&mut registry, &current);
+            register_same_key_node_for_lifecycle_test(
+                &mut registry,
+                &initial,
+                &owner,
+                &node_sig,
+                &enclave_sig,
+                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            )
+            .unwrap();
+            let predecessor = current.policy_hash().unwrap();
+            assert!(registry
+                .stage_measurement_upgrade_v1(
+                    U256::from(7),
+                    B256::repeat_byte(0xe1),
+                    B256::ZERO,
+                    50
+                )
+                .is_err());
+            registry
+                .stage_measurement_upgrade_v1(
+                    U256::from(7),
+                    B256::repeat_byte(0xe1),
+                    predecessor,
+                    50,
+                )
+                .unwrap();
+            let binding = registry
+                .validator_enclave_binding_v1(owner.address())
+                .unwrap()
+                .unwrap();
+            assert!(registry.binding_code_admitted_at_v1(&binding, 49).unwrap());
+            assert!(!registry.binding_code_admitted_at_v1(&binding, 50).unwrap());
+            assert!(
+                binding.valid_until > NOW,
+                "a long lease must not bypass code retirement"
+            );
+            registry.staged_successor_policy_v1().unwrap().unwrap().1
+        });
+        let now = if late { NOW + 4_000 } else { NOW };
+        if late {
+            provider.set_block_number(50);
+            provider.set_timestamp(U256::from(now));
+            provider.enter(|storage| {
+                TeeRegistry::new(storage)
+                    .promote_staged_successor_policy_v1(U256::from(7), 50)
+                    .unwrap()
+            });
+        }
+        let transition =
+            measurement_transition_intent(&initial, &successor, &new, 0x52, 0x62, now + 3_600);
+        let mut proof = TransitionKeyReadyProofV1 {
+            chain_id: transition.chain_id,
+            genesis_hash: transition.genesis_hash,
+            transition_intent_hash: transition.intent_hash().unwrap(),
+            candidate_manifest_hash: initialization_manifest_for_intent(&transition, [0xa7; 32])
+                .authorization_hash()
+                .unwrap(),
+            transition_nonce: transition.transition_nonce,
+            resident_offer_public: OFFER_PUBLIC,
+            candidate_attestation_signature: [0; 64],
+        };
+        proof.candidate_attestation_signature = new
+            .sign(proof.signing_hash().unwrap().as_slice())
+            .to_bytes();
+        let (node_sig, enclave_sig) = signatures(&transition, &owner, &new);
+        let mut evidence = GramineDirectEvidenceV1 {
+            intent: transition.clone(),
+            dev_attestation_public: new.verifying_key().to_bytes(),
+            dev_signature: enclave_sig,
+            transition_key_ready_proof: Some(proof),
+        };
+        let call = |e: &GramineDirectEvidenceV1| {
+            IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
+                evidence: AttestationEvidenceV1::GramineDirectDev(e.clone())
+                    .encode_canonical()
+                    .unwrap()
+                    .into(),
+                nodeSignature: node_sig.to_vec().into(),
+                enclaveSignature: enclave_sig.to_vec().into(),
+            }
+            .abi_encode()
+        };
+        // Ordinary replacement must not bypass the resident-key transition proof.
+        let mut replacement = transition.clone();
+        replacement.operation = AttestationOperationV1::ReplaceEnclaveBinding;
+        replacement.transition_nonce = initial.transition_nonce;
+        let (replace_node, replace_enclave) = signatures(&replacement, &owner, &new);
+        let replace_evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            intent: replacement,
+            dev_attestation_public: new.verifying_key().to_bytes(),
+            dev_signature: replace_enclave,
+            transition_key_ready_proof: None,
+        })
+        .encode_canonical()
+        .unwrap();
+        let replace_call = IRegisterEnclaveV1Test::replaceEnclaveBindingCall {
+            evidence: replace_evidence.into(),
+            nodeSignature: replace_node.to_vec().into(),
+            enclaveSignature: replace_enclave.to_vec().into(),
+        }
+        .abi_encode();
+        provider.enter(|storage| {
+            assert!(revert_message(
+                crate::v1_precompile::dispatch(storage, &replace_call, owner.address(), U256::ZERO)
+                    .unwrap_err()
+            )
+            .contains("transitionEnclaveMeasurement"))
+        });
+        let original = provider.storage.clone();
+        provider.enter(|storage| {
+            assert!(crate::v1_precompile::dispatch(
+                storage.clone(),
+                &call(&evidence),
+                Address::repeat_byte(0xfa),
+                U256::ZERO
+            )
+            .is_err());
+            let proof = evidence.transition_key_ready_proof.as_mut().unwrap();
+            proof.resident_offer_public = [0xee; 32];
+            proof.candidate_attestation_signature = new
+                .sign(proof.signing_hash().unwrap().as_slice())
+                .to_bytes();
+            assert!(crate::v1_precompile::dispatch(
+                storage,
+                &call(&evidence),
+                owner.address(),
+                U256::ZERO
+            )
+            .is_err());
+        });
+        assert_eq!(
+            provider.storage, original,
+            "failed ownership/key proofs must leave state intact"
+        );
+        let proof = evidence.transition_key_ready_proof.as_mut().unwrap();
+        proof.resident_offer_public = OFFER_PUBLIC;
+        proof.candidate_attestation_signature = new
+            .sign(proof.signing_hash().unwrap().as_slice())
+            .to_bytes();
+        provider.enable_production_storage_gas_metering();
+        provider.set_gas_limit(u64::MAX);
+        let calldata = call(&evidence);
+        let gas_schedule = TeeRegistryGasScheduleV1::normative();
+        let maximum = gas_schedule
+            .maximum_transaction_gas(
+                RegistryMutatorV1::TransitionEnclaveMeasurement,
+                calldata.len(),
+                AttestationEvidenceV1::GramineDirectDev(evidence.clone())
+                    .encode_canonical()
+                    .unwrap()
+                    .len(),
+                1,
+                AttestationMode::GramineDirectDev,
+            )
+            .unwrap();
+        let intrinsic = gas_schedule
+            .maximum_calldata_intrinsic_gas(calldata.len())
+            .unwrap();
+        provider.enter(|storage| {
+            crate::v1_precompile::dispatch(
+                storage.clone(),
+                &call(&evidence),
+                owner.address(),
+                U256::ZERO,
+            )
+            .unwrap();
+            assert!(
+                storage.gas_used().unwrap() + intrinsic + 200 <= maximum,
+                "strict transition exceeds advertised transaction gas"
+            );
+            // Exact replay must remain idempotent, including after retirement.
+            crate::v1_precompile::dispatch(
+                storage.clone(),
+                &call(&evidence),
+                owner.address(),
+                U256::ZERO,
+            )
+            .unwrap();
+            let registry = TeeRegistry::new(storage);
+            let binding = registry
+                .validator_enclave_binding_v1(owner.address())
+                .unwrap()
+                .unwrap();
+            assert_eq!(binding.policy_hash, successor.policy_hash().unwrap());
+            assert_eq!(binding.mrenclave, B256::repeat_byte(0xe1));
+            assert!(registry.binding_code_admitted_at_v1(&binding, 49).unwrap());
+            assert!(registry.binding_code_admitted_at_v1(&binding, 50).unwrap());
+            assert_eq!(binding.transition_nonce, 1);
+        });
+    }
+}
+
+#[test]
+fn legacy_upgrade_probe_does_not_add_metered_storage_reads_or_gas() {
+    let mut provider = storage(B256::repeat_byte(0xf1));
+    provider.enable_production_storage_gas_metering();
+    provider.enter(|storage| {
+        let registry = TeeRegistry::new(storage);
+        assert_eq!(
+            registry.enclave_upgrade_v1().unwrap(),
+            crate::upgrade::EnclaveUpgradeV1::default()
+        );
+        assert!(!registry.strict_upgrade_pending_v1().unwrap());
+        assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
+    });
+    assert_eq!(provider.gas_used(), 0);
+    assert_eq!(provider.metered_storage_operations(), (0, 0));
+}
+
+#[test]
+fn pending_upgrade_preserves_active_binding_and_survives_renewal() {
+    use outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1;
+    use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+    let genesis = B256::repeat_byte(0xd1);
+    let mut current = policy(genesis, PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded);
+    current.attestation_mode = AttestationMode::GramineDirectDev;
+    let owner =
+        OutbeEvmSigner::from_secret_bytes([0xd2; 32]).unwrap();
+    let old = ed25519_dalek::SigningKey::from_bytes(&[0xd3; 32]);
+    let new = ed25519_dalek::SigningKey::from_bytes(&[0xd4; 32]);
+    let mut initial = registration_intent(&current, &owner, CONSENSUS_KEY, &old, 0x51, 0x61);
+    initial.attestation_mode = AttestationMode::GramineDirectDev;
+    bind_reachable_node_host_authorization(&mut initial, [0xa6; 32]);
+    let (node_sig, enclave_sig) = signatures(&initial, &owner, &old);
+    let mut provider = storage(genesis);
+    let successor = provider.enter(|storage| {
+        register_validator(storage.clone(), &owner, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage);
+        registry.install_initial_policy_v1(&current).unwrap();
+        install_offer_key(&mut registry, &current);
+        register_same_key_node_for_lifecycle_test(
+            &mut registry,
+            &initial,
+            &owner,
+            &node_sig,
+            &enclave_sig,
+            PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        )
+        .unwrap();
+        registry
+            .stage_measurement_upgrade_v1(
+                U256::from(7),
+                B256::repeat_byte(0xe1),
+                current.policy_hash().unwrap(),
+                50,
+            )
+            .unwrap();
+        registry.staged_successor_policy_v1().unwrap().unwrap().1
+    });
+    let node = initial.node_id.node_id_hash().unwrap();
+    let mut prepare =
+        measurement_transition_intent(&initial, &successor, &new, 0x52, 0x62, NOW + 7_200);
+    prepare.operation = AttestationOperationV1::PrepareEnclaveUpgrade;
+    let prepare_call = |intent: &RegistrationIntentV1| {
+        let (node_sig, enclave_sig) = signatures(intent, &owner, &new);
+        ITeeRegistryV1::prepareEnclaveUpgradeCall {
+            evidence: AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                intent: intent.clone(),
+                dev_attestation_public: new.verifying_key().to_bytes(),
+                dev_signature: enclave_sig,
+                transition_key_ready_proof: None,
+            })
+            .encode_canonical()
+            .unwrap()
+            .into(),
+            nodeSignature: node_sig.to_vec().into(),
+            enclaveSignature: enclave_sig.to_vec().into(),
+        }
+        .abi_encode()
+    };
+    let before = provider.storage.clone();
+    provider.enter(|s| {
+        assert!(crate::v1_precompile::dispatch(
+            s,
+            &prepare_call(&prepare),
+            Address::repeat_byte(99),
+            U256::ZERO
+        )
+        .is_err())
+    });
+    assert_eq!(before, provider.storage);
+    // Concurrent ordinary renewal changes only the active renewal counters. The
+    // already signed prepare remains valid because its source binding is stable.
+    provider.enter(|storage| {
+        let registry = TeeRegistry::new(storage);
+        registry
+            .v1_node_registration_version
+            .write(&node, initial.registration_version + 1)
+            .unwrap();
+        registry
+            .v1_node_renewal_nonce
+            .write(&node, initial.renewal_nonce + 1)
+            .unwrap();
+        registry
+            .v1_node_valid_until
+            .write(&node, initial.requested_valid_until + current.maximum_lease)
+            .unwrap();
+    });
+    let old_binding = provider.enter(|s| {
+        TeeRegistry::new(s)
+            .validator_enclave_binding_v1(owner.address())
+            .unwrap()
+            .unwrap()
+    });
+    provider.enable_production_storage_gas_metering();
+    provider.set_gas_limit(u64::MAX);
+    let bytes = prepare_call(&prepare);
+    provider.enter(|storage| {
+        crate::v1_precompile::dispatch(storage.clone(), &bytes, owner.address(), U256::ZERO)
+            .unwrap();
+        let registry = TeeRegistry::new(storage.clone());
+        assert_eq!(
+            registry
+                .validator_enclave_binding_v1(owner.address())
+                .unwrap()
+                .unwrap(),
+            old_binding
+        );
+        assert_eq!(registry.upgrade_candidate_nonce.read(&node).unwrap(), 1);
+        assert_eq!(
+            registry.upgrade_candidate_source.read(&node).unwrap(),
+            initial.binding_id
+        );
+        assert_eq!(
+            registry.upgrade_candidate_context.base_slot(),
+            U256::from(53)
+        );
+        assert_eq!(
+            registry.upgrade_candidate_expiry.base_slot(),
+            U256::from(54)
+        );
+        assert_eq!(
+            registry.upgrade_candidate_source.base_slot(),
+            U256::from(55)
+        );
+        assert_eq!(registry.upgrade_candidate_nonce.base_slot(), U256::from(57));
+        let maximum = TeeRegistryGasScheduleV1::normative()
+            .maximum_transaction_gas(
+                RegistryMutatorV1::PrepareEnclaveUpgrade,
+                bytes.len(),
+                AttestationEvidenceV1::decode_canonical(
+                    &ITeeRegistryV1::prepareEnclaveUpgradeCall::abi_decode(&bytes)
+                        .unwrap()
+                        .evidence,
+                )
+                .unwrap()
+                .encode_canonical()
+                .unwrap()
+                .len(),
+                1,
+                AttestationMode::GramineDirectDev,
+            )
+            .unwrap();
+        let intrinsic = TeeRegistryGasScheduleV1::normative()
+            .maximum_calldata_intrinsic_gas(bytes.len())
+            .unwrap();
+        assert!(storage.gas_used().unwrap() + intrinsic <= maximum);
+    });
+    // Exact replay has no mutations.
+    let prepared_state = provider.storage.clone();
+    provider
+        .enter(|s| crate::v1_precompile::dispatch(s, &bytes, owner.address(), U256::ZERO).unwrap());
+    assert_eq!(prepared_state, provider.storage);
+    let context_hash = provider.enter(|s| {
+        TeeRegistry::new(s)
+            .upgrade_candidate_context
+            .read(&node)
+            .unwrap()
+    });
+    provider.enter(|s| {
+        assert!(TeeRegistry::new(s)
+            .cancel_enclave_upgrade_v1(Address::repeat_byte(98), node, context_hash)
+            .is_err())
+    });
+    provider.enter(|s| {
+        TeeRegistry::new(s)
+            .cancel_enclave_upgrade_v1(owner.address(), node, context_hash)
+            .unwrap()
+    });
+    provider.enter(|s| {
+        assert!(crate::v1_precompile::dispatch(s, &bytes, owner.address(), U256::ZERO).is_err())
+    });
+    prepare.transition_nonce = 2;
+    provider.enter(|s| {
+        crate::v1_precompile::dispatch(s, &prepare_call(&prepare), owner.address(), U256::ZERO)
+            .unwrap()
+    });
+
+    let mut transition = prepare.clone();
+    transition.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+    transition.requested_valid_until = NOW + 14_400;
+    transition.registration_version = old_binding.registration_version + 1;
+    transition.renewal_nonce = old_binding.renewal_nonce;
+    transition.transition_nonce = old_binding.transition_nonce + 1;
+    let mut proof = TransitionKeyReadyProofV1 {
+        chain_id: transition.chain_id,
+        genesis_hash: transition.genesis_hash,
+        transition_intent_hash: transition.intent_hash().unwrap(),
+        candidate_manifest_hash: initialization_manifest_for_intent(&transition, [0xa7; 32])
+            .authorization_hash()
+            .unwrap(),
+        transition_nonce: transition.transition_nonce,
+        resident_offer_public: OFFER_PUBLIC,
+        candidate_attestation_signature: [0; 64],
+    };
+    proof.candidate_attestation_signature = new
+        .sign(proof.signing_hash().unwrap().as_slice())
+        .to_bytes();
+    let (node_sig, enclave_sig) = signatures(&transition, &owner, &new);
+    let evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        intent: transition.clone(),
+        dev_attestation_public: new.verifying_key().to_bytes(),
+        dev_signature: enclave_sig,
+        transition_key_ready_proof: Some(proof),
+    })
+    .encode_canonical()
+    .unwrap();
+    // Candidate permission expires independently of both the old lease and the
+    // final transition lease; a live old node cannot revive an expired candidate.
+    let before_expiry_check = provider.storage.clone();
+    provider.set_timestamp(U256::from(NOW + 7_200));
+    provider.enter(|s| {
+        assert!(TeeRegistry::new(s)
+            .transition_enclave_measurement_with_staged_policy_v1(
+                owner.address(),
+                &evidence,
+                &node_sig,
+                &enclave_sig
+            )
+            .is_err())
+    });
+    assert_eq!(provider.storage, before_expiry_check);
+    provider.set_timestamp(U256::from(NOW));
+    let live_context = provider.enter(|s| {
+        TeeRegistry::new(s)
+            .upgrade_candidate_context
+            .read(&node)
+            .unwrap()
+    });
+    provider.enter(|s| {
+        TeeRegistry::new(s)
+            .cancel_enclave_upgrade_v1(owner.address(), node, live_context)
+            .unwrap()
+    });
+    // Clearing pending state must not let a prepared binding use the legacy
+    // no-pending transition route with its otherwise valid resident-key proof.
+    provider.enter(|s| {
+        assert!(TeeRegistry::new(s)
+            .transition_enclave_measurement_with_staged_policy_v1(
+                owner.address(),
+                &evidence,
+                &node_sig,
+                &enclave_sig
+            )
+            .is_err())
+    });
+    prepare.transition_nonce = 3;
+    provider.enter(|s| {
+        crate::v1_precompile::dispatch(s, &prepare_call(&prepare), owner.address(), U256::ZERO)
+            .unwrap()
+    });
+    provider.enter(|s| {
+        let mut registry = TeeRegistry::new(s);
+        registry
+            .transition_enclave_measurement_with_staged_policy_v1(
+                owner.address(),
+                &evidence,
+                &node_sig,
+                &enclave_sig,
+            )
+            .unwrap();
+        assert!(registry
+            .upgrade_candidate_context
+            .read(&node)
+            .unwrap()
+            .is_zero());
+        assert_eq!(registry.upgrade_candidate_nonce.read(&node).unwrap(), 3);
+        assert_eq!(
+            registry
+                .validator_enclave_binding_v1(owner.address())
+                .unwrap()
+                .unwrap()
+                .enclave_id,
+            transition.enclave_id
+        );
+    });
 }

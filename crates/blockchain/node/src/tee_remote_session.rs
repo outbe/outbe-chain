@@ -104,6 +104,8 @@ pub struct LocalFinalizedSuccessorStatusV1 {
     pub view: FinalizedRegistryViewV1,
     pub staged_proposal_id: Option<U256>,
     pub staged_policy: Option<TeePolicyV1>,
+    pub strict_upgrade: outbe_teeregistry::upgrade::EnclaveUpgradeV1,
+    pub retirement_height: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,12 +221,26 @@ where
             .map_err(registry_error)?
             .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
 
+        if !registry
+            .binding_code_admitted_at_v1(&source, view.block_number)
+            .map_err(registry_error)?
+            || !registry
+                .binding_code_admitted_at_v1(&target, view.block_number)
+                .map_err(registry_error)?
+        {
+            return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
+        }
+
+        let retirement_height = registry
+            .last_enclave_retirement_height_v1()
+            .map_err(registry_error)?;
         admit_remote_session_v1(
             expected,
             source_witness,
             registry_binding(view, source),
             registry_binding(view, target),
         )
+        .map(|admission| admission.with_retirement_height(retirement_height))
         .map_err(Into::into)
     })
 }
@@ -352,6 +368,10 @@ where
             view,
             staged_proposal_id,
             staged_policy,
+            strict_upgrade: registry.enclave_upgrade_v1().map_err(registry_error)?,
+            retirement_height: registry
+                .last_enclave_retirement_height_v1()
+                .map_err(registry_error)?,
         })
     })
 }
@@ -467,12 +487,25 @@ pub fn admit_anchored_remote_session_v1(
         .node_enclave_binding_for_identity_v1(target_node)
         .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
         .ok_or(ExternalRegistryAdmissionError::TargetBindingMissing)?;
+    if !registry
+        .binding_code_admitted_at_v1(&source, checkpoint.view.block_number)
+        .map_err(registry_error_external)?
+        || !registry
+            .binding_code_admitted_at_v1(&target, checkpoint.view.block_number)
+            .map_err(registry_error_external)?
+    {
+        return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
+    }
+    let retirement_height = registry
+        .last_enclave_retirement_height_v1()
+        .map_err(registry_error_external)?;
     admit_remote_session_v1(
         expected,
         source_witness,
         registry_binding(checkpoint.view, source),
         registry_binding(checkpoint.view, target),
     )
+    .map(|admission| admission.with_retirement_height(retirement_height))
     .map_err(Into::into)
 }
 
@@ -490,6 +523,12 @@ fn registry_binding(
         noise_responder_x25519: binding.noise_responder_x25519.into(),
         node_host_authorization_hash: binding.node_host_authorization_hash,
     }
+}
+
+fn registry_error_external(
+    error: outbe_primitives::error::PrecompileError,
+) -> ExternalRegistryAdmissionError {
+    ExternalRegistryAdmissionError::Registry(error.to_string())
 }
 
 struct RethStateReader<'a> {

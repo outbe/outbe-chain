@@ -42,6 +42,28 @@ impl VoteTarget for UpdateVoteTarget {
             PrecompileError::Fatal(format!("stored Update proposal payload is invalid: {err}"))
         })?;
         let outcome = ctx.with_checkpoint(|| {
+            decoded
+                .validate_measurement_upgrade()
+                .map_err(PrecompileError::from)?;
+            let mut tee_registry = TeeRegistry::new(ctx.storage.clone());
+            if tee_registry.strict_upgrade_pending_v1()?
+                || (decoded.mrenclave.is_some()
+                    && !Update::new(ctx.storage.clone())
+                        .list_waiting_for_activation_proposal_ids()?
+                        .is_empty())
+            {
+                return Err(PrecompileError::Revert(
+                    "enclave rollout requires an exclusive scheduled upgrade".into(),
+                ));
+            }
+            if decoded.tee_policy.is_some()
+                && !tee_registry.enclave_upgrade_v1()?.proposal_id.is_zero()
+            {
+                return Err(PrecompileError::Revert(
+                    "use a predecessor-bound MRENCLAVE upgrade after hard retirement is enabled"
+                        .into(),
+                ));
+            }
             match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
                 proposal_id,
                 &payload,
@@ -57,6 +79,16 @@ impl VoteTarget for UpdateVoteTarget {
             })? {
                 TeeRegistry::new(ctx.storage.clone())
                     .stage_successor_policy_v1(proposal_id, &policy)?;
+            }
+            if let Some(mrenclave) = decoded.mrenclave {
+                tee_registry.stage_measurement_upgrade_v1(
+                    proposal_id,
+                    mrenclave,
+                    decoded.predecessor_tee_policy_hash.ok_or_else(|| {
+                        PrecompileError::Revert("missing predecessor TEE policy hash".into())
+                    })?,
+                    decoded.activation_height,
+                )?;
             }
             if let Some(successor) = decoded.ocomp_successor().map_err(|err| {
                 PrecompileError::Fatal(format!("stored Update OCOMP successor is invalid: {err}"))

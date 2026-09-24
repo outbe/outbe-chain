@@ -73,6 +73,7 @@ use committed_join::{
 };
 
 mod replacement;
+pub use replacement::clear_expired_transition_submission_v1;
 pub use replacement::{
     construct_finalized_replacement_authorization_v1, load_replacement_candidate_relay,
     load_replacement_candidate_submission, persist_replacement_candidate_relay,

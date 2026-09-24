@@ -202,6 +202,53 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
     assert_eq!(echoed, canonical);
     let signature: [u8; 64] = enclave_signature.try_into().unwrap();
     assert!(intent.verify_enclave_signature(&signature));
+        let mut transition = intent;
+        transition.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
+        transition.binding_version = 2;
+        transition.registration_version = 1;
+        transition.transition_nonce = 1;
+        let request = EnclaveRequest::GenerateTransitionEvidenceDevV1 {
+            intent: transition.encode_canonical().unwrap(),
+        };
+        let mut generate = || {
+            dispatch_with_initialization(
+                request.clone(),
+                &keys,
+                &mut dkg,
+                &offer_key,
+                B256::from(manifest.chain_id),
+                DispatchInitializationContext {
+                    boot: Some(&boot),
+                    initialization: Some(&initialization),
+                    quote_generator: |_| panic!("dev transition requested DCAP"),
+                },
+            )
+        };
+        assert!(
+            matches!(generate(), EnclaveResponse::Error { message } if message.contains("permanent offer key"))
+        );
+        let resident = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new([0x35; 32]),
+            Zeroizing::new(vec![0x36; 96]),
+        );
+        let public = resident.public();
+        offer_key.set(resident).ok().unwrap();
+        let EnclaveResponse::TransitionEvidenceDevV1 { evidence } = generate() else {
+            panic!("dev transition proof missing");
+        };
+        let evidence =
+            outbe_primitives::tee_attestation_v1::AttestationEvidenceV1::decode_canonical(
+                &evidence,
+            )
+            .unwrap();
+        assert_eq!(evidence.intent(), &transition);
+        let proof = evidence.transition_key_ready_proof().unwrap();
+        assert_eq!(
+            proof.candidate_manifest_hash,
+            manifest.authorization_hash().unwrap()
+        );
+        proof.verify_for_transition(&transition, public).unwrap();
+
 }
 
 #[cfg(all(feature = "native-dcap", target_arch = "x86_64", target_os = "linux"))]
@@ -591,6 +638,7 @@ fn onboarding_cannot_decrypt_or_activate_before_finalized_admission_verifies() {
 
     let response = complete_onboarding_artifact_ingest_response(
         CompleteOnboardingArtifactIngestV1 {
+            upgrade_export: None,
             request_hash: B256::repeat_byte(0x70),
             artifact,
             expected_intent_hash: B256::repeat_byte(0x72),

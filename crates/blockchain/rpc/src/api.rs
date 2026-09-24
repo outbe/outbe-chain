@@ -336,6 +336,15 @@ pub struct GratisKeysSealed {
 
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
+    /// Returns ciphertext only for a currently finalized upgrade candidate.
+    #[method(name = "upgradeKeyV1")]
+    async fn upgrade_key_v1(
+        &self,
+        encoded_context: Bytes,
+        proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev_source: bool,
+    ) -> jsonrpsee::core::RpcResult<Bytes>;
+
     /// Returns one independently verifiable latest-finalized compressed-entity
     /// point package. V1 deliberately has no caller-selected block.
     #[method(name = "getCompressedEntity")]

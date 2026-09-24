@@ -469,6 +469,10 @@ impl TeeRegistry<'_> {
         self.active_v1_policy_len.write(len)?;
         self.active_v1_policy_hash.write(policy_hash)?;
         self.active_v1_policy_proposal_id.write(proposal_id)?;
+        if self.storage.enclave_upgrade_id()? == proposal_id {
+            self.last_enclave_retirement_height
+                .write(policy.activation_height)?;
+        }
         self.clear_staged_successor_policy_v1()?;
         self.emit(TeePolicyActivatedV1 {
             proposalId: proposal_id,
@@ -659,6 +663,7 @@ impl TeeRegistry<'_> {
         ] {
             slots.push(B256::from(slot.to_be_bytes::<32>()));
         }
+        slots.extend(self.enclave_upgrade_storage_slots_v1());
         slots.sort_unstable();
         slots.dedup();
         Ok(slots)
@@ -672,6 +677,7 @@ impl TeeRegistry<'_> {
         };
         Ok(!binding.binding_id.is_zero()
             && !binding.enclave_id.is_zero()
+            && self.binding_code_admitted_v1(&binding)?
             && binding.valid_until > consensus_timestamp(&self.storage)?)
     }
 
@@ -689,7 +695,8 @@ impl TeeRegistry<'_> {
         if validators.get_validator(validator)?.is_none() {
             return Ok(false);
         }
-        Ok(binding.valid_until > consensus_timestamp(&self.storage)?)
+        Ok(self.binding_code_admitted_v1(&binding)?
+            && binding.valid_until > consensus_timestamp(&self.storage)?)
     }
 
     fn node_enclave_binding_v1(&self, node_id_hash: B256) -> Result<Option<NodeEnclaveBindingV1>> {
@@ -774,6 +781,11 @@ impl TeeRegistry<'_> {
         if node.valid_until <= consensus_timestamp(&self.storage)? {
             return Err(PrecompileError::Revert(
                 "validator NodeHost binding references an expired NodeHost".into(),
+            ));
+        }
+        if !self.binding_code_admitted_v1(&node)? {
+            return Err(PrecompileError::Revert(
+                "validator NodeHost binding references a retired enclave".into(),
             ));
         }
         let current = self.validator_v1_node_hash.read(&validator)?;
@@ -872,7 +884,7 @@ impl TeeRegistry<'_> {
         validator_signature: &[u8; 65],
         node_binding_signature: &[u8; 65],
     ) -> Result<V1RegistrationOutcome> {
-        let policy = self.active_policy_v1()?;
+        let policy = self.policy_for_evidence_v1(evidence, false)?;
         self.register_enclave_with_active_policy_v1(
             caller,
             evidence,
@@ -892,7 +904,7 @@ impl TeeRegistry<'_> {
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
-        let policy = self.active_policy_v1()?;
+        let policy = self.policy_for_evidence_v1(evidence, false)?;
         self.renew_enclave_with_active_policy_v1(
             caller,
             evidence,
@@ -909,7 +921,7 @@ impl TeeRegistry<'_> {
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
-        let policy = self.active_policy_v1()?;
+        let policy = self.policy_for_evidence_v1(evidence, false)?;
         self.replace_enclave_binding_with_active_policy_v1(
             caller,
             evidence,
@@ -1027,6 +1039,67 @@ impl TeeRegistry<'_> {
         )
     }
 
+    pub(crate) fn prepare_enclave_upgrade_v1(
+        &mut self,
+        caller: Address,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.policy_for_evidence_v1(evidence, true)?;
+        let upgrade = self.enclave_upgrade_v1()?;
+        if upgrade.proposal_id.is_zero()
+            || policy
+                .policy_hash()
+                .map_err(|e| revert_codec("upgrade policy", e))?
+                != upgrade.successor_policy_hash
+        {
+            return Err(PrecompileError::Revert(
+                "candidate requires an approved MRENCLAVE upgrade".into(),
+            ));
+        }
+        self.apply_evidence_mutation_with_active_policy_v1(
+            AttestationOperationV1::PrepareEnclaveUpgrade,
+            caller,
+            evidence,
+            node_signature,
+            enclave_signature,
+            &policy,
+        )
+    }
+
+    pub(crate) fn cancel_enclave_upgrade_v1(
+        &mut self,
+        caller: Address,
+        node: B256,
+        expected: B256,
+    ) -> Result<()> {
+        if self.storage.is_static()? {
+            return Err(PrecompileError::WriteProtection);
+        }
+        self.require_associated_caller_v1(caller, node)?;
+        if expected.is_zero() || self.upgrade_candidate_context.read(&node)? != expected {
+            return Err(PrecompileError::Revert(
+                "pending upgrade changed or is absent".into(),
+            ));
+        }
+        self.clear_upgrade_candidate_v1(node)?;
+        self.emit(
+            outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeCancelledV1 {
+                nodeIdHash: node,
+                contextHash: expected,
+            },
+        )
+    }
+
+    fn clear_upgrade_candidate_v1(&mut self, node: B256) -> Result<()> {
+        self.upgrade_candidate_context.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_expiry.write(&node, 0)?;
+        self.upgrade_candidate_source.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_target.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_evidence.write(&node, B256::ZERO)
+    }
+
     pub(crate) fn transition_enclave_measurement_with_staged_policy_v1(
         &mut self,
         caller: Address,
@@ -1034,10 +1107,10 @@ impl TeeRegistry<'_> {
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
-        let (_, policy) = self
-            .staged_successor_policy_v1()?
-            .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))?;
-        if self.storage.block_number()? >= policy.activation_height {
+        let policy = self.policy_for_evidence_v1(evidence, true)?;
+        if self.storage.enclave_upgrade_id()?.is_zero()
+            && self.storage.block_number()? >= policy.activation_height
+        {
             return Err(PrecompileError::Revert(
                 "measurement rollout closes at successor policy activation".into(),
             ));
@@ -1181,12 +1254,10 @@ impl TeeRegistry<'_> {
                 let evidence_hash = decoded.evidence_hash().map_err(|error| {
                     revert_codec("GramineDirectDev evidence is not canonical", error)
                 })?;
-                let height =
-                    if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
-                        policy.activation_height
-                    } else {
-                        self.storage.block_number()?
-                    };
+                let height = self.measurement_admission_height_v1(
+                    policy,
+                    expected_operation.is_measurement_upgrade(),
+                )?;
                 let claims = direct_dev_claims(policy, height, evidence_hash)?;
                 (dev.intent.clone(), claims, evidence_hash, None)
             }
@@ -1261,12 +1332,14 @@ impl TeeRegistry<'_> {
         &self,
         evidence: &AttestationEvidenceV1,
     ) -> Result<()> {
-        let AttestationEvidenceV1::Dcap(dcap) = evidence else {
+        if evidence.mode() == AttestationMode::GramineDirectDev
+            && self.enclave_upgrade_v1()?.proposal_id.is_zero()
+        {
             return Err(PrecompileError::Revert(
-                "measurement transition requires DCAP key-ready evidence".into(),
+                "DirectDev transition requires a MRENCLAVE upgrade".into(),
             ));
-        };
-        let proof = dcap.transition_key_ready_proof.as_ref().ok_or_else(|| {
+        }
+        let proof = evidence.transition_key_ready_proof().ok_or_else(|| {
             PrecompileError::Revert("measurement transition is missing key-ready proof".into())
         })?;
         let offer_public = self.offer_public_key()?;
@@ -1276,7 +1349,7 @@ impl TeeRegistry<'_> {
             ));
         }
         proof
-            .verify_for_transition(&dcap.intent, offer_public.0)
+            .verify_for_transition(evidence.intent(), offer_public.0)
             .map_err(|error| {
                 PrecompileError::Revert(format!(
                     "measurement transition key-ready proof is invalid: {error}"
@@ -1318,13 +1391,10 @@ impl TeeRegistry<'_> {
         let policy_hash = policy
             .policy_hash()
             .map_err(|error| revert_codec("active V1 policy is invalid", error))?;
-        let anchored_policy_hash =
-            if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
-                self.staged_v1_policy_hash.read()?
-            } else {
-                self.active_v1_policy_hash.read()?
-            };
-        if intent.policy_hash != policy_hash || anchored_policy_hash != policy_hash {
+        if intent.policy_hash != policy_hash
+            || !self
+                .policy_hash_admitted_v1(policy_hash, expected_operation.is_measurement_upgrade())?
+        {
             return Err(PrecompileError::Revert(
                 "registration intent does not bind the authoritative V1 policy".into(),
             ));
@@ -1349,11 +1419,8 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        let height = if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
-            policy.activation_height
-        } else {
-            self.storage.block_number()?
-        };
+        let height = self
+            .measurement_admission_height_v1(policy, expected_operation.is_measurement_upgrade())?;
         if policy.measurement_rule_match_count(
             claims.mrenclave,
             claims.mrsigner,
@@ -1397,6 +1464,38 @@ impl TeeRegistry<'_> {
         let intent_hash = intent
             .intent_hash()
             .map_err(|error| revert_codec("registration intent is invalid", error))?;
+        let candidate_context_hash =
+            if expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade {
+                let candidate_context = DcapOnboardingContextV1 {
+                    chain_id: intent.chain_id,
+                    genesis_hash: intent.genesis_hash,
+                    intent_hash,
+                    node_id_hash,
+                    enclave_id: intent.enclave_id,
+                    binding_id: intent.binding_id,
+                    policy_hash: intent.policy_hash,
+                    recipient_x25519: intent.recipient_x25519,
+                    tribute_offer_public: self.offer_public_key()?.0,
+                    key_epoch: self.key_epoch()?,
+                    tribute_offer_epoch: self.tribute_offer_epoch()?,
+                };
+                candidate_context.context_hash()
+            } else {
+                B256::ZERO
+            };
+        if expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade
+            && self.upgrade_candidate_context.read(&node_id_hash)? == candidate_context_hash
+            && self.upgrade_candidate_expiry.read(&node_id_hash)? > now
+            && self.upgrade_candidate_source.read(&node_id_hash)?
+                == self.v1_node_binding_id.read(&node_id_hash)?
+        {
+            if self.upgrade_candidate_evidence.read(&node_id_hash)? != evidence_hash {
+                return Err(PrecompileError::Revert(
+                    "candidate is not an exact evidence replay".into(),
+                ));
+            }
+            return Ok(V1RegistrationOutcome::Idempotent);
+        }
         let current_intent_hash = self.v1_node_intent_hash.read(&node_id_hash)?;
         if !current_intent_hash.is_zero() && current_intent_hash == intent_hash {
             if self.v1_node_evidence_hash.read(&node_id_hash)? != evidence_hash {
@@ -1415,6 +1514,16 @@ impl TeeRegistry<'_> {
         }
 
         let current = self.node_enclave_binding_v1(node_id_hash)?;
+        if !self.storage.enclave_upgrade_id()?.is_zero()
+            && current
+                .as_ref()
+                .is_some_and(|binding| binding.policy_hash != policy_hash)
+            && !expected_operation.is_measurement_upgrade()
+        {
+            return Err(PrecompileError::Revert(
+                "changing an existing binding's policy requires transitionEnclaveMeasurement and its resident-key proof".into(),
+            ));
+        }
         match expected_operation {
             AttestationOperationV1::RegisterEnclave => {
                 if let Some(current) = current.as_ref() {
@@ -1500,11 +1609,19 @@ impl TeeRegistry<'_> {
                     ));
                 }
             }
-            AttestationOperationV1::TransitionEnclaveMeasurement => {
+            AttestationOperationV1::TransitionEnclaveMeasurement
+            | AttestationOperationV1::PrepareEnclaveUpgrade => {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot transition a missing enclave binding".into())
                 })?;
-                ensure_live_binding(current, now)?;
+                let upgrade = self.enclave_upgrade_v1()?;
+                let late_recovery = !upgrade.proposal_id.is_zero()
+                    && self.storage.block_number()? >= upgrade.activation_height
+                    && policy_hash == upgrade.successor_policy_hash
+                    && current.policy_hash != upgrade.successor_policy_hash;
+                if !late_recovery {
+                    ensure_live_binding(current, now)?;
+                }
                 if B256::from(intent.node_host_authorization_hash)
                     != current.node_host_authorization_hash
                 {
@@ -1522,11 +1639,19 @@ impl TeeRegistry<'_> {
                 }
                 if intent.binding_version
                     != next_counter(current.binding_version, "binding version")?
-                    || intent.registration_version
-                        != next_counter(current.registration_version, "registration version")?
-                    || intent.renewal_nonce != current.renewal_nonce
+                    || (expected_operation != AttestationOperationV1::PrepareEnclaveUpgrade
+                        && (intent.registration_version
+                            != next_counter(current.registration_version, "registration version")?
+                            || intent.renewal_nonce != current.renewal_nonce))
                     || intent.transition_nonce
-                        != next_counter(current.transition_nonce, "transition nonce")?
+                        != if expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade {
+                            next_counter(
+                                self.upgrade_candidate_nonce.read(&node_id_hash)?,
+                                "candidate nonce",
+                            )?
+                        } else {
+                            next_counter(current.transition_nonce, "transition nonce")?
+                        }
                 {
                     return Err(PrecompileError::Revert(
                         "measurement transition does not carry the exact next versions and nonce"
@@ -1623,13 +1748,88 @@ impl TeeRegistry<'_> {
                 }
             }
             AttestationOperationV1::ReplaceEnclaveBinding
-            | AttestationOperationV1::TransitionEnclaveMeasurement => {
+            | AttestationOperationV1::TransitionEnclaveMeasurement
+            | AttestationOperationV1::PrepareEnclaveUpgrade => {
                 if !enclave_owner.is_zero() || !binding_owner.is_zero() {
                     return Err(PrecompileError::Revert(
                         "successor enclave or binding id has already been used".into(),
                     ));
                 }
             }
+        }
+
+        if expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade {
+            if !self
+                .upgrade_candidate_context
+                .read(&node_id_hash)?
+                .is_zero()
+                && self.upgrade_candidate_expiry.read(&node_id_hash)? > now
+            {
+                return Err(PrecompileError::Revert(
+                    "cancel the live candidate before preparing another".into(),
+                ));
+            }
+            self.upgrade_candidate_context
+                .write(&node_id_hash, candidate_context_hash)?;
+            self.upgrade_candidate_expiry
+                .write(&node_id_hash, intent.requested_valid_until)?;
+            self.upgrade_candidate_source
+                .write(&node_id_hash, self.v1_node_binding_id.read(&node_id_hash)?)?;
+            self.upgrade_candidate_target.write(
+                &node_id_hash,
+                intent
+                    .upgrade_target_hash()
+                    .map_err(|e| revert_codec("candidate target", e))?,
+            )?;
+            self.upgrade_candidate_nonce
+                .write(&node_id_hash, intent.transition_nonce)?;
+            self.upgrade_candidate_evidence
+                .write(&node_id_hash, evidence_hash)?;
+            self.upgrade_binding_requires_candidate
+                .write(&intent.binding_id, true)?;
+            self.emit(
+                outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradePreparedV1 {
+                    nodeIdHash: node_id_hash,
+                    contextHash: candidate_context_hash,
+                    bindingId: intent.binding_id,
+                    validUntil: intent.requested_valid_until,
+                    nonce: intent.transition_nonce,
+                },
+            )?;
+            return Ok(V1RegistrationOutcome::Created);
+        }
+        if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement
+            && self
+                .upgrade_binding_requires_candidate
+                .read(&intent.binding_id)?
+            && self
+                .upgrade_candidate_context
+                .read(&node_id_hash)?
+                .is_zero()
+        {
+            return Err(PrecompileError::Revert(
+                "prepared upgrade binding was cancelled or consumed".into(),
+            ));
+        }
+        if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement
+            && !self
+                .upgrade_candidate_context
+                .read(&node_id_hash)?
+                .is_zero()
+        {
+            if self.upgrade_candidate_expiry.read(&node_id_hash)? <= now
+                || self.upgrade_candidate_source.read(&node_id_hash)?
+                    != self.v1_node_binding_id.read(&node_id_hash)?
+                || self.upgrade_candidate_target.read(&node_id_hash)?
+                    != intent
+                        .upgrade_target_hash()
+                        .map_err(|e| revert_codec("candidate target", e))?
+            {
+                return Err(PrecompileError::Revert(
+                    "transition does not match the live upgrade candidate".into(),
+                ));
+            }
+            self.clear_upgrade_candidate_v1(node_id_hash)?;
         }
 
         let recipient = B256::from(intent.recipient_x25519);
@@ -1685,6 +1885,11 @@ impl TeeRegistry<'_> {
         )?;
 
         match expected_operation {
+            AttestationOperationV1::PrepareEnclaveUpgrade => {
+                return Err(PrecompileError::Fatal(
+                    "candidate crossed active-binding write boundary".into(),
+                ))
+            }
             AttestationOperationV1::RegisterEnclave => self.emit(EnclaveRegisteredV1 {
                 nodeIdHash: node_id_hash,
                 enclaveId: intent.enclave_id,

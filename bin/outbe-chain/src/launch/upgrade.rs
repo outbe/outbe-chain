@@ -45,7 +45,12 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
         };
         let context = snapshot.lifecycle.context().clone();
         match &snapshot.lifecycle {
-            UpgradeJournalStateV1::Promoted { .. } => return,
+            UpgradeJournalStateV1::Promoted { .. } => {
+                // Keep watching after a restart: the next approved rollout can
+                // replace this completed journal without restarting A first.
+                tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                continue;
+            }
             UpgradeJournalStateV1::TerminalMissedCutoff {
                 finalized_height,
                 activation_height,
@@ -202,6 +207,14 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
             }
         }
         if status.view.block_number >= context.activation_height {
+            if !status.strict_upgrade.proposal_id.is_zero()
+                && status.strict_upgrade.successor_policy_hash == context.successor_policy_hash
+            {
+                tracing::warn!(activation_height = context.activation_height,
+                    "enclave upgrade deadline missed; owner may still complete upgrade-submit and unjail");
+                tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+                continue;
+            }
             match record_upgrade_missed_cutoff_v1(
                 &node_data_dir,
                 status.view.block_number,

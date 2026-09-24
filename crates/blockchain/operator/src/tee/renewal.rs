@@ -120,8 +120,7 @@ pub async fn run_renewal_once_v1(
     if let Some(upgrade) = upgrade_guard.load()? {
         if matches!(
             upgrade.lifecycle,
-            super::UpgradeJournalStateV1::CandidatePrepared { .. }
-                | super::UpgradeJournalStateV1::RootCopied { .. }
+            super::UpgradeJournalStateV1::KeyProvisioned { .. }
                 | super::UpgradeJournalStateV1::CandidateKeyReady { .. }
                 | super::UpgradeJournalStateV1::SubmissionPrepared { .. }
                 | super::UpgradeJournalStateV1::Submitted { .. }
@@ -439,6 +438,7 @@ fn generate_renewal_evidence(
                 eyre::bail!("GramineDirectDev enclave signature does not bind renewal intent");
             }
             let value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                transition_key_ready_proof: None,
                 intent: intent.clone(),
                 dev_attestation_public: intent.attestation_ed25519,
                 dev_signature: enclave_signature,
@@ -1067,6 +1067,7 @@ mod tests {
             }),
             AttestationMode::GramineDirectDev => {
                 AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    transition_key_ready_proof: None,
                     intent: intent.clone(),
                     dev_attestation_public: intent.attestation_ed25519,
                     dev_signature: enclave_signature,

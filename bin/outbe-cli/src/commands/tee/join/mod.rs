@@ -4,6 +4,7 @@ use super::compressed_public_key;
 use super::development_identity_v1;
 use super::load_secp256k1_key_file;
 use super::parse_nonzero_b256;
+use outbe_operator::tee::read_finalized_staged_successor_policy_v1;
 
 use super::sign_node_hash;
 use super::CliFinalityRpc;
@@ -111,6 +112,7 @@ pub(super) struct TeeJoinArgs<'a> {
     pub(super) binding_id: &'a str,
     pub(super) valid_until: u64,
     pub(super) timeout_secs: u64,
+    pub(super) successor_policy: bool,
 }
 
 pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
@@ -123,6 +125,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
         binding_id,
         valid_until,
         timeout_secs,
+        successor_policy,
     } = args;
     let private_key_hex = private_key
         .ok_or_else(|| eyre::eyre!("tee join requires the global --private-key EVM signer"))?;
@@ -141,7 +144,17 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
     let finalized = read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
         .await
         .wrap_err("read exact finalized TeeRegistry join state")?;
-    let policy = finalized.policy.clone();
+    let policy = if successor_policy {
+        let staged = read_finalized_staged_successor_policy_v1(&CliFinalityRpc(client))
+            .await?
+            .ok_or_else(|| eyre::eyre!("no approved successor TEE policy"))?;
+        if staged.finalized_hash != finalized.view.block_hash {
+            eyre::bail!("join and successor policy use different finalized heads");
+        }
+        staged.policy
+    } else {
+        finalized.policy.clone()
+    };
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
         return Err(eyre::eyre!(
             "finalized V1 policy chain id does not match eth_chainId"
@@ -518,6 +531,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                 let signature = enclave.sign_registration_intent_dev_v1(&intent)?;
                 (
                     AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                        transition_key_ready_proof: None,
                         intent: intent.clone(),
                         dev_attestation_public: attestation_ed25519,
                         dev_signature: signature,

@@ -869,6 +869,26 @@ pub enum EnclaveRequest {
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     },
+    /// Appended wire variant; proves resident-key readiness without a DCAP quote.
+    GenerateTransitionEvidenceDevV1 { intent: Vec<u8> },
+    /// Revoke pre-boundary remote tickets and open sessions; owner-only and monotonic.
+    RetireRemoteSessionsV1 { activation_height: u64 },
+    AuthorizeRemoteSessionV2 {
+        ticket_id: B256,
+        initiator_static_x25519: [u8; 32],
+        responder_static_x25519: [u8; 32],
+        deadline: u64,
+        finalized_block_hash: B256,
+        retirement_height: u64,
+    },
+    /// Upgrade transfer uses finalized pending-candidate proofs in both directions.
+    /// Export carries a canonical placeholder artifact with the recipient context.
+    BeginUpgradeKeyTransferV1 {
+        request_hash: B256,
+        artifact: Vec<u8>,
+        anchor_outcome: Vec<u8>,
+        export: bool,
+    },
 }
 
 impl EnclaveRequest {
@@ -876,6 +896,7 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::GetQuote { .. } => "get_quote",
             Self::GetInitializationChallenge => "get_initialization_challenge",
             Self::Initialize { .. } => "initialize",
@@ -886,6 +907,9 @@ impl EnclaveRequest {
             Self::AuthorizeRemoteSessionV1 { .. } => "authorize_remote_session_v1",
             Self::GenerateDcapQuote { .. } => "generate_dcap_quote",
             Self::SignRegistrationIntentDevV1 { .. } => "sign_registration_intent_dev_v1",
+            Self::GenerateTransitionEvidenceDevV1 { .. } => "generate_transition_evidence_dev_v1",
+            Self::RetireRemoteSessionsV1 { .. } => "retire_remote_sessions_v1",
+            Self::AuthorizeRemoteSessionV2 { .. } => "authorize_remote_session_v2",
             Self::BeginDcapVerificationV1 { .. } => "begin_dcap_verification_v1",
             Self::BeginDcapOnboardingVerificationV1 { .. } => {
                 "begin_dcap_onboarding_verification_v1"
@@ -940,6 +964,8 @@ impl EnclaveRequest {
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
+            | Self::GenerateTransitionEvidenceDevV1 { .. }
+            | Self::RetireRemoteSessionsV1 { .. }
             | Self::ProcessTributeOfferBatch { .. }
             | Self::ApplyGratisOp { .. }
             | Self::ApplyPromisOp { .. }
@@ -949,12 +975,14 @@ impl EnclaveRequest {
             | Self::QueryFidelityIndex { .. }
             | Self::Health
             | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
-            Self::GetInitializationChallenge
+            Self::BeginUpgradeKeyTransferV1 { .. }
+            | Self::GetInitializationChallenge
             | Self::Initialize { .. }
             | Self::OpenSession
             | Self::OpenRemoteSessionV1 { .. }
             | Self::SessionHandshake { .. }
             | Self::AuthorizeRemoteSessionV1 { .. }
+            | Self::AuthorizeRemoteSessionV2 { .. }
             | Self::BeginDcapVerificationV1 { .. }
             | Self::BeginDcapOnboardingVerificationV1 { .. }
             | Self::DcapVerificationChunkV1 { .. }
@@ -1341,6 +1369,16 @@ pub enum EnclaveResponse {
     },
     GramineDirectDevOnboardingArtifactIngestedV1 {
         tribute_offer_public: [u8; 32],
+    },
+    TransitionEvidenceDevV1 {
+        evidence: Vec<u8>,
+    },
+    RemoteSessionsRetiredV1 {
+        activation_height: u64,
+    },
+    UpgradeKeyExportedV1 {
+        request_hash: B256,
+        artifact: Vec<u8>,
     },
 }
 

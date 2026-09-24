@@ -133,7 +133,8 @@ pub fn starts_stream(request: &crate::protocol::EnclaveRequest) -> bool {
     use crate::protocol::EnclaveRequest::*;
     matches!(
         request,
-        BeginDcapVerificationV1 { .. }
+        BeginUpgradeKeyTransferV1 { .. }
+            | BeginDcapVerificationV1 { .. }
             | BeginDcapOnboardingVerificationV1 { .. }
             | BeginDcapOnboardingArtifactIngestV1 { .. }
     )

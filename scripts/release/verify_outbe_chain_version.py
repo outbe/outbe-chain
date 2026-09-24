@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def verify_version_text(
     source_date_epoch: int,
     target: str,
     profile: str,
+    features: list[str] | None = None,
 ) -> list[str]:
     differences: list[str] = []
     lines = text.splitlines()
@@ -33,7 +35,12 @@ def verify_version_text(
         differences.append(f"expected two exact deterministic timestamp lines: {expected_time}")
     if expected_profile not in text:
         differences.append(f"missing exact Outbe target/profile line: {expected_profile}")
-    expected_features = "Build Features: no features enabled"
+    # Vergen derives this value from CARGO_FEATURE_* environment keys: hyphens
+    # become underscores, and multiple features are joined without spaces.
+    expected_features = "Build Features: " + (
+        ",".join(sorted(feature.replace("-", "_") for feature in features))
+        if features else "no features enabled"
+    )
     if lines.count(expected_features) != 1:
         differences.append(f"expected one exact Outbe feature line: {expected_features}")
     return differences
@@ -46,7 +53,13 @@ def main() -> None:
     parser.add_argument("--source-date-epoch", required=True, type=int)
     parser.add_argument("--target", required=True)
     parser.add_argument("--profile", required=True)
+    parser.add_argument("--build-spec", type=Path)
     args = parser.parse_args()
+
+    features = None
+    if args.build_spec:
+        spec = json.loads(args.build_spec.read_text(encoding="utf-8"))
+        features = next(a["features"] for a in spec["artifacts"] if a["name"] == "outbe-chain")
 
     differences = verify_version_text(
         args.version_file.read_text(encoding="utf-8"),
@@ -54,6 +67,7 @@ def main() -> None:
         source_date_epoch=args.source_date_epoch,
         target=args.target,
         profile=args.profile,
+        features=features,
     )
     for difference in differences:
         print(f"version identity mismatch: {difference}")

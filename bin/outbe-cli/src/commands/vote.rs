@@ -120,6 +120,7 @@ async fn propose(
     payload: String,
 ) -> Result<()> {
     validate_json_payload(&payload)?;
+    let payload = prepare_enclave_upgrade_payload(client, target_module, payload).await?;
     let signer = super::require_signer(private_key)?;
 
     let call = IVote::createProposalCall {
@@ -131,6 +132,67 @@ async fn propose(
         .await?;
     println!("Proposal transaction sent: {tx_hash} (target {target_module:?})");
     Ok(())
+}
+
+async fn prepare_enclave_upgrade_payload(
+    client: &(impl Rpc + Sync),
+    target: Address,
+    payload: String,
+) -> Result<String> {
+    use outbe_primitives::{
+        addresses::{TEE_REGISTRY_ADDRESS, UPDATE_ADDRESS},
+        tee_attestation_v1::TeePolicyV1,
+        tee_registry_abi_v1::ITeeRegistryV1,
+    };
+    if target != UPDATE_ADDRESS {
+        return Ok(payload);
+    }
+    let value: serde_json::Value = serde_json::from_str(&payload)?;
+    if value.get("mrenclave").is_none() {
+        return Ok(payload);
+    }
+    let mut update = outbe_update::payload::ScheduleUpdatePayload::from_value(&value)?;
+    let finalized = client.eth_get_finalized_block().await?;
+    let tag = finalized
+        .get("number")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("finalized block has no number"))?;
+    let height = u64::from_str_radix(tag.trim_start_matches("0x"), 16)?;
+    let bytes = client
+        .eth_call_at(
+            TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::activePolicyV1Call {}.abi_encode(),
+            tag,
+        )
+        .await?;
+    let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&bytes)?;
+    let policy = TeePolicyV1::decode_canonical(&canonical)
+        .map_err(|e| eyre::eyre!("invalid finalized policy: {e}"))?;
+    let hash = policy
+        .policy_hash()
+        .map_err(|e| eyre::eyre!("invalid finalized policy: {e}"))?;
+    if update
+        .predecessor_tee_policy_hash
+        .is_some_and(|expected| expected != hash)
+    {
+        eyre::bail!("predecessorTeePolicyHash differs from the finalized active policy");
+    }
+    if policy.measurement_rules.len() != 1
+        || update.mrenclave == Some(policy.measurement_rules[0].mrenclave)
+    {
+        eyre::bail!(
+            "enclave upgrade requires a different MRENCLAVE and one predecessor measurement"
+        );
+    }
+    update.predecessor_tee_policy_hash = Some(hash);
+    let chain_id = client.eth_chain_id().await?;
+    if policy.chain_id != U256::from(chain_id).to_be_bytes() {
+        eyre::bail!("TEE policy chain identity mismatch");
+    }
+    update.validate(height, chain_id)?;
+    let payload = serde_json::to_string(&update)?;
+    println!("Enclave upgrade proposal: {payload}");
+    Ok(payload)
 }
 
 async fn cast_vote(

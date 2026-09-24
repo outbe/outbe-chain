@@ -296,6 +296,12 @@ pub trait PrecompileStorageProvider {
     /// Performs an SLOAD operation (persistent storage read).
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
 
+    /// Fixed protocol feature probe, unmetered in production providers. Reading
+    /// the previously unused opt-in slot must not change historical transaction gas.
+    fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        self.sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45))
+    }
+
     /// Performs a TLOAD operation (transient storage read).
     fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
 

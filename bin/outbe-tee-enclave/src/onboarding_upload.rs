@@ -15,6 +15,7 @@ use outbe_tee::{
 use crate::finalized_admission::{FinalizedAdmissionVerifierV1, VerifiedAdmissionAnchorV1};
 
 struct UploadV1 {
+    upgrade_export: Option<bool>,
     request_hash: B256,
     artifact: Vec<u8>,
     expected_intent_hash: B256,
@@ -28,6 +29,7 @@ struct UploadV1 {
 }
 
 pub(crate) struct CompleteOnboardingArtifactIngestV1 {
+    pub(crate) upgrade_export: Option<bool>,
     pub(crate) request_hash: B256,
     pub(crate) artifact: Vec<u8>,
     pub(crate) expected_intent_hash: B256,
@@ -73,7 +75,55 @@ impl OnboardingArtifactUploadSessionV1 {
         request: EnclaveRequest,
         descriptor: Option<&TrustedNetworkDescriptorV1>,
     ) -> Result<OnboardingArtifactUploadProgressV1, String> {
-        let result = match request {
+        let result = (|| match request {
+            EnclaveRequest::BeginUpgradeKeyTransferV1 {
+                request_hash,
+                artifact,
+                anchor_outcome,
+                export,
+            } => {
+                let descriptor = descriptor
+                    .ok_or_else(|| "upgrade requires a measured network descriptor".to_string())?;
+                let decoded = DcapOnboardingArtifactV1::decode_canonical(&artifact)
+                    .map_err(|_| "invalid upgrade artifact")?;
+                let expected =
+                    outbe_tee::finalized_admission::upgrade_key_transfer_request_hash_v1(
+                        &artifact,
+                        &anchor_outcome,
+                        export,
+                    )
+                    .map_err(|e| e.to_string())?;
+                if expected != request_hash {
+                    return Err("upgrade transfer commitment mismatch".into());
+                }
+                let context = decoded.context;
+                let old_hash = onboarding_artifact_ingest_request_hash_v1(
+                    &artifact,
+                    &anchor_outcome,
+                    context.intent_hash,
+                    context.tribute_offer_public,
+                    context.key_epoch,
+                    context.tribute_offer_epoch,
+                )
+                .map_err(|e| e.to_string())?;
+                self.begin(
+                    descriptor,
+                    old_hash,
+                    artifact,
+                    anchor_outcome,
+                    context.intent_hash,
+                    context.tribute_offer_public,
+                    context.key_epoch,
+                    context.tribute_offer_epoch,
+                )?;
+                let mut upload = self.upload.take().ok_or("upgrade upload missing")?;
+                upload.request_hash = request_hash;
+                upload.upgrade_export = Some(export);
+                upload.verifier = upload.verifier.for_upgrade();
+                self.upload = Some(upload);
+                Ok(OnboardingArtifactUploadProgressV1::Started { request_hash })
+            }
+
             EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 {
                 request_hash,
                 artifact,
@@ -107,7 +157,7 @@ impl OnboardingArtifactUploadSessionV1 {
                 self.finish(request_hash)
             }
             _ => Err("request is not part of onboarding artifact ingest".to_owned()),
-        };
+        })();
         if result.is_err() {
             self.upload = None;
         }
@@ -156,6 +206,7 @@ impl OnboardingArtifactUploadSessionV1 {
         let verifier =
             FinalizedAdmissionVerifierV1::new(descriptor, &decoded.context, &anchor_outcome)?;
         self.upload = Some(UploadV1 {
+            upgrade_export: None,
             request_hash,
             artifact,
             expected_intent_hash,
@@ -264,6 +315,7 @@ impl OnboardingArtifactUploadSessionV1 {
             .ok_or_else(|| "onboarding artifact has no verified admission record".to_owned())?;
         Ok(OnboardingArtifactUploadProgressV1::Complete(Box::new(
             CompleteOnboardingArtifactIngestV1 {
+                upgrade_export: upload.upgrade_export,
                 request_hash,
                 artifact: upload.artifact,
                 expected_intent_hash: upload.expected_intent_hash,

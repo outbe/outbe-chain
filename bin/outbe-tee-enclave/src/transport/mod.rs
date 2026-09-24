@@ -39,10 +39,7 @@ use crate::onboarding_upload::{
     OnboardingArtifactUploadSessionV1,
 };
 use crate::process::process_tribute_offer_batch;
-use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    KeyPolicy, SealHeader, SEAL_FORMAT,
-};
+use crate::seal::{EnclaveBootConfig, KeyPolicy, SealHeader, SEAL_FORMAT};
 
 mod dispatch;
 mod offer_key;

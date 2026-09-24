@@ -16,10 +16,7 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use rand_core::RngCore as _;
 
 use crate::keys::EnclaveKeys;
-use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_network_bound_payload, EnclaveBootConfig, SealHeader,
-    SEAL_FORMAT,
-};
+use crate::seal::{EnclaveBootConfig, SealHeader, SEAL_FORMAT};
 
 const MAX_PENDING_REMOTE_SESSIONS_V1: usize = 64;
 #[cfg(not(feature = "mock"))]
@@ -40,6 +37,7 @@ pub struct PendingInitialization {
 pub struct PendingRemoteSessionV1 {
     initiator_static_x25519: [u8; 32],
     deadline: u64,
+    admission_generation: u64,
 }
 
 impl PendingRemoteSessionV1 {
@@ -97,6 +95,7 @@ pub struct InitializationState {
     mock_network_binding: Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>,
     stored: Mutex<Option<StoredInitialization>>,
     remote_sessions: Mutex<BTreeMap<B256, PendingRemoteSessionV1>>,
+    remote_admission_generation: std::sync::atomic::AtomicU64,
 }
 
 impl InitializationState {
@@ -119,7 +118,10 @@ impl InitializationState {
         };
         #[cfg(all(not(feature = "mock"), not(feature = "production-dcap-release")))]
         let trusted_network_descriptor = match &attestation {
-            crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
+            crate::gramine::AttestationType::Dcap
+            | crate::gramine::AttestationType::SgxNoAttest => {
+                Some(load_trusted_network_descriptor_v1()?)
+            }
             _ => None,
         };
         #[cfg(feature = "mock")]
@@ -139,6 +141,27 @@ impl InitializationState {
             challenge,
             attestation,
             trusted_network_descriptor,
+        )
+    }
+
+    /// Separate process-harness seam: production protocol, software sealing.
+    #[cfg(feature = "local-e2e")]
+    pub fn local_e2e(
+        boot: Arc<EnclaveBootConfig>,
+        keys: &EnclaveKeys,
+        descriptor: TrustedNetworkDescriptorV1,
+    ) -> Result<Self, String> {
+        if !crate::local_e2e::configured() {
+            return Err("E2E sealing is not configured".into());
+        }
+        let mut challenge = [0; 32];
+        rand_core::OsRng.fill_bytes(&mut challenge);
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            crate::gramine::AttestationType::SgxNoAttest,
+            Some(descriptor),
         )
     }
 
@@ -184,6 +207,7 @@ impl InitializationState {
                 loaded_from_seal: true,
             })),
             remote_sessions: Mutex::new(BTreeMap::new()),
+            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
         };
         if let Some(manifest) = state.manifest()? {
             state.validate_network_binding(&manifest)?;
@@ -254,6 +278,7 @@ impl InitializationState {
             mock_network_binding: None,
             stored: Mutex::new(None),
             remote_sessions: Mutex::new(BTreeMap::new()),
+            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -274,6 +299,7 @@ impl InitializationState {
             mock_network_binding: Some(network_binding),
             stored: Mutex::new(None),
             remote_sessions: Mutex::new(BTreeMap::new()),
+            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -461,6 +487,28 @@ impl InitializationState {
         finalized_block_hash: B256,
         keys: &EnclaveKeys,
     ) -> Result<(), String> {
+        self.authorize_remote_session_at_generation(
+            ticket_id,
+            initiator_static_x25519,
+            responder_static_x25519,
+            deadline,
+            finalized_block_hash,
+            0,
+            keys,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authorize_remote_session_at_generation(
+        &self,
+        ticket_id: B256,
+        initiator_static_x25519: [u8; 32],
+        responder_static_x25519: [u8; 32],
+        deadline: u64,
+        finalized_block_hash: B256,
+        generation: u64,
+        keys: &EnclaveKeys,
+    ) -> Result<(), String> {
         if self.mode != InitializationMode::Production || self.manifest()?.is_none() {
             return Err(
                 "remote session authorization requires initialized production state".into(),
@@ -484,6 +532,13 @@ impl InitializationState {
             .remote_sessions
             .lock()
             .map_err(|_| "remote session authorization lock is poisoned".to_string())?;
+        if generation
+            != self
+                .remote_admission_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err("remote session authorization predates enclave retirement".into());
+        }
         sessions.retain(|_, session| session.deadline > now);
         if sessions.len() >= MAX_PENDING_REMOTE_SESSIONS_V1 {
             return Err("pending remote session capacity reached".into());
@@ -496,8 +551,42 @@ impl InitializationState {
             PendingRemoteSessionV1 {
                 initiator_static_x25519,
                 deadline,
+                admission_generation: self
+                    .remote_admission_generation
+                    .load(std::sync::atomic::Ordering::Acquire),
             },
         );
+        Ok(())
+    }
+
+    pub fn retire_remote_sessions(&self, height: u64) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        if height == 0 {
+            return Err("remote retirement height is zero".into());
+        }
+        let mut sessions = self
+            .remote_sessions
+            .lock()
+            .map_err(|_| "remote admission lock poisoned")?;
+        if height > self.remote_admission_generation.load(Ordering::Acquire) {
+            self.remote_admission_generation
+                .store(height, Ordering::Release);
+            sessions.clear();
+        }
+        Ok(())
+    }
+
+    pub fn ensure_remote_admission_current(
+        &self,
+        session: PendingRemoteSessionV1,
+    ) -> Result<(), String> {
+        if session.admission_generation
+            != self
+                .remote_admission_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err("remote session retired at enclave upgrade deadline".into());
+        }
         Ok(())
     }
 
@@ -600,7 +689,7 @@ impl InitializationState {
 fn load_trusted_network_descriptor_v1() -> Result<TrustedNetworkDescriptorV1, String> {
     let bytes = std::fs::read(TRUSTED_NETWORK_DESCRIPTOR_PATH).map_err(|error| {
         format!(
-            "production DCAP requires release-measured network descriptor {}: {error}",
+            "SGX initialization requires release-measured network descriptor {}: {error}",
             TRUSTED_NETWORK_DESCRIPTOR_PATH
         )
     })?;
@@ -625,13 +714,23 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
     match request {
         EnclaveRequest::GetPublicKeys
         | EnclaveRequest::AuthorizeRemoteSessionV1 { .. }
+        | EnclaveRequest::AuthorizeRemoteSessionV2 { .. }
         | EnclaveRequest::GenerateDcapQuote { .. }
         | EnclaveRequest::SignRegistrationIntentDevV1 { .. }
+        | EnclaveRequest::GenerateTransitionEvidenceDevV1 { .. }
+        | EnclaveRequest::RetireRemoteSessionsV1 { .. }
         | EnclaveRequest::BeginDcapVerificationV1 { .. }
         | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
         | EnclaveRequest::FinishDcapVerificationV1 { .. }
+        | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
+        | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
+        | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
         | EnclaveRequest::Health => CommandClass::Initialized,
+        EnclaveRequest::BeginUpgradeKeyTransferV1 { export: true, .. } => CommandClass::Ready,
+        EnclaveRequest::BeginUpgradeKeyTransferV1 { export: false, .. } => {
+            CommandClass::KeylessOnboardingArtifact
+        }
         EnclaveRequest::DkgParticipantAnnounceV1 { .. }
         | EnclaveRequest::DkgOpen { .. }
         | EnclaveRequest::DkgStartDealer { .. }
@@ -642,9 +741,6 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgTributeOfferPartial { .. }
         | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::FoundingKeyless,
         EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
-        | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
-        | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
-        | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
@@ -716,13 +812,11 @@ fn persist_manifest(
     boot: &EnclaveBootConfig,
     manifest: &EnclaveInitializationManifestV1,
 ) -> Result<(), String> {
-    let (sealing_key, policy) = crate::transport::sealing_key()
-        .ok_or_else(|| "SGX sealing key is unavailable".to_string())?;
     let mut nonce = [0u8; 12];
     rand_core::OsRng.fill_bytes(&mut nonce);
     let header = SealHeader {
         format_version: SEAL_FORMAT,
-        key_policy: policy,
+        key_policy: crate::seal::KeyPolicy::MrEnclaveAndSigner,
         isv_svn: boot.isv_svn,
         key_epoch: 0,
         tribute_offer_epoch: 0,
@@ -734,10 +828,9 @@ fn persist_manifest(
     let authorization_hash = manifest
         .authorization_hash()
         .map_err(|error| error.to_string())?;
-    let blob = seal_tribute_offer_and_group_sig(
+    let blob = crate::sgx_sealing::seal_payload(
         &authorization_hash.0,
         &encoded,
-        &sealing_key,
         manifest.network_binding(),
         &header,
     )
@@ -752,13 +845,11 @@ fn persist_identity(
     keys: &EnclaveKeys,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
 ) -> Result<(), String> {
-    let (sealing_key, policy) = crate::transport::sealing_key()
-        .ok_or_else(|| "SGX sealing key is unavailable".to_string())?;
     let path = boot.sealed_identity_path();
     if path.exists() {
         let blob =
             std::fs::read(&path).map_err(|error| format!("read sealed identity: {error}"))?;
-        let unsealed = unseal_network_bound_payload(&blob, &sealing_key, boot.isv_svn)
+        let unsealed = crate::sgx_sealing::unseal_payload(&blob, boot.isv_svn)
             .map_err(|error| format!("verify sealed identity: {error}"))?;
         if unsealed.network_binding != network_binding
             || unsealed.tribute_offer_secret.as_ref() != keys.identity_seed()
@@ -772,20 +863,15 @@ fn persist_identity(
     rand_core::OsRng.fill_bytes(&mut nonce);
     let header = SealHeader {
         format_version: SEAL_FORMAT,
-        key_policy: policy,
+        key_policy: crate::seal::KeyPolicy::MrEnclaveAndSigner,
         isv_svn: boot.isv_svn,
         key_epoch: 0,
         tribute_offer_epoch: 0,
         nonce,
     };
-    let blob = seal_tribute_offer_and_group_sig(
-        keys.identity_seed(),
-        &[],
-        &sealing_key,
-        network_binding,
-        &header,
-    )
-    .map_err(|error| format!("seal enclave identity: {error}"))?;
+    let blob =
+        crate::sgx_sealing::seal_payload(keys.identity_seed(), &[], network_binding, &header)
+            .map_err(|error| format!("seal enclave identity: {error}"))?;
     crate::transport::write_once_0600(&path, &blob)
         .map_err(|error| format!("persist sealed enclave identity: {error}"))
 }
@@ -800,14 +886,8 @@ fn restore_manifest(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("read sealed node authorization: {error}")),
     };
-    let unsealed = unseal_network_bound_payload(
-        &blob,
-        &crate::transport::sealing_key()
-            .ok_or_else(|| "SGX sealing key is unavailable".to_string())?
-            .0,
-        boot.isv_svn,
-    )
-    .map_err(|error| format!("unseal node authorization: {error}"))?;
+    let unsealed = crate::sgx_sealing::unseal_payload(&blob, boot.isv_svn)
+        .map_err(|error| format!("unseal node authorization: {error}"))?;
     let manifest = EnclaveInitializationManifestV1::decode_canonical(&unsealed.group_sig)
         .map_err(|error| format!("sealed node authorization is non-canonical: {error}"))?;
     if *unsealed.tribute_offer_secret
@@ -1209,6 +1289,70 @@ mod tests {
             )
             .unwrap_err()
             .contains("capacity reached"));
+    }
+
+    #[test]
+    fn retirement_revokes_pending_and_open_sessions_and_rejects_stale_authorizations() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            test_chain_id(),
+            root.path().into(),
+            0,
+        ));
+        let state =
+            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+        let (manifest, signature) = signed_manifest(&keys, [0x41; 32]);
+        let pending = state
+            .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
+            .unwrap();
+        state.commit(pending, &keys).unwrap();
+        let ticket = B256::repeat_byte(1);
+        let pending_ticket = B256::repeat_byte(2);
+        for id in [ticket, pending_ticket] {
+            state
+                .authorize_remote_session(
+                    id,
+                    [3; 32],
+                    keys.noise_public(),
+                    u64::MAX,
+                    B256::repeat_byte(4),
+                    &keys,
+                )
+                .unwrap();
+        }
+        let open = state.take_remote_session(ticket).unwrap();
+        state.ensure_remote_admission_current(open).unwrap();
+        state.retire_remote_sessions(50).unwrap();
+        assert!(state.ensure_remote_admission_current(open).is_err());
+        assert!(state.take_remote_session(pending_ticket).is_err());
+        assert!(state
+            .authorize_remote_session(
+                ticket,
+                [3; 32],
+                keys.noise_public(),
+                u64::MAX,
+                B256::repeat_byte(4),
+                &keys
+            )
+            .is_err());
+        state
+            .authorize_remote_session_at_generation(
+                ticket,
+                [3; 32],
+                keys.noise_public(),
+                u64::MAX,
+                B256::repeat_byte(4),
+                50,
+                &keys,
+            )
+            .unwrap();
+        let new = state.take_remote_session(ticket).unwrap();
+        state.retire_remote_sessions(49).unwrap();
+        state.retire_remote_sessions(50).unwrap();
+        state.ensure_remote_admission_current(new).unwrap();
+        state.retire_remote_sessions(100).unwrap();
+        assert!(state.ensure_remote_admission_current(new).is_err());
     }
 
     #[test]

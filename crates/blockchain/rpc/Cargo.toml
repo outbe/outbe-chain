@@ -16,6 +16,7 @@ outbe-compressed-entities.workspace = true
 outbe-offchain-data.workspace = true
 outbe-radicle.workspace = true
 outbe-tee.workspace = true
+outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-staking.workspace = true
 outbe-rewards.workspace = true

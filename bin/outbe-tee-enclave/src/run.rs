@@ -413,13 +413,12 @@ fn resolve_enclave_identity_seed(
 
     match std::fs::read(&path) {
         Ok(blob) => {
-            let unsealed = crate::seal::unseal_network_bound_payload(&blob, &sealing_key, isv_svn)
-                .map_err(|error| {
-                    format!(
-                        "sealed identity at {} is unusable and will not be replaced: {error}",
-                        path.display()
-                    )
-                })?;
+            let unsealed = crate::sgx_sealing::unseal_payload(&blob, isv_svn).map_err(|error| {
+                format!(
+                    "sealed identity at {} is unusable and will not be replaced: {error}",
+                    path.display()
+                )
+            })?;
             if !unsealed.group_sig.is_empty() {
                 return Err(format!(
                     "sealed identity at {} contains unexpected group-signature bytes",

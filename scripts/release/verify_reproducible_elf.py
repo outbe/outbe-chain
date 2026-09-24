@@ -263,6 +263,7 @@ def verify_outputs(
                     source_date_epoch=manifest["build"]["source_date_epoch"],
                     target=manifest["build"]["target"],
                     profile=manifest["build"]["profile"],
+                    features=_manifest_artifacts(manifest)["outbe-chain"]["features"],
                 )
             except UnicodeDecodeError:
                 differences.append(f"{label}: version evidence is not UTF-8")
