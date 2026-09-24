@@ -816,6 +816,17 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
     if let Some(seal) = &spec.seal {
         fs::create_dir_all(&seal.tee_dir)?;
         let tee_dir = seal.tee_dir.canonicalize().unwrap_or(seal.tee_dir.clone());
+        // The node and CLI own this directory. Seals must remain private and
+        // readable by that same operator when checkpointing an upgrade.
+        let owner = fs::metadata(&tee_dir)?;
+        cmd.args(["--user", &format!("{}:{}", owner.uid(), owner.gid())]);
+        if spec.pass_sgx_devices {
+            for device in ["/dev/sgx_enclave", "/dev/sgx/enclave", "/dev/sgx_provision"] {
+                if let Ok(metadata) = fs::metadata(device) {
+                    cmd.args(["--group-add", &metadata.gid().to_string()]);
+                }
+            }
+        }
         cmd.args(["-v", &format!("{}:/tee", tee_dir.display())]);
     }
 
@@ -1423,7 +1434,7 @@ while True:
         fs::write(&signing_key, b"key").expect("write signing key fixture");
         let image_id = DockerImageId::from_inspect_output(&format!("sha256:{}", "cd".repeat(32)))
             .expect("pinned image ID");
-        let spec = EnclaveSpec {
+        let mut spec = EnclaveSpec {
             name: "validator-0-tee".to_owned(),
             tee_port: 19500,
             enclave_bin,
@@ -1469,6 +1480,34 @@ while True:
             .get_envs()
             .all(|(key, _)| key != "OUTBE_TEST_REMOTE_ATTESTATION"));
         assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
+        assert!(!arguments.iter().any(|argument| argument == "--user"));
+        let tee_dir = root.path().join("operator-tee");
+        spec.seal = Some(SealSpec {
+            tee_dir: tee_dir.clone(),
+            chain_id_hex: "0x033ce789".into(),
+        });
+        let sealed_command =
+            build_enclave_command(&spec, &image_id).expect("operator-owned sealed runtime");
+        let args = sealed_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let owner = fs::metadata(&tee_dir).expect("created operator seal directory");
+        let user = args
+            .windows(2)
+            .position(|pair| {
+                pair[0] == "--user" && pair[1] == format!("{}:{}", owner.uid(), owner.gid())
+            })
+            .expect("container must use the seal directory owner");
+        assert!(
+            user < args
+                .iter()
+                .position(|arg| arg == image_id.as_str())
+                .unwrap()
+        );
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-v" && pair[1] == format!("{}:/tee", tee_dir.display())));
     }
 
     /// The native profile executes the enclave binary itself. No docker, no

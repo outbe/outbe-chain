@@ -752,7 +752,12 @@ impl Localnet {
         if self.tee_enabled() {
             a.extend(args![
                 "--tee-enclave-socket",
-                format!("127.0.0.1:{}", self.cfg.tee_port(i)),
+                format!(
+                    "127.0.0.1:{}",
+                    self.enclave_runtime_profiles
+                        .get(&i)
+                        .map_or_else(|| self.cfg.tee_port(i), |profile| profile.port)
+                ),
                 // Fast canary cadence so observability scenarios converge in
                 // seconds instead of the 30s production default.
                 "--tee-canary.interval-secs",
@@ -920,25 +925,18 @@ impl Localnet {
         );
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
-        let port = self.cfg.tee_port(i);
-        let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
-            self.cfg.bin_mock.clone()
-        } else {
-            self.real_enclave_bin()?
-        };
-        // The harness always seals (localnet start sets OUTBE_TEE_SEAL); the host
-        // dkg-seed is passed except for real+seal, where the enclave self-seals.
+        let profile = self.active_enclave_profile(i)?;
         let seal = Some(SealSpec {
-            tee_dir: vd.join("tee"),
+            tee_dir: profile.tee_dir,
             chain_id_hex: chain_id_hex.to_string(),
         });
 
         let guard = proc::spawn_enclave_ready(
             proc::EnclaveSpec {
-                name: self.cfg.tee_container(i),
-                tee_port: port,
-                enclave_bin,
-                signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+                name: profile.container,
+                tee_port: profile.port,
+                enclave_bin: profile.binary,
+                signing_key: profile.signing_key,
                 network_descriptor: self
                     .cfg
                     .tee_mode

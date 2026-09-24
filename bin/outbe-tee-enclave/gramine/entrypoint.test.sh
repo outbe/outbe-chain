@@ -17,7 +17,10 @@ if [[ ! -f "${TEST_SIGNING_KEY}" ]]; then
   exit 2
 fi
 
-cd /app
+# The enclave runs as the operator UID so private seals are usable by the CLI.
+# Render into a private writable directory; /app remains immutable.
+MANIFEST_DIR="$(mktemp -d /tmp/outbe-test-sgx.XXXXXX)"
+cd "${MANIFEST_DIR}"
 TEE_DIR="${OUTBE_TEE_DIR:-/tee}"
 mkdir -p "${TEE_DIR}"
 
@@ -52,7 +55,7 @@ gramine-manifest \
   -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
   -Dnetwork_descriptor_enabled="${HAS_SGX}" \
-  outbe-tee-enclave.manifest.template \
+  /app/outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 
 gramine-sgx-sign \

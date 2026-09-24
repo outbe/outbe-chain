@@ -25,5 +25,6 @@ static ALLOCATOR: outbe_tee_enclave::telemetry::CountingAllocator =
     outbe_tee_enclave::telemetry::CountingAllocator;
 
 fn main() {
+    eprintln!("outbe-tee-enclave version={}", env!("CARGO_PKG_VERSION"));
     std::process::exit(run(RunOpts::prod()));
 }

@@ -18,6 +18,7 @@
 
 mod bootstrap;
 mod committee;
+mod enclave_upgrade;
 mod follower;
 mod joiner;
 mod log_audit;
@@ -25,6 +26,7 @@ mod probes;
 mod radicle;
 
 pub use bootstrap::BootstrapProfile;
+pub(crate) use enclave_upgrade::HardwareEnclaveCandidate;
 pub(crate) use log_audit::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 #[cfg(feature = "ocomp-integration")]
@@ -242,6 +244,7 @@ pub struct Localnet {
     >,
     /// Owned validator-indexed enclave containers (committee + joiner).
     enclaves: HashMap<usize, EnclaveGuard>,
+    enclave_runtime_profiles: HashMap<usize, enclave_upgrade::EnclaveRuntimeProfile>,
     /// Exact Gramine image used by every enclave in this scenario.
     enclave_image_id: Option<DockerImageId>,
     /// Scenario-only chain-manifest overrides used to prove that a validator
@@ -272,6 +275,7 @@ impl Localnet {
             followers: HashMap::new(),
             follower_startup_probes: HashMap::new(),
             enclaves: HashMap::new(),
+            enclave_runtime_profiles: HashMap::new(),
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
             validator_argv: HashMap::new(),
