@@ -49,11 +49,10 @@ pub enum AuctionBriefReceipt {
     },
 }
 
-/// Record the day's auction brief (limit in raw PROMIS, day type). Prices are
-/// not part of a brief: the day is priced at auction start, from the oracle as
-/// it reads then. Only a limit outside Desis' `u128` auction domain is a committed
-/// rejection. Invalid state, timestamp overflow, storage/index/event faults and
-/// corruption propagate as `Err`.
+/// Record the day's auction brief (limit in raw PROMIS, day type); the day is
+/// priced at auction start, not here. Only a limit outside Desis' `u128` auction
+/// domain is a committed rejection. Invalid state, timestamp overflow,
+/// storage/index/event faults and corruption propagate as `Err`.
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,

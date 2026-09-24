@@ -68,8 +68,6 @@ pub(crate) fn preflight_brief(
     u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
 }
 
-/// A brief carries no terms: the day's prices, load and profile are all chosen
-/// at `start_auction`, from the oracle as it reads immediately before the start.
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -460,9 +458,7 @@ fn start_auction(
     issuance_end: u64,
     now: u64,
 ) -> Result<StartOutcome> {
-    // The day's terms are chosen here and nowhere else: the entry price is the
-    // VWAP of the UTC day that closed before this start, not before the brief,
-    // which can sit a whole day earlier when the anchor was deferred.
+    // The day before this start, not before the brief: a deferred anchor sits a day earlier.
     let utc_day = previous_date_key(timestamp_to_date_key(now));
     let rows: Vec<ReferenceCurrencyPrice> =
         outbe_oracle::api::priced_reference_currencies(storage.clone(), utc_day)?

@@ -77,9 +77,7 @@ impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices and
     /// the load the ladder stepped to. `min_intex_bid_rate = 0` means no bid floor.
     /// `call_trigger`, `min_intex_bid_quantity` and `commit_bond_minor` are left at
-    /// their defaults here and folded in by `fold_profile`. Every field is settled
-    /// inside `start_auction`, from one read of the oracle, so the day never runs
-    /// on terms mixed from two different days.
+    /// their defaults here and folded in by `fold_profile`.
     pub fn from_reference_prices(
         reference_prices: Vec<ReferenceCurrencyPrice>,
         promis_load_minor: u128,

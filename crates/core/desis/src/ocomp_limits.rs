@@ -15,9 +15,8 @@ use outbe_primitives::time::WorldwideDay;
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
 /// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
 /// is briefed all the same so its targets learn the auction is cancelled.
-/// `auction_entry_prices` reaches no auction: the day is priced at start, from
-/// the oracle as it reads then. The table is carried here only because the
-/// receipt hash commits it.
+/// `auction_entry_prices` reaches no auction - the day is priced at its start - and
+/// is carried only because the receipt hash commits it.
 pub fn apply_request_desis_limit(
     storage: StorageHandle<'_>,
     protocol_bundle_hash: B256,

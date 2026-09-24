@@ -332,8 +332,7 @@ pub fn priced_reference_currencies(
     // The day-type currency is priced from the same per-pair day VWAP as every
     // other currency; the OCOMP mirror of it is a copy, written only once the
     // profile is installed, and is not the price source. It is read from its own
-    // pair rather than through the registry: genesis pins 840 into
-    // `reference_currencies`, but the day-type price does not hang on that entry.
+    // pair: the day-type price does not hang on 840's registry entry.
     let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
     if day_type_index != 0 {
         if let Some(vwap) = oracle

@@ -229,9 +229,8 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
             .config_profile
             .write(outbe_intexfactory::config::PROFILE_PROD)
             .unwrap();
-        // A day is priced when its auction starts, so the oracle has to carry every
-        // day a start can land on - a deferred anchor reads the next one, not this
-        // one. Unpriced, those days would cancel instead of opening.
+        // A day is priced when its auction starts, so every day a start can land on
+        // needs a price here - a deferred anchor reads the next one, not this one.
         for day in 0..5 {
             seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
         }
