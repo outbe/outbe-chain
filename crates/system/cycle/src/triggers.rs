@@ -388,6 +388,16 @@ mod protocol_parameter_tests {
             TriggerHandler::IntexDrainParked
         ));
 
+        assert_eq!(
+            configured[10].period_seconds,
+            INTEX_VWAP_PUSH_PERIOD_SECONDS
+        );
+        assert_eq!(configured[10].id, TriggerId::IntexVwapPush.as_u32());
+        assert!(matches!(
+            configured[10].handler,
+            TriggerHandler::IntexVwapPush
+        ));
+
         let defaults =
             active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
         assert_eq!(defaults[0].period_seconds, 3_600);
