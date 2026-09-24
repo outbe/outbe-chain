@@ -26,7 +26,8 @@ contract MockDesis {
         uint16, /* totalBatches */
         address[] calldata, /* bidderAddresses */
         uint256[] calldata /* packedBids */
-    ) external {}
+    )
+        external {}
 
     /// @dev Accepts every BIDS_DONE completeness marker and discards it, mirroring `processBidsBatch`.
     function processBidsDone(
@@ -35,7 +36,8 @@ contract MockDesis {
         uint32, /* relayGeneration */
         uint16, /* totalBatches */
         uint32 /* totalBids */
-    ) external {}
+    )
+        external {}
 
     /// @dev Open for intake by default, so a day under relay behaves as the common case.
     IDesis.AuctionStage private _stage = IDesis.AuctionStage.Revealing;

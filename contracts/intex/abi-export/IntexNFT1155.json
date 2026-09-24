@@ -979,6 +979,19 @@
     },
     {
       "type": "function",
+      "name": "setVwapSource",
+      "inputs": [
+        {
+          "name": "source",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "settleIntex",
       "inputs": [
         {
@@ -1164,6 +1177,19 @@
           "name": "",
           "type": "string",
           "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "vwapSource",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "view"
@@ -1536,6 +1562,19 @@
       "inputs": [
         {
           "name": "implementation",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "VwapSourceSet",
+      "inputs": [
+        {
+          "name": "source",
           "type": "address",
           "indexed": true,
           "internalType": "address"

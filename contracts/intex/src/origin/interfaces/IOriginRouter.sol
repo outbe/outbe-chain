@@ -92,6 +92,9 @@ interface IOriginRouter {
     /// @param seriesId Series identifier.
     event MarkQualifiedSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
+    /// @notice Emitted when one finalized day is sent to a target chain. `sendId` is 0 when the leg parked.
+    event DailyVwapSent(bytes32 indexed sendId, uint32 indexed dstChainId, uint32 indexed utcDay);
+
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
     /// @param desisNew New `desis` granted `DESIS_ROLE`.
@@ -145,6 +148,12 @@ interface IOriginRouter {
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
         uint64 callPriceMinor;
+    }
+
+    /// @notice The Oracle's finalized VWAP of COEN in one reference currency for a UTC day (six decimals).
+    struct DailyVwap {
+        uint16 isoCode;
+        uint64 vwapMinor;
     }
 
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
@@ -314,6 +323,10 @@ interface IOriginRouter {
     /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
     ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.
     function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
+
+    /// @notice Sends one finalized day to every registered target but this chain, whose NFT reads the IntexFactory.
+    /// @return legs Legs sent or parked.
+    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable returns (uint256 legs);
 
     /// @notice Permissionless flush of a parked outbound leg.
     function resendParkedMessage(uint256 idx) external;
