@@ -12,7 +12,6 @@ pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 502 * 60 * 60;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 pub const DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 12 * 60 * 60;
-pub const DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS: u64 = 504 * 60 * 60;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 1_800;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
@@ -27,7 +26,6 @@ pub struct GenesisProtocolParametersV1 {
     pub metadosis_lookback_delay_seconds: u64,
     pub metadosis_offering_period_seconds: u64,
     pub metadosis_waiting_period_seconds: u64,
-    pub metadosis_bootstrap_duration_seconds: u64,
     pub metadosis_advance_interval_seconds: u64,
     pub ocomp_compute_vote_window_blocks: u64,
     pub nod_materialization_batch_subtree_height: u8,
@@ -41,7 +39,6 @@ const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     metadosis_lookback_delay_seconds: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
     metadosis_offering_period_seconds: DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
     metadosis_waiting_period_seconds: DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS,
-    metadosis_bootstrap_duration_seconds: DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS,
     metadosis_advance_interval_seconds: DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS,
     ocomp_compute_vote_window_blocks: DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
     nod_materialization_batch_subtree_height: DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
@@ -141,7 +138,6 @@ struct MetadosisOverridesV1 {
     lookback_delay_seconds: Option<u64>,
     offering_period_seconds: Option<u64>,
     waiting_period_seconds: Option<u64>,
-    bootstrap_duration_seconds: Option<u64>,
     advance_interval_seconds: Option<u64>,
 }
 
@@ -209,10 +205,6 @@ impl GenesisProtocolParametersV1 {
                 .metadosis
                 .waiting_period_seconds
                 .unwrap_or(defaults.metadosis_waiting_period_seconds),
-            metadosis_bootstrap_duration_seconds: overrides
-                .metadosis
-                .bootstrap_duration_seconds
-                .unwrap_or(defaults.metadosis_bootstrap_duration_seconds),
             metadosis_advance_interval_seconds: overrides
                 .metadosis
                 .advance_interval_seconds
@@ -269,11 +261,6 @@ impl GenesisProtocolParametersV1 {
             "metadosis.waitingPeriodSeconds",
             self.metadosis_waiting_period_seconds,
             DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS,
-        )?;
-        validate_nonzero_at_most(
-            "metadosis.bootstrapDurationSeconds",
-            self.metadosis_bootstrap_duration_seconds,
-            DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS,
         )?;
         validate_nonzero_at_most(
             "metadosis.advanceIntervalSeconds",
@@ -378,10 +365,6 @@ pub fn get_metadosis_offering_period_seconds() -> u64 {
 
 pub fn get_metadosis_waiting_period_seconds() -> u64 {
     parameters().metadosis_waiting_period_seconds
-}
-
-pub fn get_metadosis_bootstrap_duration_seconds() -> u64 {
-    parameters().metadosis_bootstrap_duration_seconds
 }
 
 pub fn get_metadosis_advance_interval_seconds() -> u64 {
@@ -501,7 +484,6 @@ mod tests {
                 "lookbackDelaySeconds": 0,
                 "offeringPeriodSeconds": 120,
                 "waitingPeriodSeconds": 30,
-                "bootstrapDurationSeconds": 300,
                 "advanceIntervalSeconds": 10
             },
             "ocomp": { "computeVoteWindowBlocks": 120 }
@@ -512,7 +494,6 @@ mod tests {
         assert_eq!(resolved.metadosis_lookback_delay_seconds, 0);
         assert_eq!(resolved.metadosis_offering_period_seconds, 120);
         assert_eq!(resolved.metadosis_waiting_period_seconds, 30);
-        assert_eq!(resolved.metadosis_bootstrap_duration_seconds, 300);
         assert_eq!(resolved.metadosis_advance_interval_seconds, 10);
         assert_eq!(resolved.ocomp_compute_vote_window_blocks, 120);
     }

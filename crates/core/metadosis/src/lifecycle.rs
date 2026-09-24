@@ -130,22 +130,26 @@ pub(crate) fn init_genesis_day_inner(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
-    initialize_bootstrap_if_needed(metadosis, ctx)?;
-    create_initial_worldwide_day_if_needed(metadosis, ctx, ctx.block.timestamp)
+    create_initial_worldwide_day_if_needed(metadosis, ctx, ctx.block.timestamp)?;
+    initialize_bootstrap_if_needed(metadosis)
 }
 
-fn initialize_bootstrap_if_needed(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-) -> Result<()> {
-    if metadosis.get_bootstrap_end_time()? == 0 {
-        let duration = outbe_chain_constants::get_metadosis_bootstrap_duration_seconds();
-        let end_time = ctx.block.timestamp.checked_add(duration).ok_or_else(|| {
-            crate::errors::caller_rejection("Metadosis bootstrap end timestamp overflow")
-        })?;
-        metadosis.set_bootstrap_end_time(end_time)?;
+/// The bootstrap runs until the first Worldwide Day opens its offering, so the
+/// boundary is that day's own schedule rather than a duration beside it.
+fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<()> {
+    if metadosis.get_bootstrap_end_time()? != 0 {
+        return Ok(());
     }
-    Ok(())
+    let active = metadosis.active_wwd.read_all()?;
+    let first = *active.first().ok_or_else(|| {
+        crate::errors::storage_corruption(
+            "Metadosis bootstrap needs the genesis Worldwide Day".into(),
+        )
+    })?;
+    let record = metadosis.worldwide_days.get(first)?.ok_or_else(|| {
+        crate::errors::storage_corruption("genesis Worldwide Day record disappeared".into())
+    })?;
+    metadosis.set_bootstrap_end_time(record.lookback_end)
 }
 
 fn create_initial_worldwide_day_if_needed(

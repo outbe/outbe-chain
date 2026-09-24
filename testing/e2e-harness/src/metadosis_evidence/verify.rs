@@ -1320,7 +1320,6 @@ mod tests {
                 "lookbackDelaySeconds": 0,
                 "offeringPeriodSeconds": 900,
                 "waitingPeriodSeconds": 30,
-                "bootstrapDurationSeconds": 300,
                 "advanceIntervalSeconds": 10
             },
             "ocomp": { "computeVoteWindowBlocks": 120 }

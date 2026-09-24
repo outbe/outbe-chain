@@ -286,7 +286,6 @@ pub(super) fn prepare_public_measurement_genesis_fixture_with_vote_window(
             "lookbackDelaySeconds": 0,
             "offeringPeriodSeconds": 120,
             "waitingPeriodSeconds": 30,
-            "bootstrapDurationSeconds": 300,
             "advanceIntervalSeconds": 10
         },
         "ocomp": { "computeVoteWindowBlocks": vote_window_blocks }
