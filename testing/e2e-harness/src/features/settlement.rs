@@ -1267,6 +1267,14 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
         Some(asset)
     );
 
+    let mut expected_assets = eth::read_call(
+        &url,
+        addresses::VAULT_ROUTER_ADDR,
+        &eth::IVaultRouter::referenceCurrencyAssetsCall { isoCode: USD_ISO },
+    )
+    .expect("existing reference assets before registering another settlement vault");
+    assert!(!expected_assets.contains(&asset));
+    expected_assets.push(asset);
     let owner_key = funder.evm_key().expect("VaultRouter owner key");
     let add = eth::send_call(
         &url,
@@ -1283,7 +1291,7 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
             addresses::VAULT_ROUTER_ADDR,
             &eth::IVaultRouter::referenceCurrencyAssetsCall { isoCode: USD_ISO },
         ),
-        Some(vec![asset])
+        Some(expected_assets)
     );
     SettlementFixture { asset, vault }
 }
