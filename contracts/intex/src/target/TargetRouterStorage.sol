@@ -5,6 +5,7 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
+import {IVwapRegistry} from "./interfaces/IVwapRegistry.sol";
 
 /// @notice How far a day's bids relay has got: the span the first round froze, the next chunk to send and
 ///         whether the completeness marker has left. Five bytes, so one slot.
@@ -47,7 +48,7 @@ struct RefundProgress {
 struct TargetRouterStorage {
     /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
     IIntexAuction auction;
-    /// @dev IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
+    /// @dev IntexNFT1155 contract that issuance and mark-called messages apply to.
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
@@ -81,10 +82,8 @@ struct TargetRouterStorage {
     ///      because the origin marks a chain paid on first delivery and a partial sum would close the
     ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
-    /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
-    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyParkedMark`. Carries the
-    ///      origin's call time so a slot applied later still derives the deadline settlement honours rather
-    ///      than one from its own arrival. Five bytes, so the pair shares a slot and is cleared in one write.
+    /// @dev Called mark waiting for its series to land here (0 = none). It carries the origin's call time, so a
+    ///      slot applied later derives the same deadline.
     mapping(bytes14 seriesId => ParkedMark) parkedMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
@@ -96,6 +95,8 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
+    /// @dev Registry the daily VWAPs from Outbe are recorded in; a day arriving while it is unset reverts.
+    IVwapRegistry vwapRegistry;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried

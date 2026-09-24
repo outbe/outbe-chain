@@ -10,6 +10,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 
 /// @title DeployTarget
 /// @author Outbe
@@ -22,6 +23,9 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 ///      route). The deployer is admin + delegate; app wiring (escrow/compact, roles) is a
 ///      separate step. Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
+    /// @dev The IntexFactory precompile: the origin chain's own daily VWAP source.
+    address internal constant INTEX_FACTORY = address(0x1015);
+
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -74,6 +78,22 @@ contract DeployTarget is BaseScript {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
+        // Idempotent, so a re-run after an upgrade is what points a chain at its source.
+        address vwapSource = INTEX_FACTORY;
+        if (local != originChainId) {
+            vwapSource = deployProxy(
+                factory,
+                deployer,
+                "VwapRegistry",
+                address(new VwapRegistry()),
+                abi.encodeCall(VwapRegistry.initialize, (deployer, router))
+            );
+            if (address(TargetRouter(payable(router)).vwapRegistry()) != vwapSource) {
+                TargetRouter(payable(router)).setVwapRegistry(vwapSource);
+            }
+        }
+        if (IntexNFT1155(nft).vwapSource() != vwapSource) IntexNFT1155(nft).setVwapSource(vwapSource);
+
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
             .setRemoteMessenger(
@@ -114,5 +134,6 @@ contract DeployTarget is BaseScript {
         console.log("IntexAuction:", auction);
         console.log("IntexNFT1155Bridge:", nftBridge);
         console.log("TargetRouter:", router);
+        console.log("VwapSource:", vwapSource);
     }
 }
