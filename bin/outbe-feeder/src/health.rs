@@ -28,6 +28,8 @@ pub struct FeederHealth {
     pub hyperlane_submitted: AtomicU64,
     pub hyperlane_failed: AtomicU64,
     pub hyperlane_last_submit_time: AtomicU64,
+    /// Consecutive liveness misses recorded on-chain for this validator.
+    pub hyperlane_miss_count: AtomicU64,
 }
 
 impl FeederHealth {
@@ -42,6 +44,7 @@ impl FeederHealth {
             hyperlane_submitted: AtomicU64::new(0),
             hyperlane_failed: AtomicU64::new(0),
             hyperlane_last_submit_time: AtomicU64::new(0),
+            hyperlane_miss_count: AtomicU64::new(0),
         }
     }
 
@@ -49,6 +52,10 @@ impl FeederHealth {
         self.hyperlane_last_submit_time
             .store(unix_now(), Ordering::Relaxed);
         self.hyperlane_submitted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn set_hyperlane_miss_count(&self, misses: u64) {
+        self.hyperlane_miss_count.store(misses, Ordering::Relaxed);
     }
 
     pub fn record_hyperlane_failure(&self) {
@@ -102,6 +109,7 @@ impl FeederHealth {
             "hyperlane_submitted": self.hyperlane_submitted.load(Ordering::Relaxed),
             "hyperlane_failed": self.hyperlane_failed.load(Ordering::Relaxed),
             "hyperlane_last_submit_time": self.hyperlane_last_submit_time.load(Ordering::Relaxed),
+            "hyperlane_miss_count": self.hyperlane_miss_count.load(Ordering::Relaxed),
         })
     }
 }

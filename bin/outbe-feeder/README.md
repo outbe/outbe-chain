@@ -319,4 +319,4 @@ curl -s http://127.0.0.1:9002/health
 curl -s http://127.0.0.1:9002/status
 ```
 
-`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` returns JSON with the latest period, vote timestamp, success/failure counters, configured vote period, and the Hyperlane checkpoint counters (`hyperlane_submitted`, `hyperlane_failed`, `hyperlane_last_submit_time`).
+`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` returns JSON with the latest period, vote timestamp, success/failure counters, configured vote period, and the Hyperlane checkpoint counters (`hyperlane_submitted`, `hyperlane_failed`, `hyperlane_last_submit_time`, `hyperlane_miss_count` — the on-chain consecutive liveness misses; three in a row jail the validator, so alert on any non-zero value).
