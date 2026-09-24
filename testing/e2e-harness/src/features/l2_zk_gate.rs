@@ -1,19 +1,73 @@
 //! L2Registry zk gate on `offerTribute` (PFS-001-10 / PFS-001-11).
 //!
-//! The harness plays the L2 network: it registers the operator's EOA through
-//! validator governance under a deterministic fixture key, and every offer must
-//! carry a real Demo Tribute proof under the circuit version enabled for the
-//! registered L2 chain whose root is signed with exactly that registered key.
+//! The harness plays the L2 network: validator governance registers either a
+//! pinned fixture key or an inbox contract that supplies it. Every offer carries
+//! a real Demo Tribute proof under the registered L2's circuit version and a
+//! Merkle root signed by the selected network key.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Bytes, B256};
+use alloy_sol_types::{sol, SolValue};
 use cucumber::{then, when};
 
 use crate::internal::l2_fixture::{self, TributeOfferStatement, TributeOfferZk};
 use crate::world::rpc::TributeZkOffer;
 use crate::world::World;
 
+sol! {
+    interface IDaInbox {
+        function groupPubKey() external view returns (bytes memory);
+    }
+}
+
+/// A getter with an immutable ABI-encoded key in its code. Both the constructor
+/// and getter use CODECOPY; no debug RPC storage writes or Solidity toolchain.
+fn inbox_init_code(public_key: &[u8]) -> Vec<u8> {
+    let answer = (Bytes::copy_from_slice(public_key),).abi_encode_params();
+    // Return `len` bytes located immediately after this 15-byte program.
+    fn return_code(data: &[u8]) -> Vec<u8> {
+        let [hi, lo] = u16::try_from(data.len())
+            .expect("small fixture")
+            .to_be_bytes();
+        let mut code = vec![
+            0x61, hi, lo, 0x61, 0x00, 0x0f, 0x60, 0x00, 0x39, 0x61, hi, lo, 0x60, 0x00, 0xf3,
+        ];
+        code.extend_from_slice(data);
+        code
+    }
+    return_code(&return_code(&answer))
+}
+
+#[when("an L2 network is registered through governance with an inbox contract and no pinned key")]
+fn register_inbox_network(world: &mut World) {
+    use crate::internal::eth;
+
+    let url = world.rpc.url(world.validators.primary_port());
+    let public = l2_fixture::root_signing_public_key(L2_CHAIN_ID);
+    let inbox = eth::deploy_bytecode(&url, &operator_key(world), inbox_init_code(&public))
+        .expect("deploy the L2 inbox getter");
+    assert_eq!(
+        eth::read_call(&url, inbox, &IDaInbox::groupPubKeyCall {})
+            .unwrap()
+            .as_ref(),
+        public.as_slice()
+    );
+    let payload = serde_json::json!({
+        "operation": "register",
+        "chainId": L2_CHAIN_ID,
+        "l1Address": format!("{inbox:#x}"),
+        "publicKey": "0x",
+    })
+    .to_string();
+    super::l2_registration::govern_l2_registry_payload(world, &payload);
+    assert_eq!(registered_network(world), (inbox, public));
+    assert_eq!(world.rpc.l2_chain_by_l1_address(inbox), Some(L2_CHAIN_ID));
+    // The offering user is independent of the registered inbox administrator.
+    let caller = super::l2_registration::operator_address(world, &operator_key(world));
+    assert_eq!(world.rpc.l2_chain_by_l1_address(caller), Some(0));
+}
+
 /// The existing canonical test-chain binding used by this basic scenario.
-const L2_CHAIN_ID: u64 = 0xdead;
+const L2_CHAIN_ID: u64 = l2_fixture::FIXTURE_L2_CHAIN_ID;
 
 /// The same chain id as the `uint32` circuit selector argument of `offerTribute`.
 const L2_CHAIN_ID_SELECTOR: u32 = 0xdead;
@@ -214,7 +268,6 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     let tampered = proof_from_other_statement(&fixture, &donor);
 
     let (registered_owner, public_key) = registered_network(world);
-    assert_eq!(registered_owner, l1_owner);
     assert!(
         l2_fixture::verify_merkle_root(&public_key, &fixture.merkle_root, &fixture.signature),
         "positive control: the fixture signature must verify against the registered key"
@@ -222,7 +275,7 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     assert_eq!(
         world
             .rpc
-            .l2_chain_by_l1_address(l1_owner)
+            .l2_chain_by_l1_address(registered_owner)
             .expect("read the operator's L2Registry mapping"),
         L2_CHAIN_ID
     );

@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for, get_utc_day_vwap_for_iso};
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -55,7 +55,7 @@ pub fn issue_gem(
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
     let terms = outbe_gem::config::read(storage)?;
-    let (floor_price, initial_state) = compute_params(gem_type, promis_load, entry_price, &terms)?;
+    let floor_price = compute_floor(gem_type, promis_load, entry_price, &terms)?;
     let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let params = GemAddParams {
@@ -68,7 +68,6 @@ pub fn issue_gem(
         call_rate: terms.call_rate,
         issuance_currency,
         reference_currency,
-        initial_state,
         issued_at,
     };
     let gem_id = gem_api::add_gem(storage, params)?;
@@ -115,7 +114,7 @@ pub fn issue_gem_position(
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
 
-    // A currency no qualification scan walks would leave every gem stuck in Issued.
+    // The daily call scan walks only listed reference currencies.
     outbe_oracle::api::check_reference_currency_with_storage(
         storage.clone(),
         series.reference_currency,
@@ -245,7 +244,6 @@ pub fn issue_merchant_gem(
             call_rate: terms.call_rate,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
-            initial_state: GemState::Issued,
             issued_at: now,
         },
     )?;
@@ -317,8 +315,9 @@ pub fn settle_gem_with_paynote(
 
         let currency = accept_payment_asset(storage, claim.asset, item)?;
         let amount_paid = cost_in_token(storage, item, claim.asset, currency)?;
-        if claim.spend_amount < amount_paid {
-            return Err(GemFactoryError::PayNoteUndercoversCost {
+        // Exact: the surplus of an over-spend is already in the reserve vault.
+        if claim.spend_amount != amount_paid {
+            return Err(GemFactoryError::PayNoteCostMismatch {
                 covered: claim.spend_amount,
                 required: amount_paid,
             }
@@ -336,10 +335,8 @@ fn settle(
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
-    // Settlement is allowed from Qualified (voluntary) or Called (forced). A
-    // Called gem must settle before its notice period lapses.
+    // The qualification walk goes last.
     match item.state {
-        s if s == GemState::Qualified as u8 => {}
         s if s == GemState::Called as u8 => {
             let now = storage.timestamp()?.to::<u64>();
             let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
@@ -347,6 +344,8 @@ fn settle(
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
         }
+        s if (s == GemState::Issued as u8 || s == GemState::Qualified as u8)
+            && gem_api::is_qualified(storage, &item)? => {}
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
@@ -482,7 +481,8 @@ fn accept_payment_asset(
 }
 
 /// Cost of one gem in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate into the same fraction, so the whole thing is floored once.
+/// cross rate of the last closed UTC day into the same fraction, so the whole
+/// thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -492,10 +492,14 @@ fn cost_in_token(
     let asset_decimals = read_decimals(storage, asset)?;
     let rate = match currency {
         PaymentCurrency::Reference => None,
-        PaymentCurrency::Issuance => Some((
-            fresh_coen_rate_for(storage.clone(), item.issuance_currency)?,
-            fresh_coen_rate_for(storage.clone(), item.reference_currency)?,
-        )),
+        PaymentCurrency::Issuance => {
+            // One timestamp, so both legs come from the same closed day.
+            let now = storage.timestamp()?.to::<u64>();
+            Some((
+                read_market_price(storage, item.issuance_currency, now)?,
+                read_market_price(storage, item.reference_currency, now)?,
+            ))
+        }
     };
     settlement_units(item, rate, asset_decimals)
 }
@@ -607,7 +611,7 @@ pub fn mine_promis(
         return Err(GemFactoryError::InvalidState.into());
     }
 
-    validate_pow(gem_id, nonce)?;
+    validate_pow(gem_id, item.owner, nonce)?;
 
     gem_api::burn(storage, gem_id)?;
 
@@ -628,50 +632,42 @@ pub fn mine_promis(
     Ok(item.promis_load_minor)
 }
 
-fn read_market_price(
-    storage: &StorageHandle<'_>,
-    reference_currency: u16,
-    now: u64,
-) -> Result<U256> {
+/// COEN price of `iso_code` from the last closed UTC day.
+fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)?
+    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
-fn compute_params(
+fn compute_floor(
     gem_type: GemTypes,
     promis_load: U256,
     coen_rate: U256,
     terms: &outbe_gem::GemParams,
-) -> Result<(U256, GemState)> {
+) -> Result<U256> {
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
-    let (floor_price, initial_state) = match gem_type {
+    let floor_price = match gem_type {
+        // A zero floor qualifies the gem from birth: every price clears it.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (U256::ZERO, GemState::Qualified)
+            U256::ZERO
         }
         GemTypes::Sra => {
             compute_cost(coen_rate, promis_load, SRA_RATE)?;
-            (
-                derived_floor(coen_rate, terms.floor_rate)?,
-                GemState::Issued,
-            )
+            derived_floor(coen_rate, terms.floor_rate)?
         }
         // Validator (post-genesis), Wallet, Cca - standard agent-class flow:
         // cost = entry x load, floor = rate x 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (
-                derived_floor(coen_rate, terms.floor_rate)?,
-                GemState::Issued,
-            )
+            derived_floor(coen_rate, terms.floor_rate)?
         }
         // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
         // not through this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
-    Ok((floor_price, initial_state))
+    Ok(floor_price)
 }
 
 /// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and
@@ -715,8 +711,9 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// PoW gate for `mine_promis`, delegating to the shared
-/// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
-    pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
+/// PoW gate for `mine_promis`. The preimage is
+/// `gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
+    pow::validate_mining_pow(gem_id, owner, pow::SINGLE_EXERCISE_SEQUENCE, nonce)
+        .map_err(|e| GemFactoryError::from(e).into())
 }

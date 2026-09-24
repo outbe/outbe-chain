@@ -13,7 +13,7 @@ use outbe_primitives::time::WorldwideDay;
 
 use crate::precompile::IDesis;
 use crate::runtime;
-use crate::schema::{DesisContract, ReferenceCurrencyPrice};
+use crate::schema::DesisContract;
 
 /// Stable consensus reason for the only business-level auction-brief rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,15 +49,14 @@ pub enum AuctionBriefReceipt {
     },
 }
 
-/// Record the day's auction brief (limit in raw PROMIS, entry price, day
-/// type). Only a limit outside Desis' `u128` auction domain is a committed
-/// rejection. Invalid state, timestamp overflow, storage/index/event faults and
-/// corruption propagate as `Err`.
+/// Record the day's auction brief (limit in raw PROMIS, day type); the day is
+/// priced at auction start, not here. Only a limit outside Desis' `u128` auction
+/// domain is a committed rejection. Invalid state, timestamp overflow,
+/// storage/index/event faults and corruption propagate as `Err`.
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     desis_limit_minor: U256,
-    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
     overflow: BriefOverflowPolicy,
@@ -89,7 +88,6 @@ pub fn dispatch_auction_brief(
             storage.clone(),
             worldwide_day,
             desis_limit_u128,
-            reference_prices,
             is_green,
             anchor,
         )?;

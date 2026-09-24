@@ -25,8 +25,8 @@ interface IIntexFactory {
     ///      the note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a token registered with the vault router under either of
-    ///        the series' currencies, and cover the settlement cost. The issuance
-    ///        currency converts through COEN and needs fresh rates.
+    ///        the series' currencies, and spend exactly the settlement cost. The
+    ///        issuance currency converts through COEN at the last closed UTC day's rate.
     function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
         external;
 
@@ -40,6 +40,9 @@ interface IIntexFactory {
         external
         view
         returns (uint16 settlementCurrency, uint256 payableUnits);
+
+    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay` on, 0 when none.
+    function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit; the units burn from

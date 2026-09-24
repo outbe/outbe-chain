@@ -1,6 +1,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::first_full_day;
 
 use crate::errors::GemError;
 use crate::schema::{GemAddParams, GemContract, GemData, GemState};
@@ -8,6 +9,10 @@ use crate::schema::{GemAddParams, GemContract, GemData, GemState};
 pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
     if params.owner.is_zero() {
         return Err(GemError::InvalidOwner.into());
+    }
+    // A zero floor qualifies the gem from birth, which only the genesis type may do.
+    if params.floor_price_minor.is_zero() && params.gem_type != crate::schema::GENESIS_GEM_TYPE {
+        return Err(GemError::ZeroFloorPrice.into());
     }
 
     let mut gem = GemContract::new(storage.clone());
@@ -17,14 +22,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         params.promis_load_minor,
         storage.block_number()?,
     );
-
-    // A gem born past Issued reached those states at issuance, so backfill the
-    // lifecycle timestamps from `issued_at` (the scan stamps them otherwise).
-    let (qualified_at, settled_at) = match params.initial_state {
-        GemState::Issued => (0u64, 0u64),
-        GemState::Qualified | GemState::Called => (params.issued_at, 0),
-        GemState::Settled => (params.issued_at, params.issued_at),
-    };
 
     let item = GemData {
         gem_id,
@@ -39,12 +36,12 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         call_threshold_seconds: params_profile.call_threshold_seconds,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
-        state: params.initial_state as u8,
+        state: GemState::Issued as u8,
         issued_at: params.issued_at,
         called_at: 0,
         call_notice_period_seconds: params_profile.call_notice_period_seconds,
-        qualified_at,
-        settled_at,
+        retired_qualified_at: 0,
+        settled_at: 0,
     };
     gem.add_gem(&item)?;
     Ok(gem_id)
@@ -64,6 +61,19 @@ pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
 pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     gem.set_state(gem_id, new_state)
+}
+
+/// Qualified from birth without a floor (Genesis), or once a finalized daily VWAP closed above it.
+pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
+    if item.floor_price_minor.is_zero() {
+        return Ok(true);
+    }
+    outbe_oracle::api::closed_above_floor(
+        storage.clone(),
+        item.reference_currency,
+        item.floor_price_minor,
+        first_full_day(item.issued_at),
+    )
 }
 
 pub fn get_gem(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemData>> {

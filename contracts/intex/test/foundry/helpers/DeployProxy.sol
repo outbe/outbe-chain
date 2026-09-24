@@ -8,6 +8,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// @dev Deploys implementation + ERC1967 proxy pairs for the UUPS contracts under test.
@@ -57,6 +58,12 @@ library DeployProxy {
         TargetRouter impl = new TargetRouter(bridge, outbeChainId);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetRouter.initialize, (delegate)));
         return TargetRouter(payable(address(proxy)));
+    }
+
+    function vwapRegistry(address admin, address router) internal returns (VwapRegistry) {
+        VwapRegistry impl = new VwapRegistry();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(VwapRegistry.initialize, (admin, router)));
+        return VwapRegistry(address(proxy));
     }
 
     function intexNFT1155Bridge(address tokenAddr, address bridge, address delegate)

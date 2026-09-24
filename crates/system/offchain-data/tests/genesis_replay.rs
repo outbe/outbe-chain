@@ -209,6 +209,30 @@ fn update_nod_item(
     .unwrap();
 }
 
+fn update_nod_bucket(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    body: &NodBucketState,
+) {
+    let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
+    let current = read(
+        storage.clone(),
+        scope,
+        parent,
+        EntityRef::NodBucket(bucket_id),
+    )
+    .unwrap()
+    .unwrap();
+    update(
+        storage.clone(),
+        scope,
+        current,
+        BodyInput::NodBucket(&canonical_bucket(body)),
+    )
+    .unwrap();
+}
+
 fn as_b256(commitment: Option<outbe_compressed_entities::Commitment>) -> Option<B256> {
     commitment.map(|value| B256::from(*value.as_bytes()))
 }
@@ -396,15 +420,22 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     // Block 2: update each namespace through the generic capability boundary.
     tribute.tribute_price_minor += U256::from(1);
     nod.gratis_load_minor += U256::from(1);
+    let expected_bucket = NodBucketState {
+        settled_nods: 0,
+        bucket_key,
+        worldwide_day: day,
+        floor_price_minor: nod.floor_price_minor,
+        is_qualified: false,
+        entry_price_minor: U256::from(17),
+        reference_currency: nod.reference_currency,
+    };
     execution.set_block_number(2);
     let scope = execution_scope(&tree, tree_parent);
     let seal2 = StorageHandle::enter(&mut execution, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         update_tribute(&storage, &scope, &parent, &tribute);
         update_nod_item(&storage, &scope, &parent, &nod);
-        NodContract::new(storage.clone())
-            .qualify_bucket(&scope, &parent, bucket_key)
-            .unwrap();
+        update_nod_bucket(&storage, &scope, &parent, &expected_bucket);
         end_block(storage, &scope).unwrap()
     });
     let block2 = finalized_block(&mut execution, 2);
@@ -416,15 +447,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     let projected_tribute = tribute_reader.get(tribute_id).unwrap().unwrap();
     let projected_nod = nod_reader.get(nod_id).unwrap().unwrap();
     let projected_bucket = nod_reader.get_bucket(bucket_id).unwrap().unwrap();
-    let expected_bucket = NodBucketState {
-        settled_nods: 0,
-        bucket_key,
-        worldwide_day: day,
-        floor_price_minor: nod.floor_price_minor,
-        is_qualified: true,
-        entry_price_minor: U256::from(16),
-        reference_currency: nod.reference_currency,
-    };
     assert_eq!(
         encode_tribute_v1(&canonical_body(&projected_tribute)).unwrap(),
         encode_tribute_v1(&canonical_body(&tribute)).unwrap()

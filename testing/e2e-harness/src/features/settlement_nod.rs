@@ -60,7 +60,7 @@ fn third_party_settles_and_mines(world: &mut World) {
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
     assert!(!initial.settlementCostMinor.is_zero());
-    qualify_successor(world, id, owner, initial.floorPriceMinor);
+    qualify_public_nod(world, id, owner, initial.floorPriceMinor, initial.issuedAt);
     let head = world.rpc.head(port).expect("qualified head");
     world
         .rpc
@@ -189,7 +189,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &eth::IGratis::opNonceOfCall { account: owner },
     )
     .expect("owner mint nonce");
-    let pow = find_nod_pow_nonce(id.to_u256(), owner);
+    let pow = find_mining_pow_nonce(id.to_u256(), owner);
     let pair_chain_id = chain_id_b256(world);
     // This is a valid MAC for the payer's own account, never the Nod owner's.
     let wrong_mac = outbe_tee_enclave::gratis::modify_mac(
@@ -513,7 +513,18 @@ fn mac_pair_state(
     expected.expect("nonempty MAC-pair observer cohort")
 }
 
-fn qualify_successor(world: &mut World, id: WwdEntityId, owner: Address, floor: U256) {
+pub(super) fn qualify_public_nod(
+    world: &mut World,
+    id: WwdEntityId,
+    owner: Address,
+    floor: U256,
+    issued_at: u64,
+) {
+    assert_ne!(
+        issued_at, 0,
+        "public Nod must have a sealed issuance timestamp"
+    );
+    let first_full_day = outbe_primitives::time::first_full_day(issued_at);
     let port = world.validators.primary_port();
     let ports = world.validators.committee_ports();
     let head = world.rpc.head(port).expect("successor qualification head");
@@ -529,8 +540,8 @@ fn qualify_successor(world: &mut World, id: WwdEntityId, owner: Address, floor: 
         .expect("successor qualification quote");
     assert!(rate > floor);
     let mut first_boundary_day = None;
-    // The first closed day can contain earlier low-price samples. If it is
-    // insufficient, the next entire UTC day uses only the declared quote.
+    // The first closed day can be the partial issuance day or contain earlier
+    // low-price samples. The next entire UTC day uses only the declared quote.
     // Two transitions are sufficient; no Nod state or Oracle history is injected.
     for boundary in 0..2 {
         crate::features::price_oracle::publish_controlled_quote(world, rate);
@@ -610,9 +621,9 @@ fn qualify_successor(world: &mut World, id: WwdEntityId, owner: Address, floor: 
                             "the full fallback UTC day must contain only the declared high quote"
                         );
                     }
-                    if vwap <= floor {
+                    if closed_day < first_full_day || vwap <= floor {
                         assert_eq!(boundary, 0, "isolated high-price day must exceed Nod floor");
-                        eprintln!("settlement_evidence kind=qualification_fallback day={closed_day} vwap={vwap} floor={floor}");
+                        eprintln!("settlement_evidence kind=qualification_fallback day={closed_day} first_full_day={first_full_day} vwap={vwap} floor={floor}");
                         first_boundary_day = Some(target / 86_400);
                         break;
                     }
@@ -1073,7 +1084,7 @@ fn assert_index_transition(
 
 fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBucketBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
-    let (item, bucket) = bodies;
+    let item = &bodies.0;
     assert_eq!(body.nodId, item.nod_id.to_u256());
     assert_eq!(body.owner, item.owner);
     assert_eq!(body.worldwideDay, item.worldwide_day.value());
@@ -1084,14 +1095,17 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBu
     assert_eq!(body.referenceCurrency, item.reference_currency);
     assert_eq!(body.issuedAt, item.issued_at);
     assert_eq!(body.isSettled, item.is_settled);
-    assert_eq!(body.isQualified, bucket.is_qualified);
 }
 
 fn successor_is_qualified(world: &World, owner: Address, id: WwdEntityId, minimum: u64) -> bool {
     let snapshot = nod_snapshot(world, owner, id, minimum);
     let bodies = nod_bodies(world, id, minimum);
     assert_snapshot_bodies(&snapshot, &bodies);
-    bodies.1.is_qualified
+    snapshot
+        .body
+        .as_ref()
+        .expect("live Nod body present")
+        .isQualified
 }
 
 fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {

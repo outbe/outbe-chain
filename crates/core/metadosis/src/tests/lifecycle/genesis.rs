@@ -123,9 +123,11 @@ fn test_cold_start_creates_only_current_utc_plus_14_day() {
         let metadosis = MetadosisContract::new(storage.clone());
         let active = metadosis.active_wwd.read_all().unwrap();
         assert_eq!(active, vec![20260302u32.into()]);
+        // The bootstrap ends when that day opens its offering.
+        let forming_start = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp();
         assert_eq!(
             metadosis.get_bootstrap_end_time().unwrap(),
-            timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR
+            forming_start + (FORMING_PERIOD_HOURS + LOOKBACK_DELAY_HOURS) * SECONDS_PER_HOUR
         );
 
         let tribute = TributeContract::new(storage);
@@ -175,11 +177,6 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
         run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(
-            metadosis.get_bootstrap_end_time().unwrap(),
-            timestamp + BOOTSTRAP_DURATION_HOURS * SECONDS_PER_HOUR
-        );
-
         let active = metadosis.active_wwd.read_all().unwrap();
         assert_eq!(active, vec![20260302u32.into()]);
 
@@ -189,6 +186,11 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
         let expected_lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
         let expected_offering_end =
             expected_lookback_end + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
+
+        assert_eq!(
+            metadosis.get_bootstrap_end_time().unwrap(),
+            expected_lookback_end
+        );
 
         assert_eq!(
             metadosis

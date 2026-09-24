@@ -7,10 +7,11 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_oracle::api::fresh_coen_rate_for;
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_common::pow;
 use outbe_common::settlement::floor_to_asset_units;
@@ -104,7 +105,7 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified Nod's known cost directly in ERC20 base units.
+/// Pays a qualified or called Nod's known cost directly in ERC20 base units.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -156,7 +157,7 @@ pub fn settle_nod(
     })
 }
 
-/// Pays a qualified Nod's exact cost by spending a PayNote.
+/// Pays a qualified or called Nod's exact cost by spending a PayNote.
 pub fn settle_nod_with_paynote(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -189,12 +190,16 @@ fn settle(
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
-    if !bucket.body().is_qualified {
-        return Err(NodFactoryError::NodNotQualified.into());
-    }
-    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
-    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
-        return Err(NodFactoryError::CallDeadlineExpired.into());
+    // The call check is one read; the qualification walk goes last.
+    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
+        0 if !nod_api::is_qualified(storage, bucket.body())? => {
+            return Err(NodFactoryError::NodNotQualified.into());
+        }
+        0 => {}
+        deadline if storage.timestamp()?.to::<u64>() > deadline => {
+            return Err(NodFactoryError::CallDeadlineExpired.into());
+        }
+        _ => {}
     }
     storage.clone().with_checkpoint(|| {
         let owner = item.body().owner;
@@ -405,8 +410,16 @@ fn accept_payment_asset(
     Err(NodFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
+/// COEN price of `iso_code` from the last closed UTC day.
+fn day_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
+    let day = previous_date_key(timestamp_to_date_key(now));
+    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
+        .ok_or_else(|| NodFactoryError::OracleUnavailable.into())
+}
+
 /// Cost of one Nod in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate into the same fraction, so the whole thing is floored once.
+/// cross rate of the last closed UTC day into the same fraction, so the whole
+/// thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
@@ -417,10 +430,14 @@ fn cost_in_token(
     let asset_decimals = read_decimals(storage, asset)?;
     let rate = match currency {
         PaymentCurrency::Reference => None,
-        PaymentCurrency::Issuance => Some((
-            fresh_coen_rate_for(storage.clone(), terms.issuance_currency)?,
-            fresh_coen_rate_for(storage.clone(), terms.reference_currency)?,
-        )),
+        PaymentCurrency::Issuance => {
+            // One timestamp, so both legs come from the same closed day.
+            let now = storage.timestamp()?.to::<u64>();
+            Some((
+                day_coen_rate(storage, terms.issuance_currency, now)?,
+                day_coen_rate(storage, terms.reference_currency, now)?,
+            ))
+        }
     };
     settlement_units(
         entry_price_minor,

@@ -113,7 +113,7 @@ fn nod_pow_binds_owner_and_zero_sequence() {
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
     assert_ne!(
         bound,
-        outbe_common::pow::compute_pow_hash(nod_id.to_u256(), nonce)
+        outbe_common::pow::compute_mining_pow_hash(nod_id.to_u256(), owner, 1, nonce)
     );
     let solved = find_valid_nonce(nod_id, owner);
     assert!(runtime::validate_pow(nod_id, owner, solved).is_ok());
@@ -239,10 +239,14 @@ impl World {
         }
     }
 
-    fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
+    /// Registers `COEN/<iso>` and prices it live only.
+    fn publish_coen_spot(&mut self, iso_code: u16, rate: U256) {
         self.enter(|storage, _, _| {
             let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
-            outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            if oracle.pair_index_of(pair).unwrap() == 0 {
+                outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            }
             outbe_oracle::api::set_exchange_rate(
                 storage.clone(),
                 Address::ZERO,
@@ -252,6 +256,26 @@ impl World {
                 storage.timestamp().unwrap().to::<u64>(),
             )
             .unwrap();
+        });
+    }
+
+    /// Prices `COEN/<iso>` at `rate` live and for the last closed UTC day, which
+    /// is the one settlement converts at.
+    fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
+        self.publish_coen_spot(iso_code, rate);
+        self.enter(|storage, _, _| {
+            use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)
+                .unwrap()
+                .expect("COEN pair registered");
+            let day = previous_date_key(timestamp_to_date_key(
+                storage.timestamp().unwrap().to::<u64>(),
+            ));
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&index, rate)
+                .unwrap();
         });
     }
 
@@ -327,14 +351,31 @@ impl World {
         self.provider.set_timestamp(U256::from(timestamp));
     }
 
+    /// Closes the bucket's first full day above its floor, which qualifies it.
     fn qualify(&mut self, nod_id: WwdEntityId) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
                 .unwrap();
-            NodContract::new(storage)
-                .qualify_bucket(scope, parent, item.bucket_key)
+            let issued_at = NodContract::new(storage.clone())
+                .callable_bucket_issued_at
+                .read(&item.bucket_key)
                 .unwrap();
+            let pair = outbe_oracle::api::AddressPair::new_coen_to(item.reference_currency);
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            let mut index = oracle.pair_index_of(pair).unwrap();
+            if index == 0 {
+                index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            }
+            let day = outbe_primitives::time::first_full_day(issued_at);
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&index, item.floor_price_minor + U256::from(1))
+                .unwrap();
+            if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+                oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+            }
         });
     }
 }
@@ -1063,7 +1104,8 @@ fn one_note_cannot_pay_two_nods() {
 #[test]
 fn a_paynote_can_cover_a_nod_cost_above_u128() {
     let mut world = World::new();
-    let cost = (U256::from(1) << 200) + U256::from(17);
+    // Above u128, yet inside the price ladder the call index bins by.
+    let cost = (U256::from(1) << 129) + U256::from(17);
     let input = NodIssueParams {
         gratis_load_minor: U256::from(1_000_000),
         entry_price_minor: cost,
@@ -1188,6 +1230,30 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
         })
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
+}
+
+/// A called Nod settles inside its notice period whether or not its bucket has
+/// qualified: the call alone opens settlement.
+#[test]
+fn a_called_nod_settles_without_qualifying() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x56));
+    let nod_id = world.issue(&input);
+    let proof = world.covering_proof(&input);
+    assert_eq!(
+        world
+            .settle(nod_id, input.owner, &proof)
+            .unwrap_err()
+            .to_string(),
+        PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
+    );
+
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    world.set_timestamp(called_at + 1);
+    assert!(!public_nod_data(&mut world, nod_id).isQualified);
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert!(public_nod_data(&mut world, nod_id).isSettled);
 }
 
 /// Past the deadline the Nod is forfeit. The daily sweep burns it, but this gate
@@ -1742,32 +1808,21 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
 }
 
 #[test]
-fn issuance_rail_rejects_a_stale_leg_without_settling() {
+fn issuance_rail_rejects_a_leg_the_closed_day_never_priced() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa5));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
-    let now = 1_700_000_000u64;
-    world.enter(|storage, _, _| {
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::AddressPair::new_coen_to(978),
-            U256::from(SIX_DECIMALS),
-            1,
-            now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
-    });
+    // The euro trades live, but the day it converts at closed without it.
+    world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
     let spend = cost_of(&input) / 2;
     let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
     assert!(
-        error.to_string().contains("stale"),
+        error.to_string().contains("oracle nominal unavailable"),
         "unexpected error: {error}"
     );
     assert!(!is_settled(&mut world, nod_id));
@@ -1786,7 +1841,7 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
     assert!(
-        error.to_string().contains("not registered"),
+        error.to_string().contains("oracle nominal unavailable"),
         "unexpected error: {error}"
     );
     assert!(!is_settled(&mut world, nod_id));

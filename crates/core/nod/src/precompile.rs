@@ -78,7 +78,8 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                crate::metadata::token_uri(&nod, &item, &bucket)
+                let qualified = api::is_qualified(&storage, &bucket)?;
+                crate::metadata::token_uri(&nod, &item, &bucket, qualified)
             }),
             tokenByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -128,7 +129,8 @@ fn to_abi_data(
     } else {
         api::settlement_deadline_of(called_at, terms.call_notice_period)
     };
-    let state = api::effective_state(item, bucket, called_at, deadline, storage.timestamp()?);
+    let qualified = api::is_qualified(storage, bucket)?;
+    let state = api::effective_state(item, qualified, called_at, deadline, storage.timestamp()?);
     Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
@@ -141,7 +143,7 @@ fn to_abi_data(
             bucket.entry_price_minor,
             item.gratis_load_minor,
         )?,
-        isQualified: bucket.is_qualified,
+        isQualified: qualified,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,

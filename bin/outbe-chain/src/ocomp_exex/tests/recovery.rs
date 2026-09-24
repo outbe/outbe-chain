@@ -360,6 +360,7 @@ fn sticky_fatal_evidence_survives_restart_and_is_write_once() {
 }
 
 // Native component restart tests; these do not claim a full process launch.
+#[cfg(feature = "snapshot-integration")]
 pub(super) mod copied_native {
     use super::*;
     use alloy_consensus::{Header, Sealable, SignableTransaction, TxLegacy};
@@ -2093,6 +2094,7 @@ pub(super) mod copied_native {
     }
 }
 
+#[cfg(feature = "snapshot-integration")]
 mod copied_exex_startup {
     use super::*;
     use alloy_consensus::{Header, Sealable};

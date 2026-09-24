@@ -1314,6 +1314,19 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     let worldwide_day = WorldwideDay::new(20_241_220);
     let floor_price_minor = U256::from(500_000u64);
     let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor, 840);
+    let nod_item = || NodItemState {
+        is_settled: false,
+        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
+        owner: proposer,
+        gratis_load_minor: U256::from(1_000_000u64),
+        worldwide_day,
+        league_id: 1,
+        floor_price_minor,
+        bucket_key,
+        issuance_currency: 840,
+        reference_currency: 840,
+        issued_at: 1,
+    };
     let seed_state = || {
         let (directory, tree_service) = persistent_test_tree(B256::ZERO);
         let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
@@ -1353,26 +1366,15 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                     &storage,
                     &scope,
                     &empty_reader,
-                    &NodItemState {
-                        is_settled: false,
-                        nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
-                        owner: proposer,
-                        gratis_load_minor: U256::from(1_000_000u64),
-                        worldwide_day,
-                        league_id: 1,
-                        floor_price_minor,
-                        bucket_key,
-                        issuance_currency: 840,
-                        reference_currency: 840,
-                        issued_at: 1,
-                    },
+                    &nod_item(),
                     U256::from(450_000_000u64),
                 )
                 .expect("seed compact Nod scheduling state");
-                // Qualification runs on the daily Nod trigger and requires the
-                // previous completed UTC day's finalized VWAP. A live quote
-                // alone leaves the bucket untouched, so there is no CE cleanup
-                // diff for the parallel-root hook to observe.
+                // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
+                let nod = NodContract::new(storage.clone());
+                nod.bucket_called_at.write(&bucket_key, 1).unwrap();
+                nod.called_bucket_index.write(&bucket_key, 0).unwrap();
+                nod.called_buckets.push(bucket_key).unwrap();
                 let (.., pair_index) =
                     outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
                 let previous_day = outbe_primitives::time::previous_date_key(
@@ -1417,7 +1419,11 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         let adapter = Arc::new(MemoryStorage::new());
         let reader: StorageReaderHandle = adapter.clone();
         let writer: StorageWriterHandle = adapter;
-        NodRepositoryWriter::new(reader.clone(), writer)
+        let repository = NodRepositoryWriter::new(reader.clone(), writer);
+        repository
+            .put_nod(&nod_item())
+            .expect("seed independent off-chain Nod item");
+        repository
             .put_bucket(&NodBucketState {
                 settled_nods: 0,
                 bucket_key,
@@ -1491,7 +1497,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 .any(|receipt| receipt.logs.iter().any(|log| {
                     log.address == NOD_ADDRESS
                         && log.data.topics().first()
-                            == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                            == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
                 })),
             "fixture must mutate a Nod bucket before testing CE cleanup"
         );
@@ -1591,7 +1597,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     assert!(proposer_result.2.iter().any(|receipt| {
         receipt.logs.iter().any(|log| {
             log.address == NOD_ADDRESS
-                && log.data.topics().first() == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                && log.data.topics().first() == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
         })
     }));
     let body_receipt_index = proposer_result
@@ -1600,7 +1606,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
+                    && log.data.topics().first()
+                        == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
             })
         })
         .expect("CycleTick body mutation receipt");

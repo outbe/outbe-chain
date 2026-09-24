@@ -10,6 +10,7 @@ outbe-macros.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-intexfactory.workspace = true
+outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

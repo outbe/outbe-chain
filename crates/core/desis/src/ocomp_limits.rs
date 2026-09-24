@@ -12,11 +12,11 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::schema::ReferenceCurrencyPrice;
-
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
 /// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
 /// is briefed all the same so its targets learn the auction is cancelled.
+/// `auction_entry_prices` reaches no auction - the day is priced at its start - and
+/// is carried only because the receipt hash commits it.
 pub fn apply_request_desis_limit(
     storage: StorageHandle<'_>,
     protocol_bundle_hash: B256,
@@ -41,13 +41,6 @@ pub fn apply_request_desis_limit(
         storage,
         worldwide_day,
         desis_limit_minor,
-        auction_entry_prices
-            .iter()
-            .map(|row| ReferenceCurrencyPrice {
-                iso_code: row.reference_currency,
-                entry_price_minor: row.entry_price_minor,
-            })
-            .collect(),
         green,
         logical_anchor,
         crate::api::BriefOverflowPolicy::Reject,

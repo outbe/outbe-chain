@@ -29,6 +29,8 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_MARK_QUALIFIED = 9;
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 10;
+    /// @dev Origin -> target: one finalized UTC day's VWAPs.
+    uint8 internal constant MSG_DAILY_VWAP = 11;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
@@ -89,6 +91,10 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
+    // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
+    uint16 internal constant DAILY_VWAP_HEAD = 7;
+    uint16 internal constant DAILY_VWAP_LEN = 10;
+    uint16 internal constant MIN_LEN_DAILY_VWAP = DAILY_VWAP_HEAD + DAILY_VWAP_LEN;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -172,6 +178,8 @@ library BridgeMsgCodec {
     error RefundBatchTooLarge(uint256 count, uint256 max);
     /// @notice A live day was encoded without a single reference price to bid against.
     error MissingReferencePrices();
+    /// @notice A DAILY_VWAP message carried no prices at all.
+    error EmptyDailyVwap();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
     error EmptyIssuanceBatch();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried more series than one may hold.
@@ -609,6 +617,45 @@ library BridgeMsgCodec {
         }
     }
 
+    /// @dev External, like the decoder, so the row loop stays off the router's runtime size.
+    function encodeDailyVwap(uint32 _utcDay, IOriginRouter.DailyVwap[] calldata _rows)
+        external
+        pure
+        returns (bytes memory message)
+    {
+        _assertDailyVwapRows(_rows.length);
+        message = abi.encodePacked(BODY_VERSION_V1, MSG_DAILY_VWAP, _utcDay, uint8(_rows.length));
+        for (uint256 i = 0; i < _rows.length; ++i) {
+            message = abi.encodePacked(message, _rows[i].isoCode, _rows[i].vwapMinor);
+        }
+    }
+
+    function decodeDailyVwap(bytes calldata _msg)
+        external
+        pure
+        returns (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows)
+    {
+        _assertMinLength(_msg, MSG_DAILY_VWAP, MIN_LEN_DAILY_VWAP);
+        _assertBodyVersion(_msg);
+        utcDay = uint32(bytes4(_msg[2:6]));
+        uint256 count = uint8(_msg[6]);
+        _assertDailyVwapRows(count);
+        uint256 expected = DAILY_VWAP_HEAD + count * DAILY_VWAP_LEN;
+        if (_msg.length != expected) revert InvalidPayloadLength(MSG_DAILY_VWAP, _msg.length, expected);
+        rows = new IOriginRouter.DailyVwap[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 at = DAILY_VWAP_HEAD + i * DAILY_VWAP_LEN;
+            rows[i] = IOriginRouter.DailyVwap({
+                isoCode: uint16(bytes2(_msg[at:at + 2])), vwapMinor: uint64(bytes8(_msg[at + 2:at + 10]))
+            });
+        }
+    }
+
+    function _assertDailyVwapRows(uint256 _count) private pure {
+        if (_count == 0) revert EmptyDailyVwap();
+        if (_count > MAX_REFERENCE_PRICES) revert PayloadArrayTooLong(_count, MAX_REFERENCE_PRICES);
+    }
+
     // --- Decoding ---
 
     /// @notice Encodes a BIDS_REMAINING report: the day's relay on `_srcChainId` has sent chunks up to
@@ -922,6 +969,7 @@ library BridgeMsgCodec {
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
         if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
         if (_msgType == MSG_BIDS_REMAINING) return MIN_LEN_BIDS_REMAINING;
+        if (_msgType == MSG_DAILY_VWAP) return MIN_LEN_DAILY_VWAP;
         if (_msgType == MSG_REFUND_INSTRUCTIONS) return MIN_LEN_REFUND_INSTRUCTIONS;
         if (_msgType == MSG_ISSUANCE_INSTRUCTIONS) return MIN_LEN_ISSUANCE_INSTRUCTIONS;
         return 0;

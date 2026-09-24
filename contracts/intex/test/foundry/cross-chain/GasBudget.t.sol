@@ -7,6 +7,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -56,6 +57,27 @@ contract GasBudgetTest is CrossChainTest {
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         spent = before - gasleft();
+    }
+
+    function test_TheQuoteCoversADailyVwapAtItsWidest() public {
+        router.setVwapRegistry(address(DeployProxy.vwapRegistry(admin, address(router))));
+        for (
+            uint256 rows = 1;
+            rows <= BridgeMsgCodec.MAX_REFERENCE_PRICES;
+            rows += BridgeMsgCodec.MAX_REFERENCE_PRICES - 1
+        ) {
+            IOriginRouter.DailyVwap[] memory day = new IOriginRouter.DailyVwap[](rows);
+            for (uint256 i = 0; i < rows; ++i) {
+                day[i] = IOriginRouter.DailyVwap({isoCode: uint16(840 + i), vwapMinor: uint64(1_000_000 + i)});
+            }
+            bytes memory packet = BridgeMsgCodec.encodeDailyVwap(uint32(WORLDWIDE_DAY + rows), day);
+            uint256 before = gasleft();
+            _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+            uint256 spent = before - gasleft();
+
+            emit log_named_uint(rows == 1 ? "daily_vwap_1row" : "daily_vwap_6rows", spent);
+            assertLt(spent, IntexGas.dailyVwap(rows), "a daily VWAP must fit the quote");
+        }
     }
 
     function _seed(bytes14[] memory batch) internal {

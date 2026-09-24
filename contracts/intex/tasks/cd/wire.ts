@@ -650,9 +650,8 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   const intexFactoryRole = await router.read.INTEX_FACTORY_ROLE();
   const relayerRole = await intex.read.RELAYER_ROLE();
 
-  // Begin-block caller: auction stage sends (DESIS_ROLE), qualify/call mark
-  // sends to BNB (INTEX_FACTORY_ROLE on OriginRouter), and the local NFT
-  // markQualified / markCalled (RELAYER_ROLE) - all run from begin-block.
+  // Begin-block caller: auction stage sends (DESIS_ROLE), call marks and daily VWAPs
+  // (INTEX_FACTORY_ROLE on OriginRouter) and the local NFT markCalled (RELAYER_ROLE).
   await grantOnRouter("DESIS_ROLE", desisRole, systemAddress);
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
@@ -717,7 +716,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
   console.log(`Asserting RELAYER_ROLE on IntexNFT1155 for the issuance + mark callers...`);
   console.log(`  IntexNFT1155: ${args.intexContract}`);
   console.log(`  Desis:        ${desisAddress} (createSeries)`);
-  console.log(`  SystemCaller: ${systemAddress} (markQualified / markCalled)`);
+  console.log(`  SystemCaller: ${systemAddress} (markCalled)`);
 
   const intex = (await viem.getContractAt(
     "IntexNFT1155",
@@ -730,14 +729,14 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
   };
 
   // createSeries runs in the Desis clearing-tick frame;
-  // markQualified / markCalled run from begin-block (the system caller). Both
-  // need RELAYER_ROLE.
+  // markCalled runs from begin-block (the system caller). Both need
+  // RELAYER_ROLE.
   const role = await intex.read.RELAYER_ROLE();
   for (const addr of [desisAddress, systemAddress]) {
     if (!(await intex.read.hasRole([role, addr]))) {
       throw new Error(
         `${addr} does NOT hold RELAYER_ROLE on IntexNFT1155 ${args.intexContract}. ` +
-          `Issuance (createSeries) or qualify / call (markQualified / markCalled) will revert. ` +
+          `Issuance (createSeries) or call (markCalled) will revert. ` +
           `Grant it first: outbe-system-grant-roles --bridge-contract <router> --intex-contract <intex> --system-address <system> --desis-contract <desis>.`,
       );
     }
@@ -752,7 +751,7 @@ const intexFactoryAssertRelayerRole = task(
 )
   .addOption({ name: "intexContract", description: "IntexNFT1155 contract address on Outbe", defaultValue: "" })
   .addOption({ name: "desisContract", description: "Desis precompile address (createSeries caller)", defaultValue: "" })
-  .addOption({ name: "systemAddress", description: "Outbe begin-block system caller (markQualified / markCalled)", defaultValue: "" })
+  .addOption({ name: "systemAddress", description: "Outbe begin-block system caller (markCalled)", defaultValue: "" })
   .setAction(lazy(intexFactoryAssertRelayerRoleAction));
 
 // ============================================================================

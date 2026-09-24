@@ -53,6 +53,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
+        /// @dev Daily VWAPs the metadata derives qualification from; zero derives none.
+        address vwapSource;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -85,6 +87,17 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param newImplementation Address of the implementation the proxy switches to.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /// @inheritdoc IIntexNFT1155
+    function setVwapSource(address source) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _s().vwapSource = source;
+        emit VwapSourceSet(source);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function vwapSource() external view returns (address) {
+        return _s().vwapSource;
+    }
 
     /// @notice Series-level data, stored per token id. Flattened to match the original
     ///         public-mapping getter ABI, with the call-trigger returned as its struct (collapsing

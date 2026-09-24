@@ -73,6 +73,12 @@ interface ITargetRouter {
     /// @param seriesId Series identifier.
     event MarkQualifiedReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
+    /// @notice Emitted when one finalized day is recorded into the VWAP registry.
+    event DailyVwapReceived(uint32 indexed srcChainId, uint32 indexed utcDay, uint256 rows);
+
+    /// @notice Emitted when the VWAP registry this router records into is set.
+    event VwapRegistrySet(address registry);
+
     /// @notice Emitted when a round of the day's bids relay leaves chunks behind: the gas it was given
     ///         ran out, or a send reverted and the round rolled back.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -126,6 +132,10 @@ interface ITargetRouter {
     event NativeSwept(address indexed to, uint256 amount);
 
     // --- Errors ---
+    /// @notice A daily VWAP arrived before a registry was set; the transport redelivers it.
+    error VwapRegistryUnset();
+    /// @notice The registry records days from another router.
+    error VwapRegistryRouterMismatch(address registryRouter);
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
     error ZeroAddress(string field);
@@ -164,6 +174,9 @@ interface ITargetRouter {
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+
+    /// @notice Point the router at the VWAP registry it records finalized days into. Admin only.
+    function setVwapRegistry(address registry) external;
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).

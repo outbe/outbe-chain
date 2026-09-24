@@ -8,7 +8,7 @@ use outbe_intex::schema::{
     SeriesRecord,
 };
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
 use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1,
@@ -155,7 +155,7 @@ impl<'a> CanonicalState<'a> {
         Ok(record)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub(crate) fn metadosis_terminal_receipt(
         &self,
         intent_id: B256,

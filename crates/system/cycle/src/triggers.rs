@@ -29,6 +29,7 @@ pub enum TriggerId {
     NodCallDaily = 8,
     GemPositionDaily = 9,
     IntexDrainParked = 10,
+    IntexVwapPush = 11,
 }
 
 impl TriggerId {
@@ -80,6 +81,7 @@ pub enum TriggerHandler {
     NodDaily,
     GemPositionDaily,
     IntexDrainParked,
+    IntexVwapPush,
 }
 
 impl TriggerHandler {
@@ -100,6 +102,7 @@ impl TriggerHandler {
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
+            Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
         }
     }
 }
@@ -145,11 +148,17 @@ const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 300;
 #[cfg(feature = "e2e-test")]
 const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 
+/// A day finalizes once, so an hourly poll catches it soon after; e2e seeds days minutes apart.
+#[cfg(not(feature = "e2e-test"))]
+const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 3_600;
+#[cfg(feature = "e2e-test")]
+const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
+
 /// Active trigger table. Order is informational only - the dispatcher
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 11] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -198,7 +207,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "gem_daily",
             period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to qualify and force-call gems;
+            // Reads finalized oracle VWAP history to force-call gems;
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot
@@ -247,7 +256,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
-            // Qualifies, calls and forfeits using the latest completed UTC day.
+            // Calls and forfeits using the latest completed UTC day.
             // Missed slots would repeat the same scan against the current clock.
             requires_accounting_window: false,
             coalesces_backlog: true,
@@ -275,10 +284,21 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: true,
             handler: TriggerHandler::IntexDrainParked,
         },
+        TriggerSpec {
+            id: TriggerId::IntexVwapPush.as_u32(),
+            label: "intex_vwap_push",
+            period_seconds: INTEX_VWAP_PUSH_PERIOD_SECONDS,
+            start_offset_seconds: 0,
+            // Reads finalized oracle days; no dependency on the parent block's accounting.
+            requires_accounting_window: false,
+            // The handler resumes from the last day it sent, so a gap collapses to one firing.
+            coalesces_backlog: true,
+            handler: TriggerHandler::IntexVwapPush,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 11] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -366,6 +386,16 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[9].handler,
             TriggerHandler::IntexDrainParked
+        ));
+
+        assert_eq!(
+            configured[10].period_seconds,
+            INTEX_VWAP_PUSH_PERIOD_SECONDS
+        );
+        assert_eq!(configured[10].id, TriggerId::IntexVwapPush.as_u32());
+        assert!(matches!(
+            configured[10].handler,
+            TriggerHandler::IntexVwapPush
         ));
 
         let defaults =

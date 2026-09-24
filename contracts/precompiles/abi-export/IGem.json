@@ -167,6 +167,25 @@
   },
   {
     "type": "function",
+    "name": "isQualified",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -530,25 +549,6 @@
   },
   {
     "type": "event",
-    "name": "GemQualified",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "qualifiedAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MetadataUpdate",
     "inputs": [
       {
@@ -556,25 +556,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "QualifyScanSkipped",
-    "inputs": [
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "utcDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false
