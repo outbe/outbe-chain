@@ -177,21 +177,22 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
         .rpc
         .proposal_id_from_receipt(ports[0], &tx)
         .expect("exact proposal receipt");
-    for index in 0..4 {
-        let tx = world
-            .rpc
-            .cast_vote(&world.validators.get(index), proposal, true)
-            .expect("vote for successor");
-        assert!(world.rpc.wait_successful_receipt(&tx, 60));
-        if world
-            .rpc
-            .vote_status(proposal)
-            .expect("proposal status")
-            .status
-            == "approved"
-        {
-            break;
-        }
+    // Ballots have independent senders. Submit all four within the voting
+    // window before waiting for finality: the main scenario uses six blocks,
+    // so four sequential send-and-finalize cycles can miss its deadline.
+    let ballots: Vec<_> = (0..4)
+        .map(|index| {
+            world
+                .rpc
+                .cast_vote(&world.validators.get(index), proposal, true)
+                .expect("vote for successor")
+        })
+        .collect();
+    for tx in ballots {
+        assert!(
+            world.rpc.wait_successful_receipt(&tx, 60),
+            "successor ballot failed: proposal={proposal} tx={tx}"
+        );
     }
     let status = world.rpc.vote_status(proposal).expect("proposal deadline");
     world
