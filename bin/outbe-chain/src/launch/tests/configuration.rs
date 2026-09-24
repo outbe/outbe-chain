@@ -74,3 +74,39 @@ fn test_validator_rpc_with_bridge_means_validator() {
         "validator must have bridge=Some -> is_validator=true"
     );
 }
+
+#[test]
+fn admission_proof_window_preserves_explicit_operator_flags() {
+    // Reth installs process-global defaults on first access. Other launcher
+    // tests parse arguments, so verify startup ordering in a fresh process.
+    const CHILD: &str = "OUTBE_TEST_RPC_DEFAULTS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "launch::tests::configuration::admission_proof_window_preserves_explicit_operator_flags", "--test-threads=1"])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(flatten)]
+        rpc: reth_node_core::args::RpcServerArgs,
+    }
+    crate::outbe_default_rpc_values().try_init().unwrap();
+    for (flag, expected) in [(None, 128), (Some("0"), 0), (Some("32"), 32)] {
+        let mut args = vec!["outbe-chain"];
+        if let Some(value) = flag {
+            args.extend(["--rpc.eth-proof-window", value]);
+        }
+        assert_eq!(
+            Arguments::try_parse_from(args)
+                .unwrap()
+                .rpc
+                .rpc_eth_proof_window,
+            expected
+        );
+    }
+}

@@ -9,6 +9,7 @@
 //! This crate MUST NOT contain secret-bearing cryptography - that lives only in
 //! `bin/outbe-tee-enclave`. Here we keep the message contract and transport.
 
+pub mod call_context;
 pub mod canary;
 pub mod client;
 pub mod client_global;

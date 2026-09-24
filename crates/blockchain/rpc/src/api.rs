@@ -234,6 +234,16 @@ pub struct FinalizationProof {
     pub block_hex: String,
 }
 
+/// A direct certificate for a descendant and the ordered blocks preceding it.
+/// The consumer authenticates every parent link and the signing committee.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AncestorFinalizationProof {
+    #[serde(flatten)]
+    pub certified: FinalizationProof,
+    pub ancestor_blocks_hex: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RadiclePhaseInfo {
@@ -454,6 +464,18 @@ pub trait OutbeApi {
     /// epoch committee - this RPC is a bytes transport, not a trust root.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
+
+    /// Canonical consensus block bytes for commitment-bound ancestor recovery.
+    /// This endpoint conveys no finality authority; consumers must authenticate
+    /// the requested digest through an independently verified descendant.
+    #[method(name = "getConsensusBlock")]
+    async fn get_consensus_block(&self, height: u64) -> jsonrpsee::core::RpcResult<Bytes>;
+
+    #[method(name = "getFinalityProof")]
+    async fn get_finality_proof(
+        &self,
+        height: u64,
+    ) -> jsonrpsee::core::RpcResult<AncestorFinalizationProof>;
 }
 
 #[cfg(test)]

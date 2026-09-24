@@ -49,6 +49,7 @@ impl TributeFactoryContract<'_> {
         parent: &impl ParentBodySource,
         input: OfferTributeInput,
     ) -> Result<WwdEntityId> {
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         self.offer_tribute_inner(
             scope,
             parent,

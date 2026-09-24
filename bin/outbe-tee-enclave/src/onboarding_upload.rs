@@ -385,7 +385,9 @@ mod tests {
     fn transition_record_cap_is_cumulative_across_chunks() {
         let (mut session, request_hash) = started_session();
         let mut offset = 0_u32;
-        for chunk_len in [MAX_ONBOARDING_INGEST_CHUNK_BYTES; 2] {
+        while (offset as usize) < MAX_COMMITTEE_TRANSITION_RECORD_BYTES {
+            let chunk_len = MAX_ONBOARDING_INGEST_CHUNK_BYTES
+                .min(MAX_COMMITTEE_TRANSITION_RECORD_BYTES - offset as usize);
             let progress = session
                 .handle(
                     EnclaveRequest::DcapOnboardingArtifactChunkV1 {
@@ -403,7 +405,7 @@ mod tests {
             };
             offset = next_offset;
         }
-        let overflow = MAX_COMMITTEE_TRANSITION_RECORD_BYTES + 1 - usize::try_from(offset).unwrap();
+        let overflow = 1;
         let error = expect_error(session.handle(
             EnclaveRequest::DcapOnboardingArtifactChunkV1 {
                 request_hash,

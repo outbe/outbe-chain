@@ -77,6 +77,12 @@ pub trait Rpc {
             Err(eyre::eyre!("outbe finalization RPC is unsupported"))
         }
     }
+    fn outbe_get_finality_proof(
+        &self,
+        height: u64,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send {
+        self.outbe_get_finalization(height)
+    }
     fn eth_get_proof(
         &self,
         address: Address,
@@ -437,6 +443,22 @@ impl Rpc for RpcClient {
             .await
     }
 
+    async fn outbe_get_finality_proof(&self, height: u64) -> Result<Value> {
+        match self
+            .call_rpc("outbe_getFinalityProof", serde_json::json!([height]))
+            .await
+        {
+            Ok(proof) => Ok(proof),
+            Err(error)
+                if error.to_string().contains("-32601")
+                    || error.to_string().contains("Method not found") =>
+            {
+                self.outbe_get_finalization(height).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     async fn eth_get_proof(
         &self,
         address: Address,
@@ -581,6 +603,8 @@ pub mod mock {
         pub consensus_status: Result<Value>,
         pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
+        pub finalized_block: Result<Value>,
+        pub proof_fn: Option<Box<dyn Fn(u64) -> Result<Value> + Send + Sync>>,
         pub block_by_number: Result<Value>,
         pub vrf_seed: Result<Value>,
         pub emission_info: Result<Value>,
@@ -604,6 +628,8 @@ pub mod mock {
                 consensus_status: Err(eyre::eyre!("not mocked")),
                 epoch_info: Err(eyre::eyre!("not mocked")),
                 latest_block: Err(eyre::eyre!("not mocked")),
+                finalized_block: Err(eyre::eyre!("not mocked")),
+                proof_fn: None,
                 block_by_number: Err(eyre::eyre!("not mocked")),
                 vrf_seed: Err(eyre::eyre!("not mocked")),
                 emission_info: Err(eyre::eyre!("not mocked")),
@@ -677,6 +703,14 @@ pub mod mock {
         }
         async fn eth_get_latest_block(&self) -> Result<Value> {
             clone_result(&self.latest_block)
+        }
+        async fn eth_get_finalized_block(&self) -> Result<Value> {
+            clone_result(&self.finalized_block)
+        }
+        async fn eth_get_proof(&self, _: Address, _: &[String], block: u64) -> Result<Value> {
+            self.proof_fn
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("proof not mocked"))?(block)
         }
         async fn outbe_get_vrf_seed(&self) -> Result<Value> {
             clone_result(&self.vrf_seed)

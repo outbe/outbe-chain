@@ -199,8 +199,19 @@ impl EnclaveSession {
         }
     }
 
-    /// Send one request with the session's reconnect-and-retry-once policy.
+    /// Send an operation with an explicit block context; retries preserve it.
+    pub fn request_with_context(
+        &mut self,
+        ctx: crate::call_context::EnclaveCallContextV1,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let _scope = crate::call_context::ContextScope::enter(ctx);
+        self.request(request)
+    }
+
     pub fn request(&mut self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        let _call_context =
+            crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
         if matches!(
             req,
             EnclaveRequest::BeginDcapVerificationV1 { .. }
@@ -261,6 +272,8 @@ impl EnclaveSession {
         dev_rejection: impl Fn() -> TransportError,
         op: impl Fn(&mut AuthorizedEnclaveClient) -> Result<T, TransportError>,
     ) -> Result<T, TransportError> {
+        let _call_context =
+            crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
         if let Some(reason) = self.revoked {
             return Err(TransportError::SessionRevoked(reason));
         }
@@ -519,6 +532,7 @@ mod tests {
         error_mode: std::sync::atomic::AtomicBool,
         /// Labels of every post-handshake request served, across connections.
         served: Mutex<Vec<&'static str>>,
+        contexts: Mutex<Vec<crate::call_context::EnclaveCallContextV1>>,
     }
 
     impl FakeEnclave {
@@ -591,7 +605,9 @@ mod tests {
                 let n = noise
                     .read_message(&frame, &mut pt)
                     .map_err(|e| e.to_string())?;
-                let request = decode_request(&pt[..n]).map_err(|e| e.to_string())?;
+                let call = crate::codec::decode_call(&pt[..n]).map_err(|e| e.to_string())?;
+                self.script.contexts.lock().unwrap().push(call.ctx);
+                let request = call.request;
                 if let Ok(mut served) = self.script.served.lock() {
                     served.push(request.label());
                 }
@@ -762,6 +778,42 @@ mod tests {
             fork.fork_connection().request(&EnclaveRequest::Health),
             Err(TransportError::SessionRevoked(_))
         ));
+        server.stop.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn exact_call_context_survives_noise_reconnect_and_historical_replay() {
+        use crate::call_context::{EnclaveCallContextV1, EnclaveContextKindV1};
+        let script = ready_script();
+        script.drop_after_requests.store(2, Ordering::Relaxed);
+        let server = spawn_server(Arc::new(FakeEnclave::generate(Arc::clone(&script))));
+        let mut session = connect_session(&server);
+        let next = EnclaveCallContextV1 {
+            kind: EnclaveContextKindV1::Execution,
+            chain_id: 42,
+            genesis_hash: B256::repeat_byte(7),
+            block_number: 100,
+            block_timestamp: 200,
+            protocol_version: 2,
+        };
+        session
+            .request_with_context(next, &EnclaveRequest::Health)
+            .unwrap();
+        // Historical replay is valid even after observing a newer version.
+        let old = EnclaveCallContextV1 {
+            block_number: 99,
+            block_timestamp: 198,
+            protocol_version: 1,
+            ..next
+        };
+        session
+            .request_with_context(old, &EnclaveRequest::Health)
+            .unwrap();
+        let contexts = script.contexts.lock().unwrap();
+        assert_eq!(contexts[1], next);
+        // Failed request, reconnect probe and successful retry all retain old.
+        assert_eq!(&contexts[2..], &[old, old, old]);
+        drop(contexts);
         server.stop.store(true, Ordering::Relaxed);
     }
 

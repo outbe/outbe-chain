@@ -918,10 +918,71 @@ where
                 "no finalization available for height {height} (not finalized locally or pruned)"
             ))
         })?;
+        if proof.finalization.is_empty() {
+            return Err(internal_err(format!(
+                "no direct finalization available for height {height}"
+            )));
+        }
         Ok(FinalizationProof {
             finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
             block_hex: format!("0x{}", hex::encode(&proof.block)),
         })
+    }
+
+    async fn get_consensus_block(&self, height: u64) -> RpcResult<Bytes> {
+        let bridge = self
+            .bridge
+            .as_ref()
+            .ok_or_else(|| internal_err("node is not serving consensus blocks".to_owned()))?;
+        bridge
+            .request_finalization(height)
+            .await
+            .map(|proof| proof.block)
+            .ok_or_else(|| {
+                internal_err(format!(
+                    "no finalized consensus block available for height {height}"
+                ))
+            })
+    }
+
+    async fn get_finality_proof(
+        &self,
+        height: u64,
+    ) -> RpcResult<crate::api::AncestorFinalizationProof> {
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err("node is not serving consensus finalizations".to_owned())
+        })?;
+        let mut ancestors = Vec::new();
+        let mut total_bytes = 0usize;
+        for offset in 0..=64u64 {
+            let next = height
+                .checked_add(offset)
+                .ok_or_else(|| internal_err("proof height overflow".to_owned()))?;
+            let proof = bridge.request_finalization(next).await.ok_or_else(|| {
+                internal_err(format!("no finality evidence available at height {next}"))
+            })?;
+            total_bytes = total_bytes.saturating_add(proof.block.len());
+            // Hex JSON doubles the block payload. Stay below the default
+            // upstream HTTP client's 10 MiB response bound with envelope room.
+            if total_bytes > 4 * 1024 * 1024 {
+                return Err(internal_err(
+                    "ancestor finality proof exceeds byte limit".to_owned(),
+                ));
+            }
+            if !proof.finalization.is_empty() {
+                return Ok(crate::api::AncestorFinalizationProof {
+                    certified: FinalizationProof {
+                        finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
+                        block_hex: format!("0x{}", hex::encode(proof.block)),
+                    },
+                    ancestor_blocks_hex: ancestors,
+                });
+            }
+            ancestors.push(format!("0x{}", hex::encode(proof.block)));
+        }
+        Err(internal_err(
+            "no descendant finalization within 64 blocks".to_owned(),
+        ))
     }
 }
 

@@ -130,6 +130,7 @@ fn mint_impl(
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
     req.fidelity = fidelity;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -187,6 +188,7 @@ fn burn_impl(
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
     req.fidelity = fidelity;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -255,6 +257,7 @@ fn pledge_impl(
     req.modify_auth = auth;
     req.pledge_terms = Some(terms);
     req.fidelity = fidelity;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -325,6 +328,7 @@ pub(crate) fn unpledge(
     req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_note)?;
     req.modify_auth = auth;
     req.pledge_note = Some(pledge_note);
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -366,6 +370,7 @@ fn reveal_owner_inner(
     );
     req.current_pledge_record = blob.to_vec();
     req.pledge_note = handle;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     Ok(result.revealed_owner)
@@ -406,6 +411,7 @@ pub(crate) fn consume_pledge(
     req.pledge_note = Some(pledge_note);
     req.smart_account = Some(smart_account);
     req.spend_auth = Some(spend_auth);
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     // Credit the EOA's own pledged ledger and delete the consumed ticket.
@@ -434,6 +440,7 @@ pub(crate) fn release_to_eoa(
     );
     req.current_balance = gratis.balance_ct_of(eoa)?;
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, eoa, &result)?;
@@ -471,6 +478,7 @@ fn burn_pledged_impl(
     let mut req = base_request(GratisOp::BurnPledged, chain_id_b256(&storage)?, eoa, amount);
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
     req.fidelity = fidelity;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, eoa, &result)?;

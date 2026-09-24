@@ -179,7 +179,7 @@ use recovery::anchor::{
     certified_follower_replay_suffix_bounds, durable_recovery_anchor_height,
     reconcile_recovered_execution_head, recover_ce_at_reconciled_anchor,
     select_certified_follower_recovery_height, unfinalized_head_lead_is_recoverable,
-    validate_certified_follower_recovery_record, CertifiedFollowerRecoveryAnchor,
+    validate_ancestor_follower_recovery_record, CertifiedFollowerRecoveryAnchor,
     CertifiedFollowerRecoveryFloors, RecoveredApplicationFinalization,
 };
 
@@ -238,3 +238,6 @@ use shutdown::preserve_stack_result_after_drain;
 
 #[cfg(test)]
 use startup::{read_ms, require_genesis_hash, validate_timing};
+
+#[cfg(test)]
+use recovery::anchor::validate_certified_follower_recovery_record;

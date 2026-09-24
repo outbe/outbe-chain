@@ -26,6 +26,80 @@ const GOOD_JSON: &str = r#"{
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
 }"#;
 
+#[test]
+fn server_installs_context_for_dispatch_and_clears_it_between_calls() {
+    use outbe_tee::call_context::{current, EnclaveCallContextV1, EnclaveContextKindV1};
+    use outbe_tee_enclave::transport::EnclaveTransportStream;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct ObservedStream(UnixStream, Arc<Mutex<Vec<EnclaveCallContextV1>>>);
+    impl Read for ObservedStream {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            // Previous calls must not leak into the next handshake/frame.
+            assert_eq!(current(), None);
+            self.0.read(bytes)
+        }
+    }
+    impl Write for ObservedStream {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if let Some(ctx) = current() {
+                let mut seen = self.1.lock().unwrap();
+                if seen.last() != Some(&ctx) {
+                    seen.push(ctx);
+                }
+            }
+            self.0.write(bytes)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush()
+        }
+    }
+    impl EnclaveTransportStream for ObservedStream {
+        fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+            self.0.set_read_timeout(timeout)
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("context.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let server_observed = Arc::clone(&observed);
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let keys = EnclaveKeys::new(OFFER_SECRET, None).unwrap();
+        let offer_key = Arc::new(std::sync::OnceLock::new());
+        serve_connection(ObservedStream(stream, server_observed), &keys, &offer_key).unwrap();
+        assert_eq!(current(), None);
+    });
+    let mut client = EnclaveClient::connect(&socket).unwrap();
+    let live = EnclaveCallContextV1 {
+        kind: EnclaveContextKindV1::Execution,
+        chain_id: 42,
+        genesis_hash: alloy_primitives::B256::repeat_byte(7),
+        block_number: 100,
+        block_timestamp: 200,
+        protocol_version: 2,
+    };
+    let historical = EnclaveCallContextV1 {
+        block_number: 99,
+        block_timestamp: 198,
+        protocol_version: 1,
+        ..live
+    };
+    for ctx in [live, historical] {
+        client
+            .request_with_context(ctx, &EnclaveRequest::Health)
+            .unwrap();
+    }
+    drop(client);
+    server.join().unwrap();
+    assert_eq!(*observed.lock().unwrap(), vec![live, historical]);
+}
+
 /// Encrypt an offer to the enclave offer key + salt, exactly as a client would.
 fn encrypt_offer(
     tribute_offer_public: [u8; 32],

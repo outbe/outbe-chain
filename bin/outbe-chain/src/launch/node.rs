@@ -10,6 +10,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
     // its own defaults, so explicit `--txpool.*` flags still win.
     let _ = outbe_default_txpool_values().try_init();
+    let _ = outbe_default_rpc_values().try_init();
 
     let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
@@ -566,6 +567,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             &builder.config().network,
             builder.config().datadir().p2p_secret(),
         )?;
+        outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
+            chain_id: builder.config().chain.chain().id(),
+            genesis_hash: builder.config().chain.genesis_hash(),
+            ..Default::default()
+        }).map_err(eyre::Report::msg)?;
         let expected_enclave_id = match tee_session {
             outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
                 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
@@ -819,6 +825,10 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
+                    let context_provider = Arc::clone(&provider);
+                    outbe_tee::call_context::install_provider(Arc::new(move || {
+                        outbe_node::tee_call_context::read(context_provider.as_ref(), proof_chain_id, genesis_hash)
+                    })).map_err(eyre::Report::msg)?;
                     // Validators get the full bridge-backed handler.
                     // `--upstream` followers also run a marshal and CAN serve
                     // `outbe_getFinalization` (chaining followers), but must NOT

@@ -129,6 +129,17 @@ pub enum TeeCmd {
 
 impl TeeCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
+        if !matches!(
+            &self,
+            TeeCmd::UpgradeCopyRoot { .. }
+                | TeeCmd::UpgradeStatus { .. }
+                | TeeCmd::Pubkey {
+                    diff_chain: false,
+                    ..
+                }
+        ) {
+            refresh_call_context(client, None).await?;
+        }
         match self {
             TeeCmd::Join {
                 enclave_socket,
@@ -245,3 +256,46 @@ mod join;
 use super::require_signer;
 
 use join::{join, TeeJoinArgs};
+
+mod admission_history;
+
+async fn refresh_call_context(rpc: &(impl Rpc + Sync), height: Option<u64>) -> Result<()> {
+    use alloy_primitives::{keccak256, B256, U256};
+    use alloy_sol_types::SolValue;
+    use outbe_tee::call_context::{EnclaveCallContextV1, EnclaveContextKindV1};
+    let block = match height {
+        Some(height) => rpc.eth_get_block_by_number(height).await?,
+        None => rpc.eth_get_finalized_block().await?,
+    };
+    let number = json_hex_u64_field(&block, "number")?;
+    let timestamp = json_hex_u64_field(&block, "timestamp")?;
+    let tag = format!("0x{number:x}");
+    let selector = keccak256(b"getActiveVersion()");
+    let bytes = rpc
+        .eth_call_at(
+            outbe_primitives::addresses::UPDATE_ADDRESS,
+            &selector[..4],
+            &tag,
+        )
+        .await?;
+    let version = U256::abi_decode(&bytes)?;
+    eyre::ensure!(
+        version <= U256::from(u32::MAX),
+        "active protocol version overflow"
+    );
+    let genesis = rpc.eth_get_block_by_number(0).await?;
+    let genesis_hash: B256 = genesis
+        .get("hash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("genesis RPC block has no hash"))?
+        .parse()?;
+    outbe_tee::call_context::set_snapshot(EnclaveCallContextV1 {
+        kind: EnclaveContextKindV1::Snapshot,
+        chain_id: rpc.eth_chain_id().await?,
+        genesis_hash,
+        block_number: number,
+        block_timestamp: timestamp,
+        protocol_version: version.to(),
+    })
+    .map_err(eyre::Report::msg)
+}

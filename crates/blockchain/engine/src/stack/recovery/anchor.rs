@@ -238,3 +238,78 @@ pub(in crate::stack) fn recover_ce_at_reconciled_anchor(
     );
     Ok(recovered)
 }
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
+    height: u64,
+    canonical_hash: B256,
+    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
+    local_block: &outbe_consensus::block::ConsensusBlock,
+    upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
+    schemes: &HybridSchemeProvider<MinSig>,
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+) -> Result<CertifiedFollowerRecoveryAnchor> {
+    use commonware_consensus::types::Epocher as _;
+    upstream.validate_envelope(Height::new(height))?;
+    ensure!(
+        local_block.number() == height && local_block.block_hash() == canonical_hash,
+        "local recovery block differs from canonical Reth checkpoint"
+    );
+    ensure!(
+        local_block == upstream.target(),
+        "upstream recovery ancestor differs from local block"
+    );
+    let certified = &upstream.certified;
+    let epoch = certified.finalization.proposal.round.epoch();
+    ensure!(
+        epocher
+            .containing(Height::new(height))
+            .is_some_and(|bounds| bounds.epoch() == epoch),
+        "recovery ancestor certificate is not from its authenticated historical committee"
+    );
+    if upstream.ancestors.is_empty() {
+        return validate_certified_follower_recovery_record(
+            height,
+            canonical_hash,
+            local_finalization
+                .ok_or_else(|| eyre::eyre!("missing normalized direct recovery certificate"))?,
+            local_block,
+            &certified.finalization,
+            &certified.block,
+            schemes,
+        );
+    }
+    let scheme = schemes
+        .scoped(epoch)
+        .ok_or_else(|| eyre::eyre!("missing recovery ancestor committee"))?;
+    ensure!(
+        certified.finalization.verify(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            scheme.as_ref(),
+            &commonware_parallel::Sequential
+        ),
+        "recovery descendant certificate failed verification"
+    );
+    if let Some(local) = local_finalization {
+        ensure!(
+            local.proposal.payload.0 == canonical_hash && local.proposal.round.epoch() == epoch,
+            "local recovery certificate conflicts with authenticated ancestor"
+        );
+        ensure!(
+            local.verify(
+                &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+                scheme.as_ref(),
+                &commonware_parallel::Sequential
+            ),
+            "local recovery ancestor certificate failed verification"
+        );
+    }
+    Ok(CertifiedFollowerRecoveryAnchor {
+        checkpoint: ProjectionCheckpoint {
+            block_number: height,
+            block_hash: canonical_hash,
+        },
+        finalization: local_finalization.cloned(),
+        block: local_block.clone(),
+    })
+}

@@ -81,6 +81,7 @@ pub(crate) fn mint(
     let mut req = base_request(PromisOp::Mint, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = promis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_promis_op(req)?;
     ensure_applied(&result)?;
     write_balance(&promis, caller, &result)?;
@@ -113,6 +114,7 @@ pub(crate) fn burn(
     let mut req = base_request(PromisOp::Burn, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = promis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_promis_op(req)?;
     ensure_applied(&result)?;
     write_balance(&promis, caller, &result)?;

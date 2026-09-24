@@ -103,6 +103,14 @@ struct UpstreamFinalizationProof {
     block_hex: String,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamAncestorFinalityProof {
+    #[serde(flatten)]
+    certified: UpstreamFinalizationProof,
+    ancestor_blocks_hex: Vec<String>,
+}
+
 /// The upstream finalized-block + tip transport: a jsonrpsee HTTP client against
 /// an upstream node's `outbe_*` RPC.
 ///
@@ -210,6 +218,60 @@ fn decode_finalization_proof(proof: &UpstreamFinalizationProof) -> Option<Certif
 }
 
 impl FinalizedSource for UpstreamRpcClient {
+    async fn get_finality_proof(
+        &self,
+        height: Height,
+    ) -> Option<outbe_consensus::follow::upstream::AncestorFinalityProof> {
+        let proof: UpstreamAncestorFinalityProof = match self
+            .client
+            .request("outbe_getFinalityProof", rpc_params![height.get()])
+            .await
+        {
+            Ok(value) => value,
+            Err(_) => {
+                return self.get_finalization(height).await.map(|certified| {
+                    outbe_consensus::follow::upstream::AncestorFinalityProof {
+                        certified,
+                        ancestors: Vec::new(),
+                    }
+                })
+            }
+        };
+        if proof.ancestor_blocks_hex.len() > 64 {
+            return None;
+        }
+        let certified = decode_finalization_proof(&proof.certified)?;
+        let mut ancestors = Vec::with_capacity(proof.ancestor_blocks_hex.len());
+        for encoded in proof.ancestor_blocks_hex {
+            let bytes = alloy_primitives::hex::decode(encoded.trim_start_matches("0x")).ok()?;
+            let mut input = bytes.as_slice();
+            let block = ConsensusBlock::read_cfg(&mut input, &()).ok()?;
+            if !input.is_empty() {
+                return None;
+            }
+            ancestors.push(block);
+        }
+        let proof = outbe_consensus::follow::upstream::AncestorFinalityProof {
+            certified,
+            ancestors,
+        };
+        proof.validate_envelope(height).ok()?;
+        Some(proof)
+    }
+    async fn get_block(&self, height: Height) -> Option<ConsensusBlock> {
+        let bytes: alloy_primitives::Bytes = match self
+            .client
+            .request("outbe_getConsensusBlock", rpc_params![height.get()])
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(_) => return self.get_finalization(height).await.map(|value| value.block),
+        };
+        let mut input = bytes.as_ref();
+        let block = ConsensusBlock::read_cfg(&mut input, &()).ok()?;
+        (input.is_empty() && block.number() == height.get()).then_some(block)
+    }
+
     fn get_finalization(
         &self,
         height: Height,

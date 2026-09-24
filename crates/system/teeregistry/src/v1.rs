@@ -1095,6 +1095,7 @@ impl TeeRegistry<'_> {
             ));
         }
 
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         let (intent, claims, evidence_hash, onboarding_artifact) = match &decoded {
             AttestationEvidenceV1::Dcap(dcap) => {
                 let policy_bytes = policy.encode_canonical().map_err(|error| {
@@ -1234,6 +1235,8 @@ impl TeeRegistry<'_> {
                 key_epoch: self.key_epoch()?,
                 tribute_offer_epoch: self.tribute_offer_epoch()?,
             };
+            let _enclave_context =
+                outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
             Some(
                 outbe_tee::prepare_gramine_direct_dev_onboarding_artifact_v1(context).map_err(
                     |error| {

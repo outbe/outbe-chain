@@ -5,7 +5,8 @@ use alloy_primitives::{keccak256, B256, U256};
 
 use crate::dcap_protocol::{DcapOnboardingContextV1, MAX_DCAP_ONBOARDING_ARTIFACT_BYTES};
 
-pub const MAX_COMMITTEE_TRANSITION_RECORD_BYTES: usize = 128 * 1024;
+pub const MAX_COMMITTEE_TRANSITION_RECORD_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_FINALITY_DESCENDANTS: usize = 64;
 pub const MAX_FINALIZED_ADMISSION_RECORD_BYTES: usize = 4 * 1024 * 1024;
 /// The current Hybrid finalization is below 256 bytes at the maximum committee
 /// size. Keep a versioned wire margin without permitting a record-sized opaque
@@ -100,6 +101,9 @@ pub fn onboarding_registry_slots_v1(context: &DcapOnboardingContextV1) -> [B256;
 pub struct CertifiedHeaderV1 {
     pub finalization: Vec<u8>,
     pub header: Vec<u8>,
+    /// Consecutive child headers ending at the certificate's payload. Empty
+    /// retains the original V1 direct-certificate encoding byte for byte.
+    pub descendants: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -143,8 +147,11 @@ pub enum FinalizedAdmissionCodecError {
 impl CertifiedHeaderV1 {
     pub fn encode_canonical(&self) -> Result<Vec<u8>, FinalizedAdmissionCodecError> {
         let mut out = Vec::new();
-        out.push(1);
+        out.push(if self.descendants.is_empty() { 1 } else { 2 });
         put_certified_header(&mut out, self)?;
+        if !self.descendants.is_empty() {
+            put_descendants(&mut out, &self.descendants)?;
+        }
         if out.len() > MAX_COMMITTEE_TRANSITION_RECORD_BYTES {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
@@ -156,10 +163,14 @@ impl CertifiedHeaderV1 {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
         let mut decoder = Decoder::new(input);
-        if decoder.u8()? != 1 {
+        let version = decoder.u8()?;
+        if version != 1 && version != 2 {
             return Err(FinalizedAdmissionCodecError::Malformed("version"));
         }
-        let value = decoder.certified_header()?;
+        let mut value = decoder.certified_header()?;
+        if version == 2 {
+            value.descendants = decoder.descendants()?;
+        }
         decoder.finish()?;
         Ok(value)
     }
@@ -173,8 +184,15 @@ impl FinalizedAdmissionWitnessV1 {
             ));
         }
         let mut out = Vec::new();
-        out.push(1);
+        out.push(if self.admission.descendants.is_empty() {
+            1
+        } else {
+            2
+        });
         put_certified_header(&mut out, &self.admission)?;
+        if !self.admission.descendants.is_empty() {
+            put_descendants(&mut out, &self.admission.descendants)?;
+        }
         put_account(&mut out, &self.registry_account)?;
         put_u16(&mut out, self.registry_storage.len())?;
         for proof in &self.registry_storage {
@@ -193,10 +211,14 @@ impl FinalizedAdmissionWitnessV1 {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
         let mut decoder = Decoder::new(input);
-        if decoder.u8()? != 1 {
+        let version = decoder.u8()?;
+        if version != 1 && version != 2 {
             return Err(FinalizedAdmissionCodecError::Malformed("version"));
         }
-        let admission = decoder.certified_header()?;
+        let mut admission = decoder.certified_header()?;
+        if version == 2 {
+            admission.descendants = decoder.descendants()?;
+        }
         let registry_account = decoder.account()?;
         let storage_count = decoder.count(EXACT_REGISTRY_STORAGE_PROOFS)?;
         if storage_count != EXACT_REGISTRY_STORAGE_PROOFS {
@@ -228,6 +250,23 @@ fn put_certified_header(
     validate_certified_header_fields(&proof.finalization, &proof.header)?;
     put_bytes(out, &proof.finalization)?;
     put_bytes(out, &proof.header)
+}
+
+fn put_descendants(
+    out: &mut Vec<u8>,
+    headers: &[Vec<u8>],
+) -> Result<(), FinalizedAdmissionCodecError> {
+    if headers.is_empty() || headers.len() > MAX_FINALITY_DESCENDANTS {
+        return Err(FinalizedAdmissionCodecError::TooLarge);
+    }
+    put_u16(out, headers.len())?;
+    for header in headers {
+        if header.is_empty() || header.len() > MAX_COMPACT_HEADER_BYTES {
+            return Err(FinalizedAdmissionCodecError::TooLarge);
+        }
+        put_bytes(out, header)?;
+    }
+    Ok(())
 }
 
 fn validate_certified_header_fields(
@@ -303,7 +342,24 @@ impl<'a> Decoder<'a> {
         Ok(CertifiedHeaderV1 {
             finalization: finalization.to_vec(),
             header: header.to_vec(),
+            descendants: Vec::new(),
         })
+    }
+
+    fn descendants(&mut self) -> Result<Vec<Vec<u8>>, FinalizedAdmissionCodecError> {
+        let count = self.count(MAX_FINALITY_DESCENDANTS)?;
+        if count == 0 {
+            return Err(FinalizedAdmissionCodecError::Malformed("empty V2 ancestry"));
+        }
+        let mut headers = Vec::with_capacity(count);
+        for _ in 0..count {
+            let bytes = self.bytes()?;
+            if bytes.is_empty() || bytes.len() > MAX_COMPACT_HEADER_BYTES {
+                return Err(FinalizedAdmissionCodecError::TooLarge);
+            }
+            headers.push(bytes.to_vec());
+        }
+        Ok(headers)
     }
 
     fn account(&mut self) -> Result<MptAccountProofV1, FinalizedAdmissionCodecError> {
@@ -381,6 +437,7 @@ mod tests {
     fn fixture() -> FinalizedAdmissionWitnessV1 {
         FinalizedAdmissionWitnessV1 {
             admission: CertifiedHeaderV1 {
+                descendants: Vec::new(),
                 finalization: vec![7],
                 header: vec![8],
             },
@@ -418,8 +475,37 @@ mod tests {
     }
 
     #[test]
+    fn ancestry_codec_preserves_v1_and_bounds_v2() {
+        let direct = fixture();
+        assert_eq!(direct.encode_canonical().unwrap()[0], 1);
+        let mut indirect = direct;
+        indirect.admission.descendants = vec![vec![0x42]; 2];
+        let encoded = indirect.encode_canonical().unwrap();
+        assert_eq!(encoded[0], 2);
+        assert_eq!(
+            FinalizedAdmissionWitnessV1::decode_canonical(&encoded).unwrap(),
+            indirect
+        );
+        let transition = indirect.admission.encode_canonical().unwrap();
+        assert_eq!(
+            CertifiedHeaderV1::decode_canonical(&transition).unwrap(),
+            indirect.admission
+        );
+        indirect.admission.descendants = vec![vec![1]; MAX_FINALITY_DESCENDANTS + 1];
+        assert_eq!(
+            indirect.encode_canonical(),
+            Err(FinalizedAdmissionCodecError::TooLarge)
+        );
+        let mut noncanonical = fixture().admission.encode_canonical().unwrap();
+        noncanonical[0] = 2;
+        noncanonical.extend_from_slice(&[0, 0]);
+        assert!(CertifiedHeaderV1::decode_canonical(&noncanonical).is_err());
+    }
+
+    #[test]
     fn compact_certified_header_is_canonical_and_field_bounded() {
         let header = CertifiedHeaderV1 {
+            descendants: Vec::new(),
             finalization: vec![0x31, 0x32],
             header: vec![0x41, 0x42],
         };
@@ -435,10 +521,12 @@ mod tests {
 
         for malformed in [
             CertifiedHeaderV1 {
+                descendants: Vec::new(),
                 finalization: Vec::new(),
                 header: vec![1],
             },
             CertifiedHeaderV1 {
+                descendants: Vec::new(),
                 finalization: vec![1],
                 header: Vec::new(),
             },
@@ -453,6 +541,7 @@ mod tests {
 
         assert_eq!(
             CertifiedHeaderV1 {
+                descendants: Vec::new(),
                 finalization: vec![0; MAX_FINALIZATION_BYTES + 1],
                 header: vec![1],
             }
@@ -461,6 +550,7 @@ mod tests {
         );
         assert_eq!(
             CertifiedHeaderV1 {
+                descendants: Vec::new(),
                 finalization: vec![1],
                 header: vec![0; MAX_COMPACT_HEADER_BYTES + 1],
             }

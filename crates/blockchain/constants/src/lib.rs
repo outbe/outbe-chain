@@ -322,20 +322,32 @@ impl GenesisProtocolParametersV1 {
 static PARAMETERS: OnceLock<GenesisProtocolParametersV1> = OnceLock::new();
 
 /// Enforce the build policy and initialize test-only overrides when enabled.
+/// Re-validating the same effective parameters is harmless; changing an
+/// already running process's parameters remains forbidden.
 pub fn initialize(value: Option<&serde_json::Value>) -> Result<(), ProtocolConstantsError> {
     let parameters = GenesisProtocolParametersV1::select_for_build(value)?;
 
     #[cfg(feature = "test-protocol-overrides")]
     {
-        PARAMETERS
-            .set(parameters)
-            .map_err(|_| ProtocolConstantsError::AlreadyInitialized)
+        initialize_once(&PARAMETERS, parameters)
     }
 
     #[cfg(not(feature = "test-protocol-overrides"))]
     {
         let _ = parameters;
         Ok(())
+    }
+}
+
+#[cfg(feature = "test-protocol-overrides")]
+fn initialize_once(
+    slot: &OnceLock<GenesisProtocolParametersV1>,
+    parameters: GenesisProtocolParametersV1,
+) -> Result<(), ProtocolConstantsError> {
+    if *slot.get_or_init(|| parameters) == parameters {
+        Ok(())
+    } else {
+        Err(ProtocolConstantsError::AlreadyInitialized)
     }
 }
 
@@ -425,6 +437,43 @@ fn validate_at_most(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(feature = "test-protocol-overrides")]
+    #[test]
+    fn repeated_initialization_accepts_only_identical_effective_parameters() {
+        let slot = OnceLock::new();
+        initialize_once(&slot, DEFAULTS).unwrap();
+        initialize_once(
+            &slot,
+            GenesisProtocolParametersV1::resolve(Some(&json!({}))).unwrap(),
+        )
+        .unwrap();
+        let changed = GenesisProtocolParametersV1::resolve(Some(&json!({
+            "governance": { "votingWindowBlocks": 20 }
+        })))
+        .unwrap();
+        assert_eq!(
+            initialize_once(&slot, changed),
+            Err(ProtocolConstantsError::AlreadyInitialized)
+        );
+        assert_eq!(slot.get(), Some(&DEFAULTS));
+    }
+
+    #[cfg(feature = "test-protocol-overrides")]
+    #[test]
+    fn concurrent_conflicting_initialization_keeps_exactly_one_configuration() {
+        let slot = OnceLock::new();
+        let other = GenesisProtocolParametersV1 {
+            governance_voting_window_blocks: 20,
+            ..DEFAULTS
+        };
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| initialize_once(&slot, DEFAULTS));
+            let b = scope.spawn(|| initialize_once(&slot, other));
+            assert_ne!(a.join().unwrap().is_ok(), b.join().unwrap().is_ok());
+        });
+        initialize_once(&slot, *slot.get().unwrap()).unwrap();
+    }
 
     #[test]
     fn governance_window_is_independent_and_strictly_bounded() {

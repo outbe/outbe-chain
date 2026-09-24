@@ -1274,7 +1274,6 @@ where
 
     // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
     // can backfill + verify finalized blocks from this validator.
-    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 
     let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
         match recover_application_finalized_round(
@@ -1433,6 +1432,12 @@ where
         .storage_dir
         .as_ref()
         .expect("storage_dir was required above");
+    spawn_finalization_drainer(
+        &ctx,
+        marshal_mailbox.clone(),
+        bridge.clone(),
+        finalized_parent_cert_store.clone(),
+    );
     let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(

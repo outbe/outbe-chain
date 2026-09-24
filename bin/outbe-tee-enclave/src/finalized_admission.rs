@@ -90,11 +90,9 @@ impl FinalizedAdmissionVerifierV1 {
     pub fn advance_committee(&mut self, encoded: &[u8]) -> Result<(), String> {
         let transition = CertifiedHeaderV1::decode_canonical(encoded)
             .map_err(|error| format!("committee transition codec: {error}"))?;
-        let (finalization, header, header_hash) = decode_certified_header(&transition)
+        let (finalization, header, _) = decode_certified_header(&transition)
             .map_err(|error| format!("committee transition decode failed: {error}"))?;
-        if header.number() <= self.previous_height
-            || finalization.proposal.payload != Digest(header_hash)
-        {
+        if header.number() <= self.previous_height {
             return Err("committee transition envelope or order is invalid".into());
         }
         let epoch = finalization.proposal.round.epoch();
@@ -124,7 +122,10 @@ impl FinalizedAdmissionVerifierV1 {
             .register_epoch_from_outcome(Epoch::new(next), &outcome)
             .map_err(|error| format!("successor committee rejected: {error}"))?;
         self.chain.retain_only_highest();
-        self.previous_height = header.number();
+        self.previous_height = header
+            .number()
+            .checked_add(transition.descendants.len() as u64)
+            .ok_or_else(|| "committee finality height overflow".to_owned())?;
         Ok(())
     }
 
@@ -133,9 +134,7 @@ impl FinalizedAdmissionVerifierV1 {
             .map_err(|error| format!("finalized admission witness codec: {error}"))?;
         let (finalization, header, header_hash) = decode_certified_header(&proof.admission)
             .map_err(|error| format!("admission finalization decode failed: {error}"))?;
-        if header.number() <= self.previous_height
-            || finalization.proposal.payload != Digest(header_hash)
-        {
+        if header.number() <= self.previous_height {
             return Err("admission finalization envelope or order is invalid".into());
         }
         let epoch = finalization.proposal.round.epoch();
@@ -196,6 +195,22 @@ fn decode_certified_header(
         return Err("trailing bytes after canonical Outbe header".into());
     }
     let hash = header.hash_slow();
+    let mut previous = header.clone();
+    for encoded in &proof.descendants {
+        let mut bytes = encoded.as_slice();
+        let child = OutbeHeader::decode(&mut bytes)
+            .map_err(|error| format!("invalid descendant header: {error}"))?;
+        if !bytes.is_empty()
+            || previous.number().checked_add(1) != Some(child.number())
+            || child.parent_hash() != previous.hash_slow()
+        {
+            return Err("finality ancestry is not a consecutive parent-hash chain".into());
+        }
+        previous = child;
+    }
+    if finalization.proposal.payload != Digest(previous.hash_slow()) {
+        return Err("finalization payload does not authenticate the header ancestry".into());
+    }
     Ok((finalization, header, hash))
 }
 
@@ -266,6 +281,7 @@ mod tests {
         )
         .unwrap();
         CertifiedHeaderV1 {
+            descendants: Vec::new(),
             finalization: finalization.to_vec(),
             header: alloy_rlp::encode(certified.block.header()).to_vec(),
         }
@@ -409,6 +425,12 @@ mod tests {
 
     #[test]
     fn real_e0_to_e1_finalization_chain_and_registry_mpt_verify_end_to_end() {
+        for indirect in [false, true] {
+            verify_real_proof(indirect);
+        }
+    }
+
+    fn verify_real_proof(indirect: bool) {
         use std::collections::BTreeMap;
 
         use alloy_primitives::{keccak256, Bytes};
@@ -511,13 +533,32 @@ mod tests {
             B256::repeat_byte(0x81),
             epoch1.preannounce_extra_data(Epoch::new(1)),
         );
-        let admission = epoch1.certify_block(Epoch::new(1), 2, 1_000, state_root, Vec::new());
+        let admission_height = if indirect { 3 } else { 2 };
+        let admission = epoch1.certify_block(
+            Epoch::new(1),
+            admission_height,
+            1_000,
+            state_root,
+            Vec::new(),
+        );
 
-        let transition_record =
-            compact_certified_header(&transition.finalization, &transition.block)
-                .encode_canonical()
-                .unwrap();
-        let proof = FinalizedAdmissionWitnessV1 {
+        let mut transition_header =
+            compact_certified_header(&transition.finalization, &transition.block);
+        if indirect {
+            let descendant = epoch0.certify_child_block(
+                Epoch::new(0),
+                2,
+                950,
+                B256::repeat_byte(0x82),
+                Vec::new(),
+                transition.block_hash,
+            );
+            let compact = compact_certified_header(&descendant.finalization, &descendant.block);
+            transition_header.finalization = compact.finalization;
+            transition_header.descendants.push(compact.header);
+        }
+        let transition_record = transition_header.encode_canonical().unwrap();
+        let mut proof = FinalizedAdmissionWitnessV1 {
             admission: compact_certified_header(&admission.finalization, &admission.block),
             registry_account: MptAccountProofV1 {
                 nonce: account.nonce,
@@ -540,17 +581,56 @@ mod tests {
                 })
                 .collect(),
         };
+        if indirect {
+            let descendant = epoch1.certify_child_block(
+                Epoch::new(1),
+                admission_height + 1,
+                1_001,
+                B256::repeat_byte(0x83),
+                Vec::new(),
+                admission.block_hash,
+            );
+            let compact = compact_certified_header(&descendant.finalization, &descendant.block);
+            proof.admission.finalization = compact.finalization;
+            proof.admission.descendants.push(compact.header);
+        }
         let mut verifier = FinalizedAdmissionVerifierV1::new(
             &descriptor,
             &context,
             &epoch0.outcome(Epoch::new(0)),
         )
         .unwrap();
+        // An untrusted history scanner may omit a pre-announce. The enclave
+        // must reject admission until the authenticated transition is supplied.
+        assert!(verifier
+            .verify_admission(&proof.encode_canonical().unwrap())
+            .unwrap_err()
+            .contains("skips an unauthenticated committee"));
+        if indirect {
+            // A descendant signed by the proposed committee cannot authenticate
+            // the transition that would install that same committee.
+            let forged = epoch1.certify_child_block(
+                Epoch::new(1),
+                2,
+                950,
+                B256::repeat_byte(0x82),
+                Vec::new(),
+                transition.block_hash,
+            );
+            let signed = compact_certified_header(&forged.finalization, &forged.block);
+            let mut circular = transition_header.clone();
+            circular.finalization = signed.finalization;
+            circular.descendants = vec![signed.header];
+            assert!(verifier
+                .advance_committee(&circular.encode_canonical().unwrap())
+                .unwrap_err()
+                .contains("current committee"));
+        }
         verifier.advance_committee(&transition_record).unwrap();
         let verified = verifier
             .verify_admission(&proof.encode_canonical().unwrap())
             .unwrap();
-        assert_eq!(verified.block_number, 2);
+        assert_eq!(verified.block_number, admission_height);
         assert_eq!(verified.block_hash, admission.block_hash);
         assert_eq!(verified.state_root, state_root);
         assert_eq!(verified.consensus_timestamp, 1_000);

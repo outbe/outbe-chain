@@ -254,6 +254,7 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
     let mut dkg = DkgSessionStore::new();
     let mut dcap_verification = DcapVerificationSessionV1::default();
     let mut onboarding_upload = OnboardingArtifactUploadSessionV1::default();
+    let mut call_stream = outbe_tee::call_context::StreamContext::default();
     // Seal the DKG-derived offer key + share once installed (Seam F). Tracked
     // per-connection so we attempt the write-once seal at most once here.
 
@@ -298,7 +299,10 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
         let n = noise
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
-        let req = decode_request(&pt[..n])?;
+        let call = outbe_tee::codec::decode_call(&pt[..n])?;
+        call_stream.accept(&call.request, call.ctx)?;
+        let _call_context = outbe_tee::call_context::ContextScope::enter(call.ctx);
+        let req = call.request;
         let req_label = req.label();
         let req_class = crate::initialization::request_class_label(&req);
         let req_started = std::time::SystemTime::now();

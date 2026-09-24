@@ -1,6 +1,6 @@
+use super::super::admission_history;
 use super::super::json_b256_field;
 use super::super::json_hex_array;
-use super::super::json_hex_bytes;
 use super::super::json_hex_u256_field;
 use super::super::json_hex_u64_field;
 use super::super::sign_node_hash;
@@ -21,7 +21,6 @@ use outbe_operator::tee::FinalizedRegistryChainViewV1;
 
 use outbe_operator::tee::RenewalBindingV1;
 
-use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
@@ -30,7 +29,6 @@ use outbe_primitives::tee_attestation_v1::TeePolicyScheduleV1;
 use outbe_tee::connect_committed_node_host_enclave;
 
 use outbe_tee::finalized_admission::onboarding_registry_slots_v1;
-use outbe_tee::finalized_admission::CertifiedHeaderV1;
 use outbe_tee::finalized_admission::FinalizedAdmissionRecordKindV1;
 use outbe_tee::finalized_admission::FinalizedAdmissionWitnessV1;
 use outbe_tee::finalized_admission::MptAccountProofV1;
@@ -258,21 +256,19 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
     }
 
     for height in 1..=finalized_height {
+        if !matches!(
+            admission_history::history_artifact(rpc, height).await?,
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) if boundary.epoch == 0
+        ) {
+            continue;
+        }
         let public = rpc
-            .outbe_get_finalization(height)
+            .outbe_get_finality_proof(height)
             .await
             .wrap_err_with(|| format!("read finalization at height {height}"))?;
-        let finalization = json_hex_bytes(&public, "finalizationHex")?;
-        let block = json_hex_bytes(&public, "blockHex")?;
-        let certified =
-            outbe_consensus::follow::decode_public_finalized_block(&finalization, &block, 256)
-                .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
-        if certified.block.number() != height {
-            eyre::bail!("outbe_getFinalization returned height mismatch at {height}");
-        }
-        let artifacts =
-            decode_outbe_block_artifacts(certified.block.header().extra_data().as_ref())
-                .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+        let (block, _) = admission_history::compact_header(&public, height)?;
+        let artifacts = decode_outbe_block_artifacts(block.header().extra_data().as_ref())
+            .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
             artifacts.consensus_header_artifact
         {
@@ -307,36 +303,39 @@ async fn stream_finalized_admission_attempt_v1(
         expected_offer_epoch,
     )?;
 
+    // Capture the exact state proof before scanning history while the head advances.
+    let slots = onboarding_registry_slots_v1(context);
+    let slot_params = slots
+        .iter()
+        .map(|slot| format!("{slot:#x}"))
+        .collect::<Vec<_>>();
+    let (finalized_height, opening) =
+        admission_history::registry_opening(rpc, finalized_height, &slot_params).await?;
+
     let mut next_transition_epoch = 1_u64;
     let mut admission = None;
     for height in 1..=finalized_height {
-        let public = rpc
-            .outbe_get_finalization(height)
-            .await
-            .wrap_err_with(|| format!("read finalization at height {height}"))?;
-        let finalization = json_hex_bytes(&public, "finalizationHex")?;
-        let block = json_hex_bytes(&public, "blockHex")?;
-        let certified =
-            outbe_consensus::follow::decode_public_finalized_block(&finalization, &block, 256)
-                .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
-        if certified.block.number() != height {
-            return Err(
-                eyre::eyre!("outbe_getFinalization returned height mismatch at {height}").into(),
-            );
-        }
-        let artifacts =
-            decode_outbe_block_artifacts(certified.block.header().extra_data().as_ref())
-                .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+        let Some(public) = admission_history::admission_public(
+            rpc,
+            height,
+            finalized_height,
+            next_transition_epoch,
+        )
+        .await?
+        else {
+            continue;
+        };
+        let (block, compact) = admission_history::compact_header(&public, height)?;
+        let artifacts = decode_outbe_block_artifacts(block.header().extra_data().as_ref())
+            .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
         if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) =
             artifacts.consensus_header_artifact
         {
             if height < finalized_height && epoch == next_transition_epoch {
-                let transition = CertifiedHeaderV1 {
-                    finalization: finalization.clone(),
-                    header: alloy_rlp::encode(certified.block.header()).to_vec(),
-                }
-                .encode_canonical()
-                .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
+                let transition = compact
+                    .clone()
+                    .encode_canonical()
+                    .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
                 enclave.upload_finalized_admission_record_v1(
                     request_hash,
                     FinalizedAdmissionRecordKindV1::CommitteeTransition,
@@ -348,22 +347,10 @@ async fn stream_finalized_admission_attempt_v1(
             }
         }
         if height == finalized_height {
-            admission = Some(CertifiedHeaderV1 {
-                finalization,
-                header: alloy_rlp::encode(certified.block.header()).to_vec(),
-            });
+            admission = Some(compact);
         }
     }
 
-    let slots = onboarding_registry_slots_v1(context);
-    let slot_params = slots
-        .iter()
-        .map(|slot| format!("{slot:#x}"))
-        .collect::<Vec<_>>();
-    let opening = rpc
-        .eth_get_proof(TEE_REGISTRY_ADDRESS, &slot_params, finalized_height)
-        .await
-        .wrap_err("read exact finalized TeeRegistry MPT opening")?;
     let registry_account = MptAccountProofV1 {
         nonce: json_hex_u64_field(&opening, "nonce")?,
         balance: json_hex_u256_field(&opening, "balance")?,

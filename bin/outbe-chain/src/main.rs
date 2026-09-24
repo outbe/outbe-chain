@@ -89,7 +89,8 @@ use launch::admission::{
 use launch::bundles::load_installed_ocomp_bundles;
 
 use launch::configuration::{
-    configure_outbe_engine_args, outbe_default_txpool_values, validate_adr005_node_mode,
+    configure_outbe_engine_args, outbe_default_rpc_values, outbe_default_txpool_values,
+    validate_adr005_node_mode,
 };
 
 use launch::identity::load_reth_p2p_node_host_signer;

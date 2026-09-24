@@ -14,13 +14,68 @@
 //! JSON number array (~4x under `serde_json`), and alloy `U256`/`Address`/`B256`
 //! serialize as raw bytes (non-human-readable serde) instead of hex strings, so
 //! many more offers fit under the 64 KiB Noise frame per `ProcessTributeOfferBatch`.
-//! Both binaries are built from this crate, so encoder and decoder always agree;
-//! the chain is from-genesis, so there is no legacy wire to stay compatible with.
+//! Authenticated calls carry a versioned context envelope. The decoder also
+//! accepts legacy requests and marks their context as unavailable; producers of
+//! context envelopes require a matching enclave receiver.
 
 use std::io::{Read, Write};
 
+use crate::call_context::{EnclaveCallContextV1, EnclaveContextKindV1};
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
+
+// Outside the legacy enum's postcard discriminants. Existing requests retain
+// their exact wire indices; the common envelope can evolve independently.
+const CALL_V1: &[u8] = b"\xff\xff\x00OUTBE-CTX\x01";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct EnclaveCallV1 {
+    pub ctx: EnclaveCallContextV1,
+    pub request: EnclaveRequest,
+}
+
+/// Encode every post-handshake call with one frozen context.
+pub fn encode_call(
+    ctx: EnclaveCallContextV1,
+    request: &EnclaveRequest,
+) -> Result<Vec<u8>, TransportError> {
+    let mut bytes = CALL_V1.to_vec();
+    // A tuple has the same postcard layout as the owned envelope, without
+    // cloning potentially large request buffers.
+    bytes.extend(
+        postcard::to_allocvec(&(ctx, request)).map_err(|e| TransportError::Codec(e.to_string()))?,
+    );
+    if bytes.len() > MAX_FRAME_LEN - 16 {
+        return Err(TransportError::FrameTooLarge(bytes.len() + 16));
+    }
+    Ok(bytes)
+}
+
+pub fn decode_call(bytes: &[u8]) -> Result<EnclaveCallV1, TransportError> {
+    if let Some(body) = bytes.strip_prefix(CALL_V1) {
+        let (call, rest) = postcard::take_from_bytes::<EnclaveCallV1>(body)
+            .map_err(|e| TransportError::Codec(e.to_string()))?;
+        if !rest.is_empty() {
+            return Err(TransportError::Codec("trailing enclave call bytes".into()));
+        }
+        Ok(call)
+    } else {
+        let (request, rest) = postcard::take_from_bytes::<EnclaveRequest>(bytes)
+            .map_err(|e| TransportError::Codec(e.to_string()))?;
+        if !rest.is_empty() {
+            return Err(TransportError::Codec(
+                "trailing legacy request bytes".into(),
+            ));
+        }
+        Ok(EnclaveCallV1 {
+            ctx: EnclaveCallContextV1 {
+                kind: EnclaveContextKindV1::Legacy,
+                ..Default::default()
+            },
+            request,
+        })
+    }
+}
 
 /// Hard cap on a single frame body. Bounds memory and matches the Noise 64 KiB
 /// message ceiling closely enough for the PoC (larger batches need chunking).
@@ -58,7 +113,7 @@ pub fn encode_request(req: &EnclaveRequest) -> Result<Vec<u8>, TransportError> {
 
 /// Deserialize a request from bytes (postcard).
 pub fn decode_request(bytes: &[u8]) -> Result<EnclaveRequest, TransportError> {
-    postcard::from_bytes(bytes).map_err(|e| TransportError::Codec(e.to_string()))
+    Ok(decode_call(bytes)?.request)
 }
 
 /// Serialize a response to bytes (postcard).
@@ -76,6 +131,39 @@ mod tests {
     use super::*;
     use crate::protocol::{EnclaveRequest, EncryptedTributeOffer, WorldwideDay};
     use alloy_primitives::{Address, U256};
+
+    #[test]
+    fn common_context_envelope_preserves_request_and_rejects_trailing_bytes() {
+        let ctx = EnclaveCallContextV1 {
+            kind: EnclaveContextKindV1::Execution,
+            chain_id: 424242,
+            genesis_hash: alloy_primitives::B256::repeat_byte(0x42),
+            block_number: 300,
+            block_timestamp: 1700000000,
+            protocol_version: 2,
+        };
+        for request in [
+            EnclaveRequest::Health,
+            EnclaveRequest::DkgStartDealer {
+                ceremony_id: alloy_primitives::B256::ZERO,
+            },
+            EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() },
+        ] {
+            let bytes = encode_call(ctx, &request).unwrap();
+            let decoded = decode_call(&bytes).unwrap();
+            assert_eq!(decoded.ctx, ctx);
+            assert_eq!(decoded.request, request);
+            let legacy = encode_request(&request).unwrap();
+            assert_eq!(
+                decode_call(&legacy).unwrap().ctx.kind,
+                EnclaveContextKindV1::Legacy
+            );
+            assert_eq!(decode_request(&legacy).unwrap(), request);
+            let mut trailing = bytes;
+            trailing.push(0);
+            assert!(decode_call(&trailing).is_err());
+        }
+    }
 
     #[test]
     fn frame_roundtrip() {
