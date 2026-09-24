@@ -968,10 +968,9 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(x_item.gem_type, GemTypes::Genesis as u8);
-            assert_eq!(
-                x_item.state,
-                outbe_gem::GemState::Qualified as u8,
-                "Genesis gem is born Qualified"
+            assert!(
+                outbe_gem::api::is_qualified(&ctx.storage, &x_item).unwrap(),
+                "Genesis gem qualifies from birth"
             );
 
             assert_eq!(gem.balance_of(VAL_Y).unwrap(), 1);

@@ -117,15 +117,17 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Gem -------------------------------------------------------------------
   server.tool(
     "gem_get",
-    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued) " +
-      "plus parsed tokenURI metadata.",
+    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued), whether it has " +
+      "qualified (born so, or derived from finalized daily VWAPs) plus parsed tokenURI metadata.",
     { id: z.string().describe("Gem token id (decimal or 0x hex)") },
     handler(async ({ id }) => {
-      const [data, metadata] = await Promise.all([
+      // A node without the view still answers the rest.
+      const [data, qualified, metadata] = await Promise.all([
         view(ctx, "gem", "getGemStatus", [BigInt(id)]),
+        view(ctx, "gem", "isQualified", [BigInt(id)]).catch(() => undefined),
         view(ctx, "gem", "tokenURI", [BigInt(id)]),
       ]);
-      return ok({ gemId: id, data, metadata });
+      return ok({ gemId: id, data, ...(qualified === undefined ? {} : { qualified }), metadata });
     }),
   );
 

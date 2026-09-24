@@ -502,7 +502,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
 fn measure_settle_gem_gas_with_real_paynote() {
     use alloy_evm::{Evm as _, EvmFactory as _};
     use alloy_sol_types::SolEvent as _;
-    use outbe_gem::{GemAddParams, GemState};
+    use outbe_gem::GemAddParams;
     use outbe_gemfactory::precompile::IGemFactory;
     use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
     use reth_ethereum::evm::primitives::EvmEnv;
@@ -524,6 +524,25 @@ fn measure_settle_gem_gas_with_real_paynote() {
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        // A finalized day above the floor qualifies the gem, which settlement requires.
+        let pair = match outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_CURRENCY)
+            .unwrap()
+        {
+            Some(index) => index,
+            None => outbe_oracle::api::register_pair(
+                storage.clone(),
+                outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_CURRENCY),
+            )
+            .unwrap(),
+        };
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let day = outbe_primitives::time::first_full_day(BLOCK_TIMESTAMP);
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&pair, U256::from(1_080_001))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         outbe_gem::api::add_gem(
             &storage,
             GemAddParams {
@@ -536,7 +555,6 @@ fn measure_settle_gem_gas_with_real_paynote() {
                 call_rate: 128,
                 issuance_currency: REFERENCE_CURRENCY,
                 reference_currency: REFERENCE_CURRENCY,
-                initial_state: GemState::Qualified,
                 issued_at: BLOCK_TIMESTAMP,
             },
         )
