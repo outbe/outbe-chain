@@ -72,9 +72,14 @@ impl Localnet {
             "upgrade acceptance requires hardware SGX"
         );
         ensure!(
-            index < self.committee_size() && round > 0,
+            index <= self.committee_size() && round > 0,
             "invalid candidate slot or round"
         );
+        self.live_enclave_pid(index)?;
+        if index == self.committee_size() {
+            let (_, exit) = self.owned_full_node_process(index)?;
+            ensure!(exit.is_none(), "FullNode exited before enclave upgrade");
+        }
         self.ensure_enclave_image_once()?;
         let active = self.active_enclave_profile(index)?;
         let image = self
@@ -144,7 +149,7 @@ impl Localnet {
         let slot = 10_000usize
             .checked_add(
                 (round as usize)
-                    .checked_mul(self.committee_size())
+                    .checked_mul(self.committee_size() + 1)
                     .ok_or_else(|| eyre!("round overflow"))?,
             )
             .and_then(|slot| slot.checked_add(index))
@@ -295,11 +300,23 @@ impl Localnet {
         );
         let index = candidate.index;
         let endpoint = candidate.endpoint();
-        let original = self
-            .validator_argv
-            .get(&index)
-            .ok_or_else(|| eyre!("validator has no captured argv"))?;
-        let argv = with_enclave_endpoint(original, &endpoint)?;
+        let argv = if index < self.committee_size() {
+            Some(with_enclave_endpoint(
+                self.validator_argv
+                    .get(&index)
+                    .ok_or_else(|| eyre!("validator has no captured argv"))?,
+                &endpoint,
+            )?)
+        } else {
+            ensure!(
+                index == self.committee_size()
+                    && !self
+                        .followers
+                        .contains_key(&format!("joiner-full-node-{index}")),
+                "stop owned FullNode before selecting its replacement enclave"
+            );
+            None
+        };
         let recovery = self
             .validator_recovery_original_argv
             .get(&index)
@@ -308,7 +325,9 @@ impl Localnet {
         if let Some(mut old) = self.enclaves.remove(&index) {
             old.stop_and_reap()?;
         }
-        self.validator_argv.insert(index, argv);
+        if let Some(argv) = argv {
+            self.validator_argv.insert(index, argv);
+        }
         if let Some(recovery) = recovery {
             self.validator_recovery_original_argv
                 .insert(index, recovery);

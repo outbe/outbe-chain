@@ -326,7 +326,7 @@ impl Localnet {
             "--p2p-secret-key",
             p2p_secret_file.display(),
             "--tee-enclave-socket",
-            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            format!("127.0.0.1:{}", self.active_enclave_profile(index)?.port),
             "--upstream",
             format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             "--consensus.listen-addr",

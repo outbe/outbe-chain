@@ -19,7 +19,16 @@ fn permanent_key(world: &World, port: u16) -> U256 {
     .expect("finalized permanent offer key")
 }
 
-fn binding(world: &World, port: u16, owner: Address) -> B256 {
+fn binding(world: &World, port: u16, index: usize) -> B256 {
+    use alloy_signer_local::PrivateKeySigner;
+    use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+
+    let directory = world.validators.data_dir(index);
+    let secret = std::fs::read_to_string(directory.parent().unwrap().join("reth-p2p-secret.hex"))
+        .expect("existing NodeHost P2P identity");
+    let signer: PrivateKeySigner = secret.trim().parse().expect("valid NodeHost P2P key");
+    let encoded = signer.credential().verifying_key().to_encoded_point(true);
+    let public = encoded.as_bytes();
     let height = world
         .rpc
         .finalized(port)
@@ -27,7 +36,10 @@ fn binding(world: &World, port: u16, owner: Address) -> B256 {
     eth::read_call_at_result(
         &world.rpc.url(port),
         addresses::TEE_ADDR,
-        &eth::ITeeRegistryV1::validatorEnclaveBindingCall { validator: owner },
+        &ITeeRegistryV1::nodeHostEnclaveBindingCall {
+            rethP2pPrefix: public[0],
+            rethP2pX: B256::from_slice(&public[1..]),
+        },
         height,
     )
     .expect("finalized validator binding")
@@ -115,6 +127,19 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
         !permanent.is_zero(),
         "existing DKG must already own the permanent key"
     );
+    let full_node = world.state.ocomp_successor_bundle_hash.map(|_| {
+        let index = world.validators.joiner_index();
+        let (pid, exit) = world
+            .localnet
+            .owned_full_node_process(index)
+            .expect("owned FullNode before enclave rollout");
+        assert!(exit.is_none(), "FullNode exited before enclave rollout");
+        world
+            .ocomp
+            .stop_keyless_full_node_roles(index.try_into().unwrap())
+            .expect("stop FullNode clients before enclave rollout");
+        (index, pid)
+    });
     // Only one replacement enclave is live at a time, bounding SGX TCS/EPC use.
     let mut first = Some(
         world
@@ -176,7 +201,7 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
     );
     let genesis = world.localnet.scenario_dir().join("genesis.json");
     let mut signers = std::collections::BTreeSet::new();
-    for index in 0..4 {
+    for index in (0..4).chain(full_node.map(|(index, _)| index)) {
         let donor = if index == 0 { 3 } else { 0 };
         let port = ports[donor];
         let mut candidate: HardwareEnclaveCandidate = if index == 0 {
@@ -201,7 +226,12 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             .unwrap()
             .parse::<Address>()
             .unwrap();
-        let before = binding(world, port, owner);
+        let before = binding(world, port, index);
+        assert_ne!(
+            before,
+            B256::ZERO,
+            "upgrade requires the existing NodeHost binding"
+        );
         let active_dir = world
             .localnet
             .active_enclave_seal_directory(index)
@@ -238,7 +268,7 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             .run_candidate_upgrade_cli(&candidate, donor, "upgrade-provision", &provision)
             .expect("transfer existing network key through finalized authorization");
         assert_eq!(
-            binding(world, port, owner),
+            binding(world, port, index),
             before,
             "preparation replaced active binding"
         );
@@ -314,7 +344,7 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
                 "cancellation must retain replay protection"
             );
             assert_eq!(
-                binding(world, port, owner),
+                binding(world, port, index),
                 before,
                 "cancellation replaced active binding"
             );
@@ -335,6 +365,12 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             assert_eq!(renewed.nonce, pending.nonce + 1);
             assert_ne!(renewed.contextHash, pending.contextHash);
         }
+        if let Some((full_index, pid)) = full_node.filter(|(slot, _)| *slot == index) {
+            world
+                .localnet
+                .stop_joiner_full_node_owned(full_index, pid)
+                .expect("stop exact FullNode before committing its enclave transition");
+        }
         world
             .localnet
             .run_candidate_upgrade_cli(
@@ -350,7 +386,7 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             )
             .expect("submit resident-key transition");
         let deadline = Instant::now() + Duration::from_secs(120);
-        while binding(world, port, owner) != id {
+        while binding(world, port, index) != id {
             assert!(
                 Instant::now() < deadline,
                 "candidate transition was not finalized"
@@ -371,36 +407,56 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             .localnet
             .select_promoted_hardware_candidate(candidate, donor)
             .expect("select exact promoted enclave");
-        let marker = "local TEE recovery anchor durably persisted; validator restart ready";
-        let previous = world
-            .localnet
-            .log_count(index, marker)
-            .expect("capture recovery marker baseline");
-        let follower = world
-            .localnet
-            .launch_validator_recovery_follower(index, donor)
-            .expect("start certified recovery follower");
-        let deadline = Instant::now() + Duration::from_secs(180);
-        while world
-            .localnet
-            .log_count(index, marker)
-            .expect("read recovery progress")
-            <= previous
-        {
-            assert!(
-                Instant::now() < deadline,
-                "recovery anchor was not durably committed"
-            );
-            sleep(Duration::from_millis(500));
+        if index < 4 {
+            let marker = "local TEE recovery anchor durably persisted; validator restart ready";
+            let previous = world
+                .localnet
+                .log_count(index, marker)
+                .expect("capture recovery marker baseline");
+            let follower = world
+                .localnet
+                .launch_validator_recovery_follower(index, donor)
+                .expect("start certified recovery follower");
+            let deadline = Instant::now() + Duration::from_secs(180);
+            while world
+                .localnet
+                .log_count(index, marker)
+                .expect("read recovery progress")
+                <= previous
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "recovery anchor was not durably committed"
+                );
+                sleep(Duration::from_millis(500));
+            }
+            world
+                .localnet
+                .stop_follower(&follower)
+                .expect("stop recovered follower");
+            world
+                .localnet
+                .restart_validator(index)
+                .expect("restore validator authority");
+        } else {
+            world
+                .localnet
+                .launch_dcap_full_node(&format!("joiner-full-node-{index}"), index, donor)
+                .expect(
+                    "restore non-voting FullNode using its promoted enclave and preserved datadir",
+                );
+            let (pid, exit) = world
+                .localnet
+                .owned_full_node_process(index)
+                .expect("replacement FullNode owner");
+            assert!(exit.is_none());
+            assert_ne!(pid, full_node.unwrap().1);
+            *world
+                .state
+                .ocomp_successor_node_pids_after_activation
+                .last_mut()
+                .expect("FullNode PID observation") = pid;
         }
-        world
-            .localnet
-            .stop_follower(&follower)
-            .expect("stop recovered follower");
-        world
-            .localnet
-            .restart_validator(index)
-            .expect("restore validator authority");
         let height = world
             .rpc
             .finalized(port)
@@ -434,6 +490,40 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             &eth::ITeeRegistryV1::isValidatorEnclaveReadyCall { validator: owner }
         )
         .expect("post-retirement readiness"));
+    }
+    if let Some((index, _)) = full_node {
+        world
+            .ocomp
+            .start_keyless_full_node_roles(index.try_into().unwrap())
+            .expect("restore existing FullNode computation domain after enclave migration");
+        let mut all_ports = ports.clone();
+        all_ports.push(world.validators.http_port(index));
+        world
+            .rpc
+            .wait_finalized_checkpoint(&all_ports, activation + 3, 180)
+            .expect("FullNode retains certified finality after measurement retirement");
+        assert_eq!(
+            world.rpc.active_count(ports[0]),
+            Some(4),
+            "FullNode acquired validator authority"
+        );
+        assert!(
+            !world
+                .validators
+                .data_dir(index)
+                .parent()
+                .unwrap()
+                .join("ocomp-key-v1.hex")
+                .exists(),
+            "FullNode acquired an OCOMP voting key"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .state_root(world.validators.http_port(index), activation + 3),
+            world.rpc.state_root(ports[0], activation + 3),
+            "FullNode state differs after enclave migration"
+        );
     }
     resume_computation(world, clients, price);
     eprintln!("HARDWARE_ENCLAVE_UPGRADE round={round} version={version} proposal={proposal} activation={activation} mrenclave={measurement} permanent_key={permanent:#x}");
