@@ -136,6 +136,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens burned.
     event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
+    /// @notice Emitted when the collection's daily VWAP source is set.
+    event VwapSourceSet(address indexed source);
+
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Issued tokens were burned.
@@ -245,7 +248,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The amount of burned tokens.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
+    /// @notice Point the collection at the daily VWAP source its cards read. Admin only; zero derives none.
+    function setVwapSource(address source) external;
+
     // --- Reads ---
+
+    /// @notice The daily VWAP source the cards read; zero until set.
+    function vwapSource() external view returns (address);
 
     /// @notice Whether the series has been created here.
     /// @param seriesId Series identifier.
