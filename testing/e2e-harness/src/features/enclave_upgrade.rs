@@ -20,6 +20,14 @@ fn permanent_key(world: &World, port: u16) -> U256 {
 }
 
 fn binding(world: &World, port: u16, index: usize) -> B256 {
+    binding_view(world, port, index).bindingId
+}
+
+fn binding_view(
+    world: &World,
+    port: u16,
+    index: usize,
+) -> outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1View {
     use alloy_signer_local::PrivateKeySigner;
     use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
@@ -43,7 +51,6 @@ fn binding(world: &World, port: u16, index: usize) -> B256 {
         height,
     )
     .expect("finalized validator binding")
-    .bindingId
 }
 
 #[when(expr = "the operators install node release version {string} before enclave governance")]
@@ -530,8 +537,108 @@ fn upgrade_hardware_committee(world: &mut World, version: String, binary: String
             "FullNode state differs after enclave migration"
         );
     }
+    for index in (0..4).chain(full_node.map(|(index, _)| index)) {
+        let donor = if index == 0 { 3 } else { 0 };
+        let before = binding(world, ports[donor], index);
+        let output = world
+            .localnet
+            .renew_active_hardware_enclave(index, donor)
+            .expect("normal tee renew must work after promoted enclave retirement");
+        assert!(
+            output.contains("NotDue"),
+            "fresh lease unexpectedly due: {output}"
+        );
+        assert_eq!(
+            binding(world, ports[donor], index),
+            before,
+            "checking a fresh lease must not replace its binding"
+        );
+        assert_eq!(permanent_key(world, ports[donor]), permanent);
+        eprintln!("HARDWARE_ENCLAVE_RENEWAL round={round} node={index} outcome=not_due");
+    }
     resume_computation(world, clients, price);
+    renew_promoted_leases_when_due(world, full_node.map(|(index, _)| index), round, permanent);
     eprintln!("HARDWARE_ENCLAVE_UPGRADE round={round} version={version} proposal={proposal} activation={activation} mrenclave={measurement} permanent_key={permanent:#x}");
+}
+
+fn renew_promoted_leases_when_due(
+    world: &mut World,
+    full_node: Option<usize>,
+    round: u32,
+    permanent: U256,
+) {
+    let ports = world.validators.committee_ports();
+    let lease = outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1;
+    let before: Vec<_> = (0..4)
+        .chain(full_node)
+        .map(|index| (index, binding_view(world, ports[0], index)))
+        .collect();
+    let target = before
+        .iter()
+        .map(|(_, binding)| binding.validUntil.checked_sub(lease / 2).unwrap())
+        .max()
+        .unwrap()
+        + 1;
+    let (_, _, _, pending) =
+        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        let height = world
+            .rpc
+            .finalized(ports[0])
+            .expect("lease window checkpoint");
+        let timestamp = world.rpc.block_timestamp(ports[0], height).unwrap();
+        if timestamp >= target {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "consensus clock did not reach lease renewal window"
+        );
+        sleep(Duration::from_millis(500));
+    }
+    if let Some(pending) = pending {
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            assert!(
+                Instant::now() < deadline,
+                "feeder did not recover after renewal clock advance"
+            );
+            sleep(Duration::from_millis(500));
+        }
+    }
+    for (index, old) in before {
+        let donor = if index == 0 { 3 } else { 0 };
+        let output = world
+            .localnet
+            .renew_active_hardware_enclave(index, donor)
+            .expect("renew promoted hardware enclave lease through normal CLI");
+        assert!(
+            output.contains("Finalized"),
+            "due renewal did not finalize: {output}"
+        );
+        let renewed = binding_view(world, ports[donor], index);
+        assert_eq!(renewed.bindingId, old.bindingId);
+        assert_eq!(renewed.enclaveId, old.enclaveId);
+        assert_eq!(renewed.bindingVersion, old.bindingVersion);
+        assert_eq!(renewed.transitionNonce, old.transitionNonce);
+        assert_eq!(renewed.registrationVersion, old.registrationVersion + 1);
+        assert_eq!(renewed.renewalNonce, old.renewalNonce + 1);
+        assert_eq!(renewed.validUntil, old.validUntil + lease);
+        assert_eq!(permanent_key(world, ports[donor]), permanent);
+        let repeated = world
+            .localnet
+            .renew_active_hardware_enclave(index, donor)
+            .expect("repeat normal renewal after finalization");
+        assert!(
+            repeated.contains("NotDue"),
+            "finalized lease renewed twice: {repeated}"
+        );
+        assert_eq!(
+            binding_view(world, ports[donor], index).renewalNonce,
+            renewed.renewalNonce
+        );
+        eprintln!("HARDWARE_ENCLAVE_RENEWAL round={round} node={index} outcome=finalized old_until={} new_until={} nonce={}", old.validUntil, renewed.validUntil, renewed.renewalNonce);
+    }
 }
 
 fn suspend_computation(

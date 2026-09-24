@@ -267,6 +267,33 @@ impl Localnet {
         self.sh().cli_required(args)
     }
 
+    pub(crate) fn renew_active_hardware_enclave(
+        &self,
+        index: usize,
+        donor: usize,
+    ) -> Result<String> {
+        ensure!(
+            donor < self.committee_size() && donor != index,
+            "renewal requires another live RPC peer"
+        );
+        let profile = self.active_enclave_profile(index)?;
+        let directory = self.cfg.validator_dir(index);
+        self.sh().cli_required(vec![
+            "--rpc-url".into(),
+            format!("http://127.0.0.1:{}", self.cfg.http_port(donor)),
+            "--private-key".into(),
+            proc::read_evm_key(&directory)?,
+            "tee".into(),
+            "renew".into(),
+            "--node-data-dir".into(),
+            directory.join("data").display().to_string(),
+            "--enclave-socket".into(),
+            format!("127.0.0.1:{}", profile.port),
+            "--reth-p2p-secret-key".into(),
+            directory.join("reth-p2p-secret.hex").display().to_string(),
+        ])
+    }
+
     /// Only select B after the production CLI durably promoted its journal.
     pub(crate) fn select_promoted_hardware_candidate(
         &mut self,
