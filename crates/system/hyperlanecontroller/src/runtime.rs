@@ -1,15 +1,27 @@
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{eip191_hash_message, keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
+use outbe_primitives::tee_signatures::recover_signer;
+use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::errors::HyperlaneControllerError;
 use crate::precompile::IHyperlaneController;
-use crate::schema::HyperlaneControllerContract;
+use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
-use outbe_validatorset::contract::ValidatorSet;
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
+
+/// Submissions younger than this many blocks do not count towards the
+/// per-domain reference index: time for the agent to sign, upload, and the
+/// feeder to submit before a lagging validator is considered behind.
+pub const GRACE_BLOCKS: u64 = 30;
+/// The liveness verdict runs at every block number that is a multiple of
+/// this, the same cadence as the oracle slash window.
+pub const LIVENESS_WINDOW_BLOCKS: u64 = 150;
+/// Consecutive window misses before a validator is jailed.
+pub const MAX_MISSES: u32 = 3;
 
 /// One call executed by the controller's Interchain Account on a remote chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,12 +58,16 @@ impl HyperlaneControllerContract<'_> {
         router: Address,
         domains: &[u32],
         isms: &[Address],
+        hooks: &[Address],
     ) -> Result<()> {
         if self.is_initialized()? {
             return Err(HyperlaneControllerError::AlreadyInitialized.into());
         }
         if domains.len() != isms.len() {
             return Err(HyperlaneControllerError::IsmLengthMismatch.into());
+        }
+        if domains.len() != hooks.len() {
+            return Err(HyperlaneControllerError::HookLengthMismatch.into());
         }
         let local = self.local_domain()?;
         let local_ism = domains
@@ -81,8 +97,8 @@ impl HyperlaneControllerContract<'_> {
                     .into(),
             )?;
             self.router.write(router)?;
-            for (domain, ism) in domains.iter().zip(isms) {
-                self.write_domain(*domain, *ism)?;
+            for ((domain, ism), hook) in domains.iter().zip(isms).zip(hooks) {
+                self.write_domain(*domain, *ism, *hook)?;
             }
             self.emit(IHyperlaneController::Initialized { router })
         })
@@ -219,11 +235,11 @@ impl HyperlaneControllerContract<'_> {
 
     /// Connects a remote chain (or replaces its ISM). The local domain is
     /// fixed at `initialize`.
-    pub fn add_domain(&mut self, domain: u32, ism: Address) -> Result<()> {
+    pub fn add_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<()> {
         self.require_initialized()?;
         self.require_remote_domain(domain)?;
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.write_domain(domain, ism))
+        storage.with_checkpoint(|| self.write_domain(domain, ism, hook))
     }
 
     /// Disconnects a remote chain from validator synchronisation.
@@ -248,6 +264,192 @@ impl HyperlaneControllerContract<'_> {
             }
             self.emit(IHyperlaneController::DomainRemoved { domain })
         })
+    }
+
+    // ----------------------------------------------------------------------
+    // Liveness: validators prove their Hyperlane agent keeps signing
+    // ----------------------------------------------------------------------
+
+    /// Registers the key `caller`'s validator signs Hyperlane checkpoints
+    /// with. Zero resets to the validator address.
+    pub fn set_hyperlane_signer(&mut self, caller: Address, signer: Address) -> Result<()> {
+        let validator = self.validator_of_sender(caller)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.signer_of.write(&validator, signer)?;
+            self.emit(IHyperlaneController::HyperlaneSignerSet { validator, signer })
+        })
+    }
+
+    /// Liveness proof for one domain. The caller (validator or its oracle
+    /// delegate, i.e. the feeder key) submits its latest signed checkpoint;
+    /// the signature is verified against the validator's Hyperlane signer and
+    /// only the index is recorded.
+    pub fn submit_checkpoint(
+        &mut self,
+        caller: Address,
+        domain: u32,
+        root: B256,
+        index: u32,
+        message_id: B256,
+        signature: &[u8],
+    ) -> Result<()> {
+        self.require_initialized()?;
+        let validator = self.validator_of_sender(caller)?;
+        let hook = self.hook_by_domain.read(&domain)?;
+        if hook == Address::ZERO {
+            return Err(HyperlaneControllerError::UnknownHook { domain }.into());
+        }
+        let signature: &[u8; 65] =
+            signature
+                .try_into()
+                .map_err(|_| HyperlaneControllerError::InvalidSignatureLength {
+                    length: signature.len(),
+                })?;
+        let recovered = recover_signer(
+            &checkpoint_digest(domain, hook, root, index, message_id),
+            signature,
+        )?;
+        let expected = self.hyperlane_signer(validator)?;
+        if recovered != expected {
+            return Err(HyperlaneControllerError::SignerMismatch {
+                validator,
+                expected,
+                recovered,
+            }
+            .into());
+        }
+        let key = validator_domain_key(validator, domain);
+        let submitted = self.submitted_index.read(&key)?;
+        if index < submitted {
+            return Err(HyperlaneControllerError::StaleIndex { index, submitted }.into());
+        }
+        let block = self.storage.block_number()?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.submitted_index.write(&key, index)?;
+            self.submitted_block.write(&key, block)?;
+            self.emit(IHyperlaneController::CheckpointSubmitted {
+                validator,
+                domain,
+                index,
+            })
+        })
+    }
+
+    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]). Per domain
+    /// the reference index is the `threshold`-th highest submission among
+    /// active validators, counting only submissions older than
+    /// [`GRACE_BLOCKS`]: one validator cannot inflate it, and a checkpoint
+    /// everyone is still catching up on is ignored. A validator below the
+    /// reference on any domain gets a miss; [`MAX_MISSES`] consecutive misses
+    /// jail it (no slash). A validator with no submission yet is stamped and
+    /// evaluated from the next window. Returns the validators jailed.
+    pub fn check_liveness(&mut self) -> Result<Vec<Address>> {
+        if !self.is_initialized()? {
+            return Ok(Vec::new());
+        }
+        let now = self.storage.block_number()?;
+        let mut validator_set = ValidatorSet::new(self.storage.clone());
+        let active: Vec<Address> = validator_set
+            .get_active_validators()?
+            .into_iter()
+            .map(|record| record.validator_address)
+            .collect();
+        if active.is_empty() {
+            return Ok(Vec::new());
+        }
+        let threshold = usize::from(consensus_threshold(active.len())?);
+        let domains = self.domains.read_all()?;
+
+        let mut references: Vec<(u32, Option<u32>)> = Vec::with_capacity(domains.len());
+        for domain in &domains {
+            let mut settled = Vec::with_capacity(active.len());
+            for validator in &active {
+                let key = validator_domain_key(*validator, *domain);
+                let block = self.submitted_block.read(&key)?;
+                if block != 0 && block.saturating_add(GRACE_BLOCKS) <= now {
+                    settled.push(self.submitted_index.read(&key)?);
+                }
+            }
+            settled.sort_unstable_by(|a, b| b.cmp(a));
+            references.push((*domain, settled.get(threshold - 1).copied()));
+        }
+
+        let mut jailed = Vec::new();
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            for validator in &active {
+                let mut newcomer = false;
+                let mut behind = false;
+                for (domain, reference) in &references {
+                    let key = validator_domain_key(*validator, *domain);
+                    if self.submitted_block.read(&key)? == 0 {
+                        self.submitted_block.write(&key, now)?;
+                        newcomer = true;
+                        continue;
+                    }
+                    if let Some(reference) = reference {
+                        if self.submitted_index.read(&key)? < *reference {
+                            behind = true;
+                        }
+                    }
+                }
+                if newcomer {
+                    continue;
+                }
+                if !behind {
+                    if self.miss_count.read(validator)? != 0 {
+                        self.miss_count.write(validator, 0)?;
+                    }
+                    continue;
+                }
+                let misses = self.miss_count.read(validator)?.saturating_add(1);
+                self.emit(IHyperlaneController::LivenessMiss {
+                    validator: *validator,
+                    misses,
+                })?;
+                if misses < MAX_MISSES {
+                    self.miss_count.write(validator, misses)?;
+                    continue;
+                }
+                validator_set.jail_validator(*validator)?;
+                self.miss_count.write(validator, 0)?;
+                self.emit(IHyperlaneController::LivenessJailed {
+                    validator: *validator,
+                })?;
+                jailed.push(*validator);
+            }
+            Ok(())
+        })?;
+        Ok(jailed)
+    }
+
+    /// Hyperlane signer of `validator`: the registered key, else the
+    /// validator address itself.
+    pub fn hyperlane_signer(&self, validator: Address) -> Result<Address> {
+        let signer = self.signer_of.read(&validator)?;
+        Ok(if signer == Address::ZERO {
+            validator
+        } else {
+            signer
+        })
+    }
+
+    /// The active validator a transaction sender acts for: the validator
+    /// itself or its oracle delegate (the feeder key).
+    fn validator_of_sender(&self, sender: Address) -> Result<Address> {
+        let validator_set = ValidatorSet::new(self.storage.clone());
+        let validator = validator_set
+            .resolve_validator_for_role(sender, ValidatorDelegateRole::Oracle)?
+            .ok_or(HyperlaneControllerError::NotActiveValidator { caller: sender })?;
+        if !validator_set
+            .validator_lifecycle(validator)?
+            .is_active_status()
+        {
+            return Err(HyperlaneControllerError::NotActiveValidator { caller: sender }.into());
+        }
+        Ok(validator)
     }
 
     // ----------------------------------------------------------------------
@@ -386,19 +588,46 @@ impl HyperlaneControllerContract<'_> {
         Ok(())
     }
 
-    fn write_domain(&mut self, domain: u32, ism: Address) -> Result<()> {
+    fn write_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<()> {
         if domain == 0 {
             return Err(HyperlaneControllerError::InvalidDomain.into());
         }
-        if ism == Address::ZERO {
+        if ism == Address::ZERO || hook == Address::ZERO {
             return Err(HyperlaneControllerError::InvalidAddress.into());
         }
         if self.ism_by_domain.read(&domain)? == Address::ZERO {
             self.domains.push(domain)?;
         }
         self.ism_by_domain.write(&domain, ism)?;
+        self.hook_by_domain.write(&domain, hook)?;
         self.emit(IHyperlaneController::DomainAdded { domain, ism })
     }
+}
+
+/// The EIP-191 digest a Hyperlane validator signs for a checkpoint
+/// (`hyperlane-core`'s `CheckpointWithMessageId::signing_hash`):
+/// `domain_hash = keccak(domain_be32 || hook_bytes32 || "HYPERLANE")`,
+/// `signing_hash = keccak(domain_hash || root || index_be32 || message_id)`,
+/// then `personal_sign` over the 32-byte signing hash.
+pub fn checkpoint_digest(
+    domain: u32,
+    hook: Address,
+    root: B256,
+    index: u32,
+    message_id: B256,
+) -> B256 {
+    let mut domain_input = Vec::with_capacity(4 + 32 + 9);
+    domain_input.extend_from_slice(&domain.to_be_bytes());
+    domain_input.extend_from_slice(hook.into_word().as_slice());
+    domain_input.extend_from_slice(b"HYPERLANE");
+    let domain_hash = keccak256(&domain_input);
+
+    let mut signing_input = Vec::with_capacity(32 + 32 + 4 + 32);
+    signing_input.extend_from_slice(domain_hash.as_slice());
+    signing_input.extend_from_slice(root.as_slice());
+    signing_input.extend_from_slice(&index.to_be_bytes());
+    signing_input.extend_from_slice(message_id.as_slice());
+    eip191_hash_message(keccak256(&signing_input))
 }
 
 /// Bridge threshold for `n` active validators: the same 2/3 rule as the

@@ -41,7 +41,8 @@ pub(crate) use late_credits::run_late_finalize_credits;
 
 use cycle::{run_cycle_tick_at_activation, run_cycle_tick_with_readers_at_activation};
 pub(crate) use cycle::{
-    run_hook_events, run_ocomp_lifecycle_begin, run_ocomp_terminal_request, run_oracle_slash_window,
+    run_hook_events, run_hyperlane_liveness_window, run_ocomp_lifecycle_begin,
+    run_ocomp_terminal_request, run_oracle_slash_window,
 };
 
 pub(crate) use boundary::run_boundary_outcome;
@@ -216,6 +217,7 @@ fn dispatch_inner(
         SystemTxInputV2::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_oracle_slash_window(&ctx)?;
+            run_hyperlane_liveness_window(&ctx);
         }
         SystemTxInputV2::HookEvents => {
             let ctx = block_runtime_context_from_storage(storage, false)?;

@@ -6,7 +6,7 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::schema::HyperlaneControllerContract;
+use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 
 /// Selectors that accept native value: only `fund`, the top-up of the balance
 /// that pays Interchain Account dispatch fees. The route table binds this list
@@ -34,7 +34,7 @@ pub fn dispatch(
             let mut controller = HyperlaneControllerContract::new(storage);
             match call {
                 initialize(c) => mutate_void(c, caller, |sender, c| {
-                    controller.initialize(sender, c.router, &c.domains, &c.isms)
+                    controller.initialize(sender, c.router, &c.domains, &c.isms, &c.hooks)
                 }),
                 fund(c) => {
                     mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, _, amount| {
@@ -42,9 +42,30 @@ pub fn dispatch(
                     })
                 }
                 sync(c) => mutate(c, caller, |_, _| controller.sync()),
+                setHyperlaneSigner(c) => mutate_void(c, caller, |sender, c| {
+                    controller.set_hyperlane_signer(sender, c.signer)
+                }),
+                submitCheckpoint(c) => mutate_void(c, caller, |sender, c| {
+                    controller.submit_checkpoint(
+                        sender,
+                        c.domain,
+                        c.root,
+                        c.index,
+                        c.messageId,
+                        &c.signature,
+                    )
+                }),
                 router(c) => view(c, |_| controller.router.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
+                hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),
                 domains(c) => view(c, |_| controller.domains.read_all()),
+                hyperlaneSigner(c) => view(c, |c| controller.signer_of.read(&c.validator)),
+                submittedIndex(c) => view(c, |c| {
+                    controller
+                        .submitted_index
+                        .read(&validator_domain_key(c.validator, c.domain))
+                }),
+                missCount(c) => view(c, |c| controller.miss_count.read(&c.validator)),
             }
         },
     )

@@ -128,6 +128,11 @@ pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
     outbe_oracle::lifecycle::run_slash_window(ctx)
 }
 
+/// Hyperlane liveness window, same phase as the Oracle slash window.
+pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) {
+    outbe_hyperlanecontroller::lifecycle::run_liveness_window(ctx)
+}
+
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
 /// attached to this phase's receipt by the executor without re-running hooks.
 pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {

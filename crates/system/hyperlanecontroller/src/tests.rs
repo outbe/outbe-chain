@@ -74,11 +74,19 @@ fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
     p.enable_sub_call_stub();
 }
 
+fn hook(n: u8) -> Address {
+    let mut bytes = [0u8; 20];
+    bytes[18] = 0x0a;
+    bytes[19] = n;
+    Address::from(bytes)
+}
+
 fn initialize_call() -> Bytes {
     IHyperlaneController::initializeCall {
         router: router(),
         domains: vec![LOCAL, SEPOLIA, BSC],
         isms: vec![local_ism(), sepolia_ism(), bsc_ism()],
+        hooks: vec![hook(1), hook(2), hook(3)],
     }
     .abi_encode()
     .into()
@@ -205,6 +213,7 @@ fn initialize_is_gated_and_one_shot() {
             router: router(),
             domains: vec![SEPOLIA],
             isms: vec![sepolia_ism()],
+            hooks: vec![hook(2)],
         }
         .abi_encode()
         .into();
@@ -332,9 +341,9 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
         let mut c = HyperlaneControllerContract::new(storage);
-        c.add_domain(1, v(5)).unwrap();
+        c.add_domain(1, v(5), hook(5)).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC, 1]);
-        c.add_domain(1, v(6)).unwrap();
+        c.add_domain(1, v(6), hook(6)).unwrap();
         assert_eq!(c.ism_by_domain.read(&1).unwrap(), v(6));
         assert_eq!(c.domains.read_all().unwrap().len(), 4);
 
@@ -344,8 +353,8 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
 
         assert!(c.remove_domain(SEPOLIA).is_err());
         assert!(c.remove_domain(LOCAL).is_err());
-        assert!(c.add_domain(LOCAL, v(7)).is_err());
-        assert!(c.add_domain(0, v(7)).is_err());
+        assert!(c.add_domain(LOCAL, v(7), hook(7)).is_err());
+        assert!(c.add_domain(0, v(7), hook(7)).is_err());
     });
 }
 
@@ -369,7 +378,7 @@ fn operations_require_initialization() {
                 }]
             )
             .is_err());
-        assert!(c.add_domain(SEPOLIA, v(1)).is_err());
+        assert!(c.add_domain(SEPOLIA, v(1), hook(1)).is_err());
     });
 }
 
@@ -471,5 +480,379 @@ mod sync {
             assert!(!c.sync().unwrap());
         });
         assert!(topics(&p).is_empty());
+    }
+}
+
+mod liveness {
+    use super::*;
+    use crate::runtime::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
+    use crate::schema::validator_domain_key;
+    use alloy_primitives::{b256, hex};
+    use outbe_primitives::tee_signatures::recover_signer;
+    use outbe_validatorset::contract::ValidatorSet;
+
+    /// Real checkpoints signed on outbetestnet by validator 0x4fe927… for the
+    /// (since redeployed) MerkleTreeHook 0x6543cef9…, taken from its S3 bucket.
+    const FIXTURE_HOOK: Address = address!("0x6543cef9bbe42d66b5b36ccaf9374de2b55f9cbc");
+    const FIXTURE_VALIDATOR: Address = address!("0x4fe927ab711793954b3a29969ecd4a60d6d265d0");
+    const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
+
+    struct Checkpoint {
+        root: B256,
+        index: u32,
+        message_id: B256,
+        signature: [u8; 65],
+    }
+
+    fn signature(hex_str: &str) -> [u8; 65] {
+        hex::decode(hex_str).unwrap().try_into().unwrap()
+    }
+
+    fn checkpoint_0() -> Checkpoint {
+        Checkpoint {
+            root: b256!("0xb8f3591fc1f80eaecba71902c5a172bb89783f96eb34dacf4fec14ef5d8e4765"),
+            index: 0,
+            message_id: b256!("0x6cf30153c1583380a6bab73348f2f33f7aa36a249f3ffe3868d4d0a8694c8c1f"),
+            signature: signature("1d728977b83ac16088ea0db249f9c4eac6b58818b42676964b238ac37228e48520858022b5e514ea711b3b2bd55be4381efeb8d7bb907c75525bd760decad2781b"),
+        }
+    }
+
+    fn checkpoint_2() -> Checkpoint {
+        Checkpoint {
+            root: b256!("0x5cd1ceeff6f033960677157f13b472fcfb1617638dbdfb0ab0cde36cd94bf050"),
+            index: 2,
+            message_id: b256!("0x3eae2775d2a39169fd82693c9883351a72761c9cdf4cddedaf95bf62e454250e"),
+            signature: signature("82079df9c6de4d2ab039216e3275cf803d245819150512e50dde105e2802f98976b8041d134256ef7df29fa8a8613a5c042af46c3468ab011410e19e6e1cb4931c"),
+        }
+    }
+
+    fn submit_call(domain: u32, checkpoint: &Checkpoint, index: u32) -> Bytes {
+        IHyperlaneController::submitCheckpointCall {
+            domain,
+            root: checkpoint.root,
+            index,
+            messageId: checkpoint.message_id,
+            signature: Bytes::copy_from_slice(&checkpoint.signature),
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) {
+        let mut vs = ValidatorSet::new(storage);
+        if vs.config_owner.read().unwrap().is_zero() {
+            vs.config_owner.write(VALIDATOR_OWNER).unwrap();
+            vs.set_config_max_validators(100).unwrap();
+        }
+        let mut pubkey = [0u8; 48];
+        pubkey[0] = seed;
+        vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)
+            .unwrap();
+        vs.activate_validator_via_boundary_for_test(addr).unwrap();
+    }
+
+    /// Initialized controller with the fixture hook on the local domain and
+    /// the fixture validator active.
+    fn liveness_provider() -> HashMapStorageProvider {
+        let mut p = provider();
+        stub_pre_initialize(&mut p);
+        StorageHandle::enter(&mut p, |storage| {
+            let call: Bytes = IHyperlaneController::initializeCall {
+                router: router(),
+                domains: vec![LOCAL, SEPOLIA],
+                isms: vec![local_ism(), sepolia_ism()],
+                hooks: vec![FIXTURE_HOOK, hook(2)],
+            }
+            .abi_encode()
+            .into();
+            dispatch(storage.clone(), &call, deployer(), U256::ZERO).unwrap();
+            activate(storage, FIXTURE_VALIDATOR, 1);
+        });
+        p
+    }
+
+    fn write_submission(
+        c: &HyperlaneControllerContract<'_>,
+        validator: Address,
+        domain: u32,
+        index: u32,
+        block: u64,
+    ) {
+        let key = validator_domain_key(validator, domain);
+        c.submitted_index.write(&key, index).unwrap();
+        c.submitted_block.write(&key, block).unwrap();
+    }
+
+    #[test]
+    fn digest_recovers_the_agent_key_from_real_checkpoints() {
+        for checkpoint in [checkpoint_0(), checkpoint_2()] {
+            let digest = checkpoint_digest(
+                LOCAL,
+                FIXTURE_HOOK,
+                checkpoint.root,
+                checkpoint.index,
+                checkpoint.message_id,
+            );
+            assert_eq!(
+                recover_signer(&digest, &checkpoint.signature).unwrap(),
+                FIXTURE_VALIDATOR
+            );
+        }
+    }
+
+    #[test]
+    fn submit_accepts_own_signature_and_rejects_the_rest() {
+        let mut p = liveness_provider();
+        p.set_block_number(100);
+        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        StorageHandle::enter(&mut p, |storage| {
+            let two = checkpoint_2();
+            dispatch(
+                storage.clone(),
+                &submit_call(LOCAL, &two, 2),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap();
+            let view: Bytes = IHyperlaneController::submittedIndexCall {
+                validator: FIXTURE_VALIDATOR,
+                domain: LOCAL,
+            }
+            .abi_encode()
+            .into();
+            let ret = dispatch(storage.clone(), &view, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::submittedIndexCall::abi_decode_returns(&ret).unwrap(),
+                2
+            );
+
+            let not_validator = dispatch(
+                storage.clone(),
+                &submit_call(LOCAL, &two, 2),
+                stranger(),
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(revert_reason(not_validator).contains("not an active validator"));
+
+            let no_hook = dispatch(
+                storage.clone(),
+                &submit_call(BSC, &two, 2),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(revert_reason(no_hook).contains("no MerkleTreeHook"));
+
+            let tampered = dispatch(
+                storage.clone(),
+                &submit_call(LOCAL, &two, 3),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(revert_reason(tampered).contains("does not match"));
+
+            let older = dispatch(
+                storage.clone(),
+                &submit_call(LOCAL, &checkpoint_0(), 0),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(revert_reason(older).contains("is not newer"));
+
+            // Re-submitting the same index is a harmless no-op.
+            dispatch(
+                storage,
+                &submit_call(LOCAL, &two, 2),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap();
+        });
+        let submitted = topics(&p)
+            .iter()
+            .filter(|h| **h == IHyperlaneController::CheckpointSubmitted::SIGNATURE_HASH)
+            .count();
+        assert_eq!(submitted, 2);
+    }
+
+    #[test]
+    fn registered_signer_replaces_the_validator_address() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            // A stranger key cannot register a signer, the validator can.
+            let set: Bytes = IHyperlaneController::setHyperlaneSignerCall { signer: v(9) }
+                .abi_encode()
+                .into();
+            assert!(dispatch(storage.clone(), &set, stranger(), U256::ZERO).is_err());
+            dispatch(storage.clone(), &set, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
+            // The fixture is signed by the validator key, not v(9): rejected now.
+            let err = dispatch(
+                storage.clone(),
+                &submit_call(LOCAL, &checkpoint_2(), 2),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap_err();
+            assert!(revert_reason(err).contains("does not match"));
+            // Reset to the validator address.
+            let reset: Bytes = IHyperlaneController::setHyperlaneSignerCall {
+                signer: Address::ZERO,
+            }
+            .abi_encode()
+            .into();
+            dispatch(storage.clone(), &reset, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
+            dispatch(
+                storage,
+                &submit_call(LOCAL, &checkpoint_2(), 2),
+                FIXTURE_VALIDATOR,
+                U256::ZERO,
+            )
+            .unwrap();
+        });
+    }
+
+    /// Four validators: the reference is the third-highest settled index, so
+    /// one inflated submission cannot move it and fresh ones are ignored.
+    #[test]
+    fn reference_index_is_quorum_based_and_grace_gated() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
+                activate(storage.clone(), addr, i as u8 + 2);
+            }
+            let c = HyperlaneControllerContract::new(storage);
+            let old = 1_000 - GRACE_BLOCKS;
+            write_submission(&c, FIXTURE_VALIDATOR, LOCAL, 500, old);
+            write_submission(&c, v(2), LOCAL, 498, old);
+            write_submission(&c, v(3), LOCAL, 120, old);
+            write_submission(&c, v(4), LOCAL, 999_999, old);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
+                write_submission(&c, addr, SEPOLIA, 10, old);
+            }
+        });
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            assert!(c.check_liveness().unwrap().is_empty());
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
+            }
+            // v(3) catches up with a fresh submission: it is not part of the
+            // reference yet, but v(3) itself is no longer behind.
+            write_submission(&c, v(3), LOCAL, 600, 999);
+            assert!(c.check_liveness().unwrap().is_empty());
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn newcomer_is_stamped_and_evaluated_from_the_next_boundary() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
+                activate(storage.clone(), addr, i as u8 + 2);
+            }
+            let c = HyperlaneControllerContract::new(storage);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
+                write_submission(&c, addr, LOCAL, 50, 100);
+                write_submission(&c, addr, SEPOLIA, 50, 100);
+            }
+        });
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 0);
+            assert_eq!(
+                c.submitted_block
+                    .read(&validator_domain_key(v(4), LOCAL))
+                    .unwrap(),
+                1_000
+            );
+        });
+        p.set_block_number(2_200);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn idle_bridge_and_below_quorum_data_produce_no_misses() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
+                activate(storage.clone(), addr, i as u8 + 2);
+            }
+            let c = HyperlaneControllerContract::new(storage);
+            // Only two settled submissions: below the threshold of three,
+            // so there is no reference and nobody can be behind.
+            write_submission(&c, FIXTURE_VALIDATOR, LOCAL, 500, 100);
+            write_submission(&c, v(2), LOCAL, 500, 100);
+            write_submission(&c, v(3), LOCAL, 1, 100);
+            write_submission(&c, v(4), LOCAL, 1, 100);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
+                write_submission(&c, addr, SEPOLIA, 0, 100);
+            }
+        });
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            // Reference for LOCAL is the third highest: 1. Everyone is at or
+            // above it; SEPOLIA never moved. No misses.
+            assert!(c.check_liveness().unwrap().is_empty());
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
+                assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
+            }
+        });
+    }
+
+    #[test]
+    fn consecutive_misses_jail_and_sync_drops_the_validator() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
+                activate(storage.clone(), addr, i as u8 + 2);
+            }
+            let c = HyperlaneControllerContract::new(storage);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                write_submission(&c, addr, LOCAL, 500, 100);
+                write_submission(&c, addr, SEPOLIA, 5, 100);
+            }
+            write_submission(&c, v(3), LOCAL, 7, 100);
+            write_submission(&c, v(3), SEPOLIA, 5, 100);
+        });
+        let mut jailed = Vec::new();
+        for boundary in 1..=MAX_MISSES {
+            p.set_block_number(1_000 * u64::from(boundary));
+            StorageHandle::enter(&mut p, |storage| {
+                let mut c = HyperlaneControllerContract::new(storage);
+                jailed = c.check_liveness().unwrap();
+            });
+        }
+        assert_eq!(jailed, vec![v(3)]);
+        assert_eq!(
+            *topics(&p).last().unwrap(),
+            IHyperlaneController::LivenessJailed::SIGNATURE_HASH
+        );
+        StorageHandle::enter(&mut p, |storage| {
+            let vs = ValidatorSet::new(storage.clone());
+            assert!(!vs.validator_lifecycle(v(3)).unwrap().is_active_status());
+            let active: Vec<Address> = vs
+                .get_active_validators()
+                .unwrap()
+                .into_iter()
+                .map(|r| r.validator_address)
+                .collect();
+            assert_eq!(active.len(), 3);
+            assert!(!active.contains(&v(3)));
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+        });
     }
 }

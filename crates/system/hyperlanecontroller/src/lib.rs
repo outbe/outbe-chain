@@ -15,13 +15,17 @@
 //!   balance, topped up through `fund`.
 
 pub mod errors;
+pub mod lifecycle;
 pub mod precompile;
 pub mod schema;
 
 mod runtime;
 mod sol_ext;
 
-pub use runtime::{consensus_threshold, validate_validators, RemoteCall};
+pub use runtime::{
+    checkpoint_digest, consensus_threshold, validate_validators, RemoteCall, GRACE_BLOCKS,
+    LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
+};
 pub use schema::HyperlaneControllerContract;
 
 #[cfg(test)]

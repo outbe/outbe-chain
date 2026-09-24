@@ -32,6 +32,30 @@ pub enum HyperlaneControllerError {
     #[error("domains and ISMs length mismatch")]
     IsmLengthMismatch,
 
+    #[error("domains and hooks length mismatch")]
+    HookLengthMismatch,
+
+    #[error("no MerkleTreeHook configured for domain {domain}")]
+    UnknownHook { domain: u32 },
+
+    #[error("caller {caller} is not an active validator or its oracle delegate")]
+    NotActiveValidator { caller: Address },
+
+    #[error(
+        "checkpoint signer {recovered} does not match validator {validator} signer {expected}"
+    )]
+    SignerMismatch {
+        validator: Address,
+        expected: Address,
+        recovered: Address,
+    },
+
+    #[error("checkpoint index {index} is not newer than the submitted {submitted}")]
+    StaleIndex { index: u32, submitted: u32 },
+
+    #[error("checkpoint signature must be 65 bytes, got {length}")]
+    InvalidSignatureLength { length: usize },
+
     #[error("domain {domain} is not configured")]
     UnknownDomain { domain: u32 },
 
