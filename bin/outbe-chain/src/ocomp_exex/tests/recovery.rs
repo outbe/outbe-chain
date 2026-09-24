@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn finished_height_receiver_loss_is_benign_only_after_runtime_shutdown() {
+    use super::super::failure::finished_height_closed_during_shutdown;
+
+    let (stop, shutdown) = reth_ethereum::tasks::shutdown::signal();
+    let (events, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = ProjectionCheckpoint {
+        block_number: 385,
+        block_hash: B256::repeat_byte(7),
+    };
+    drop(receiver);
+    let error = publish_finished_height(&events, checkpoint).unwrap_err();
+    assert!(!finished_height_closed_during_shutdown(&error, &shutdown));
+    stop.fire();
+    assert!(finished_height_closed_during_shutdown(&error, &shutdown));
+    let corruption = eyre::eyre!("OCOMP FinishedHeight consumer is unavailable");
+    assert!(!finished_height_closed_during_shutdown(
+        &corruption,
+        &shutdown
+    ));
+}
+
+#[test]
 fn drain_fatal_cannot_be_overwritten_by_an_inflight_reader_tick() {
     let checkpoint = ProjectionCheckpoint {
         block_number: 5,

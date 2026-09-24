@@ -1,6 +1,7 @@
 use super::classify_retention_reconciliation;
 use super::consume_projection_runtime_deadline;
 use super::drain_exex_notifications;
+use super::failure::finished_height_closed_during_shutdown;
 use super::load_persisted_fatal_evidence;
 use super::projection_runtime_failure;
 use super::projection_runtime_watch_closed_failure;
@@ -107,6 +108,7 @@ where
 {
     gauge!("outbe_ocomp_finalized_loop_fatal").set(0.0);
     let readiness = OcompReadinessV1(Arc::new(std::sync::Mutex::new(readiness)));
+    let shutdown = ctx.task_executor().on_shutdown_signal().clone();
     let provider = ctx.provider().clone();
     // OCOMP owns a nonexecuting finalized reader. Its closure is not an EVM
     // execution head, and must never select Reth historical execution backfill.
@@ -603,6 +605,11 @@ where
                 Ok(())
                 }.await;
                 if let Err(error) = tick_result {
+                    // Reth closes the ExEx manager and this reader concurrently.
+                    // A shutdown-only receiver loss must not poison the next restart.
+                    if finished_height_closed_during_shutdown(&error, &shutdown) {
+                        wait_for_node_teardown().await;
+                    }
                     counter!("outbe_ocomp_finalized_loop_errors_total").increment(1);
                     runtime.latch_fatal(B256::ZERO, format!("unified finalized loop failed: {error:#}"))?;
                     wait_for_node_teardown().await;
