@@ -430,6 +430,15 @@ fn real_zk_offer_records_rewards_once_and_rolls_back_failures() {
 }
 
 #[test]
+#[ignore = "requires the pinned Barretenberg CRS"]
+fn inbox_key_real_zk_offer_records_rewards_once_and_rolls_back_failures() {
+    let proof = include_bytes!(
+        "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+    );
+    assert_real_zk_offer_with_key_source(proof, 0xdead, "1.1.0", true);
+}
+
+#[test]
 #[ignore = "generates a real Barretenberg proof with the pinned CRS"]
 fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
     use ark_bn254::Fr;
@@ -506,6 +515,16 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
 }
 
 fn assert_real_zk_offer(proof: &[u8], l2_chain_id: u32, circuit_version: &str) {
+    assert_real_zk_offer_with_key_source(proof, l2_chain_id, circuit_version, false);
+}
+
+fn assert_real_zk_offer_with_key_source(
+    proof: &[u8],
+    l2_chain_id: u32,
+    circuit_version: &str,
+    from_inbox: bool,
+) {
+    use alloy_sol_types::{sol, SolCall, SolValue};
     use commonware_codec::Encode;
     use commonware_cryptography::bls12381::primitives::{
         ops::{self, sign_message},
@@ -563,6 +582,20 @@ fn assert_real_zk_offer(proof: &[u8], l2_chain_id: u32, circuit_version: &str) {
         signature: Bytes::copy_from_slice(&signature),
     };
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let network_key = outbe_l2registry::public_key::encode(&group_key).unwrap();
+    let inbox = Address::repeat_byte(0x88);
+    if from_inbox {
+        sol! {
+            function groupPubKey() external view returns (bytes memory);
+        }
+        provider.stub_sub_call_at_selector(
+            inbox,
+            groupPubKeyCall::SELECTOR,
+            (Bytes::copy_from_slice(&network_key),)
+                .abi_encode_params()
+                .into(),
+        );
+    }
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
@@ -571,8 +604,8 @@ fn assert_real_zk_offer(proof: &[u8], l2_chain_id: u32, circuit_version: &str) {
         registry
             .register_network(
                 u64::from(l2_chain_id),
-                Address::repeat_byte(0x88),
-                &outbe_l2registry::public_key::encode(&group_key).unwrap(),
+                inbox,
+                if from_inbox { &[] } else { &network_key },
             )
             .unwrap();
         begin_block(storage.clone(), &scope).unwrap();

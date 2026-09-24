@@ -19,6 +19,4 @@ mod tests;
 
 pub use errors::DesisError;
 pub use runtime::{tick_gate, tick_schedule};
-pub use schema::{
-    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
-};
+pub use schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};

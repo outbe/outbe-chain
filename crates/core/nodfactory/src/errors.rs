@@ -49,6 +49,9 @@ pub enum NodFactoryError {
     #[error("{0}")]
     Rounding(RoundingError),
 
+    #[error("oracle nominal unavailable")]
+    OracleUnavailable,
+
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
 

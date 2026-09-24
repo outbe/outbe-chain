@@ -13,6 +13,13 @@ pub use crate::pre_admission::MetadosisPreAdmissionProjection;
 pub use crate::state::DayLimitFormationReceipt;
 pub use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 
+/// When the bootstrap ends: the moment the first Worldwide Day opens its
+/// offering. `None` before that day exists, so callers name what zero means.
+pub fn bootstrap_end_time(storage: StorageHandle<'_>) -> Result<Option<u64>> {
+    let end = MetadosisContract::new(storage).get_bootstrap_end_time()?;
+    Ok((end != 0).then_some(end))
+}
+
 /// Reads one typed WWD projection without exposing its storage facade.
 pub fn worldwide_day(
     storage: StorageHandle<'_>,

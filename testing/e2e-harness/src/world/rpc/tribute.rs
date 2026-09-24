@@ -178,6 +178,7 @@ impl Rpc {
     pub fn submit_tribute_offer_with_agent_rewards(
         &self,
         key: &str,
+        l2_chain_id: u64,
         wwd: &str,
         wallet_addresses: &[Address],
         sra_addresses: &[Address],
@@ -203,8 +204,9 @@ impl Rpc {
         // both are built from these literals.
         const AMOUNT_BASE: &str = "100";
         const AMOUNT_MICRO: &str = "0";
-        let zk = self.prove_offer(
+        let zk = self.prove_offer_for_network(
             creator,
+            l2_chain_id,
             worldwide_day,
             840,
             (AMOUNT_BASE, AMOUNT_MICRO),

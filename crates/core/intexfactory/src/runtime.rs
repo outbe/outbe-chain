@@ -5,11 +5,13 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_oracle::api::fresh_coen_rate_for;
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::{
+    first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay,
+};
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -934,8 +936,9 @@ fn discharge_cost(
 
     let currency = accept_payment_token(storage, claim.asset, series)?;
     let cost = cost_in_token(storage, series, claim.asset, currency, amount)?;
-    if claim.spend_amount < cost {
-        return Err(IntexFactoryError::PayNoteUndercoversCost {
+    // Exact: the surplus of an over-spend is already in the reserve vault.
+    if claim.spend_amount != cost {
+        return Err(IntexFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
             required: cost,
         }
@@ -1000,9 +1003,17 @@ enum PaymentCurrency {
     Issuance,
 }
 
+/// COEN price of `iso_code` from the last closed UTC day.
+fn day_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
+    let day = previous_date_key(timestamp_to_date_key(now));
+    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
+        .ok_or_else(|| IntexFactoryError::OracleUnavailable.into())
+}
+
 /// Cost of `amount` units in `token`'s minor units. The Cost Amount is denominated
-/// in the reference currency; an issuance-currency token is charged at the live
-/// COEN cross rate, folded into the same fraction so the operation is floored once.
+/// in the reference currency; an issuance-currency token is charged at the COEN
+/// cross rate of the last closed UTC day, folded into the same fraction so the
+/// operation is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -1022,8 +1033,10 @@ fn cost_in_token(
     let rate = if target_iso == series.reference_currency {
         None
     } else {
-        let from = fresh_coen_rate_for(storage.clone(), series.reference_currency)?;
-        let to = fresh_coen_rate_for(storage.clone(), target_iso)?;
+        // One timestamp, so both legs come from the same closed day.
+        let now = storage.timestamp()?.to::<u64>();
+        let from = day_coen_rate(storage, series.reference_currency, now)?;
+        let to = day_coen_rate(storage, target_iso, now)?;
         Some((to, from))
     };
     settlement_units(product, amount, rate, payment_decimals)

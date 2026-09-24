@@ -1063,6 +1063,48 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn inbox_tribute_to_coen_scenario_is_runnable_with_registered_steps() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse Tribute scenarios");
+        let scenario = feature
+            .scenarios
+            .iter()
+            .find(|scenario| has_tag(&feature, scenario, "tribute-inbox-key"))
+            .expect("inbox-backed real proof scenario");
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        assert_eq!(unmet(&feature, scenario, &env), None);
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert!(has_tag(&feature, scenario, "ocomp-public-apply"));
+        let step_index = |text: &str| {
+            scenario
+                .steps
+                .iter()
+                .position(|step| step.value == text)
+                .unwrap_or_else(|| panic!("main flow is missing step: {text}"))
+        };
+        let registration = step_index("an L2 network is registered through governance with an inbox contract and no pinned key");
+        let offer = step_index("a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries");
+        let nod = step_index(
+            "three matching validator domains atomically apply Lysis and create the Nod",
+        );
+        let coen = step_index(
+            "the public Tribute owner settles its Nod and redeems its exact Gratis into COEN",
+        );
+        assert!(registration < offer && offer < nod && nod < coen);
+        assert_registered_steps(&feature, scenario);
+    }
+
     #[test]
     fn explicit_tee_profiles_are_disjoint_even_under_all() {
         let no_attest_feature = Feature::parse_path(

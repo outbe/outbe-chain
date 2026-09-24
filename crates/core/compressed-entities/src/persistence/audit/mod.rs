@@ -123,5 +123,5 @@ pub struct CeAuditReport {
 
 pub(super) use trees::audit;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 mod tests;
