@@ -27,6 +27,9 @@ pub enum GemError {
 
     #[error("gem already exists")]
     AlreadyExists,
+
+    #[error("only a genesis gem is issued without a floor")]
+    ZeroFloorPrice,
 }
 
 impl From<GemError> for PrecompileError {

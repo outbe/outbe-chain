@@ -3,15 +3,15 @@ use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISIO
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{GemData, GemState};
 
-pub(crate) fn token_uri(item: &GemData) -> String {
+pub(crate) fn token_uri(item: &GemData, qualified: bool) -> String {
     let id = nft_card::short_id(item.gem_id);
     let settled = item.state == GemState::Settled as u8;
     let deadline = (item.called_at != 0 && !settled)
         .then(|| item.called_at + u64::from(item.call_notice_period_seconds));
     let state = match item.state {
-        s if s == GemState::Qualified as u8 => nft_card::QUALIFIED,
         s if s == GemState::Called as u8 => nft_card::CALLED,
         s if s == GemState::Settled as u8 => nft_card::SETTLED,
+        _ if qualified => nft_card::QUALIFIED,
         _ => nft_card::ISSUED,
     };
 
