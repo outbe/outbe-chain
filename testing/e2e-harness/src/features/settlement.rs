@@ -866,6 +866,51 @@ pub(crate) fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
     );
 }
 
+fn close_days_before(world: &mut World, utc_day: u32) {
+    let port = world.validators.primary_port();
+    let ports = world.validators.committee_ports();
+    for _ in 0..2 {
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee clock before the qualification quote");
+        if outbe_primitives::time::timestamp_to_date_key(now) >= utc_day {
+            return;
+        }
+        let target = (now / 86_400 + 1)
+            .checked_mul(86_400)
+            .and_then(|boundary| boundary.checked_add(1))
+            .expect("next UTC boundary");
+        let (_, _, height, pending) =
+            crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        for &peer in &ports {
+            assert!(
+                world.rpc.wait_finalized_at_least(peer, height, 240),
+                "validator on port {peer} did not finalize the day transition"
+            );
+        }
+        if let Some(pending) = pending {
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+                assert!(
+                    Instant::now() < deadline,
+                    "post-jump feeder did not finalize"
+                );
+                sleep(Duration::from_millis(500));
+            }
+        }
+    }
+    let now = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee clock after the day transitions");
+    assert!(
+        outbe_primitives::time::timestamp_to_date_key(now) >= utc_day,
+        "committee stands on {} and never reached {utc_day}",
+        outbe_primitives::time::timestamp_to_date_key(now)
+    );
+}
+
 #[when("the feeder publishes a Nod qualification quote before the next UTC day")]
 fn publish_nod_qualification_quote(world: &mut World) {
     let key = world
@@ -880,7 +925,10 @@ fn publish_nod_qualification_quote(world: &mut World) {
         .parse::<Address>()
         .expect("canonical owner address");
     let (_, body) = wait_for_materialized_nod(world, world.validators.primary_port(), owner);
-    // NodDaily consumes the completed previous UTC day's VWAP. Publish before
+    // A Nod qualifies only on a UTC day it held in full, and carries the logical time
+    // its generation was evaluated at, so the day of that stamp is closed first.
+    close_days_before(world, outbe_primitives::time::first_full_day(body.issuedAt));
+    // Qualification consumes the completed previous UTC day's VWAP. Publish before
     // the scenario's existing V2 day transition, with room for earlier samples.
     let rate = body
         .floorPriceMinor
