@@ -15,6 +15,7 @@ pub(crate) mod runtime;
 pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
+pub mod vwap_push;
 
 pub use api::{issue, read_params};
 pub use config::IntexParams;
