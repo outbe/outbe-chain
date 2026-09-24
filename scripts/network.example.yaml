@@ -31,7 +31,6 @@ keys_dir: ./keys
 # Before offering Tributes, register the L2 through validator governance and
 # provide its BLS root-signing key (or an inbox exposing groupPubKey()). The ZKP
 # circuit version must also have a compiled binding for that L2 chain id.
-# See testing/e2e-harness/TRIBUTE_ZKP.md for prerequisites and tests.
 
 tee:
   mode: gramine-direct-dev            # | dcap-required
