@@ -25,6 +25,24 @@ pub struct FeederConfig {
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
+    /// Hyperlane checkpoint submission (validator liveness proof).
+    pub hyperlane: Option<HyperlaneConfig>,
+}
+
+/// Hyperlane liveness settings. The feeder reads this validator's own
+/// public-read checkpoint bucket (the location it announced on-chain,
+/// `<bucket>/<domain>/`) for every domain the HyperlaneController knows and
+/// submits the latest signed checkpoint. An empty `[hyperlane]` section
+/// enables it with defaults.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HyperlaneConfig {
+    /// How often to poll the bucket (seconds).
+    #[serde(default = "default_hyperlane_poll_interval")]
+    pub poll_interval_secs: u64,
+    /// Submit through the ZeroFee txpool policy.
+    #[serde(default)]
+    pub gasless: bool,
 }
 
 /// Health server settings.
@@ -123,6 +141,9 @@ pub struct DeviationThreshold {
 
 fn default_vote_period() -> u64 {
     2
+}
+fn default_hyperlane_poll_interval() -> u64 {
+    30
 }
 fn default_poll_interval() -> u64 {
     2
@@ -290,6 +311,11 @@ impl FeederConfig {
         }
 
         crate::provider::dex::validate_config(self)?;
+        if let Some(hyperlane) = &self.hyperlane {
+            if hyperlane.poll_interval_secs == 0 {
+                return Err(eyre::eyre!("hyperlane.poll_interval_secs must be > 0"));
+            }
+        }
         Ok(())
     }
 
@@ -350,7 +376,18 @@ mod tests {
             provider_endpoints: vec![],
             dex_providers: vec![],
             health: None,
+            hyperlane: None,
         }
+    }
+
+    #[test]
+    fn hyperlane_section_is_validated() {
+        let mut cfg = minimal_config(2);
+        cfg.hyperlane = Some(toml::from_str("").unwrap());
+        assert!(cfg.validate().is_ok());
+
+        cfg.hyperlane.as_mut().unwrap().poll_interval_secs = 0;
+        assert!(cfg.validate().is_err());
     }
 
     fn source(provider: &str, base: &str, quote: &str) -> CurrencyPairSource {

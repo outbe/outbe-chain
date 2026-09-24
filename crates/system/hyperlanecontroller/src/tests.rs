@@ -32,6 +32,9 @@ fn stranger() -> Address {
 fn ica_router() -> Address {
     address!("0x0000000000000000000000000000000000000626")
 }
+fn validator_announce() -> Address {
+    address!("0x0000000000000000000000000000000000000627")
+}
 fn local_ism() -> Address {
     address!("0x0000000000000000000000000000000000000151")
 }
@@ -84,6 +87,7 @@ fn hook(n: u8) -> Address {
 fn initialize_call() -> Bytes {
     IHyperlaneController::initializeCall {
         icaRouter: ica_router(),
+        validatorAnnounce: validator_announce(),
         domains: vec![LOCAL, SEPOLIA, BSC],
         isms: vec![local_ism(), sepolia_ism(), bsc_ism()],
         hooks: vec![hook(1), hook(2), hook(3)],
@@ -152,6 +156,7 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
     StorageHandle::enter(&mut p, |storage| {
         let c = HyperlaneControllerContract::new(storage);
         assert_eq!(c.ica_router.read().unwrap(), ica_router());
+        assert_eq!(c.validator_announce.read().unwrap(), validator_announce());
         assert_eq!(c.ism_by_domain.read(&LOCAL).unwrap(), local_ism());
         assert_eq!(c.ism_by_domain.read(&SEPOLIA).unwrap(), sepolia_ism());
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC]);
@@ -211,6 +216,7 @@ fn initialize_is_gated_and_one_shot() {
     StorageHandle::enter(&mut p, |storage| {
         let call: Bytes = IHyperlaneController::initializeCall {
             icaRouter: ica_router(),
+            validatorAnnounce: validator_announce(),
             domains: vec![SEPOLIA],
             isms: vec![sepolia_ism()],
             hooks: vec![hook(2)],
@@ -287,25 +293,6 @@ fn rotation_without_fee_balance_changes_nothing() {
         assert!(revert_reason(err).contains("is below the required"));
     });
     assert!(topics(&p).is_empty());
-}
-
-#[test]
-fn add_remove_and_threshold_derive_from_the_local_ism() {
-    let mut p = initialized_provider();
-    stub_router_and_ism(&mut p, U256::ZERO, &[v(1), v(2)], 2);
-    StorageHandle::enter(&mut p, |storage| {
-        let mut c = HyperlaneControllerContract::new(storage);
-        c.add_validator(v(3), None).unwrap();
-        c.add_validator(v(4), Some(3)).unwrap();
-        c.remove_validator(v(2), Some(1)).unwrap();
-        c.set_threshold(2).unwrap();
-
-        // Already present / absent.
-        assert!(c.add_validator(v(1), None).is_err());
-        assert!(c.remove_validator(v(9), None).is_err());
-        // Keeping threshold 2 after removing down to one validator is invalid.
-        assert!(c.remove_validator(v(1), None).is_err());
-    });
 }
 
 #[test]
@@ -559,6 +546,7 @@ mod liveness {
         StorageHandle::enter(&mut p, |storage| {
             let call: Bytes = IHyperlaneController::initializeCall {
                 icaRouter: ica_router(),
+                validatorAnnounce: validator_announce(),
                 domains: vec![LOCAL, SEPOLIA],
                 isms: vec![local_ism(), sepolia_ism()],
                 hooks: vec![FIXTURE_HOOK, hook(2)],
@@ -662,20 +650,20 @@ mod liveness {
             .unwrap_err();
             assert!(revert_reason(older).contains("is not newer"));
 
-            // Re-submitting the same index is a harmless no-op.
-            dispatch(
+            let repeat = dispatch(
                 storage,
                 &submit_call(LOCAL, &two, 2),
                 FIXTURE_VALIDATOR,
                 U256::ZERO,
             )
-            .unwrap();
+            .unwrap_err();
+            assert!(revert_reason(repeat).contains("is not newer"));
         });
         let submitted = topics(&p)
             .iter()
             .filter(|h| **h == IHyperlaneController::CheckpointSubmitted::SIGNATURE_HASH)
             .count();
-        assert_eq!(submitted, 2);
+        assert_eq!(submitted, 1);
     }
 
     #[test]

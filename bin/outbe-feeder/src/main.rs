@@ -8,6 +8,7 @@ mod aggregator;
 mod config;
 mod fixed;
 mod health;
+mod hyperlane;
 mod oracle_client;
 mod provider;
 mod vote_builder;
@@ -107,7 +108,7 @@ async fn main() -> Result<()> {
     run_feeder(config).await
 }
 
-async fn run_feeder(config: FeederConfig) -> Result<()> {
+async fn run_feeder(mut config: FeederConfig) -> Result<()> {
     let providers = provider::create_providers(&config)?;
     let wallet = oracle_client::create_wallet(&config.account)?;
     let vote_period = config.oracle.vote_period;
@@ -123,6 +124,18 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
 
     if health_enabled {
         health::start_health_server(&health_bind, health.clone()).await?;
+    }
+
+    if let Some(hyperlane) = config.hyperlane.take() {
+        let attester = hyperlane::Attester::new(
+            hyperlane,
+            config.chain.rpc_endpoint.clone(),
+            config.chain.chain_id,
+            wallet.clone(),
+            config.account.validator_address.parse()?,
+            health.clone(),
+        );
+        tokio::spawn(attester.run());
     }
 
     let mut pending_vote = None;
@@ -254,6 +267,7 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
                         &config.chain.rpc_endpoint,
                         &wallet,
                         config.chain.chain_id,
+                        oracle_client::ORACLE_ADDRESS,
                         &calldata,
                         config.chain.gasless_oracle_votes,
                     )

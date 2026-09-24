@@ -10083,6 +10083,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-hyperlanecontroller",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-ocomp-protocol",

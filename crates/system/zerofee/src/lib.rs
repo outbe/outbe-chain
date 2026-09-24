@@ -24,6 +24,7 @@
 
 pub mod constants;
 pub mod hooks;
+mod hyperlane;
 mod intexfactory;
 mod oracle;
 pub mod precompile;

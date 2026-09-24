@@ -24,6 +24,10 @@ pub struct FeederHealth {
     pub current_period: AtomicU64,
     /// Configured vote period in blocks.
     pub vote_period: u64,
+    /// Hyperlane checkpoints submitted / failed, and the last submit time.
+    pub hyperlane_submitted: AtomicU64,
+    pub hyperlane_failed: AtomicU64,
+    pub hyperlane_last_submit_time: AtomicU64,
 }
 
 impl FeederHealth {
@@ -35,7 +39,20 @@ impl FeederHealth {
             votes_failed: AtomicU64::new(0),
             current_period: AtomicU64::new(0),
             vote_period,
+            hyperlane_submitted: AtomicU64::new(0),
+            hyperlane_failed: AtomicU64::new(0),
+            hyperlane_last_submit_time: AtomicU64::new(0),
         }
+    }
+
+    pub fn record_hyperlane_success(&self) {
+        self.hyperlane_last_submit_time
+            .store(unix_now(), Ordering::Relaxed);
+        self.hyperlane_submitted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_hyperlane_failure(&self) {
+        self.hyperlane_failed.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_success(&self, block: u64) {
@@ -82,8 +99,18 @@ impl FeederHealth {
             "votes_failed": self.votes_failed.load(Ordering::Relaxed),
             "current_period": self.current_period.load(Ordering::Relaxed),
             "vote_period": self.vote_period,
+            "hyperlane_submitted": self.hyperlane_submitted.load(Ordering::Relaxed),
+            "hyperlane_failed": self.hyperlane_failed.load(Ordering::Relaxed),
+            "hyperlane_last_submit_time": self.hyperlane_last_submit_time.load(Ordering::Relaxed),
         })
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Starts the health HTTP server on the given bind address.

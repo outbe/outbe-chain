@@ -38,6 +38,10 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "0.0.0.0:9002"
 
+[hyperlane]
+poll_interval_secs = 30
+gasless = true
+
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
@@ -78,6 +82,9 @@ threshold = "2.0"
 | `oracle.vote_period` | yes | Blocks per vote window (must match on-chain) |
 | `oracle.poll_interval_secs` | no | Block polling interval (default: 2s) |
 | `health.enabled` | no | Enables health/status HTTP server (default: true) |
+| `hyperlane` | no | Section enables Hyperlane checkpoint submission (an empty `[hyperlane]` works) |
+| `hyperlane.poll_interval_secs` | no | Bucket polling interval (default: 30s) |
+| `hyperlane.gasless` | no | Submit checkpoints through the `zerofee` hook registry (default: false) |
 | `health.bind_address` | no | Health server bind address (default: `0.0.0.0:9002`) |
 | `currency_pairs[].base` | yes | On-chain base asset: `COEN`, an ISO 4217 numeric code, or a `0x` token address |
 | `currency_pairs[].quote` | yes | On-chain quote asset in the same format |
@@ -288,6 +295,21 @@ IOracle.delegateFeederConsent(feederAddress)
 
 The feeder then signs transactions with its own key but votes count for the delegating validator.
 
+## Hyperlane Liveness
+
+With a `[hyperlane]` section the feeder also proves that this validator's Hyperlane
+agent keeps signing. Every `poll_interval_secs` it reads `HyperlaneController.domains()`
+and the validator's latest announced bucket from `ValidatorAnnounce`
+(`HyperlaneController.validatorAnnounce()`), then, per domain,
+`<bucket>/<domain>/checkpoint_latest_index.json` plus `checkpoint_<index>_with_id.json`
+(the agent must run with `--checkpointSyncer.folder=<domain id>`). A host move needs no
+feeder change: the agent re-announces and the feeder follows, like the relayer. When the bucket index is higher than
+`submittedIndex(validator, domain)` it sends `HyperlaneController.submitCheckpoint(...)`
+from the same feeder key; the precompile recovers the checkpoint signature and records the
+index. The controller jails validators that fall behind the quorum for three liveness
+windows in a row (see `crates/system/hyperlanecontroller/README.md`). `hyperlane.gasless`
+works like `chain.gasless_oracle_votes` through the `HyperlaneSubmitCheckpointHook`.
+
 ## Health Checks
 
 Default bind address: `0.0.0.0:9002`.
@@ -297,4 +319,4 @@ curl -s http://127.0.0.1:9002/health
 curl -s http://127.0.0.1:9002/status
 ```
 
-`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` returns JSON with the latest period, vote timestamp, success/failure counters, and configured vote period.
+`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` returns JSON with the latest period, vote timestamp, success/failure counters, configured vote period, and the Hyperlane checkpoint counters (`hyperlane_submitted`, `hyperlane_failed`, `hyperlane_last_submit_time`).

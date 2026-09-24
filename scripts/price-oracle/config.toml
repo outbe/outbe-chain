@@ -17,6 +17,12 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "0.0.0.0:9002"
 
+# Hyperlane liveness: submits this validator's signed checkpoints from the bucket it
+# announced on-chain. Remove the section on hosts without a Hyperlane validator.
+[hyperlane]
+poll_interval_secs = 30
+gasless = true
+
 # Mock REST price server from the test config.
 [[provider_endpoints]]
 name = "mock_http"

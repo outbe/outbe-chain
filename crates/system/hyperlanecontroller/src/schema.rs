@@ -19,6 +19,8 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///   6: submitted_block - mapping(validator_domain_key => block of that
 ///      submission); zero = never submitted
 ///   7: miss_count - mapping(validator => consecutive liveness misses)
+///   8: validator_announce - ValidatorAnnounce on Outbe, where validators
+///      publish the location of their checkpoint bucket
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -45,6 +47,9 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 7)]
     pub miss_count: outbe_primitives::storage::dsl::Map<Address, u32>,
+
+    #[attribute(order = 8)]
+    pub validator_announce: outbe_primitives::storage::dsl::Value<Address>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

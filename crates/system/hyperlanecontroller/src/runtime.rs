@@ -56,6 +56,7 @@ impl HyperlaneControllerContract<'_> {
         &mut self,
         caller: Address,
         ica_router: Address,
+        validator_announce: Address,
         domains: &[u32],
         isms: &[Address],
         hooks: &[Address],
@@ -68,6 +69,9 @@ impl HyperlaneControllerContract<'_> {
         }
         if domains.len() != hooks.len() {
             return Err(HyperlaneControllerError::HookLengthMismatch.into());
+        }
+        if validator_announce == Address::ZERO {
+            return Err(HyperlaneControllerError::InvalidAddress.into());
         }
         let local = self.local_domain()?;
         let local_ism = domains
@@ -97,6 +101,7 @@ impl HyperlaneControllerContract<'_> {
                     .into(),
             )?;
             self.ica_router.write(ica_router)?;
+            self.validator_announce.write(validator_announce)?;
             for ((domain, ism), hook) in domains.iter().zip(isms).zip(hooks) {
                 self.write_domain(*domain, *ism, *hook)?;
             }
@@ -136,36 +141,6 @@ impl HyperlaneControllerContract<'_> {
     // ----------------------------------------------------------------------
     // Owner operations (trigger not wired yet)
     // ----------------------------------------------------------------------
-
-    /// Adds `validator` to the current set. `threshold` replaces the current
-    /// one when given; otherwise the current threshold is kept.
-    pub fn add_validator(&mut self, validator: Address, threshold: Option<u8>) -> Result<()> {
-        let (mut validators, current) = self.current_validators()?;
-        if validators.contains(&validator) {
-            return Err(HyperlaneControllerError::InvalidValidator { validator }.into());
-        }
-        validators.push(validator);
-        self.set_validators_and_threshold(&validators, threshold.unwrap_or(current))
-    }
-
-    /// Removes `validator` from the current set. `threshold` replaces the
-    /// current one when given; otherwise the current threshold is kept and
-    /// must still fit the smaller set.
-    pub fn remove_validator(&mut self, validator: Address, threshold: Option<u8>) -> Result<()> {
-        let (mut validators, current) = self.current_validators()?;
-        let before = validators.len();
-        validators.retain(|entry| *entry != validator);
-        if validators.len() == before {
-            return Err(HyperlaneControllerError::InvalidValidator { validator }.into());
-        }
-        self.set_validators_and_threshold(&validators, threshold.unwrap_or(current))
-    }
-
-    /// Changes only the threshold, keeping the current set.
-    pub fn set_threshold(&mut self, threshold: u8) -> Result<()> {
-        let (validators, _) = self.current_validators()?;
-        self.set_validators_and_threshold(&validators, threshold)
-    }
 
     /// Full rotation: `setValidatorsAndThreshold` on every remote ISM through
     /// the Interchain Account, then on the local ISM. One checkpoint - any
@@ -286,7 +261,8 @@ impl HyperlaneControllerContract<'_> {
     /// Liveness proof for one domain. The caller (validator or its oracle
     /// delegate, i.e. the feeder key) submits its latest signed checkpoint;
     /// the signature is verified against the validator's Hyperlane signer and
-    /// only the index is recorded.
+    /// only the index is recorded. Index 0 is never accepted: the first
+    /// submission must be strictly newer than the stored zero.
     pub fn submit_checkpoint(
         &mut self,
         caller: Address,
@@ -323,7 +299,7 @@ impl HyperlaneControllerContract<'_> {
         }
         let key = validator_domain_key(validator, domain);
         let submitted = self.submitted_index.read(&key)?;
-        if index < submitted {
+        if index <= submitted {
             return Err(HyperlaneControllerError::StaleIndex { index, submitted }.into());
         }
         let block = self.storage.block_number()?;

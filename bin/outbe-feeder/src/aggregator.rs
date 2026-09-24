@@ -551,6 +551,7 @@ mod tests {
             provider_endpoints: vec![],
             dex_providers: vec![],
             health: None,
+            hyperlane: None,
         }
     }
 

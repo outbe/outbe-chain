@@ -21,13 +21,14 @@ Address: `0x000000000000000000000000000000000000EE14` (`HYPERLANE_CONTROLLER_ADD
 | 5    | `submitted_index` | `(validator, domain) -> latest submitted checkpoint index`          |
 | 6    | `submitted_block` | `(validator, domain) -> block of that submission`; zero = never     |
 | 7    | `miss_count`    | `validator -> consecutive liveness-window misses`                     |
+| 8    | `validator_announce` | ValidatorAnnounce on Outbe; `outbe-feeder` reads the validator's bucket location from it |
 
 Validator sets and thresholds are **not** stored here: the ISMs are the source
 of truth, the controller only forwards owner calls to them.
 
 ## Direct selectors
 
-- `initialize(icaRouter, domains[], isms[], hooks[])` — one-shot. Caller must be the current
+- `initialize(icaRouter, validatorAnnounce, domains[], isms[], hooks[])` — one-shot. Caller must be the current
   owner of the Outbe ISM (the deployer that staged `transferOwnership` to the
   controller). The controller `acceptOwnership()`s the ISM (it is Ownable2Step),
   verifies it already owns `icaRouter`, and stores the table.
@@ -44,7 +45,7 @@ of truth, the controller only forwards owner calls to them.
   see below. Caller: an active validator or its oracle delegate (the feeder key).
 - `setHyperlaneSigner(signer)` — registers the key the validator's Hyperlane agent
   signs with when it differs from the validator address; zero resets.
-- views: `icaRouter()`, `ismByDomain(domain)`, `hookByDomain(domain)`, `domains()`,
+- views: `icaRouter()`, `validatorAnnounce()`, `ismByDomain(domain)`, `hookByDomain(domain)`, `domains()`,
   `hyperlaneSigner(validator)`, `submittedIndex(validator, domain)`, `missCount(validator)`.
 
 ## Liveness
@@ -55,7 +56,8 @@ checkpoint bucket and submits the latest signed checkpoint per domain through
 `submitCheckpoint`. The controller resolves the sender to its validator, recovers
 the signer over the Hyperlane digest (`checkpoint_digest`: domain hash, root,
 index, message id, EIP-191), requires it to match `hyperlaneSigner(validator)`
-and a non-decreasing index, then records only `(index, block)`.
+and a strictly higher index than the stored one (so index 0 is never
+submitted and a repeat reverts), then records only `(index, block)`.
 
 Every `LIVENESS_WINDOW_BLOCKS` (150) the `OracleSlashWindow` system tx runs
 `lifecycle::run_liveness_window` → `check_liveness()`:
@@ -77,9 +79,6 @@ itself, so a fake self-signed checkpoint is indistinguishable from a real one.
 
 | method                                   | effect                                                                 |
 |------------------------------------------|------------------------------------------------------------------------|
-| `add_validator(v, threshold?)`           | reads the current set from the Outbe ISM, appends, pushes to all ISMs  |
-| `remove_validator(v, threshold?)`        | same, removing                                                         |
-| `set_threshold(t)`                       | same set, new threshold                                                |
 | `set_validators_and_threshold(set, t)`   | full rotation: `callRemote` to every remote ISM, then the local setter; one checkpoint |
 | `call_remote(domain, calls[])`           | generic ICA call on a remote chain (e.g. `acceptOwnership()` on a remote ISM) |
 | `call_local(to, value, data)`            | generic owner call on Outbe (IGP, ProtocolFee, ProxyAdmin, router …)   |
@@ -91,11 +90,13 @@ the controller's balance; an insufficient balance reverts before anything is sen
 ## Deploy order (hyperline)
 
 1. `mise run deploy-contracts` — stock contracts, owner = deployer key.
-2. `mise run ica:enroll` — link the InterchainAccountRouters both ways.
-3. `mise run owner:transfer` — Outbe contracts → controller, remote contracts →
-   the controller's ICA (computed on the remote router). The ISM transfer is
-   two-step: it stays *pending* until accepted.
-4. `initialize(icaRouter, domains, isms, hooks)` from the deployer key (still `owner()` of the Outbe ISM).
-5. `fund()`.
-6. `call_remote(domain, [ism.acceptOwnership()])` per remote chain.
-7. Test rotation; verify `validatorsAndThreshold` changed on the remote ISM.
+2. `mise run controller:init` — runs the chain `ica:enroll` (link the
+   InterchainAccountRouters both ways, while the deployer still owns them) →
+   `owner:transfer` (Outbe contracts → controller, remote contracts → the
+   controller's ICA computed on the remote router; the ISM transfer is two-step
+   and stays *pending* until accepted) → `initialize(icaRouter, validatorAnnounce,
+   domains, isms, hooks)` from the deployer key (still `owner()` of the Outbe ISM).
+   Each step is idempotent and can be run on its own.
+3. `fund()`.
+4. `call_remote(domain, [ism.acceptOwnership()])` per remote chain.
+5. Test rotation; verify `validatorsAndThreshold` changed on the remote ISM.

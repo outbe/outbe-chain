@@ -23,12 +23,14 @@ interface IHyperlaneController {
 
     /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
     /// Outbe domain (= chain id); `hooks` are the MerkleTreeHook addresses whose
-    /// checkpoints the validators sign. Caller must be the current owner of the
-    /// Outbe ISM (the deployer that staged `transferOwnership` to this
-    /// precompile); the precompile accepts that pending ownership and verifies
-    /// it owns `icaRouter`.
+    /// checkpoints the validators sign; `validatorAnnounce` is the Outbe
+    /// ValidatorAnnounce where validators publish their checkpoint bucket.
+    /// Caller must be the current owner of the Outbe ISM (the deployer that
+    /// staged `transferOwnership` to this precompile); the precompile accepts
+    /// that pending ownership and verifies it owns `icaRouter`.
     function initialize(
         address icaRouter,
+        address validatorAnnounce,
         uint32[] calldata domains,
         address[] calldata isms,
         address[] calldata hooks
@@ -62,6 +64,9 @@ interface IHyperlaneController {
 
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
+
+    /// ValidatorAnnounce on Outbe.
+    function validatorAnnounce() external view returns (address);
 
     /// ISM for `domain`, or zero when not configured.
     function ismByDomain(uint32 domain) external view returns (address);
