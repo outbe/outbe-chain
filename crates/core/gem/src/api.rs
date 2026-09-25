@@ -40,7 +40,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         issued_at: params.issued_at,
         called_at: 0,
         call_notice_period_seconds: params_profile.call_notice_period_seconds,
-        retired_qualified_at: 0,
         settled_at: 0,
     };
     gem.add_gem(&item)?;

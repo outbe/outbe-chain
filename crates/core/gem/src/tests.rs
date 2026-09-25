@@ -550,13 +550,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
         assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
-        // GemData record spans 17 slots (owner@+0 .. settled_at@+16), so
-        // the schema fields after gem_items start at 1 + 17 = 18.
-        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 17);
-        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(18u64));
-        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(19u64));
-        // all_gem_ids (List) occupies slot 20.
-        assert_eq!(gem.gem_index.base_slot(), U256::from(21u64));
+        // GemData record spans 16 slots (owner@+0 .. settled_at@+15), so
+        // the schema fields after gem_items start at 1 + 16 = 17.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 16);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(17u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(18u64));
+        // all_gem_ids (List) occupies slot 19.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(20u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);
@@ -1132,13 +1132,13 @@ fn config_unknown_selector_errors() {
 }
 
 /// Pin the selector slot index: the seeder writes a raw slot, and `gem_items`
-/// spans a 17-slot record, so the attribute order is not the slot.
+/// spans a 16-slot record, so the attribute order is not the slot.
 #[test]
 fn config_profile_slot_matches_seeder_layout() {
     with_storage(|storage| {
         assert_eq!(
             GemContract::new(storage.clone()).config_profile.slot(),
-            U256::from(42)
+            U256::from(34)
         );
     });
 }
