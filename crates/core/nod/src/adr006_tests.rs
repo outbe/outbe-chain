@@ -187,11 +187,11 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
         let nod = NodContract::new(storage);
         assert_eq!(
             nod.ocomp_materialization_head_sequence.slot(),
-            U256::from(19)
+            U256::from(13)
         );
         assert_eq!(
             nod.ocomp_materialization_tail_sequence.slot(),
-            U256::from(20)
+            U256::from(14)
         );
     });
 }
@@ -288,71 +288,51 @@ fn nod_contract_slot_layout_is_pinned() {
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
         assert_eq!(nod.total_supply.slot(), U256::ZERO);
-        assert_eq!(nod.retired_bin_tree_root.base_slot(), U256::from(1));
-        assert_eq!(
-            nod.retired_unqualified_bin_scan_cursor.base_slot(),
-            U256::from(6)
-        );
-        assert_eq!(nod.bucket_worldwide_day.base_slot(), U256::from(7));
-        assert_eq!(nod.ocomp_target_generation.base_slot(), U256::from(8));
+        assert_eq!(nod.bucket_worldwide_day.base_slot(), U256::from(1));
+        assert_eq!(nod.ocomp_target_generation.base_slot(), U256::from(2));
         assert_eq!(
             nod.ocomp_materialization_attempt_count.slot(),
-            U256::from(23)
+            U256::from(17)
         );
-        // Call-event columns, appended after the OCOMP block.
-        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(24));
-        assert_eq!(nod.bucket_nods.base_slot(), U256::from(25));
-        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(26));
-        // `retired_callable_buckets` sits at 27. `StorageVec` exposes no slot
-        // accessor, but slots are dense, so pinning 26 and 28 pins it too.
-        assert_eq!(
-            nod.retired_callable_bucket_index.base_slot(),
-            U256::from(28)
-        );
-        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(29));
-        assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(30));
-        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(31));
-        assert_eq!(nod.retired_call_scan_cursor.slot(), U256::from(32));
+        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
+        assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
+        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
+        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(21));
+        assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(22));
+        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
         assert_eq!(
             nod.ocomp_materialization_protocol_bundle_hash.base_slot(),
-            U256::from(33)
+            U256::from(24)
         );
-        // Call terms sealed at issuance, appended after everything above.
-        assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(34));
-        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(35));
+        assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
+        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(26));
         assert_eq!(
             nod.callable_bucket_call_threshold.base_slot(),
-            U256::from(36)
+            U256::from(27)
         );
         assert_eq!(
             nod.callable_bucket_call_notice_period.base_slot(),
-            U256::from(37)
+            U256::from(28)
         );
-        assert_eq!(nod.max_call_window.base_slot(), U256::from(38));
-        assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(39));
-        assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(40));
-        assert_eq!(nod.entry_price_currency.base_slot(), U256::from(41));
-        assert_eq!(nod.entry_price_value.base_slot(), U256::from(42));
-        // Issued-at stamp for the call-scan cutoff, appended after everything above.
-        assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(43));
-        // Frozen-day sweep columns, appended after the issued-at stamp.
-        assert_eq!(nod.retired_qualify_sweep_day.slot(), U256::from(44));
-        assert_eq!(nod.retired_qualify_pending_day.slot(), U256::from(45));
-        assert_eq!(nod.retired_qualify_currency_cursor.slot(), U256::from(46));
-        assert_eq!(nod.retired_qualify_scan_cursor.base_slot(), U256::from(47));
-        assert_eq!(nod.call_sweep_day.slot(), U256::from(48));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(49));
-        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(50));
-        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(51));
-        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(52));
-        assert_eq!(nod.call_bin_count.base_slot(), U256::from(53));
-        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(54));
-        assert_eq!(nod.call_bucket_bin.base_slot(), U256::from(55));
-        // `called_buckets` sits at 56, pinned by its neighbours.
-        assert_eq!(nod.called_bucket_index.base_slot(), U256::from(57));
-        assert_eq!(nod.forfeit_cursor.slot(), U256::from(58));
-        assert_eq!(nod.call_currency_cursor.slot(), U256::from(59));
-        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(60));
+        assert_eq!(nod.max_call_window.base_slot(), U256::from(29));
+        assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
+        assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
+        assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
+        assert_eq!(nod.entry_price_value.base_slot(), U256::from(33));
+        assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(34));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(36));
+        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(37));
+        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(38));
+        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(39));
+        assert_eq!(nod.call_bin_count.base_slot(), U256::from(40));
+        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(41));
+        assert_eq!(nod.call_bucket_bin.base_slot(), U256::from(42));
+        // `called_buckets` sits at 43, pinned by its neighbours.
+        assert_eq!(nod.called_bucket_index.base_slot(), U256::from(44));
+        assert_eq!(nod.forfeit_cursor.slot(), U256::from(45));
+        assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));
+        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(47));
     });
 }
 

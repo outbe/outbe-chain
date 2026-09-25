@@ -8,8 +8,8 @@ use outbe_primitives::{error::Result, storage::types::StorageKey, time::Worldwid
 use crate::errors::NodError;
 
 pub const MAX_ENTRY_PRICE_CURRENCIES: u32 = 256;
-const FROZEN_SLOT: u64 = 39;
-const PRICE_SLOT: u64 = 42;
+const FROZEN_SLOT: u64 = 30;
+const PRICE_SLOT: u64 = 33;
 
 /// The subject ISOs are ordered, bounded, and always include mandatory USD.
 pub fn entry_price_slots(day: WorldwideDay, isos: &[u16]) -> Result<Vec<B256>> {

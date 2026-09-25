@@ -97,9 +97,7 @@ fn item(owner: Address, floor: U256, reference_currency: u16) -> NodItemState {
     }
 }
 
-/// Dense `order`-packing puts these fields at contiguous offsets 0..=14. The
-/// per-currency bin re-keying changed field *types* but must not move a single
-/// slot; nothing else in CI guards this layout.
+/// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
@@ -107,12 +105,6 @@ fn nod_contract_slot_layout_is_pinned() {
         let nod = NodContract::new(storage);
         for (index, actual) in [
             nod.total_supply.slot(),
-            nod.retired_bin_tree_root.base_slot(),
-            nod.retired_bin_tree_mid.base_slot(),
-            nod.retired_bin_tree_leaf.base_slot(),
-            nod.retired_unqualified_bin_count.base_slot(),
-            nod.retired_unqualified_bin_buckets.base_slot(),
-            nod.retired_unqualified_bin_scan_cursor.base_slot(),
             nod.bucket_worldwide_day.base_slot(),
             nod.ocomp_target_generation.base_slot(),
             nod.ocomp_namespace_root.base_slot(),
