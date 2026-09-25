@@ -446,7 +446,6 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         crate::notify::enqueue_notice(
             factory,
-            crate::notify::NOTICE_CALLED,
             crate::notify::pack_called_notice(series_id, called_at),
         )?;
     }

@@ -9,9 +9,6 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 use crate::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use crate::schema::IntexFactoryContract;
 
-/// A notice carrying one Called series, which its group no longer holds. Any other kind is dropped.
-pub const NOTICE_CALLED: u8 = 1;
-
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
 /// free, so the origin's stamp reaches the target instead of its delivery time.
 pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
@@ -31,14 +28,9 @@ fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
     )
 }
 
-pub(crate) fn enqueue_notice(
-    factory: &mut IntexFactoryContract,
-    kind: u8,
-    entry: U256,
-) -> Result<()> {
+pub(crate) fn enqueue_notice(factory: &mut IntexFactoryContract, entry: U256) -> Result<()> {
     let tail = factory.notify_tail.read()?;
     factory.notify_at.write(&tail, entry)?;
-    factory.notify_kind.write(&tail, kind)?;
     factory.notify_tail.write(tail.saturating_add(1))?;
     Ok(())
 }
@@ -59,26 +51,17 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut index = head;
     let mut messages: u32 = 0;
     while index < stop && messages < MAX_ROUTER_CALLS_PER_FIRING {
-        let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
         let calls_left = MAX_ROUTER_CALLS_PER_FIRING - messages;
-        let consumed = if kind == NOTICE_CALLED {
-            drain_called_run(
-                &factory,
-                &storage,
-                index,
-                stop,
-                entry,
-                &mut messages,
-                calls_left,
-            )?
-        } else {
-            factory.notify_at.clear(&index)?;
-            factory.notify_kind.clear(&index)?;
-            messages = messages.saturating_add(1);
-            1
-        };
-        index += consumed;
+        index += drain_called_run(
+            &factory,
+            &storage,
+            index,
+            stop,
+            entry,
+            &mut messages,
+            calls_left,
+        )?;
     }
     if index >= tail {
         factory.notify_head.write(0)?;
@@ -101,19 +84,6 @@ fn drain_called_run(
     calls_left: u32,
 ) -> Result<u32> {
     let (first_id, called_at) = unpack_called_notice(first);
-    // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
-    // be lost silently. Only an entry written by an older binary carries one; drop it where it shows.
-    if called_at == 0 {
-        factory.notify_at.clear(&at)?;
-        factory.notify_kind.clear(&at)?;
-        *messages = messages.saturating_add(1);
-        tracing::warn!(
-            target: "outbe::intexfactory",
-            series = %first_id,
-            "called notice: dropping, no call time"
-        );
-        return Ok(1);
-    }
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
 
@@ -122,9 +92,6 @@ fn drain_called_run(
     let run_cap = (calls_left as usize).saturating_mul(MAX_SERIES_PER_MARK);
     let mut index = at.saturating_add(1);
     while index < stop && run.len() < run_cap {
-        if factory.notify_kind.read(&index)? != NOTICE_CALLED {
-            break;
-        }
         let (id, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
         if !joins_run(worldwide_day, called_at, id, ts) {
             break;
@@ -135,7 +102,6 @@ fn drain_called_run(
 
     for slot in at..index {
         factory.notify_at.clear(&slot)?;
-        factory.notify_kind.clear(&slot)?;
     }
     *messages = messages.saturating_add(router_calls(run.len()));
     // Best-effort: a batch that cannot be sent is dropped, never left to wedge the

@@ -32,24 +32,9 @@ pub struct IssuanceParams {
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// Retired and never read; the slot stays declared so the fields after it
-    /// keep their numbers on an upgraded chain. Not to be reused.
-    #[attribute(order = 0)]
-    pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
-
     /// `keccak256(series_id ++ owner)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    // Retired with the qualify sweep, as is every `retired_*` below: kept only to hold slots.
-    #[attribute(order = 2)]
-    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-    #[attribute(order = 3)]
-    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 4)]
-    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 5)]
-    pub retired_unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Call-price bin index the daily Called scan walks; a series enters it at issuance.
     #[attribute(order = 6)]
@@ -62,14 +47,9 @@ pub struct IntexFactoryContract {
     #[attribute(order = 9)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
-    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
     #[attribute(order = 10)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
-
-    #[attribute(order = 11)]
-    pub retired_qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
-    #[attribute(order = 12)]
-    pub retired_qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // Registry index the call scan resumes at, so a currency that exhausts the shared
     // budget cannot starve the ones behind it.
@@ -80,13 +60,6 @@ pub struct IntexFactoryContract {
     // lowest bins every day and never reaches the series above them. 0 = fresh sweep.
     #[attribute(order = 14)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
-
-    #[attribute(order = 15)]
-    pub retired_unqualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 16)]
-    pub retired_unqualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-    #[attribute(order = 17)]
-    pub retired_unqualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
     // whole (reference currency, worldwide day) pair shares.
@@ -104,8 +77,6 @@ pub struct IntexFactoryContract {
     #[attribute(order = 21)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    #[attribute(order = 22)]
-    pub retired_unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 23)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -121,9 +92,6 @@ pub struct IntexFactoryContract {
     /// index, so the notice carries its own.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Queue index -> which mark the notice carries; see `NOTICE_CALLED`.
-    #[attribute(order = 27)]
-    pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 
     // Called groups awaiting their settlement window, bucketed by the hour it closes
     // in. A called group has left the bin index, so these members are its only trace.
@@ -167,10 +135,6 @@ pub struct IntexFactoryContract {
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 42)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 43)]
-    pub retired_qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 44)]
-    pub retired_qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
     /// Where the parked-message sweep resumes: every index below it is sent or empty.
     #[attribute(order = 45)]
     pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,

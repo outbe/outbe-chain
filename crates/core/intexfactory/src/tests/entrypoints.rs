@@ -138,7 +138,54 @@ fn config_auto_profile_follows_the_network() {
 fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.config_profile.slot(), U256::from(10));
+        assert_eq!(f.config_profile.slot(), U256::from(5));
+    });
+}
+
+/// Slots are dense in `order` sequence, so a field inserted rather than appended moves every one after it.
+#[test]
+fn intex_factory_slot_layout_is_pinned() {
+    with_factory(|s| {
+        let f = IntexFactoryContract::new(s.clone());
+        let slots = [
+            f.mine_seq.base_slot(),
+            f.qualified_bin_tree_root.base_slot(),
+            f.qualified_bin_tree_mid.base_slot(),
+            f.qualified_bin_tree_leaf.base_slot(),
+            f.qualified_bin_count.base_slot(),
+            f.config_profile.slot(),
+            f.call_currency_cursor.slot(),
+            f.call_scan_cursor.base_slot(),
+            f.qualified_group_count.base_slot(),
+            f.qualified_group_members.base_slot(),
+            f.qualified_group_bin.base_slot(),
+            f.call_sweep_day.slot(),
+            f.qualified_bin_groups.base_slot(),
+            f.notify_head.slot(),
+            f.notify_tail.slot(),
+            f.notify_at.base_slot(),
+            f.expiry_tree_root.slot(),
+            f.expiry_tree_mid.base_slot(),
+            f.expiry_tree_leaf.base_slot(),
+            f.called_group_deadline.base_slot(),
+            f.called_group_count.base_slot(),
+            f.called_group_members.base_slot(),
+            f.max_call_window_seconds.base_slot(),
+            f.min_call_threshold_seconds.base_slot(),
+            f.expiry_bucket_len.base_slot(),
+            f.expiry_bucket_live.base_slot(),
+            f.expiry_bucket_at.base_slot(),
+            f.called_group_slot.base_slot(),
+            f.expiry_sweep_day.slot(),
+            f.expiry_cursor.slot(),
+            f.call_pending_day.slot(),
+            f.parked_message_cursor.slot(),
+            f.parked_proceeds_cursor.slot(),
+            f.vwap_sent_day.slot(),
+        ];
+        for (index, slot) in slots.into_iter().enumerate() {
+            assert_eq!(slot, U256::from(index), "field #{index}");
+        }
     });
 }
 
