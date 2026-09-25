@@ -222,7 +222,6 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             !api::is_qualified(&storage, &eur_bucket).unwrap(),
             "a COEN/USD price must not qualify a EUR-denominated floor"
         );
-        assert!(!usd_bucket.is_qualified, "nothing is stored");
     });
 }
 

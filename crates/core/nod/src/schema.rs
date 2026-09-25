@@ -106,8 +106,6 @@ pub struct NodBucketState {
     pub bucket_key: B256,
     pub worldwide_day: WorldwideDay,
     pub floor_price_minor: U256,
-    /// Never read: qualification is derived. Kept so bodies encode the same.
-    pub is_qualified: bool,
     pub entry_price_minor: U256,
 
     /// Denomination of `floor_price_minor`, propagated from the Nods in the

@@ -1429,7 +1429,6 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 bucket_key,
                 worldwide_day,
                 floor_price_minor,
-                is_qualified: false,
                 entry_price_minor: U256::from(450_000_000u64),
                 reference_currency: 840,
             })

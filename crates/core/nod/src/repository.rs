@@ -785,7 +785,6 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
         floor_price_minor: body.floor_price_minor,
-        is_qualified: body.is_qualified,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }
@@ -820,7 +819,6 @@ pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
         bucket_key: body.bucket_key,
         worldwide_day: body.worldwide_day,
         floor_price_minor: body.floor_price_minor,
-        is_qualified: body.is_qualified,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }

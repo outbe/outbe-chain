@@ -97,7 +97,6 @@ fn bucket(bucket_key: B256) -> NodBucketState {
         bucket_key,
         worldwide_day: WorldwideDay::new(20_260_715),
         floor_price_minor: U256::from(8),
-        is_qualified: true,
         entry_price_minor: U256::from(5),
         reference_currency: 978,
     }
@@ -129,7 +128,7 @@ fn typed_readers_share_one_memory_adapter() {
     assert_eq!(stored_nod.bucket_key, bucket_key);
 
     let stored_bucket = readers.nod().get_bucket(bucket_id).unwrap().unwrap();
-    assert!(stored_bucket.is_qualified);
+    assert_eq!(stored_bucket.floor_price_minor, U256::from(8));
 }
 
 #[test]
