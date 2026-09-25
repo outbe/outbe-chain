@@ -11,15 +11,9 @@ use crate::units::{SCALE_1E18, SCALE_1E6_U256};
 /// Quote six-decimal asset atomic principal and an FP18
 /// currency-per-COEN valuation. Floor each equation only after full scaling.
 /// Assets support 0–18 decimals. Zero inputs/results and output overflow fail.
-pub fn checked_quote(
-    principal: U256,
-    decimals: u8,
-    valuation: U256,
-) -> Result<(U256, U256)> {
+pub fn checked_quote(principal: U256, decimals: u8, valuation: U256) -> Result<(U256, U256)> {
     if decimals > 18 {
-        return Err(PrecompileError::Revert(
-            "unsupported asset decimals".into(),
-        ));
+        return Err(PrecompileError::Revert("unsupported asset decimals".into()));
     }
     if principal.is_zero() || valuation.is_zero() {
         return Err(PrecompileError::Revert(
@@ -43,7 +37,7 @@ fn convert_to_u256(value: U512) -> Result<U256> {
     let value = U256::checked_from_limbs_slice(value.as_limbs())
         .ok_or_else(|| PrecompileError::Revert("arithmetic overflow".into()))?;
     if value.is_zero() {
-        return Err(PrecompileError::Revert("value rounds to zero".into(), ));
+        return Err(PrecompileError::Revert("value rounds to zero".into()));
     }
     Ok(value)
 }
