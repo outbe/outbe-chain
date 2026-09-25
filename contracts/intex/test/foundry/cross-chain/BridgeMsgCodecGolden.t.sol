@@ -66,20 +66,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_BidsDone() public pure {
-        // [ver=01][type=02][wwd=11223344][srcChain=00000061][gen=00000002][totalBatches=0003][totalBids=000000c8]
-        assertEq(
-            BridgeMsgCodec.encodeBidsDone(0x11223344, 0x61, 0x02, 0x0003, 0xC8),
-            hex"01021122334400000061000000020003000000c8"
-        );
+        // [ver=01][type=02][wwd=11223344][srcChain=00000061][totalBatches=0003][totalBids=000000c8]
+        bytes memory encoded = BridgeMsgCodec.encodeBidsDone(0x11223344, 0x61, 0x0003, 0xC8);
+        assertEq(encoded, hex"010211223344000000610003000000c8");
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_BIDS_DONE);
     }
 
     function test_RoundTrip_BidsDone_AllFields() public view {
-        (uint32 wwd, uint32 src, uint32 gen, uint16 batches, uint32 bids) = this.exposedDecodeBidsDone(
-            BridgeMsgCodec.encodeBidsDone(0x0A0B0C0D, 0x11121314, 0x21222324, 0x3132, 0x41424344)
-        );
+        (uint32 wwd, uint32 src, uint16 batches, uint32 bids) =
+            this.exposedDecodeBidsDone(BridgeMsgCodec.encodeBidsDone(0x0A0B0C0D, 0x11121314, 0x3132, 0x41424344));
         assertEq(wwd, 0x0A0B0C0D, "worldwideDay");
         assertEq(src, 0x11121314, "srcChainId");
-        assertEq(gen, 0x21222324, "relayGeneration");
         assertEq(batches, 0x3132, "totalBatches");
         assertEq(bids, 0x41424344, "totalBids");
     }
@@ -138,7 +135,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(wonBidsCount, 0xA1B2C3D4, "wonBidsCount");
     }
 
-    function test_RoundTrip_BidsBatch_AllFields_InclRelayGeneration() public view {
+    function test_RoundTrip_BidsBatch_AllFields() public view {
         address[] memory bidders = new address[](2);
         bidders[0] = address(0xA11CE);
         bidders[1] = address(0xB0B);
@@ -155,20 +152,13 @@ contract BridgeMsgCodecGoldenTest is Test {
         (
             uint32 worldwideDay,
             uint32 srcChainId,
-            uint32 relayGeneration,
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory dBidders,
             uint256[] memory dPacked
         ) = this.exposedDecodeBidsBatch(
             BridgeMsgCodec.encodeBidsBatch(
-                0x11223344,
-                0x0000ABCD,
-                0x0000002A,
-                0x0000,
-                0x0001,
-                bidders,
-                BidPackLib.pack(quantities, rates, timestamps)
+                0x11223344, 0x0000ABCD, 0x0000, 0x0001, bidders, BidPackLib.pack(quantities, rates, timestamps)
             )
         );
 
@@ -176,7 +166,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(srcChainId, 0x0000ABCD, "srcChainId");
         assertEq(batchIndex, 0x0000, "batchIndex");
         assertEq(totalBatches, 0x0001, "totalBatches");
-        assertEq(relayGeneration, 0x0000002A, "relayGeneration");
         assertEq(dBidders.length, 2, "bidders len");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
         assertEq(dBidders[1], address(0xB0B), "bidders[1]");
@@ -191,13 +180,12 @@ contract BridgeMsgCodecGoldenTest is Test {
         }
     }
 
-    function test_RoundTrip_BidsBatch_MidBatch_RelayGenerationOne() public view {
-        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,) = this.exposedDecodeBidsBatch(
-            BridgeMsgCodec.encodeBidsBatch(7, 30101, 1, 0, 2, new address[](0), new uint256[](0))
+    function test_RoundTrip_BidsBatch_MidBatch() public view {
+        (,, uint16 batchIndex, uint16 totalBatches,,) = this.exposedDecodeBidsBatch(
+            BridgeMsgCodec.encodeBidsBatch(7, 30101, 0, 2, new address[](0), new uint256[](0))
         );
         assertEq(batchIndex, 0, "batchIndex");
         assertEq(totalBatches, 2, "totalBatches");
-        assertEq(relayGeneration, 1, "relayGeneration");
     }
 
     function test_RoundTrip_RefundInstructions_AllFields() public view {
@@ -307,14 +295,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         return seriesIds[0];
     }
 
-    function exposedDecodeBidsDone(bytes calldata p) external pure returns (uint32, uint32, uint32, uint16, uint32) {
+    function exposedDecodeBidsDone(bytes calldata p) external pure returns (uint32, uint32, uint16, uint32) {
         return BridgeMsgCodec.decodeBidsDone(p);
     }
 
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
+        returns (uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }

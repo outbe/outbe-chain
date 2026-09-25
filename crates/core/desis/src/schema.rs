@@ -215,16 +215,13 @@ pub struct DesisContract {
     pub auction_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // --- Per-chain bid intake (keyed keccak256(worldwide_day_be32 ++ chain_be32)) ---
-    /// Highest accepted bid-relay generation for the chain.
-    #[attribute(order = 18)]
-    pub chain_last_generation: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// totalBatches carried by the chain's batches for the current generation.
+    /// totalBatches the chain's first batch declared; every later batch must carry the same.
     #[attribute(order = 19)]
     pub chain_total_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
+    /// Bitmap of arrived batchIndices (bit i = batchIndex i seen).
     #[attribute(order = 20)]
     pub chain_arrived_mask: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Bids accepted from the chain for the current generation.
+    /// Bids accepted from the chain.
     #[attribute(order = 21)]
     pub chain_bid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// 1 once the chain's intake is complete (marker + all batches + totals match).

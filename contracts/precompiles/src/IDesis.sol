@@ -19,27 +19,20 @@ interface IDesis {
     }
 
     // --- Bid ingestion (from OriginRouter) ---
-    /// @notice Accept a relayed bid batch from a target chain. Batches of one `relayGeneration` may arrive in any order over
-    ///         the unordered bridge; the receiver collects all `totalBatches` (by `batchIndex`) before finalizing.
+    /// @notice Accept a relayed bid batch from a target chain. A day's batches may arrive in any order over the
+    ///         unordered bridge; the receiver collects all `totalBatches` (by `batchIndex`) before finalizing.
     function processBidsBatch(
         uint32 worldwideDay,
         uint32 srcChainId,
-        uint32 relayGeneration,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidderAddresses,
         uint256[] calldata packedBids
     ) external;
 
-    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day/generation.
+    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day.
     ///         The gate clears the auction once every snapshot chain has reported (or the fan-in deadline passes).
-    function processBidsDone(
-        uint32 worldwideDay,
-        uint32 srcChainId,
-        uint32 relayGeneration,
-        uint16 totalBatches,
-        uint32 totalBids
-    ) external;
+    function processBidsDone(uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
 
     // --- Views ---
     function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
@@ -58,8 +51,8 @@ interface IDesis {
     /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared InboundReason
-    /// codes: 2 = obsolete (superseded generation or post-clearing delivery), 3 = conflicting BIDS_DONE
-    /// marker, 4 = day not found (never briefed here).
+    /// codes: 2 = obsolete (post-clearing delivery), 3 = conflicting BIDS_DONE marker, 4 = day not found
+    /// (never briefed here).
     event InboundIgnored(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint8 reason);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
     /// @notice The day was cancelled because the oracle could price none of its reference

@@ -20,8 +20,8 @@ interface ITargetRouter {
     /// @notice Emitted when the BIDS_DONE completeness marker is sent to Outbe after a day's chunks.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param totalBatches Number of BIDS_BATCH messages relayed for this day/generation.
-    /// @param totalBids Total bids relayed for this day/generation.
+    /// @param totalBatches Number of BIDS_BATCH messages relayed for this day.
+    /// @param totalBids Total bids relayed for this day.
     event BidsDoneSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 totalBatches, uint32 totalBids);
 
     /// @notice Emitted when an auction stage message is received from Outbe.

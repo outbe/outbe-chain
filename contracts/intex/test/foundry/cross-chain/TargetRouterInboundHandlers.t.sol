@@ -121,7 +121,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
         _deliver(packet); // first CLEARING relays
 
-        // A redelivered CLEARING must not re-relay under a fresh generation.
+        // A redelivered CLEARING must not relay the day again.
         vm.recordLogs();
         _deliver(packet);
         assertEq(_countLogs(keccak256("BidsDoneSent(bytes32,uint32,uint16,uint32)")), 0, "no re-relay");

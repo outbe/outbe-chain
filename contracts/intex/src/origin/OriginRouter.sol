@@ -452,7 +452,6 @@ contract OriginRouter is
         (
             uint32 worldwideDay,
             uint32 bodySrcChainId,
-            uint32 relayGeneration,
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
@@ -462,21 +461,19 @@ contract OriginRouter is
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
 
         IDesis(_os().desis)
-            .processBidsBatch(
-                worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
-            );
+            .processBidsBatch(worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids);
 
         emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);
     }
 
     /// @dev Decode a BIDS_DONE marker and forward it to Desis; the body `srcChainId` is cross-checked as in BIDS_BATCH.
     function _handleBidsDone(uint32 srcChainId, bytes calldata payload) internal {
-        (uint32 worldwideDay, uint32 bodySrcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids) =
+        (uint32 worldwideDay, uint32 bodySrcChainId, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
 
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
 
-        IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
+        IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
     }

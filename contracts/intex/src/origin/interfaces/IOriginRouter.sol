@@ -36,8 +36,8 @@ interface IOriginRouter {
     /// @notice Emitted when a BIDS_DONE completeness marker is received from a target chain.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param totalBatches Number of BIDS_BATCH messages the source relayed for this day/generation.
-    /// @param totalBids Total bids the source relayed for this day/generation.
+    /// @param totalBatches Number of BIDS_BATCH messages the source relayed for this day.
+    /// @param totalBids Total bids the source relayed for this day.
     event BidsDoneReceived(
         uint32 indexed srcChainId, uint32 indexed worldwideDay, uint16 totalBatches, uint32 totalBids
     );

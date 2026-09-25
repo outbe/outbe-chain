@@ -179,7 +179,7 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_BodySrcChainIdMismatch_IsAcknowledgedAsAConflict() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
         // authenticated source chainId (BNB_CHAIN_ID = 1): never acceptable, so acknowledged, not retried.
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 1, 0, 1, new address[](0), new uint256[](0));
+        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 0, 1, new address[](0), new uint256[](0));
         vm.expectEmit(true, true, true, true, address(outbeRouter));
         emit IOriginRouter.InboundMessageIgnored(
             BNB_CHAIN_ID,
@@ -193,8 +193,7 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_ShortBidsBatch_RevertsInvalidPayloadLength() public {
         // Empty-arrays BIDS_BATCH. Send a one-byte-short packet (truncate the last byte of the trailing
         // length word) to trip the per-type minimum-length check.
-        bytes memory full =
-            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
+        bytes memory full = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
         bytes memory truncated = new bytes(full.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = full[i];
@@ -230,9 +229,7 @@ contract InboundValidationTest is CrossChainTest {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_BIDS_BATCH,
-            abi.encode(
-                uint32(42), BNB_CHAIN_ID, uint32(1), uint16(0), uint16(1), bidders, quantities, rates, timestamps
-            )
+            abi.encode(uint32(42), BNB_CHAIN_ID, uint16(0), uint16(1), bidders, quantities, rates, timestamps)
         );
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)

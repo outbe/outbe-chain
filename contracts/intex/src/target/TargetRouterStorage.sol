@@ -52,9 +52,6 @@ struct TargetRouterStorage {
     IERC7786TokenBridge tokenBridge;
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
     address originRouter;
-    /// @dev Per-day counter stamped on every BIDS_BATCH of the day's relay. Bumped once, when the first
-    ///      round starts: every round of the same day shares it, so the receiver collects them together.
-    mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and

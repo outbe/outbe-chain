@@ -85,7 +85,7 @@ contract ReentrancyProbeDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
+    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -153,8 +153,7 @@ contract RouterReentrancyTest is CrossChainTest {
         vm.prank(address(probeDesis));
         outbeRouter.sendAuctionStageStart(p);
 
-        bytes memory packet =
-            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
+        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
 
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
 

@@ -34,10 +34,7 @@ contract GatedDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
-        external
-        view
-    {
+    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external view {
         if (!ready) revert NotReady();
     }
 
@@ -150,8 +147,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     ///         re-delivering the same batch succeeds. The router no longer drops it to keep a lane moving.
     function test_OM_PrematureBidsBatch_RevertsThenRedeliverSucceeds() public {
         _freezeSnapshot(42); // BNB is in the day's snapshot; the revert below is Desis-not-ready, not membership
-        bytes memory bids =
-            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
+        bytes memory bids = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
 
         // Premature: Desis not ready -> revert propagates out of the bridge.
         vm.expectRevert(GatedDesis.NotReady.selector);

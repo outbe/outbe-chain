@@ -166,7 +166,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_EncodeBidsBatch_AtCap_Encodes() public pure {
         uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN; // 64
-        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
+        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH);
     }
 
@@ -327,7 +327,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeBidsBatch(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
+        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {
