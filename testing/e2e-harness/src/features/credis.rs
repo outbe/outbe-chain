@@ -10,7 +10,7 @@ use outbe_primitives::addresses::{
 };
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
-use crate::features::settlement::{assert_receipt_event, chain_id_b256, find_pow_nonce};
+use crate::features::settlement::{assert_receipt_event, chain_id_b256, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
     self, event, execute, send, snapshot, CredisFixture, ICcaRegistry, ICredis, ICredisFactory,
@@ -141,7 +141,7 @@ fn prepare(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::minePromisCall {
             gemId: gem,
-            nonce: find_pow_nonce(gem),
+            nonce: find_mining_pow_nonce(gem, user),
             mac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 user,
