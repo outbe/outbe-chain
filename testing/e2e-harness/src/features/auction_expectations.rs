@@ -15,7 +15,7 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IBidSettlement {
         function bidLocks(uint32 worldwideDay, address bidder) external view returns (
-            uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded);
+            uint128 lockedAmount, uint32 lockedAt, uint8 status);
     }
 }
 
@@ -356,8 +356,6 @@ pub(super) fn assert_clearing(
                 .expect("settled bid lock");
                 assert_eq!(lock.lockedAmount, 0, "claimed lock deleted");
                 assert_eq!(lock.status, 0, "claimed lock deleted");
-                assert_eq!(lock.failedRefund, 0);
-                assert!(!lock.splitRecorded);
                 let refund = logs(
                     url,
                     side.escrow,

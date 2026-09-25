@@ -708,7 +708,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           ])) as [
             Hex,
             boolean,
-            { lockedAmount: bigint; lockedAt: number; status: number; failedRefund: bigint; splitRecorded: boolean },
+            { lockedAmount: bigint; lockedAt: number; status: number },
             { amount: bigint; lockedAt: number },
           ];
           const committed = commitHash !== "0x" && /[1-9a-f]/i.test(commitHash.slice(2));
