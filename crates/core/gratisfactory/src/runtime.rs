@@ -59,7 +59,6 @@ fn asset_metadata(storage: &StorageHandle<'_>, asset: Address) -> Result<(u16, u
         return Err(GratisFactoryError::ReserveVaultUnavailable.into());
     }
     let iso = read_iso_code(storage, asset)?;
-    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), iso)?;
     let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&ret)
         .map_err(|_| GratisFactoryError::AssetDecimalsUndecodable)?;
