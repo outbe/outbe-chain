@@ -496,7 +496,7 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.worldwide_day_terminal_receipts.base_slot(),
-            U256::from(36u64)
+            U256::from(31u64)
         );
         assert_eq!(
             <crate::schema::CapacityForfeitureReceiptState as StorageRecord>::SLOTS,
@@ -504,7 +504,7 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.capacity_forfeiture_receipts.base_slot(),
-            U256::from(42u64)
+            U256::from(37u64)
         );
         assert_eq!(
             <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
@@ -512,19 +512,12 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.day_limit_formation_receipts.base_slot(),
-            U256::from(55u64)
+            U256::from(50u64)
         );
-        // The terminal-intents field changed shape (StorageVec -> sparse
-        // Mapping) but both are 1-slot fields: its base slot and every later
-        // base slot must stay fixed, so the pinned layout hash is unchanged.
-        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(24u64));
-        // Order 17 remains the one-slot reserved committee bytes at slot 31;
-        // the following mapping must therefore remain rooted at slot 32.
-        assert_eq!(m.ocomp_vote_accountability.base_slot(), U256::from(32u64));
-        assert!(m.ocomp_result_committee_snapshot.is_empty().unwrap());
-        // Appended per-day terminal count lands after the last pre-existing
-        // field (day-limit receipts occupy 55..=61).
-        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(62u64));
+        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(23u64));
+        assert_eq!(m.ocomp_vote_accountability.base_slot(), U256::from(27u64));
+        // Day-limit receipts occupy 50..=56.
+        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(57u64));
         assert_eq!(
             alloy_primitives::keccak256(crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL),
             crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH

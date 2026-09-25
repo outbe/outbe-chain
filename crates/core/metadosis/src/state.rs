@@ -2,8 +2,7 @@ use crate::aggregate::{WwdDayType, WwdStatus};
 use crate::constants::*;
 use crate::precompile::IMetadosis;
 use crate::schema::{
-    DayLimitFormationReceiptStateEntryExt, MetadosisContract, OcompDayLimitFormationStateEntryExt,
-    WorldwideDay, WorldwideDayEntryExt,
+    DayLimitFormationReceiptStateEntryExt, MetadosisContract, WorldwideDay, WorldwideDayEntryExt,
 };
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
@@ -65,15 +64,10 @@ impl MetadosisContract<'_> {
         formation: OcompDayLimitFormation,
     ) -> Result<()> {
         if self
-            .ocomp_day_limit_formations
+            .day_limit_formation_receipts
             .entry(formation.worldwide_day)
             .formed()
             .read()?
-            || self
-                .day_limit_formation_receipts
-                .entry(formation.worldwide_day)
-                .formed()
-                .read()?
         {
             return Err(crate::errors::caller_rejection(
                 "formed OCOMP day limit is immutable",
@@ -83,12 +77,6 @@ impl MetadosisContract<'_> {
             .entry(formation.worldwide_day)
             .metadosis_limit_amount()
             .write(formation.day_limit)?;
-        let legacy = self
-            .ocomp_day_limit_formations
-            .entry(formation.worldwide_day);
-        legacy
-            .carry_over_taken()
-            .write(formation.carry_over_taken)?;
         let receipt = self
             .day_limit_formation_receipts
             .entry(formation.worldwide_day);
@@ -111,10 +99,6 @@ impl MetadosisContract<'_> {
         _permit: &crate::commit::CommitPermit<'_>,
         wwd: WorldwideDayKey,
     ) -> Result<()> {
-        self.ocomp_day_limit_formations
-            .entry(wwd)
-            .formed()
-            .write(true)?;
         self.day_limit_formation_receipts
             .entry(wwd)
             .formed()
@@ -162,14 +146,8 @@ impl MetadosisContract<'_> {
         &self,
         wwd_key: WorldwideDayKey,
     ) -> Result<Option<OcompDayLimitFormation>> {
-        let legacy = self.ocomp_day_limit_formations.entry(wwd_key);
         let receipt = self.day_limit_formation_receipts.entry(wwd_key);
         if !receipt.formed().read()? {
-            if legacy.formed().read()? {
-                return Err(crate::errors::storage_corruption(
-                    "legacy OCOMP day-limit marker has no semantic replay receipt".into(),
-                ));
-            }
             return Ok(None);
         }
         let persisted_day_limit = self
@@ -186,8 +164,6 @@ impl MetadosisContract<'_> {
         if base_limit.checked_add(carry_over_taken) != Some(day_limit)
             || carry_over_before.checked_sub(carry_over_taken) != Some(carry_over_after)
             || day_limit != persisted_day_limit
-            || !legacy.formed().read()?
-            || legacy.carry_over_taken().read()? != carry_over_taken
             || block_number == 0
         {
             return Err(crate::errors::storage_corruption(
@@ -233,14 +209,6 @@ impl MetadosisContract<'_> {
                 self.capacity_forfeiture_receipts.delete(wwd_key)?;
             }
             self.worldwide_days.delete(wwd_key)?;
-            if self
-                .ocomp_day_limit_formations
-                .entry(wwd_key)
-                .formed()
-                .read()?
-            {
-                self.ocomp_day_limit_formations.delete(wwd_key)?;
-            }
             if self
                 .day_limit_formation_receipts
                 .entry(wwd_key)

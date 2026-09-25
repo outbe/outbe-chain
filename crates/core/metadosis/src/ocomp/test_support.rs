@@ -73,10 +73,7 @@ use outbe_validatorset::{
 #[cfg(test)]
 use crate::errors::MetadosisError;
 #[cfg(test)]
-use crate::schema::{
-    DayLimitFormationReceiptStateEntryExt, OcompDayLimitFormationStateEntryExt,
-    WorldwideDayEntryExt,
-};
+use crate::schema::{DayLimitFormationReceiptStateEntryExt, WorldwideDayEntryExt};
 use crate::{
     constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
     ocomp::{
@@ -272,9 +269,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
                 self.capacity_forfeiture_receipts.delete(wwd)?;
             }
             self.worldwide_days.delete(wwd)?;
-            if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
-                self.ocomp_day_limit_formations.delete(wwd)?;
-            }
             if self
                 .day_limit_formation_receipts
                 .entry(wwd)
@@ -289,7 +283,12 @@ impl FixtureKernelExt for MetadosisContract<'_> {
 
     #[cfg(test)]
     fn set_metadosis_limit(&mut self, wwd: WorldwideDay, amount: U256) -> PrecompileResult<()> {
-        if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
+        if self
+            .day_limit_formation_receipts
+            .entry(wwd)
+            .formed()
+            .read()?
+        {
             return Err(PrecompileError::Revert(
                 "formed OCOMP day limit is immutable".into(),
             ));
@@ -351,9 +350,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .entry(wwd)
             .metadosis_limit_amount()
             .read()?;
-        let formation = self.ocomp_day_limit_formations.entry(wwd);
-        formation.carry_over_taken().write(U256::ZERO)?;
-        formation.formed().write(true)?;
         let receipt = self.day_limit_formation_receipts.entry(wwd);
         receipt.base_limit().write(day_limit)?;
         receipt.carry_over_before().write(U256::ZERO)?;

@@ -677,7 +677,7 @@ fn stored_job(intent_id: B256, encoded: &[u8]) -> HashMapStorageProvider {
         // Metadosis slots directly or imports its private schema.
         let slot = intent_storage_key(intent_id)
             .unwrap()
-            .mapping_slot(U256::from(21));
+            .mapping_slot(U256::from(20));
         StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
             .write(encoded)
             .unwrap();

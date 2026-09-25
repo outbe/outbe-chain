@@ -672,9 +672,9 @@ mod active_inventory {
     #[test]
     fn malformed_native_scheduler_propagates_through_inventory_without_source_writes() {
         // Current Metadosis schema places the one-slot scheduler StorageBytes
-        // immediately before the fixed OCOMP job-records mapping base slot 21.
+        // immediately before the fixed OCOMP job-records mapping base slot 20.
         // Raw corruption is test setup only; the inventory calls the owner view.
-        let scheduler_slot = U256::from(20);
+        let scheduler_slot = U256::from(19);
         for version in [1, 2] {
             for oversized in [false, true] {
                 let mut owner = queued_owner(0);
@@ -5994,16 +5994,16 @@ mod pin_authority {
                         .write(bytes)
                         .unwrap();
                 };
-                write(U256::from(20), &live_index);
+                write(U256::from(19), &live_index);
                 write(
-                    DAY.mapping_slot(U256::from(22)),
+                    DAY.mapping_slot(U256::from(21)),
                     &receipt.encode_canonical(&limits).unwrap(),
                 );
-                write(DAY.mapping_slot(U256::from(25)), &scheduler);
+                write(DAY.mapping_slot(U256::from(24)), &scheduler);
                 write(
                     outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
                         .unwrap()
-                        .mapping_slot(U256::from(21)),
+                        .mapping_slot(U256::from(20)),
                     &job.encode_canonical(&limits).unwrap(),
                 );
                 if let Some(finalized) = &job.finalized {
@@ -6013,7 +6013,7 @@ mod pin_authority {
                     response.extend_from_slice(&finalized.deadline_height.to_be_bytes());
                     response.extend_from_slice(finalized.job_id.as_slice());
                     response.extend_from_slice(intent_id.as_slice());
-                    write(U256::from(33), &response);
+                    write(U256::from(28), &response);
                 }
                 assert_eq!(
                     read_live_ocomp_jobs(storage).unwrap(),
@@ -7222,7 +7222,7 @@ mod pin_authority {
             // Metadosis slots directly or imports its private schema.
             let slot = intent_storage_key(intent_id)
                 .unwrap()
-                .mapping_slot(U256::from(21));
+                .mapping_slot(U256::from(20));
             StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
                 .write(encoded)
                 .unwrap();
@@ -9065,7 +9065,7 @@ mod canonical_composition {
                 // Exact corruption already exercised by active_inventory.
                 StorageHandle::enter(&mut owner, |storage| {
                     outbe_primitives::storage::types::StorageBytes::new(
-                        U256::from(20),
+                        U256::from(19),
                         outbe_primitives::addresses::METADOSIS_ADDRESS,
                         storage,
                     )

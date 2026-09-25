@@ -373,14 +373,12 @@ fn commit_and_emit_request(
         })?;
 
     request.ctx.with_checkpoint(|| {
-        let mut registry = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone());
-        if registry.active_authority(&schema_limits)?.is_some() {
-            let pinned_bundle = registry.pin_lineage(intent_id, &schema_limits)?;
-            if pinned_bundle != intent.protocol_bundle_hash {
-                return Err(storage_corruption_message(
-                    "OCOMP intent bundle differs from its Registry lineage pin",
-                ));
-            }
+        let pinned_bundle = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone())
+            .pin_lineage(intent_id, &schema_limits)?;
+        if pinned_bundle != intent.protocol_bundle_hash {
+            return Err(storage_corruption_message(
+                "OCOMP intent bundle differs from its Registry lineage pin",
+            ));
         }
 
         metadosis.commit_ocomp_request(

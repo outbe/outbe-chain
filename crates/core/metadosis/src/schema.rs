@@ -10,7 +10,7 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 /// not the field's `order = 8`. OCM finality proof construction and verification
 /// use this fixed consensus path; the storage behavior test pins it to the
 /// macro-generated contract layout.
-pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 21;
+pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 20;
 
 /// WorldwideDay status values stored as u8.
 pub mod status {
@@ -83,25 +83,7 @@ pub struct WorldwideDay {
     pub current_vwap: U256,
 }
 
-/// Minimal PoC state proving which carry-over was consumed into an immutable
-/// day limit. This is deliberately a separate append-only mapping so the
-/// established `WorldwideDay` width and every later consensus slot remain
-/// unchanged.
-#[storage_record(exists_field = formed)]
-pub struct OcompDayLimitFormationState {
-    #[key]
-    pub wwd: WorldwideDayKey,
-
-    #[attribute(order = 0)]
-    pub formed: bool,
-
-    #[attribute(order = 1, default = U256::ZERO)]
-    pub carry_over_taken: U256,
-}
-
-/// Fresh-devnet semantic replay receipt for the Cycle-owned day-limit slot.
-/// It is separate from the legacy two-field formation marker so that the
-/// established storage layout and OCOMP proof slots remain unchanged.
+/// Semantic replay receipt for the Cycle-owned day-limit slot.
 #[storage_record(exists_field = formed)]
 pub struct DayLimitFormationReceiptState {
     #[key]
@@ -248,11 +230,6 @@ pub struct MetadosisContract {
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 
-    /// Fork-profile authority installed by `OcompLifecycleBegin`. Empty before
-    /// the genesis-bound OCOMP profile is armed.
-    #[attribute(order = 6)]
-    pub ocomp_request_profile: outbe_primitives::storage::types::StorageBytes,
-
     /// Exact bounded live-Job registry. Empty while no OCOMP intent is pending.
     /// READY work is kept in the separately bounded ordered index below; each
     /// live entry retains an independent per-WWD FSM and IntentId.
@@ -284,8 +261,7 @@ pub struct MetadosisContract {
     /// Per-WorldwideDay terminal IntentId, keyed
     /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 || wwd_be || index_be)` (see
     /// `ocomp::terminal_index`). The single-attempt FSM permits exactly one
-    /// immutable entry, deleted together with the day on retirement. Must stay
-    /// a 1-slot field: every later base slot depends on this position.
+    /// immutable entry, deleted together with the day on retirement.
     #[attribute(order = 11)]
     pub ocomp_terminal_intents: outbe_primitives::storage::types::Mapping<B256, B256>,
 
@@ -304,28 +280,10 @@ pub struct MetadosisContract {
     #[attribute(order = 13)]
     pub ocomp_ready_index: outbe_primitives::storage::types::StorageBytes,
 
-    /// PoC day-limit formation state. Appended after all existing fields so
-    /// OCM finality proof paths and pre-fork storage offsets remain fixed.
-    #[attribute(order = 14)]
-    pub ocomp_day_limit_formations:
-        outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompDayLimitFormationState>,
-
     /// Canonical active Lysis generation selected by completed Metadosis state.
     /// This append-only mapping is the public authority after activation.
     #[attribute(order = 15)]
     pub ocomp_active_lysis_generations: Mapping<WorldwideDayKey, StorageBytes>,
-
-    /// Canonical OCB1 `ProtocolBundleV1` installed by `OcompLifecycleBegin`.
-    /// The request profile stores its hash; activation needs the complete
-    /// immutable bundle to select the frozen LYSIS_V1 program semantics.
-    #[attribute(order = 16)]
-    pub ocomp_active_protocol_bundle: StorageBytes,
-
-    /// Reserved zero-valued slot from the removed static OCOMP committee.
-    /// The field name, type and ordinal stay unchanged so the storage layout
-    /// hash and every following field remain byte-identical.
-    #[attribute(order = 17)]
-    pub ocomp_result_committee_snapshot: StorageBytes,
 
     /// Dynamic monolithic result-vote slots and their independently closing
     /// accountability summary, keyed by finalized JobId.
@@ -344,9 +302,8 @@ pub struct MetadosisContract {
     /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`,
     /// it stores one league word per owner so the OCOMP openings MPT-prove a
     /// single league slot per owner instead of the raw Fidelity cohort ledger.
-    /// Appended (base slot 34) so pre-fork storage offsets and OCM finality
-    /// proof paths stay fixed; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`
-    /// is pinned to this layout by test.
+    /// Base slot 29; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` is
+    /// pinned to this layout by test.
     #[attribute(order = 20)]
     pub ocomp_fidelity_league_snapshot: Mapping<B256, u16>,
 
@@ -359,27 +316,24 @@ pub struct MetadosisContract {
     pub ocomp_fidelity_league_snapshot_root:
         outbe_primitives::storage::types::Mapping<WorldwideDayKey, B256>,
 
-    /// Durable typed outer-WWD terminal receipt. Appended for the fresh-devnet
-    /// layout; existing OCOMP proof slots remain byte-identical.
+    /// Durable typed outer-WWD terminal receipt.
     #[attribute(order = 22)]
     pub worldwide_day_terminal_receipts:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDayTerminalReceiptState>,
 
     /// Capacity-forfeiture detail receipt linked to the generic terminal
-    /// receipt above. Fresh-devnet append-only layout.
+    /// receipt above.
     #[attribute(order = 23)]
     pub capacity_forfeiture_receipts:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, CapacityForfeitureReceiptState>,
 
-    /// Complete Metadosis-owned semantic result for day-limit replay. Appended
-    /// only for fresh devnet; no backfill or mixed-history interpretation.
+    /// Complete Metadosis-owned semantic result for day-limit replay.
     #[attribute(order = 24)]
     pub day_limit_formation_receipts:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, DayLimitFormationReceiptState>,
 
     /// Per-WorldwideDay terminal record count: the sole authority for the
-    /// length of the sparse `ocomp_terminal_intents` index above. Appended so
-    /// pre-existing base slots stay fixed.
+    /// length of the sparse `ocomp_terminal_intents` index above.
     #[attribute(order = 25)]
     pub ocomp_terminal_counts: Mapping<WorldwideDayKey, u16>,
 }

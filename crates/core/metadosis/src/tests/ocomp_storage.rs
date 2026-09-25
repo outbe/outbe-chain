@@ -105,80 +105,38 @@ fn commit_request(
 }
 
 #[test]
-fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let mut contract = MetadosisContract::new(storage);
-        let profile = request_profile();
-
-        contract
-            .initialize_ocomp_request_profile(&profile, &limits)
-            .unwrap();
-        assert_eq!(
-            contract.read_ocomp_request_profile(&limits).unwrap(),
-            Some(profile.clone())
-        );
-        contract
-            .initialize_ocomp_request_profile(&profile, &limits)
-            .unwrap();
-
-        let mut changed = profile;
-        changed.protocol_bundle_hash = B256::repeat_byte(0x42);
-        assert!(contract
-            .initialize_ocomp_request_profile(&changed, &limits)
-            .is_err());
-        assert_eq!(
-            contract.read_ocomp_request_profile(&limits).unwrap(),
-            Some(request_profile())
-        );
-    });
-}
-
-#[test]
-fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let install = crate::fixture_kernel::fork_install_fixture(
-            OcompForkInstallClassification::Measurement,
-            1,
-            1,
-            B256::repeat_byte(0x11),
-        );
-        let encoded = install.encode_canonical(&limits).unwrap();
-        let nested_bytes = install
-            .request_profile
+fn fork_install_is_exactly_profile_plus_bundle() {
+    let limits = poc_schema_limits();
+    let install = crate::fixture_kernel::fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        1,
+        B256::repeat_byte(0x11),
+    );
+    let encoded = install.encode_canonical(&limits).unwrap();
+    let nested_bytes = install
+        .request_profile
+        .encode_canonical(&limits)
+        .unwrap()
+        .len()
+        + install
+            .protocol_bundle
             .encode_canonical(&limits)
             .unwrap()
-            .len()
-            + install
-                .protocol_bundle
-                .encode_canonical(&limits)
-                .unwrap()
-                .len();
-        let founder_bytes = install
-            .founder_registrations
-            .iter()
-            .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
-            .sum::<usize>();
-        assert_eq!(
-            encoded.len() - nested_bytes,
-            4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
-        );
-        assert_eq!(
-            crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
-            install
-        );
-
-        let mut contract = MetadosisContract::new(storage);
-        contract
-            .initialize_ocomp_fork_install(&install, 1, &limits)
-            .unwrap();
-        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
-        contract
-            .initialize_ocomp_fork_install(&install, 1, &limits)
-            .unwrap();
-        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
-    });
+            .len();
+    let founder_bytes = install
+        .founder_registrations
+        .iter()
+        .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
+        .sum::<usize>();
+    assert_eq!(
+        encoded.len() - nested_bytes,
+        4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
+    );
+    assert_eq!(
+        crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
+        install
+    );
 }
 
 #[test]
