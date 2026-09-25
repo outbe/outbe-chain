@@ -1583,6 +1583,42 @@ fn issue_merchant_gem_source_entry_dominates_the_market_price() {
     });
 }
 
+/// Entry and floor are two independent maxima against the source terms: a tie takes the shared
+/// value, and the floor can come from the source while the entry comes from the market.
+#[test]
+fn issue_merchant_gem_takes_each_maximum_independently() {
+    let unit = six_decimal_unit();
+    let rate = U256::from(2u64) * unit;
+    let markup = |entry: U256| entry * U256::from(108u64) / U256::from(100u64);
+    // (day VWAP, source entry, source floor, expected entry, expected floor)
+    for (vwap, source_entry, source_floor, entry, floor) in [
+        (
+            U256::from(5u64) * unit,
+            U256::from(5u64) * unit,
+            markup(U256::from(5u64) * unit),
+            U256::from(5u64) * unit,
+            markup(U256::from(5u64) * unit),
+        ),
+        (
+            U256::from(4u64) * unit,
+            unit,
+            U256::from(6u64) * unit,
+            U256::from(4u64) * unit,
+            U256::from(6u64) * unit,
+        ),
+    ] {
+        with_storage(Some(rate), |storage| {
+            seed_day_vwap(storage, 840, vwap);
+            let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
+            let gem_id =
+                runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+            let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+            assert_eq!(item.entry_price_minor, entry);
+            assert_eq!(item.floor_price_minor, floor);
+        });
+    }
+}
+
 #[test]
 fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
