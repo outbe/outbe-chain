@@ -560,7 +560,7 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn waa_capped_distribution_credits_claimable_and_burns_excess() {
+    fn waa_capped_distribution_mints_only_credited_rewards() {
         run(|ctx| {
             let alice = address!("0x1111111111111111111111111111111111111111");
             let bob = address!("0x2222222222222222222222222222222222222222");
@@ -617,12 +617,12 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn waa_no_tribute_returns_full_pool_and_burns_pre_funded_balance() {
+    fn waa_no_tribute_returns_full_pool_without_minting() {
         run(|ctx| {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
             assert_eq!(excess, U256::from(500u64));
-            // closure: minted 500, burned 500 - net zero.
+            // No eligible rewards: no backing is minted.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -633,7 +633,7 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn sra_no_tribute_returns_full_pool_and_burns_pre_funded_balance() {
+    fn sra_no_tribute_returns_full_pool_without_minting() {
         run(|ctx| {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Sra, U256::from(700u64))]).unwrap();
@@ -688,12 +688,12 @@ mod distribute_daily_tests {
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
-                bond + native(48)
+                bond
             );
             assert_eq!(
-                outbe_ccaregistry::api::get_cca(&ctx.storage, cca)
-                    .unwrap()
-                    .rewardAmount,
+                AgentRewardContract::new(ctx.storage.clone())
+                    .get_pool_claimable_reward(RewardPool::Cca, cca)
+                    .unwrap(),
                 native(48)
             );
         });
@@ -728,7 +728,7 @@ mod distribute_daily_tests {
                 U256::ZERO
             );
             // burn parity: AGENT_REWARD holds exactly alice's
-            // 320 claimable; the SRA no-tribute 500 was burned.
+            // 320 claimable; the SRA no-tribute pool was not minted.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -805,7 +805,6 @@ fn iagentreward_sol_matches_contract_public_annotations() {
         ("getClaimableBalance", "address", true, "uint256"),
         ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
         ("claimReward", "uint8,uint256", false, "uint256"),
-        ("issueCcaReward", "address,uint256", false, "uint256"),
     ];
     for (name, args_types, is_view, ret_types) in expected {
         let canon = sol_function_canonical(SOL, name)
@@ -937,3 +936,5 @@ fn reward_timestamp_narrowing_rejects_overflow() {
         assert!(error.to_string().contains("timestamp overflow"));
     });
 }
+
+mod cca;

@@ -37,9 +37,6 @@ pub struct CcaContract {
     /// Excess burns offset later openings for the same CCA and UTC day only.
     #[attribute(order = 3)]
     pub gratis_deficits_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Claimable native COEN atomic units, independent of the bond.
-    #[attribute(order = 4)]
-    pub reward_amounts: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {

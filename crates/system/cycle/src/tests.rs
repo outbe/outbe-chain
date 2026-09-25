@@ -1135,6 +1135,12 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
+        assert_eq!(
+            fire.storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -1202,9 +1208,16 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_ccaregistry::constants::BOND_REQUIREMENT
-                + outbe_primitives::units::checked_protocol_to_native(cca_credit).unwrap(),
-            "retry must credit CCA exactly once"
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "CCA custody holds only the bond"
+        );
+        assert_eq!(
+            retry
+                .storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            outbe_primitives::units::checked_protocol_to_native(cca_credit).unwrap(),
+            "retry must credit CCA backing to AgentReward exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
         for voter in voters {

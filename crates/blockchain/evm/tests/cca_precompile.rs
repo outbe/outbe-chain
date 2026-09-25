@@ -2,6 +2,11 @@
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_agentreward::{
+    distribution::{distribute_daily, PoolKind},
+    schema::RewardPool,
+    AgentRewardContract,
+};
 use outbe_ccaregistry::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
@@ -183,12 +188,19 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         api::position_opened(&s, CCA, 20231115, U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
         assert_eq!(
-            outbe_ccaregistry::emission_sink::distribute_daily(&ctx, 20231115, U256::from(1000))
-                .unwrap(),
+            distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::from(1000))]).unwrap(),
             U256::from(680)
         );
     });
     let reward = checked_protocol_to_native(U256::from(320)).unwrap();
+    assert_eq!(
+        db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
+        reward
+    );
+    assert_eq!(
+        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
+        BOND_REQUIREMENT
+    );
     assert!(tx(
         &mut db,
         U256::ZERO,
@@ -214,7 +226,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert!(!api::is_active(&s, CCA).unwrap());
         assert!(api::position_opened(&s, CCA, 20231115, U256::ONE).is_err());
     });
-    let claim = |amount| ICcaRegistry::claimRewardsCall { amount }.abi_encode();
+    let claim = |amount| IAgentReward::claimRewardCall { pool: 2, amount }.abi_encode();
     let before = snapshot(&mut db);
     // Both spot and an older daily VWAP are available; neither may replace yesterday.
     with_storage(&mut db, |storage| {
@@ -226,7 +238,13 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         );
     });
     for amount in [U256::ZERO, reward + U256::ONE, U256::ONE] {
-        let failed = tx(&mut db, U256::ZERO, claim(amount), NOW);
+        let failed = tx_to(
+            &mut db,
+            AGENT_REWARD_ADDRESS,
+            U256::ZERO,
+            claim(amount),
+            NOW,
+        );
         assert!(!failed.is_success());
         assert!(failed.logs().is_empty());
         assert_eq!(snapshot(&mut db), before);
@@ -237,20 +255,18 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |storage| {
         seed_vwap(&storage, timestamp_to_date_key(NOW), price)
     });
-    let unauthorized = tx_to(
-        &mut db,
-        AGENT_REWARD_ADDRESS,
-        U256::ZERO,
-        IAgentReward::issueCcaRewardCall {
-            owner: CCA,
-            load: U256::ONE,
-        }
-        .abi_encode(),
-        claim_time,
-    );
-    assert!(!unauthorized.is_success());
-    assert!(unauthorized.logs().is_empty());
-    assert_eq!(snapshot(&mut db), before);
+    for (target, signature, args) in [
+        (AGENT_REWARD_ADDRESS, "issueCcaReward(address,uint256)", 64),
+        (CCA_REGISTRY_ADDRESS, "claimRewards(uint256)", 32),
+        (CCA_REGISTRY_ADDRESS, "claimRewards()", 0),
+    ] {
+        let mut data = alloy_primitives::keccak256(signature)[..4].to_vec();
+        data.resize(4 + args, 0);
+        let removed = tx_to(&mut db, target, U256::ZERO, data, claim_time);
+        assert!(!removed.is_success());
+        assert!(removed.logs().is_empty());
+        assert_eq!(snapshot(&mut db), before);
+    }
 
     // Force a failure inside issuance after the Gem has been stored.
     with_storage(&mut db, |storage| {
@@ -260,7 +276,13 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
-    let failed = tx(&mut db, U256::ZERO, claim(U256::ZERO), claim_time);
+    let failed = tx_to(
+        &mut db,
+        AGENT_REWARD_ADDRESS,
+        U256::ZERO,
+        claim(U256::ZERO),
+        claim_time,
+    );
     assert!(!failed.is_success());
     assert!(failed.logs().is_empty());
     assert_eq!(snapshot(&mut db), before_failure);
@@ -270,17 +292,17 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .write(U256::ZERO)
             .unwrap();
     });
-    // Force failure after successful nested issuance, when burning its backing.
+    // Force failure after successful issuance, when burning its backing.
     with_storage(&mut db, |storage| {
-        let backing = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
+        let backing = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
         storage
-            .decrease_balance(CCA_REGISTRY_ADDRESS, backing)
+            .decrease_balance(AGENT_REWARD_ADDRESS, backing)
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
     let failed = try_tx_to(
         &mut db,
-        CCA_REGISTRY_ADDRESS,
+        AGENT_REWARD_ADDRESS,
         U256::ZERO,
         claim(U256::ZERO),
         claim_time,
@@ -290,14 +312,14 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert_eq!(snapshot(&mut db), before_failure);
     with_storage(&mut db, |storage| {
         storage
-            .increase_balance(CCA_REGISTRY_ADDRESS, BOND_REQUIREMENT + reward)
+            .increase_balance(AGENT_REWARD_ADDRESS, reward)
             .unwrap();
         // Preserve an existing native remainder too.
         storage
-            .increase_balance(CCA_REGISTRY_ADDRESS, U256::from(7))
+            .increase_balance(AGENT_REWARD_ADDRESS, U256::from(7))
             .unwrap();
-        outbe_ccaregistry::schema::CcaContract::new(storage)
-            .reward_amounts
+        AgentRewardContract::new(storage)
+            .cca_claimable_rewards
             .write(&CCA, reward + U256::from(7))
             .unwrap();
     });
@@ -308,17 +330,28 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         ),
         (220, U256::ZERO),
     ] {
-        let result = tx(&mut db, U256::ZERO, claim(requested), claim_time);
+        let result = tx_to(
+            &mut db,
+            AGENT_REWARD_ADDRESS,
+            U256::ZERO,
+            claim(requested),
+            claim_time,
+        );
         assert!(result.is_success(), "{result:?}");
         let gem_id =
-            ICcaRegistry::claimRewardsCall::abi_decode_returns(result.output().unwrap()).unwrap();
+            IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap();
         let claimed = result
             .logs()
             .iter()
-            .find_map(|log| ICcaRegistry::RewardsClaimed::decode_log(log).ok())
+            .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
             .unwrap()
             .data;
         assert_eq!(claimed.cca, CCA);
+        assert!(result
+            .logs()
+            .iter()
+            .any(|log| log.address == AGENT_REWARD_ADDRESS
+                && IAgentReward::RewardsClaimed::decode_log(log).is_ok()));
         assert_eq!(
             claimed.amount,
             checked_protocol_to_native(U256::from(load)).unwrap()
@@ -351,11 +384,25 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             initial - BOND_REQUIREMENT
         );
     }
-    assert_eq!(snapshot(&mut db).0.rewardAmount, U256::from(7));
-    assert!(!tx(&mut db, U256::ZERO, claim(U256::ZERO), claim_time).is_success());
+    with_storage(&mut db, |storage| {
+        assert_eq!(
+            AgentRewardContract::new(storage)
+                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .unwrap(),
+            U256::from(7)
+        )
+    });
+    assert!(!tx_to(
+        &mut db,
+        AGENT_REWARD_ADDRESS,
+        U256::ZERO,
+        claim(U256::ZERO),
+        claim_time
+    )
+    .is_success());
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        BOND_REQUIREMENT + U256::from(7)
+        BOND_REQUIREMENT
     );
     assert!(!tx(
         &mut db,
@@ -373,7 +420,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     .is_success());
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        U256::from(7)
+        U256::ZERO
     );
     assert_eq!(db.cache.accounts[&CCA].info.balance, initial);
     with_storage(&mut db, |s| {
@@ -433,6 +480,7 @@ fn snapshot(db: &mut CacheDB<EmptyDB>) -> (ICcaRegistry::Cca, Vec<ContractState>
     let mut contracts = Vec::new();
     for address in [
         CCA_REGISTRY_ADDRESS,
+        AGENT_REWARD_ADDRESS,
         outbe_primitives::addresses::GEM_ADDRESS,
         outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
     ] {

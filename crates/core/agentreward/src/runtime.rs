@@ -1,3 +1,4 @@
+use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_gemfactory::schema::GemTypes;
@@ -47,11 +48,16 @@ impl AgentRewardContract<'_> {
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
-    /// Gets the total claimable reward balance for an address across both pools.
+    /// Gets the total claimable reward balance for an address across all three pools.
     pub fn get_claimable_reward(&self, address: Address) -> Result<U256> {
         let waa = self.get_pool_claimable_reward(RewardPool::Waa, address)?;
         let sra = self.get_pool_claimable_reward(RewardPool::Sra, address)?;
-        checked_add(waa, sra, "agentreward claimable total overflow")
+        let cca = self.get_pool_claimable_reward(RewardPool::Cca, address)?;
+        checked_add(
+            checked_add(waa, sra, "agentreward claimable total overflow")?,
+            cca,
+            "agentreward claimable total overflow",
+        )
     }
 
     /// Gets the claimable reward balance an address holds in one pool.
@@ -59,6 +65,7 @@ impl AgentRewardContract<'_> {
         match pool {
             RewardPool::Waa => self.waa_claimable_rewards.read(&address),
             RewardPool::Sra => self.sra_claimable_rewards.read(&address),
+            RewardPool::Cca => self.cca_claimable_rewards.read(&address),
         }
     }
 
@@ -83,6 +90,7 @@ impl AgentRewardContract<'_> {
         match pool {
             RewardPool::Waa => self.waa_claimable_rewards.write(&address, amount),
             RewardPool::Sra => self.sra_claimable_rewards.write(&address, amount),
+            RewardPool::Cca => self.cca_claimable_rewards.write(&address, amount),
         }
     }
 
@@ -104,39 +112,54 @@ impl AgentRewardContract<'_> {
         address: Address,
         amount: U256,
     ) -> Result<U256> {
-        let balance = self.get_pool_claimable_reward(pool, address)?;
-        if balance.is_zero() {
-            return Err(PrecompileError::Revert(
-                "no claimable balance in this pool".into(),
-            ));
-        }
-        let requested = if amount.is_zero() { balance } else { amount };
-        if requested > balance {
-            return Err(PrecompileError::Revert(
-                "insufficient claimable balance".into(),
-            ));
-        }
-        // The balance is native COEN; a Gem load is a protocol amount. Only the
-        // part that survives the conversion is minted and burned, so a sub-unit
-        // remainder keeps accumulating instead of being lost.
-        let gem_load = native_to_protocol_floor(requested);
-        if gem_load.is_zero() {
-            return Err(PrecompileError::Revert(
-                "claimed amount is below one protocol unit".into(),
-            ));
-        }
-        let burned = checked_protocol_to_native(gem_load)
-            .ok_or_else(|| PrecompileError::Revert("native AgentReward claim overflow".into()))?;
-        let gem_type = match pool {
-            RewardPool::Waa => GemTypes::Wallet,
-            RewardPool::Sra => GemTypes::Sra,
-        };
-        let gem_id = issue_reward_gem(&self.storage, address, gem_type, gem_load)?;
-        self.storage
-            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
-        self.write_pool_claimable_reward(pool, address, balance - burned)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            if pool == RewardPool::Cca {
+                // Registration history is sufficient: earned rewards survive deregistration.
+                outbe_ccaregistry::api::cca_state(&storage, address)?;
+            }
+            let balance = self.get_pool_claimable_reward(pool, address)?;
+            if balance.is_zero() {
+                return Err(PrecompileError::Revert(
+                    "no claimable balance in this pool".into(),
+                ));
+            }
+            let requested = if amount.is_zero() { balance } else { amount };
+            if requested > balance {
+                return Err(PrecompileError::Revert(
+                    "insufficient claimable balance".into(),
+                ));
+            }
+            // The balance is native COEN; a Gem load is a protocol amount. Only the
+            // part that survives the conversion is minted and burned, so a sub-unit
+            // remainder keeps accumulating instead of being lost.
+            let gem_load = native_to_protocol_floor(requested);
+            if gem_load.is_zero() {
+                return Err(PrecompileError::Revert(
+                    "claimed amount is below one protocol unit".into(),
+                ));
+            }
+            let burned = checked_protocol_to_native(gem_load).ok_or_else(|| {
+                PrecompileError::Revert("native AgentReward claim overflow".into())
+            })?;
+            let gem_type = match pool {
+                RewardPool::Waa => GemTypes::Wallet,
+                RewardPool::Sra => GemTypes::Sra,
+                RewardPool::Cca => GemTypes::Cca,
+            };
+            let gem_id = issue_reward_gem(&self.storage, address, gem_type, gem_load)?;
+            self.storage
+                .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
+            self.write_pool_claimable_reward(pool, address, balance - burned)?;
 
-        Ok(gem_id)
+            if pool == RewardPool::Cca {
+                self.emit(IAgentReward::RewardsClaimed {
+                    cca: address,
+                    amount: burned,
+                })?;
+            }
+            Ok(gem_id)
+        })
     }
 
     /// Gets all WAA tribute counts for a day as (address, count) pairs.
