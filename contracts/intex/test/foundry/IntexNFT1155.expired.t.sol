@@ -38,11 +38,11 @@ contract IntexNFT1155ExpiredTest is Test {
         deadline = block.timestamp + CALL_PERIOD;
     }
 
-    /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`,
-    /// `status` and `state` into the record's fourth slot, `state` at byte 13.
+    /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
+    /// and `state` into the record's fourth slot, `state` at byte 12.
     function _storedState() internal view returns (uint8) {
         bytes32 base = keccak256(abi.encode(iTok, STORAGE_SLOT));
-        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 104);
+        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
     }
 
     function test_ReadsCalledUpToTheDeadlineAndExpiredAfterIt() public {
@@ -55,7 +55,7 @@ contract IntexNFT1155ExpiredTest is Test {
 
     function test_SeriesDataAgreesWithReadData() public {
         vm.warp(deadline + 1);
-        (,,,,,,,,,,,, IIntexNFT1155.IntexState state) = token.seriesData(iTok);
+        (,,,,,,,,,,, IIntexNFT1155.IntexState state) = token.seriesData(iTok);
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Expired));
     }
 

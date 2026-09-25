@@ -570,7 +570,6 @@ sol! {
         uint32 issuedAt;
         uint32 calledAt;
         uint32 totalSupply;
-        uint8 status;
         uint8 state;
         uint32 worldwideDay;
     }

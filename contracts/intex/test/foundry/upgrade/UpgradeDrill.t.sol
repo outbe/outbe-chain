@@ -71,7 +71,7 @@ contract UpgradeDrillTest is CrossChainTest {
         _assertUpgraded(address(nft), address(newImpl));
         assertEq(nft.balanceOf(owner, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
         assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
-        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) =
+        (,,,,,,,, uint32 issuedAt,,, IIntexNFT1155.IntexState state) =
             nft.seriesData(nft.issuedTokenId(CreateSeriesLib.seriesId(7)));
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");

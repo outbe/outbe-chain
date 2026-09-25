@@ -23,8 +23,6 @@ contract IntexNFT1155SettledRecordTest is Test {
     // `seriesData` mapping is member 0 of the ERC-7201 struct; SeriesData spans 4 slots.
     uint256 internal constant _SERIES_DATA_OFFSET = 0;
     uint256 internal constant _SERIES_DATA_SLOTS = 4;
-    // `status` sits at bit 96 of slot 3 (after issuedAt, calledAt, totalSupply).
-    uint256 internal constant _STATUS_BIT = 96;
 
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");

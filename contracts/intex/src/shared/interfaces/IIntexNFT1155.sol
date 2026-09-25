@@ -62,10 +62,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Series-level data, stored per token id (one entry for the Issued token id
-    ///         and one for the Settled token id; `status` distinguishes them).
-    /// @dev `issuedUnits` is meaningful only on the Issued entry; it caps the current
-    ///      `totalSupply` minted via `mint` (a burn frees cap room).
+    /// @notice Series-level data, stored once per series under its Issued token id.
+    /// @dev `issuedUnits` caps the current `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
@@ -90,8 +88,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 calledAt;
         /// @notice Total supply of this token id across all owners.
         uint32 totalSupply;
-        /// @notice Token classification (Issued or Settled).
-        IntexStatus status;
         /// @notice Current series lifecycle state.
         IntexState state;
         /// @notice Worldwide day whose tributes fed this series.
@@ -284,10 +280,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return settled The Settled token id.
     function tokenIds(bytes14 seriesId) external pure returns (uint256 issued, uint256 settled);
 
-    /// @notice Token classification (Issued/Settled) for a token id.
+    /// @notice Token classification (Issued/Settled) for a token id, read off the id itself.
     /// @param tokenId Token id to classify.
     /// @return The token classification.
-    function statusOf(uint256 tokenId) external view returns (IntexStatus);
+    function statusOf(uint256 tokenId) external pure returns (IntexStatus);
 
     /// @notice Read series data by series id.
     /// @param seriesId Series identifier.

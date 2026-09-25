@@ -506,11 +506,6 @@
               "internalType": "uint32"
             },
             {
-              "name": "status",
-              "type": "uint8",
-              "internalType": "enum IIntexNFT1155.IntexStatus"
-            },
-            {
               "name": "state",
               "type": "uint8",
               "internalType": "enum IIntexNFT1155.IntexState"
@@ -758,7 +753,7 @@
           "internalType": "enum IIntexNFT1155.IntexStatus"
         }
       ],
-      "stateMutability": "view"
+      "stateMutability": "pure"
     },
     {
       "type": "function",

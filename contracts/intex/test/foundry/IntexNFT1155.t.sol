@@ -91,7 +91,6 @@ contract IntexNFT1155Test is Test {
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
-        assertEq(uint8(data.status), uint8(IIntexNFT1155.IntexStatus.Issued));
         assertEq(data.issuedAt, block.timestamp);
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);

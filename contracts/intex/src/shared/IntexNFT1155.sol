@@ -43,8 +43,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
-        /// @dev Series-level data, stored per token id. One entry per class: both carry the
-        ///      immutable series identity; mutable lifecycle fields live on the Issued entry only.
+        /// @dev Series-level data, stored once per series under its Issued token id; the Settled class
+        ///      resolves to it.
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
         /// @dev Settled-class supply per token id. The Settled class carries no identity record of its
         ///      own - it resolves to the Issued entry - so only its supply is stored.
@@ -117,7 +117,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             uint32 issuedAt,
             uint32 calledAt,
             uint32 totalSupply,
-            IIntexNFT1155.IntexStatus status,
             IIntexNFT1155.IntexState state
         )
     {
@@ -133,7 +132,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         issuedAt = d.issuedAt;
         calledAt = d.calledAt;
         totalSupply = d.totalSupply;
-        status = d.status;
         state = _effectiveState(d);
     }
 
@@ -182,7 +180,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             issuedAt: params.issuedAt,
             calledAt: 0,
             totalSupply: 0,
-            status: IIntexNFT1155.IntexStatus.Issued,
             state: IIntexNFT1155.IntexState.Issued,
             worldwideDay: params.worldwideDay,
             seriesId: params.seriesId
@@ -468,9 +465,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function statusOf(uint256 tokenId) external view returns (IIntexNFT1155.IntexStatus) {
-        if (_isSettledTokenId(tokenId)) return IIntexNFT1155.IntexStatus.Settled;
-        return _s().seriesData[tokenId].status;
+    function statusOf(uint256 tokenId) external pure returns (IIntexNFT1155.IntexStatus) {
+        return _isSettledTokenId(tokenId) ? IIntexNFT1155.IntexStatus.Settled : IIntexNFT1155.IntexStatus.Issued;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -517,10 +513,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IIntexNFT1155
     function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
         IIntexNFT1155.SeriesData memory data = _identity(tokenId);
-        if (_isSettledTokenId(tokenId)) {
+        bool settled = _isSettledTokenId(tokenId);
+        if (settled) {
             // A settled position is closed: it wears the series identity with the Settled badge and its
             // own supply, and the series' later lifecycle no longer moves it.
-            data.status = IIntexNFT1155.IntexStatus.Settled;
             data.state = IIntexNFT1155.IntexState.Issued;
             data.calledAt = 0;
             data.totalSupply = _s().settledSupply[tokenId];
@@ -530,7 +526,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
                 data.state = IIntexNFT1155.IntexState.Qualified;
             }
         }
-        return IntexMetadata.tokenURI(data);
+        return IntexMetadata.tokenURI(data, settled);
     }
 
     /// @dev A missing or failing source reads as not qualified, so `uri` never reverts on it.
