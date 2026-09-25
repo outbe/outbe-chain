@@ -580,32 +580,45 @@ fn renew_promoted_leases_when_due(
         .max()
         .unwrap()
         + 1;
-    let (_, _, _, pending) =
+    let (_, before_restart, _, mut pending) =
         crate::features::ocomp::restart_committee_at_logical_time(world, target);
-    let deadline = Instant::now() + Duration::from_secs(300);
+    // Production consensus advances at most one hour per block. A week-long
+    // lease jump needs at least 168 blocks, so bound a stalled clock rather
+    // than the total time needed to reach the renewal window. The scenario
+    // still has its overall execution deadline.
+    let stall_timeout = Duration::from_secs(180);
+    let mut last_timestamp = before_restart[0].block_timestamp;
+    let mut deadline = Instant::now() + stall_timeout;
+    eprintln!("HARDWARE_ENCLAVE_RENEWAL_CLOCK round={round} from={last_timestamp} target={target}");
     loop {
-        let height = world
-            .rpc
-            .finalized(ports[0])
-            .expect("lease window checkpoint");
+        let height = ports
+            .iter()
+            .map(|&port| world.rpc.finalized(port).expect("lease window checkpoint"))
+            .min()
+            .expect("renewal requires the validator committee");
         let timestamp = world.rpc.block_timestamp(ports[0], height).unwrap();
-        if timestamp >= target {
+        if timestamp > last_timestamp {
+            last_timestamp = timestamp;
+            deadline = Instant::now() + stall_timeout;
+        }
+        // Observe the feeder concurrently with the clock ratchet, retaining
+        // success instead of starting its observation after a long jump.
+        if pending.as_ref().is_some_and(|publication| {
+            crate::features::price_oracle::observe_pending_publication(world, publication)
+        }) {
+            pending = None;
+        }
+        if timestamp >= target && pending.is_none() {
+            eprintln!(
+                "HARDWARE_ENCLAVE_RENEWAL_CLOCK round={round} reached={timestamp} height={height}"
+            );
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "consensus clock did not reach lease renewal window"
+            "consensus clock stalled before lease renewal window: timestamp={timestamp} target={target} height={height}"
         );
         sleep(Duration::from_millis(500));
-    }
-    if let Some(pending) = pending {
-        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
-            assert!(
-                Instant::now() < deadline,
-                "feeder did not recover after renewal clock advance"
-            );
-            sleep(Duration::from_millis(500));
-        }
     }
     for (index, old) in before {
         let donor = if index == 0 { 3 } else { 0 };
