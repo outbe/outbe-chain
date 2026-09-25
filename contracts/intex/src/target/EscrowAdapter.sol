@@ -164,27 +164,6 @@ contract EscrowAdapter is
         return _s().lockTag;
     }
 
-    /// @notice Bid lock record for a bidder within a series. Flattened to match the original
-    ///         public-mapping getter ABI.
-    function bidLocks(uint32 worldwideDay, address bidder)
-        external
-        view
-        returns (uint128 lockedAmount, uint32 lockedAt, LockStatus status)
-    {
-        BidLock storage l = _s().bidLocks[worldwideDay][bidder];
-        return (l.lockedAmount, l.lockedAt, l.status);
-    }
-
-    /// @notice Per-series escrow state. Flattened to match the original public-mapping getter ABI.
-    function auctionEscrowState(uint32 worldwideDay)
-        external
-        view
-        returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
-    {
-        AuctionEscrowState storage e = _s().auctionEscrowState[worldwideDay];
-        return (e.totalLocked, e.lockCount, e.finalizedAt, e.finalized);
-    }
-
     // --- Admin ---
     /// @inheritdoc IEscrowAdapter
     function wire(address _intexAuction, address _compact, address _paymentToken)

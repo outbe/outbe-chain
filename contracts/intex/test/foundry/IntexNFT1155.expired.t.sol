@@ -53,12 +53,6 @@ contract IntexNFT1155ExpiredTest is Test {
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Expired));
     }
 
-    function test_SeriesDataAgreesWithReadData() public {
-        vm.warp(deadline + 1);
-        (,,,,,,,,,,, IIntexNFT1155.IntexState state) = token.seriesData(iTok);
-        assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Expired));
-    }
-
     /// The whole point of deriving: storage still says `Called`, so `_update`,
     /// `crosschainBurn` and `crosschainMint` keep refusing an expired series.
     function test_StorageStillHoldsCalled() public {

@@ -726,10 +726,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             }
           }
           if (lock.status !== 0) {
-            const [[, , , finalized], [claimable, claimableAt]] = (await Promise.all([
-              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "auctionEscrowState", args: [wwd] }),
+            const [[, finalized], [claimable, claimableAt]] = (await Promise.all([
+              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getAuctionStatus", args: [wwd] }),
               n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getClaimableRefund", args: [wwd, who] }),
-            ])) as [[bigint, number, number, boolean], [bigint, number]];
+            ])) as [[boolean, boolean, bigint], [bigint, number]];
             const escrow: Record<string, unknown> = {
               lockedAmount: lock.lockedAmount.toString(),
               status: lockStatus(lock.status),

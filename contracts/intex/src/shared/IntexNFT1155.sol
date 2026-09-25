@@ -99,42 +99,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return _s().vwapSource;
     }
 
-    /// @notice Series-level data, stored per token id. Flattened to match the original
-    ///         public-mapping getter ABI, with the call-trigger returned as its struct (collapsing
-    ///         the three flat trigger fields keeps the return arity within the via_ir stack bound).
-    function seriesData(uint256 tokenId)
-        external
-        view
-        returns (
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint32 issuedUnits,
-            uint128 promisLoadMinor,
-            uint64 entryPriceMinor,
-            uint64 floorPriceMinor,
-            uint64 callPriceMinor,
-            IIntexNFT1155.IntexCallTrigger memory callTrigger,
-            uint32 issuedAt,
-            uint32 calledAt,
-            uint32 totalSupply,
-            IIntexNFT1155.IntexState state
-        )
-    {
-        IIntexNFT1155.SeriesData memory d = _s().seriesData[tokenId];
-        issuanceCurrency = d.issuanceCurrency;
-        referenceCurrency = d.referenceCurrency;
-        issuedUnits = d.issuedUnits;
-        promisLoadMinor = d.promisLoadMinor;
-        entryPriceMinor = d.entryPriceMinor;
-        floorPriceMinor = d.floorPriceMinor;
-        callPriceMinor = d.callPriceMinor;
-        callTrigger = d.callTrigger;
-        issuedAt = d.issuedAt;
-        calledAt = d.calledAt;
-        totalSupply = d.totalSupply;
-        state = _effectiveState(d);
-    }
-
     /// @inheritdoc IIntexNFT1155
     function worldwideDayOf(bytes14 seriesId) external view returns (uint32) {
         return _s().seriesData[_issuedTokenId(seriesId)].worldwideDay;

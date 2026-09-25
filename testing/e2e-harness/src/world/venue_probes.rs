@@ -47,9 +47,10 @@ sol! {
         struct AuctionResult {
             uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
         }
-        function auctions(uint32 worldwideDay)
-            external view
-            returns (uint8 worldwideDayState, AuctionSchedule memory schedule, AuctionParams memory params, AuctionResult memory result);
+        struct AuctionData {
+            uint8 worldwideDayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;
+        }
+        function getAuctionInfo(uint32 worldwideDay) external view returns (AuctionData memory);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -163,7 +164,7 @@ pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> S
     match eth::read_call(
         url,
         venue,
-        &IVenueSchedule::auctionsCall {
+        &IVenueSchedule::getAuctionInfoCall {
             worldwideDay: worldwide_day,
         },
     ) {

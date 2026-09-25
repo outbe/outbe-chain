@@ -151,40 +151,6 @@
     },
     {
       "type": "function",
-      "name": "auctionEscrowState",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "totalLocked",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "lockCount",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "finalizedAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "finalized",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "authorizeClaim",
       "inputs": [
         {
@@ -231,40 +197,6 @@
         }
       ],
       "stateMutability": "pure"
-    },
-    {
-      "type": "function",
-      "name": "bidLocks",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "lockedAmount",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "lockedAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "status",
-          "type": "uint8",
-          "internalType": "enum IEscrowAdapter.LockStatus"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "function",
