@@ -28,7 +28,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Issued -> Called -> Expired; `Qualified` is derived and no longer written. `Expired` is read-only:
+    /// @dev Issued -> Called -> Expired; `Qualified` is derived, never stored. `Expired` is read-only:
     ///      storage keeps `Called`, so the freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
@@ -163,8 +163,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error TransferOnCalledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
-    /// @notice Bridge crosschainBurn/crosschainMint attempted while the series state disallows it.
-    error BridgeStateForbidden(uint256 tokenId, uint8 state);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a `Called` series after the settlement
     ///         deadline (`calledAt + callNoticePeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
@@ -206,7 +204,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     function issue(address to, uint256 quantity, bytes14 seriesId) external;
 
-    /// @notice Mark a series as Called (Issued/Qualified -> Called).
+    /// @notice Mark a series as Called (Issued -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
@@ -229,7 +227,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Burn `amount` Issued Intex from `owner` when the tokens are sent to the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued or Qualified - no Call Event yet). The capacity record lives in the
+    ///      (Issued - no Call Event yet). The capacity record lives in the
     ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.

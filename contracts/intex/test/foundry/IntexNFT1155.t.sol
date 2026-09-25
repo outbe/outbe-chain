@@ -216,11 +216,11 @@ contract IntexNFT1155Test is Test {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        // Re-calling on an already Called series surfaces the canonical "Qualified expected" hint.
+        // Re-calling on an already Called series names Issued as the only state it could be called from.
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Qualified),
+                uint8(IIntexNFT1155.IntexState.Issued),
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
@@ -768,7 +768,7 @@ contract IntexNFT1155Test is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Qualified),
+                uint8(IIntexNFT1155.IntexState.Issued),
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );

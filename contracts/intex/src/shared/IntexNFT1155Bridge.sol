@@ -31,7 +31,7 @@ contract IntexNFT1155Bridge is
 {
     uint16 public constant SEND = IntexNFT1155BridgeCodec.SEND;
     uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
-    uint8 public constant BODY_VERSION_V2 = IntexNFT1155BridgeCodec.BODY_VERSION_V2;
+    uint8 public constant BODY_VERSION_V1 = IntexNFT1155BridgeCodec.BODY_VERSION_V1;
     uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
 
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
@@ -231,7 +231,7 @@ contract IntexNFT1155Bridge is
             revert IntexNFT1155BridgeCodec.InvalidPayloadLength(message.length, IntexNFT1155BridgeCodec.HEADER_LEN);
         }
         uint8 version = uint8(message[0]);
-        if (version != BODY_VERSION_V2) revert IntexNFT1155BridgeCodec.UnsupportedBodyVersion(version);
+        if (version != BODY_VERSION_V1) revert IntexNFT1155BridgeCodec.UnsupportedBodyVersion(version);
         uint8 msgType = uint8(message[1]);
 
         if (msgType == SEND) {
@@ -315,7 +315,6 @@ contract IntexNFT1155Bridge is
         IntexNFT1155BridgeStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
-        if (f.srcChainId == 0) revert NoReclaimSource(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
 
         bytes32[] memory recipients = new bytes32[](1);

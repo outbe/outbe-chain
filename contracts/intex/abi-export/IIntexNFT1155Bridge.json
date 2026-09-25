@@ -642,22 +642,6 @@
     },
     {
       "type": "error",
-      "name": "NoReclaimSource",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "NoSuchFailedCrosschainMint",
       "inputs": [
         {

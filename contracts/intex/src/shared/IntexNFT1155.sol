@@ -201,9 +201,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
-        // Allow Issued -> Called and Qualified -> Called.
-        if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
+        if (data.state != IIntexNFT1155.IntexState.Issued) {
+            revert InvalidState(uint8(IIntexNFT1155.IntexState.Issued), uint8(data.state));
         }
 
         // Zero is the "not called" sentinel, and a future stamp would outlast the origin's window.
@@ -224,7 +223,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IERC1155Bridgeable
     /// @dev Bridge crosschainBurn gating:
     ///      - Settled token ids are soulbound - always reverts.
-    ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
+    ///      - Series state `Issued`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, owner-initiated moves while the series is tradable).
     ///      - Series state `Called`: allowed only when the destination owner is the source owner -
     ///        ownership is frozen once a series is Called - and only inside the call window.
@@ -365,8 +364,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
-        if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
+        if (data.state != IIntexNFT1155.IntexState.Issued) {
+            revert InvalidState(uint8(IIntexNFT1155.IntexState.Issued), uint8(data.state));
         }
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
@@ -526,7 +525,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
     ///      - Owner-to-owner transfers:
     ///          * Settled token ids are soulbound - always reverts.
-    ///          * Issued token ids are transferable while the series is Issued or Qualified.
+    ///          * Issued token ids are transferable while the series is Issued.
     ///            A Called series freezes owner-to-owner transfers: the settlement
     ///            obligation stays with the owner and cannot be passed on. Bridge gating
     ///            is separate and lives in `crosschainBurn` / `crosschainMint`.

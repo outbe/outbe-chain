@@ -1548,22 +1548,6 @@
     },
     {
       "type": "error",
-      "name": "BridgeStateForbidden",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "state",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "CalledAtInvalid",
       "inputs": [
         {

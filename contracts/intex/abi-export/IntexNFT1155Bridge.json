@@ -23,7 +23,7 @@
     },
     {
       "type": "function",
-      "name": "BODY_VERSION_V2",
+      "name": "BODY_VERSION_V1",
       "inputs": [],
       "outputs": [
         {
@@ -1338,22 +1338,6 @@
       "type": "error",
       "name": "NativeSweepFailed",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "NoReclaimSource",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
     },
     {
       "type": "error",
