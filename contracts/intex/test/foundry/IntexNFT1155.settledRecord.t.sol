@@ -20,8 +20,8 @@ contract IntexNFT1155SettledRecordTest is Test {
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
     uint256 internal constant _NFT_STORAGE_SLOT = 0xe941cbaf65abb9f7003c3006add9c5d12ba7e339abdf88d4afd5defeb8932900;
-    // `seriesData` mapping is member 1 of the ERC-7201 struct; SeriesData spans 4 slots.
-    uint256 internal constant _SERIES_DATA_OFFSET = 1;
+    // `seriesData` mapping is member 0 of the ERC-7201 struct; SeriesData spans 4 slots.
+    uint256 internal constant _SERIES_DATA_OFFSET = 0;
     uint256 internal constant _SERIES_DATA_SLOTS = 4;
     // `status` sits at bit 96 of slot 3 (after issuedAt, calledAt, totalSupply).
     uint256 internal constant _STATUS_BIT = 96;

@@ -15,7 +15,7 @@ contract IntexNFT1155ExpiredTest is Test {
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 21 days;
 
-    /// erc7201:outbe.intex.IntexNFT1155; `seriesData` is the namespace's second member.
+    /// erc7201:outbe.intex.IntexNFT1155; `seriesData` is the namespace's first member.
     bytes32 internal constant STORAGE_SLOT = 0xe941cbaf65abb9f7003c3006add9c5d12ba7e339abdf88d4afd5defeb8932900;
 
     address internal admin = makeAddr("admin");
@@ -41,7 +41,7 @@ contract IntexNFT1155ExpiredTest is Test {
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`,
     /// `status` and `state` into the record's fourth slot, `state` at byte 13.
     function _storedState() internal view returns (uint8) {
-        bytes32 base = keccak256(abi.encode(iTok, bytes32(uint256(STORAGE_SLOT) + 1)));
+        bytes32 base = keccak256(abi.encode(iTok, STORAGE_SLOT));
         return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 104);
     }
 
