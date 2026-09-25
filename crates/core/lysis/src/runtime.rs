@@ -236,7 +236,7 @@ pub fn freeze_entry_price_snapshot(
             prices.insert(iso, vwap);
         }
     }
-    outbe_nod::api::store_entry_price_snapshot(storage, day, &prices)?;
+    outbe_nod::api::store_entry_price_snapshot(storage, day, previous_day, &prices)?;
     Ok(prices)
 }
 

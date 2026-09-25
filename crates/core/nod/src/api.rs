@@ -58,13 +58,19 @@ pub fn entry_price_snapshot(
     NodContract::new(storage).entry_price_snapshot(day)
 }
 
+/// UTC day the frozen snapshot was read from, or `None` before it was captured.
+pub fn entry_price_source_day(storage: StorageHandle, day: WorldwideDay) -> Result<Option<u32>> {
+    NodContract::new(storage).entry_price_source_day(day)
+}
+
 /// Stores the complete map atomically. A frozen day cannot be overwritten.
 pub fn store_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,
+    source_day: u32,
     prices: &BTreeMap<u16, U256>,
 ) -> Result<()> {
-    NodContract::new(storage).store_entry_price_snapshot(day, prices)
+    NodContract::new(storage).store_entry_price_snapshot(day, source_day, prices)
 }
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
