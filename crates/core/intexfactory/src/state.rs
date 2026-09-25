@@ -390,11 +390,11 @@ impl IntexFactoryContract<'_> {
 impl<'storage> IntexFactoryContract<'storage> {
     fn call_bin_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
         GroupIndex {
-            bin_count: self.qualified_bin_count.clone(),
-            bin_groups: self.qualified_bin_groups.clone(),
-            group_count: self.qualified_group_count.clone(),
-            group_members: self.qualified_group_members.clone(),
-            group_bin: self.qualified_group_bin.clone(),
+            bin_count: self.call_bin_count.clone(),
+            bin_groups: self.call_bin_group_days.clone(),
+            group_count: self.call_group_count.clone(),
+            group_members: self.call_group_members.clone(),
+            group_bin: self.call_group_bin.clone(),
             iso: reference_currency,
         }
     }
@@ -588,29 +588,29 @@ pub(crate) struct CallBins<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(
 
 impl BinTreeStorage for CallBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.0.qualified_bin_tree_root.read(&self.1)
+        self.0.call_bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.0.qualified_bin_tree_root.write(&self.1, value)
+        self.0.call_bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
         self.0
-            .qualified_bin_tree_mid
+            .call_bin_tree_mid
             .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .qualified_bin_tree_mid
+            .call_bin_tree_mid
             .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
         self.0
-            .qualified_bin_tree_leaf
+            .call_bin_tree_leaf
             .read(&IntexFactoryContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .qualified_bin_tree_leaf
+            .call_bin_tree_leaf
             .write(&IntexFactoryContract::scoped(self.1, key), value)
     }
 }

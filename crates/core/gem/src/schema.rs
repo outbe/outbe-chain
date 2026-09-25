@@ -119,19 +119,19 @@ pub struct GemContract {
 
     // --- Call-price bin index, one trie per reference currency; a gem enters it at issuance.
     #[attribute(order = 11)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
     #[attribute(order = 12)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 13)]
-    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 14)]
-    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     #[attribute(order = 15)]
-    pub qualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub call_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,

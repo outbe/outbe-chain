@@ -246,13 +246,13 @@ fn add_gem_enrolls_issued_in_call_bin() {
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
         assert_eq!(
-            gem.qualified_bin_count
+            gem.call_bin_count
                 .read(&GemContract::scoped(840, bin))
                 .unwrap(),
             1
         );
         assert_eq!(
-            gem.qualified_bin_gems
+            gem.call_bin_gems
                 .read(&GemContract::bin_index_key(840, bin, 0))
                 .unwrap(),
             gem_id
@@ -269,7 +269,7 @@ fn settling_an_issued_gem_takes_it_out_of_the_call_bin() {
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
         assert_eq!(
-            gem.qualified_bin_count
+            gem.call_bin_count
                 .read(&GemContract::scoped(840, bin))
                 .unwrap(),
             0
@@ -289,7 +289,7 @@ fn removing_a_gem_its_bin_does_not_hold_is_a_no_op() {
         gem.remove_call_bin(gem_id, call_price, EUR).unwrap();
         let bin = GemContract::price_to_bin(call_price).unwrap();
         assert_eq!(
-            gem.qualified_bin_gems
+            gem.call_bin_gems
                 .read(&GemContract::bin_index_key(840, bin, 0))
                 .unwrap(),
             gem_id

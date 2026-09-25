@@ -7,7 +7,7 @@ fn issue_enrolls_in_call_bin() {
         let f = IntexFactoryContract::new(s.clone());
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
@@ -79,7 +79,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
         f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
@@ -87,7 +87,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(11))
             .unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
@@ -95,7 +95,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(22))
             .unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
@@ -132,7 +132,7 @@ fn try_call_marks_called_when_threshold_met() {
         );
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0

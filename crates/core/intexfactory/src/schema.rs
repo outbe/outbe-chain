@@ -38,14 +38,14 @@ pub struct IntexFactoryContract {
 
     // Call-price bin index the daily Called scan walks; a series enters it at issuance.
     #[attribute(order = 6)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 7)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 8)]
-    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 9)]
-    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
     #[attribute(order = 10)]
@@ -64,13 +64,13 @@ pub struct IntexFactoryContract {
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
     // whole (reference currency, worldwide day) pair shares.
     #[attribute(order = 18)]
-    pub qualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 19)]
-    pub qualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub call_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
     #[attribute(order = 20)]
-    pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight; a date key is never 0.
@@ -79,7 +79,7 @@ pub struct IntexFactoryContract {
 
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 23)]
-    pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub call_bin_group_days: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Lifecycle notices waiting for the `intex_drain_notices` trigger to send them: the
     // scans run in a block hook, which cannot call contracts. Head and tail reset
