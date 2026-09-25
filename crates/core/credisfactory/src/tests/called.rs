@@ -638,20 +638,22 @@ fn voiding_several_positions_in_one_pass_skips_none() {
 
 #[test]
 fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        let budget = crate::called::MAX_CREDIS_VOIDS_PER_RUN;
-        // One Open position plus one more voidable position than the budget, so
-        // a void is genuinely declined and the run still has to walk past it.
-        let total = budget + 2;
-
-        // One owner can hold many positions as long as none is called yet, so
-        // open them all first and only then arm the calls.
+    let mut provider = env();
+    let budget = crate::called::MAX_CREDIS_VOIDS_PER_RUN;
+    // One Open position plus one more voidable position than the budget, so
+    // a void is genuinely declined and the run still has to walk past it.
+    let total = budget + 2;
+    StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
-        let ids: Vec<U256> = (1..=u64::from(total))
-            .map(|nonce| open_for(&storage, alice(), nonce))
-            .collect();
-
+    });
+    // Open identical owner/CCA/asset tuples in successive blocks before calling.
+    let ids: Vec<U256> = (1..=u64::from(total))
+        .map(|nonce| {
+            provider.set_block_number(BLOCK_NUMBER + nonce);
+            StorageHandle::enter(&mut provider, |storage| open_for(&storage, alice(), nonce))
+        })
+        .collect();
+    StorageHandle::enter(&mut provider, |storage| {
         // `ids[0]` sits at active index 0, so the descending walk reaches it
         // LAST - after the void budget is already spent. Leave it Open; the rest
         // become called-and-lapsed.

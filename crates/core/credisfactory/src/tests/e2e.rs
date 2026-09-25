@@ -20,6 +20,124 @@ use crate::runtime;
 use crate::tests::common::*;
 
 #[test]
+fn duplicate_issuance_preserves_a_different_pledge_for_the_next_block() {
+    let mut provider = env();
+    let (first, note, reservation, spend) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap_for(&storage, alice(), pledge_cost());
+        bootstrap_for(&storage, bob(), pledge_cost());
+        let first = open(&storage, 1);
+        assert_eq!(
+            first,
+            CredisContract::position_id(cca(), alice(), asset(), BLOCK_NUMBER)
+        );
+
+        // A different pledger and note target the same public issuance tuple.
+        let (note, _) = pledge_fixture(
+            storage.clone(),
+            bob(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, bob(), pledge_stables(), 1),
+        )
+        .unwrap();
+        let reservation = seed_reservation(&storage, alice(), pledge_stables());
+        let spend = credis_spend_auth(bob(), note, alice());
+        fund_stake(&storage, pledge_stake());
+
+        let credis = CredisContract::new(storage.clone());
+        let first_record = credis.get_position(first).unwrap();
+        let supply = outbe_gratis::api::total_supply(storage.clone()).unwrap();
+        let nonce = outbe_gratis::api::op_nonce(storage.clone(), bob()).unwrap();
+        let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
+        // Model the enclosing EVM frame, including rollback of pledge consumption.
+        let error = storage
+            .with_checkpoint(|| {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    note,
+                    spend,
+                    REFERENCE_ISO,
+                    reservation,
+                    pledge_stake(),
+                )
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert_eq!(credis.get_position(first).unwrap(), first_record);
+        assert_eq!(credis.total_positions().unwrap(), 1);
+        assert_eq!(credis.position_count_of(alice()).unwrap(), 1);
+        assert_eq!(credis.active_len().unwrap(), 1);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            supply
+        );
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), bob()).unwrap(),
+            nonce
+        );
+        assert_eq!(factory_balance(&storage), pledge_stake());
+        assert_eq!(storage.balance(alice()).unwrap(), pledge_stake());
+        assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
+            pledge_cost()
+        );
+        assert_eq!(
+            outbe_vaultrouter::api::reservation_of(&storage, reservation)
+                .unwrap()
+                .amount,
+            pledge_stables()
+        );
+        (first, note, reservation, spend)
+    });
+
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        // The exact same authorization succeeds without recreating the pledge.
+        let (second, amount) = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            note,
+            spend,
+            REFERENCE_ISO,
+            reservation,
+            pledge_stake(),
+        )
+        .unwrap();
+        assert_eq!(amount, pledge_stables());
+        assert_eq!(
+            second,
+            CredisContract::position_id(cca(), alice(), asset(), BLOCK_NUMBER + 1)
+        );
+        assert_ne!(second, first);
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(credis.total_positions().unwrap(), 2);
+        assert_eq!(
+            credis.get_position(first).unwrap().principal,
+            pledge_stables()
+        );
+        assert_ne!(
+            credis.get_position(first).unwrap().eoa_ct,
+            credis.get_position(second).unwrap().eoa_ct
+        );
+        assert_eq!(view_pledged(&storage, bob()), pledge_cost());
+        assert_eq!(factory_balance(&storage), U256::ZERO);
+        assert_eq!(
+            storage.balance(alice()).unwrap(),
+            pledge_stake() * U256::from(2)
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn issuance_checks_note_and_liquidity_expiry_independently() {
     for (delay, reservation_lifetime, error) in [
         (899, 1800, None),
@@ -475,33 +593,38 @@ fn settle_accepts_a_third_party_payer() {
 
 #[test]
 fn issue_credis_allows_an_owner_with_an_unresolved_call() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        // Both pledges are quoted at the seeded rate, before the price moves.
-        let (first_handle, first_reservation) = pledge(&storage, alice(), 1);
-        let (second_handle, second_reservation) = pledge(&storage, alice(), 2);
+    let mut provider = env();
+    let (first, second_handle, second_reservation) =
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost() * U256::from(2u64));
+            // Both pledges are quoted at the seeded rate, before the price moves.
+            let (first_handle, first_reservation) = pledge(&storage, alice(), 1);
+            let (second_handle, second_reservation) = pledge(&storage, alice(), 2);
 
-        let first_spend = credis_spend_auth(alice(), first_handle, alice());
-        fund_stake(&storage, pledge_stake());
-        let (first, _) = runtime::issue_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            first_handle,
-            first_spend,
-            REFERENCE_ISO,
-            first_reservation,
-            pledge_stake(),
-        )
-        .unwrap();
+            let first_spend = credis_spend_auth(alice(), first_handle, alice());
+            fund_stake(&storage, pledge_stake());
+            let (first, _) = runtime::issue_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                first_handle,
+                first_spend,
+                REFERENCE_ISO,
+                first_reservation,
+                pledge_stake(),
+            )
+            .unwrap();
 
-        // Call the first position.
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_called(first, now_of(&storage)).unwrap());
-        }
+            // Call the first position.
+            {
+                let mut credis = CredisContract::new(storage.clone());
+                assert!(credis.mark_called(first, now_of(&storage)).unwrap());
+            }
 
+            (first, second_handle, second_reservation)
+        });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
         // The called position does not gate origination: the second one opens
         // while the first is still unresolved, and both stand on their own.
         let spend = credis_spend_auth(alice(), second_handle, alice());
@@ -744,10 +867,13 @@ fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
 
 #[test]
 fn a_position_settled_at_the_deadline_is_never_voided() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
+    let mut provider = env();
+    let position_id = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        let position_id = open(&storage, 1);
+        open(&storage, 1)
+    });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
         // A second position keeps the active index non-empty after the first is
         // settled, so the scan really walks the book instead of returning at its
         // `len == 0` early exit and passing this test vacuously.
