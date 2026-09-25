@@ -329,11 +329,7 @@ fn try_call(
     {
         return Ok(false);
     }
-    // A zero stamp predates sealing and never counts.
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
-    if issued_at == 0 {
-        return Ok(false);
-    }
     let terms = nod.read_call_terms(bucket_key)?;
     if !breached_enough(window, &terms, first_full_day(issued_at)) {
         return Ok(false);
@@ -447,10 +443,7 @@ const fn unpack_cursor(packed: u64) -> (u32, u32) {
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
     let window_days = terms.call_window / SECS_PER_DAY;
     let threshold_days = terms.call_threshold / SECS_PER_DAY;
-    // A bucket armed before the terms existed carries zeroes. Zero days is "no
-    // terms", not "every day breaches"; leave it uncallable. Same guard as
-    // `outbe_gem::runtime::trigger_call`.
-    if window_days == 0 || threshold_days == 0 || threshold_days > window_days {
+    if threshold_days > window_days {
         return false;
     }
     let mut breaches: u32 = 0;

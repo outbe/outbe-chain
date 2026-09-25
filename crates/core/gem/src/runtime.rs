@@ -29,9 +29,6 @@ impl GemContract<'_> {
         // Both terms are stored in seconds; the daily scan needs day counts.
         let window_days = item.call_window_seconds / 86_400;
         let threshold_days = item.call_threshold_seconds / 86_400;
-        if window_days == 0 || threshold_days == 0 {
-            return Ok(false);
-        }
         let issued_day = first_full_day(item.issued_at);
         let mut breaches: u32 = 0;
         for (day, vwap) in window.iter().take(window_days as usize) {

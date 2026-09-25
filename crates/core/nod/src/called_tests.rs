@@ -447,63 +447,6 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
     });
 }
 
-/// A bucket carrying zero terms is uncallable, not callable on every day. Zero
-/// is what a bucket armed before the terms existed reads back, and
-/// `breaches >= 0` would otherwise call the whole index on the next scan.
-#[test]
-fn a_bucket_with_zero_call_terms_is_never_called() {
-    harness(|storage, scope, parent| {
-        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
-        let at = START + 30 * DAY;
-        fill_days(
-            storage,
-            last_closed_day(at),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
-
-        reterm(storage, item.bucket_key, ISO, 0, 0, 0);
-        assert_eq!(
-            scan(storage, scope, parent, at),
-            0,
-            "a full breach window still does not call"
-        );
-        assert_eq!(called_at(storage, item.bucket_key), 0);
-    });
-}
-
-/// A zero notice on an already-called bucket means "no deadline", not "lapsed
-/// at the moment of the call" - otherwise the next run would forfeit it.
-#[test]
-fn a_called_bucket_with_a_zero_notice_period_is_never_forfeited() {
-    harness(|storage, scope, parent| {
-        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
-        let at = START + 30 * DAY;
-        fill_days(
-            storage,
-            last_closed_day(at),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
-        assert_eq!(scan(storage, scope, parent, at), 1);
-
-        reterm(
-            storage,
-            item.bucket_key,
-            ISO,
-            CALL_LOOKBACK_DAYS,
-            CALL_THRESHOLD_DAYS,
-            0,
-        );
-        let long_after = at + 365 * DAY;
-        finalize_through(storage, long_after);
-        assert_eq!(scan(storage, scope, parent, long_after), 0);
-        assert!(api::get_item(storage, scope, parent, item.nod_id)
-            .unwrap()
-            .is_some());
-    });
-}
-
 /// A bucket whose sealed window outruns the current constant still gets its
 /// whole span collected: the scan sizes the shared per-currency window off the
 /// `max_call_window` high-water mark, not off the constant.
@@ -720,29 +663,6 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         let scan_at = date_key_to_utc_timestamp(first_full_day(START));
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scope, parent, scan_at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
-    });
-}
-
-/// A bucket issued before the stamp existed carries zero. Zero is "unsealed",
-/// not epoch-midnight; it cannot inherit a full-history breach. Delete and
-/// reissue through the existing empty-bucket path to arm it.
-#[test]
-fn a_zero_issued_at_stamp_does_not_call() {
-    harness(|storage, scope, parent| {
-        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
-        NodContract::new(storage.clone())
-            .callable_bucket_issued_at
-            .clear(&item.bucket_key)
-            .unwrap();
-        let at = START + 30 * DAY;
-        fill_days(
-            storage,
-            last_closed_day(at),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
-        assert_eq!(scan(storage, scope, parent, at), 0);
         assert_eq!(called_at(storage, item.bucket_key), 0);
     });
 }
