@@ -1218,7 +1218,7 @@ fn expiry_moves_the_active_units_into_forfeited() {
 }
 
 #[test]
-fn a_series_mined_before_the_upgrade_counts_nothing_as_exercised() {
+fn settled_units_alone_count_nothing_as_exercised() {
     with_registry(|s| {
         let id = called_series(&s, 52);
         api::record_settled_units(&s, id, 40).unwrap();
