@@ -1258,6 +1258,97 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
 }
 
 // ---------------------------------------------------------------------
+// One entry price across the direct path, the certified opening and the snapshot
+// ---------------------------------------------------------------------
+
+/// The price a Nod is issued at, the frozen snapshot and the storage proof the certified
+/// path opens must be the same value.
+#[test]
+fn the_direct_path_the_snapshot_and_the_certified_opening_agree_on_one_price() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let entry_price = U256::from(500_000u64);
+    let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    storage.set_timestamp(U256::from(T_NOW));
+    let bodies = TestBodyRepository::new();
+
+    let nod_id = StorageHandle::enter(&mut storage, |storage| {
+        let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+
+        let owner = gas_audit_address(1);
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        bodies.issue(
+            &mut tribute,
+            &scope,
+            &gas_audit_tribute(1, owner, wwd, coen(100u64)),
+        );
+        tribute.seal_day(wwd).unwrap();
+
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            coen(100u64) / U256::from(10u64),
+            T_NOW,
+        )
+        .expect("lysis must complete");
+
+        // The snapshot the day was frozen at.
+        assert_eq!(
+            outbe_nod::api::entry_price_snapshot(storage.clone(), wwd).unwrap(),
+            Some(std::collections::BTreeMap::from([(840, entry_price)]))
+        );
+        assert_eq!(
+            outbe_nod::api::entry_price_source_day(storage.clone(), wwd).unwrap(),
+            Some(previous_date_key(timestamp_to_date_key(T_NOW)))
+        );
+
+        // The certified path opens the very same slots by storage proof.
+        let isos = [840];
+        let slots = outbe_nod::openings::entry_price_slots(wwd, &isos).unwrap();
+        let opened: Vec<_> = slots
+            .iter()
+            .map(|slot| {
+                (
+                    *slot,
+                    storage
+                        .sload(NOD_ADDRESS, U256::from_be_bytes(slot.0))
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            outbe_nod::openings::evaluate_entry_prices(wwd, &isos, &opened).unwrap(),
+            std::collections::BTreeMap::from([(840, entry_price)])
+        );
+
+        // The direct path sealed that same price into the Nod's bucket.
+        let items = outbe_nod::api::list_all(&storage, &scope, &bodies).unwrap();
+        assert_eq!(items.len(), 1);
+        let bucket_id = outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+            items[0].worldwide_day,
+            items[0].bucket_key.0,
+        );
+        let bucket = outbe_nod::api::get_bucket(&storage, &scope, &bodies, bucket_id)
+            .unwrap()
+            .expect("issuance seals the bucket");
+        assert_eq!(bucket.entry_price_minor, entry_price);
+
+        end_block(storage, &scope).unwrap();
+        result.nod_ids[0]
+    });
+    assert!(!nod_id.to_u256().is_zero());
+}
+
+// ---------------------------------------------------------------------
 // Creator-reward: lysis records the per-owner contributor map
 // ---------------------------------------------------------------------
 
