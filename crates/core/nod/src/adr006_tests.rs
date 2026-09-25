@@ -196,6 +196,32 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
     });
 }
 
+/// `openings` and the oracle-opening codec both name the snapshot slots; both must be the schema's.
+#[test]
+fn entry_price_openings_follow_the_schema() {
+    use outbe_primitives::storage::types::StorageKey;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage);
+        let frozen = nod.entry_prices_frozen.base_slot();
+        let price = nod.entry_price_value.base_slot();
+        let day = WorldwideDay::new(20_260_726);
+        assert_eq!(
+            crate::openings::entry_price_slots(day, &[840]).unwrap(),
+            vec![
+                B256::from(day.mapping_slot(frozen).to_be_bytes()),
+                B256::from(840u16.mapping_slot(day.mapping_slot(price)).to_be_bytes()),
+            ]
+        );
+        let plan = format!("nod_entry_price_slots_v1(frozen={frozen},price={price},");
+        assert!(
+            outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_DESCRIPTOR.contains(&plan),
+            "{plan}"
+        );
+    });
+}
+
 #[test]
 fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));

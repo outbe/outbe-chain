@@ -446,6 +446,37 @@ fn test_query_worldwide_days_by_status_via_precompile() {
     });
 }
 
+/// The committed layout string must describe the live schema, not only hash to its pin.
+#[test]
+fn storage_layout_string_matches_the_live_schema() {
+    use crate::schema::{
+        CapacityForfeitureReceiptState, DayLimitFormationReceiptState,
+        WorldwideDayTerminalReceiptState,
+    };
+
+    with_contract(|m| {
+        let live = format!(
+            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|active_wwd_count_slot={}\
+             |closed_wwd_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_slots={}\
+             |capacity_forfeiture_base_slot={}|capacity_forfeiture_slots={}\
+             |day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
+            <WorldwideDay as StorageRecord>::SLOTS,
+            m.active_wwd_count.slot(),
+            m.closed_wwd.base_slot(),
+            m.worldwide_day_terminal_receipts.base_slot(),
+            <WorldwideDayTerminalReceiptState as StorageRecord>::SLOTS,
+            m.capacity_forfeiture_receipts.base_slot(),
+            <CapacityForfeitureReceiptState as StorageRecord>::SLOTS,
+            m.day_limit_formation_receipts.base_slot(),
+            <DayLimitFormationReceiptState as StorageRecord>::SLOTS,
+        );
+        assert_eq!(
+            live.as_bytes(),
+            crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL
+        );
+    });
+}
+
 #[test]
 fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
