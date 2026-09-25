@@ -388,10 +388,7 @@ pub(crate) fn try_call_group(
         return Ok(0);
     };
     let series = outbe_intex::api::read_series(storage, first)?;
-    if !matches!(
-        series.lifecycle_state()?,
-        IntexState::Issued | IntexState::Qualified
-    ) {
+    if series.lifecycle_state()? != IntexState::Issued {
         return Ok(0);
     }
     let trigger = series.call_price_minor;

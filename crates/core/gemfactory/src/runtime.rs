@@ -168,7 +168,7 @@ pub fn issue_gem_position(
 
 /// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-sendable (non-Issued/Qualified) state or `amount` is zero.
+/// non-sendable (non-Issued) state or `amount` is zero.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
@@ -344,8 +344,7 @@ fn settle(
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
         }
-        s if (s == GemState::Issued as u8 || s == GemState::Qualified as u8)
-            && gem_api::is_qualified(storage, &item)? => {}
+        s if s == GemState::Issued as u8 && gem_api::is_qualified(storage, &item)? => {}
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 

@@ -7,10 +7,10 @@ use crate::precompile::IGem::{GemCalled, GemExpired};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
-    /// `Issued | Qualified -> Called` when the coen daily VWAP exceeded this gem's Call
+    /// `Issued -> Called` when the coen daily VWAP exceeded this gem's Call
     /// Threshold on at least `call_threshold_seconds` of its trailing `call_window_seconds`,
     /// read off `window` (newest-first `(day, vwap)` pairs). No-op unless the
-    /// gem is Issued or Qualified. Returns true if called.
+    /// gem is Issued. Returns true if called.
     ///
     /// Both terms are per-gem snapshots taken at issuance, so a later change to
     /// `CALL_WINDOW`/`CALL_THRESHOLD` cannot re-term a live gem. `window` must
@@ -23,7 +23,7 @@ impl GemContract<'_> {
         now_ts: u64,
     ) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        if item.state != GemState::Issued as u8 && item.state != GemState::Qualified as u8 {
+        if item.state != GemState::Issued as u8 {
             return Ok(false);
         }
         // Both terms are stored in seconds; the daily scan needs day counts.

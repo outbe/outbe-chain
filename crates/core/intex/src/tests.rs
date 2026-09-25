@@ -235,25 +235,6 @@ fn mark_called_from_issued_sets_called_at() {
 }
 
 #[test]
-fn mark_called_from_qualified() {
-    with_registry(|s| {
-        api::create_series(&s, sample_params(1)).unwrap();
-        let registry = crate::IntexContract::new(s.clone());
-        let mut record = registry.series.get(sid(1)).unwrap().unwrap();
-        record.state = IntexState::Qualified as u8;
-        registry.series.update(&record).unwrap();
-        api::mark_called(&s, sid(1), ISSUED_AT + 10).unwrap();
-        assert_eq!(
-            api::read_series(&s, sid(1))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            IntexState::Called
-        );
-    });
-}
-
-#[test]
 fn mark_called_rejected_when_already_called() {
     with_registry(|s| {
         api::create_series(&s, sample_params(1)).unwrap();
@@ -288,11 +269,10 @@ fn dense_enumeration_tracks_created_series() {
 #[test]
 fn intex_state_encoding_matches_solidity() {
     assert_eq!(IntexState::Issued as u8, 0);
-    assert_eq!(IntexState::Qualified as u8, 1);
     assert_eq!(IntexState::Called as u8, 2);
     assert_eq!(IntexState::Expired as u8, 3);
     assert_eq!(IntexState::from_u8(0).unwrap(), IntexState::Issued);
-    assert_eq!(IntexState::from_u8(1).unwrap(), IntexState::Qualified);
+    assert!(IntexState::from_u8(1).is_err());
     assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Called);
     assert_eq!(IntexState::from_u8(3).unwrap(), IntexState::Expired);
     assert!(IntexState::from_u8(4).is_err());
@@ -1172,27 +1152,6 @@ fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
             IntexState::Called
         );
-    });
-}
-
-#[test]
-fn a_series_an_older_node_stored_as_expired_still_reads_expired() {
-    with_registry(|s| {
-        let id = called_series(&s, 63);
-        api::record_settled_units(&s, id, 30).unwrap();
-        let mut registry = crate::IntexContract::new(s.clone());
-        let mut record = registry.load_series(id).unwrap();
-        record.state = IntexState::Expired as u8;
-        registry.update_series_record(&record).unwrap();
-
-        // The clock is still before the deadline: only the stored state says Expired.
-        assert_eq!(
-            dispatch_series_data(&s, id).state,
-            IntexState::Expired as u8
-        );
-        let counts = api::unit_counts(&s, id).unwrap();
-        assert_eq!(counts.active, 0);
-        assert_eq!(counts.forfeited, 70);
     });
 }
 

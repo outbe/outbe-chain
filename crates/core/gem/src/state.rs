@@ -255,7 +255,7 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    /// `Issued | Qualified -> Called`: stamps the call and moves the gem to the expiry queue.
+    /// `Issued -> Called`: stamps the call and moves the gem to the expiry queue.
     pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if !is_callable(item.state) {
@@ -493,7 +493,7 @@ impl BinTreeStorage for CallBins<'_, '_> {
     }
 }
 
-/// Issued and Qualified gems wait in the bin index for a call.
+/// Issued gems wait in the bin index for a call.
 fn is_callable(state: u8) -> bool {
-    state == GemState::Issued as u8 || state == GemState::Qualified as u8
+    state == GemState::Issued as u8
 }

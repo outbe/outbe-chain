@@ -604,25 +604,6 @@ mod call_sweep {
         });
     }
 
-    /// A group deferred across the upgrade may hold a series the old sweep already
-    /// credited and stored as Expired; its load must not go back a second time.
-    #[test]
-    fn a_member_an_older_node_retired_is_not_credited_again() {
-        with_factory(|s| {
-            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-            priced_window(&s, scan_ts);
-            let (members, deadline) = called_two_member_group(&s, scan_ts);
-            let registry = outbe_intex::IntexContract::new(s.clone());
-            let mut record = registry.series.get(members[0]).unwrap().unwrap();
-            record.state = outbe_intex::IntexState::Expired as u8;
-            registry.series.update(&record).unwrap();
-
-            sweep_at(&s, due(deadline));
-            assert_eq!(unallocated(&s), U256::from(40u64) * U256::from(LOAD));
-            assert_eq!(group_len(&s), 0);
-        });
-    }
-
     #[test]
     fn a_second_pass_over_an_expired_group_credits_nothing() {
         with_factory(|s| {

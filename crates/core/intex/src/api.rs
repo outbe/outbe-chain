@@ -72,17 +72,16 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
     registry.create_series_record(&record)
 }
 
-/// `Issued | Qualified -> Called`. Mirrors `markCalled`. `called_at` is the
+/// `Issued -> Called`. Mirrors `markCalled`. `called_at` is the
 /// block timestamp supplied by the caller (deterministic; no wall clock here).
 /// `Called` is terminal for these transitions.
 pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: u32) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
     let state = record.lifecycle_state()?;
-    if state != IntexState::Issued && state != IntexState::Qualified {
-        return Err(IntexError::InvalidStateEither {
-            first: IntexState::Issued as u8,
-            second: IntexState::Qualified as u8,
+    if state != IntexState::Issued {
+        return Err(IntexError::InvalidState {
+            expected: IntexState::Issued as u8,
             actual: record.state,
         }
         .into());

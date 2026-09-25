@@ -204,14 +204,6 @@ fn a_gem_qualifies_on_a_closed_day_above_its_floor() {
 }
 
 #[test]
-fn qualification_is_never_stored() {
-    with_storage(|storage| {
-        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
-        assert!(api::set_state(storage, gem_id, GemState::Qualified).is_err());
-    });
-}
-
-#[test]
 fn only_a_genesis_gem_is_issued_without_a_floor() {
     with_storage(|storage| {
         let mut p = sample_params(ALICE);

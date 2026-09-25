@@ -17,8 +17,6 @@ use crate::errors::IntexError;
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
-    /// Never written: qualification is derived from daily VWAPs. Kept so records that carry it decode.
-    Qualified = 1,
     Called = 2,
     Expired = 3,
 }
@@ -27,7 +25,6 @@ impl IntexState {
     pub fn from_u8(value: u8) -> Result<Self, IntexError> {
         match value {
             0 => Ok(Self::Issued),
-            1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
             3 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
