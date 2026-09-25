@@ -142,7 +142,7 @@ pub fn pledge_fixture(
 ) -> outbe_primitives::error::Result<(B256, U256)> {
     let valuation_price = U256::from(2) * outbe_primitives::units::SCALE_1E18;
     let (gratis_amount, entry_price) =
-        outbe_primitives::math::scaled_math::checked_pledge_quote(principal, 6, valuation_price)?;
+        outbe_primitives::math::scaled_math::checked_quote(principal, 6, valuation_price)?;
     assert!(gratis_amount <= max_gratis);
     let handle = outbe_gratis::api::pledge(
         storage,

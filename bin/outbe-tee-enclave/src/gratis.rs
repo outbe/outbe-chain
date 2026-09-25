@@ -448,7 +448,7 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             if terms.asset.is_zero() {
                 return Ok(reject("pledge asset must not be zero"));
             }
-            let quote = outbe_primitives::math::scaled_math::checked_pledge_quote(
+            let quote = outbe_primitives::math::scaled_math::checked_quote(
                 terms.stables_amount,
                 terms.asset_decimals,
                 terms.valuation_price,

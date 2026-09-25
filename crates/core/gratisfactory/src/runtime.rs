@@ -24,7 +24,7 @@ use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
 use outbe_oracle::api::{previous_half_open_8hours_vwap, AddressPair};
 use outbe_primitives::addresses::{GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::math::scaled_math::checked_pledge_quote;
+use outbe_primitives::math::scaled_math::checked_quote;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
 
@@ -98,7 +98,7 @@ pub fn pledge_gratis(
     .filter(|price| !price.is_zero())
     .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
     let (gratis_amount, entry_price) =
-        checked_pledge_quote(stables_amount, asset_decimals, valuation_price)?;
+        checked_quote(stables_amount, asset_decimals, valuation_price)?;
     let terms = PledgeTerms {
         stables_amount,
         gratis_amount,

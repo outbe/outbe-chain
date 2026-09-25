@@ -24,7 +24,7 @@ use crate::runtime;
 use crate::sol_ext::{IVaultRouter, IERC20};
 use outbe_gratis::api::PledgeTerms;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_primitives::math::scaled_math::checked_pledge_quote;
+use outbe_primitives::math::scaled_math::checked_quote;
 use outbe_primitives::units::SCALE_1E18;
 
 const CHAIN_ID: u64 = 1;
@@ -179,7 +179,7 @@ fn pledge_quoted(
     auth: ModifyAuth,
 ) -> outbe_primitives::error::Result<(B256, U256)> {
     let valuation_price = U256::from(2) * SCALE_1E18;
-    let (gratis_amount, entry_price) = checked_pledge_quote(stables_amount, 6, valuation_price)?;
+    let (gratis_amount, entry_price) = checked_quote(stables_amount, 6, valuation_price)?;
     runtime::pledge_priced(
         storage,
         caller,

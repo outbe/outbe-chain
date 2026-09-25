@@ -8,22 +8,22 @@ use alloy_primitives::{U256, U512};
 use crate::error::{PrecompileError, Result};
 use crate::units::{SCALE_1E18, SCALE_1E6_U256};
 
-/// Quote six-decimal Gratis and entry from asset atomic principal and an FP18
+/// Quote six-decimal asset atomic principal and an FP18
 /// currency-per-COEN valuation. Floor each equation only after full scaling.
 /// Assets support 0–18 decimals. Zero inputs/results and output overflow fail.
-pub fn checked_pledge_quote(
+pub fn checked_quote(
     principal: U256,
     decimals: u8,
     valuation: U256,
 ) -> Result<(U256, U256)> {
     if decimals > 18 {
         return Err(PrecompileError::Revert(
-            "unsupported pledge asset decimals".into(),
+            "unsupported asset decimals".into(),
         ));
     }
     if principal.is_zero() || valuation.is_zero() {
         return Err(PrecompileError::Revert(
-            "pledge principal and valuation must be positive".into(),
+            "principal and valuation must be positive".into(),
         ));
     }
     let asset_scale = U512::from(10u64).pow(U512::from(decimals));
@@ -31,21 +31,23 @@ pub fn checked_pledge_quote(
     let six = U512::from(SCALE_1E6_U256);
     // Bounds: the largest numerator is 256 + 60 + 20 bits; denominators
     // are at most 60 + 256 bits. Every intermediate therefore fits U512.
-    let gratis = principal * U512::from(SCALE_1E18) * six / (asset_scale * U512::from(valuation));
-    let gratis = pledge_output(gratis)?;
-    let entry = principal * six * six / (asset_scale * U512::from(gratis));
-    Ok((gratis, pledge_output(entry)?))
+    let quoted = principal * U512::from(SCALE_1E18) * six / (asset_scale * U512::from(valuation));
+    let quoted = convert_to_u256(quoted)?;
+    let entry = principal * six * six / (asset_scale * U512::from(quoted));
+    Ok((quoted, convert_to_u256(entry)?))
 }
 
-fn pledge_output(value: U512) -> Result<U256> {
+fn convert_to_u256(value: U512) -> Result<U256> {
+    if value.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    
     // A quote is stored as U256: explicitly reject values outside that bound
     // instead of truncating the high limbs (covered by quote boundary tests).
     let value = U256::checked_from_limbs_slice(value.as_limbs())
-        .ok_or_else(|| PrecompileError::Revert("pledge arithmetic overflow".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("arithmetic overflow".into()))?;
     if value.is_zero() {
-        return Err(PrecompileError::Revert(
-            "pledge amount or entry rounds to zero".into(),
-        ));
+        return Err(PrecompileError::Revert("value rounds to zero".into(), ));
     }
     Ok(value)
 }
@@ -93,13 +95,13 @@ mod pledge_tests {
         for decimals in [0, 6, 8, 18] {
             let principal = U256::from(2) * U256::from(10).pow(U256::from(decimals));
             assert_eq!(
-                checked_pledge_quote(principal, decimals, U256::from(2) * SCALE_1E18).unwrap(),
+                checked_quote(principal, decimals, U256::from(2) * SCALE_1E18).unwrap(),
                 (SCALE_1E6_U256, U256::from(2_000_000)),
             );
         }
         // Truncating this price to six decimals would incorrectly debit 1e6.
         assert_eq!(
-            checked_pledge_quote(
+            checked_quote(
                 U256::from(2_000_000),
                 6,
                 U256::from(2) * SCALE_1E18 + U256::ONE
@@ -110,7 +112,7 @@ mod pledge_tests {
         // Fractional Gratis is floored first; entry is principal / accepted Gratis,
         // not the Oracle's normalized price (which is 2e6 here).
         assert_eq!(
-            checked_pledge_quote(U256::from(3), 6, U256::from(2) * SCALE_1E18).unwrap(),
+            checked_quote(U256::from(3), 6, U256::from(2) * SCALE_1E18).unwrap(),
             (U256::ONE, U256::from(3_000_000)),
         );
     }
@@ -125,15 +127,15 @@ mod pledge_tests {
             (U256::ONE, 0, U256::ONE),                  // zero entry
             (U256::MAX, 0, SCALE_1E18),                 // Gratis exceeds U256
         ] {
-            assert!(checked_pledge_quote(principal, decimals, price).is_err());
+            assert!(checked_quote(principal, decimals, price).is_err());
         }
         // A U256 intermediate would overflow, although both outputs fit.
         assert_eq!(
-            checked_pledge_quote(U256::MAX, 6, SCALE_1E18).unwrap(),
+            checked_quote(U256::MAX, 6, SCALE_1E18).unwrap(),
             (U256::MAX, SCALE_1E6_U256)
         );
         // Exact upper conversion boundary; the next integer is rejected.
-        assert_eq!(pledge_output(U512::from(U256::MAX)).unwrap(), U256::MAX);
-        assert!(pledge_output(U512::from(U256::MAX) + U512::ONE).is_err());
+        assert_eq!(convert_to_u256(U512::from(U256::MAX)).unwrap(), U256::MAX);
+        assert!(convert_to_u256(U512::from(U256::MAX) + U512::ONE).is_err());
     }
 }
