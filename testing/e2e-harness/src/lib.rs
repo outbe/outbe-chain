@@ -67,7 +67,7 @@ struct WatchdogHandle {
 }
 
 struct WatchdogState {
-    active: Option<(String, Instant)>,
+    active: Option<(String, Instant, Duration)>,
     stop: bool,
 }
 
@@ -78,7 +78,6 @@ struct ScenarioWatchdog {
 
 impl ScenarioWatchdog {
     fn start(env: Environment) -> Self {
-        let timeout = Duration::from_secs(env.scenario_timeout_secs);
         let shared = Arc::new((
             Mutex::new(WatchdogState {
                 active: None,
@@ -91,7 +90,7 @@ impl ScenarioWatchdog {
         };
         let thread = thread::Builder::new()
             .name("outbe-e2e-watchdog".to_owned())
-            .spawn(move || watchdog_loop(shared, env, timeout))
+            .spawn(move || watchdog_loop(shared, env))
             .expect("spawn E2E scenario watchdog");
         Self {
             handle,
@@ -116,7 +115,7 @@ impl WatchdogHandle {
         let (state, wake) = &*self.shared;
         let mut state = state.lock().expect("lock E2E watchdog");
         let deadline = Instant::now() + timeout;
-        state.active = Some((scenario, deadline));
+        state.active = Some((scenario, deadline, timeout));
         wake.notify_all();
         deadline
     }
@@ -137,11 +136,7 @@ impl WatchdogHandle {
     }
 }
 
-fn watchdog_loop(
-    shared: Arc<(Mutex<WatchdogState>, Condvar)>,
-    env: Environment,
-    timeout: Duration,
-) {
+fn watchdog_loop(shared: Arc<(Mutex<WatchdogState>, Condvar)>, env: Environment) {
     let (state, wake) = &*shared;
     loop {
         let mut state = state.lock().expect("lock E2E watchdog");
@@ -151,7 +146,7 @@ fn watchdog_loop(
         if state.stop {
             return;
         }
-        let (scenario, deadline) = state.active.clone().expect("active watchdog scenario");
+        let (scenario, deadline, timeout) = state.active.clone().expect("active watchdog scenario");
         let now = Instant::now();
         if now < deadline {
             let (next, _) = wake
@@ -295,7 +290,6 @@ pub async fn run() {
     let watchdog = ScenarioWatchdog::start(env_hook.clone());
     let before_watchdog = watchdog.handle();
     let after_watchdog = watchdog.handle();
-    let scenario_timeout = Duration::from_secs(env_hook.scenario_timeout_secs);
 
     let writer = World::cucumber()
         .max_concurrent_scenarios(1)
@@ -307,7 +301,7 @@ pub async fn run() {
             hook_counters.started.fetch_add(1, Ordering::Relaxed);
             let deadline = before_watchdog.arm(
                 format!("{} :: {}", feature.name, scenario.name),
-                scenario_timeout,
+                Duration::from_secs(env::scenario_timeout_secs(feature, scenario, &env_hook)),
             );
             world.localnet.set_scenario_deadline(deadline);
             // Only reachable for unmet scenarios in `--all` mode (the filter
