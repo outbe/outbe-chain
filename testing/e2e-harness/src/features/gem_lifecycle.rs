@@ -406,7 +406,7 @@ fn settle_and_mine(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
-            nonce: find_mining_pow_nonce(gem_id, merchant),
+            nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, merchant),
             mac: B256::from(mac),
             opNonce: op_nonce,
         },

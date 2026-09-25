@@ -141,7 +141,7 @@ fn prepare(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::minePromisCall {
             gemId: gem,
-            nonce: find_mining_pow_nonce(gem, user),
+            nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem, user),
             mac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 user,

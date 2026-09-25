@@ -1137,16 +1137,45 @@ fn settle_rejects_non_qualified_state() {
 }
 
 #[test]
-fn gem_pow_binds_the_owner() {
-    use outbe_common::pow::{compute_mining_pow_hash, SINGLE_EXERCISE_SEQUENCE};
+fn gem_pow_binds_the_owner_and_its_own_domain() {
+    use outbe_common::pow::{compute_mining_pow_hash, MiningDomain, SINGLE_EXERCISE_SEQUENCE};
 
     let gem_id = U256::from(0x1234_5678u64);
     let nonce = find_valid_nonce(gem_id, ALICE);
 
     assert!(runtime::validate_pow(gem_id, ALICE, nonce).is_ok());
     assert_ne!(
-        compute_mining_pow_hash(gem_id, ALICE, SINGLE_EXERCISE_SEQUENCE, nonce),
-        compute_mining_pow_hash(gem_id, BOB, SINGLE_EXERCISE_SEQUENCE, nonce)
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            BOB,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        )
+    );
+    assert_ne!(
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        compute_mining_pow_hash(
+            MiningDomain::Nod,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        "a Nod nonce must not settle a Gem"
     );
 }
 
