@@ -978,8 +978,8 @@ mod tests {
                 .unwrap();
             assert_eq!(x_item.gem_type, GemTypes::Genesis as u8);
             assert!(
-                outbe_gem::api::is_qualified(&ctx.storage, &x_item).unwrap(),
-                "Genesis gem qualifies from birth"
+                x_item.floor_price_minor.is_zero(),
+                "Genesis gem carries no floor"
             );
 
             assert_eq!(gem.balance_of(VAL_Y).unwrap(), 1);

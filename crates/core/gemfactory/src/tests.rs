@@ -235,7 +235,10 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
             rate * U256::from(228u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Issued as u8);
-        assert!(gem_api::is_qualified(storage, &item).unwrap());
+        assert!(
+            !gem_api::is_qualified(storage, &item).unwrap(),
+            "a zero floor still waits for its first finalized day"
+        );
         assert_eq!(item.gem_type, GemTypes::Genesis as u8);
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -243,9 +246,9 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
     });
 }
 
-/// Without a floor, a Genesis gem settles before any day has closed.
+/// A Genesis gem settles once its first full day closes: a zero floor clears at any price.
 #[test]
-fn a_genesis_gem_settles_with_no_closed_day() {
+fn a_genesis_gem_settles_once_its_first_day_closes() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
@@ -253,6 +256,7 @@ fn a_genesis_gem_settles_with_no_closed_day() {
         issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap()
     });
     StorageHandle::enter(&mut provider, |storage| {
+        seed_qualifying_day(&storage, gem_id);
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         assert_eq!(
             gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
