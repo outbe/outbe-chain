@@ -65,6 +65,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
     GratisOpRequest {
         op,
         chain_id,
+        block_timestamp: 0,
         account,
         amount,
         current_balance: Vec::new(),
@@ -97,6 +98,13 @@ fn ensure_applied(result: &GratisOpResult) -> Result<()> {
         GratisOpStatus::Applied => Ok(()),
         GratisOpStatus::Rejected { reason } => Err(PrecompileError::Revert(reason.clone())),
     }
+}
+
+/// Pledge timestamps use u64 Unix seconds, matching the execution block clock.
+/// Reject an out-of-range storage value rather than truncating it.
+fn pledge_timestamp(storage: &StorageHandle<'_>) -> Result<u64> {
+    u64::try_from(storage.timestamp()?)
+        .map_err(|_| PrecompileError::Revert("pledge timestamp exceeds u64".into()))
 }
 
 /// Store the balance / pledged ciphertext blobs the enclave produced (an empty
@@ -251,6 +259,7 @@ fn pledge_impl(
         caller,
         amount_stables,
     );
+    req.block_timestamp = pledge_timestamp(&storage)?;
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
     req.pledge_terms = Some(terms);
@@ -401,6 +410,7 @@ pub(crate) fn consume_pledge(
         eoa,
         U256::ZERO,
     );
+    req.block_timestamp = pledge_timestamp(&storage)?;
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
     req.current_pledge_record = ticket_ct;
     req.pledge_note = Some(pledge_note);

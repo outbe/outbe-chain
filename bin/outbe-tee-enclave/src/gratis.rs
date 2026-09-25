@@ -33,8 +33,10 @@ const FIELD_EOA: u8 = 2;
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
-/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry(32) || iso(2) || decimals(1) || valuation(32)`.
-const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32 + 2 + 1 + 32;
+/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry(32) || iso(2) || decimals(1) || valuation(32) || created_at(8) || valid_until(8)`.
+/// Fresh-genesis format: tickets without authenticated timestamps are rejected.
+const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32 + 2 + 1 + 32 + 8 + 8;
+const PLEDGE_NOTE_VALIDITY_SECONDS: u64 = 900;
 
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
 
@@ -185,6 +187,8 @@ struct PledgeLockTicket {
     issuance_currency: u16,
     asset_decimals: u8,
     valuation_price: U256,
+    created_at: u64,
+    valid_until: u64,
 }
 
 impl PledgeLockTicket {
@@ -198,6 +202,8 @@ impl PledgeLockTicket {
         b.extend_from_slice(&self.issuance_currency.to_be_bytes());
         b.push(self.asset_decimals);
         b.extend_from_slice(&self.valuation_price.to_be_bytes::<32>());
+        b.extend_from_slice(&self.created_at.to_be_bytes());
+        b.extend_from_slice(&self.valid_until.to_be_bytes());
         b
     }
 
@@ -214,6 +220,16 @@ impl PledgeLockTicket {
             issuance_currency: u16::from_be_bytes([b[136], b[137]]),
             asset_decimals: b[138],
             valuation_price: U256::from_be_slice(&b[139..171]),
+            created_at: u64::from_be_bytes(
+                b[171..179]
+                    .try_into()
+                    .map_err(|_| TeeError::DecryptFailed)?,
+            ),
+            valid_until: u64::from_be_bytes(
+                b[179..187]
+                    .try_into()
+                    .map_err(|_| TeeError::DecryptFailed)?,
+            ),
         })
     }
 
@@ -463,6 +479,10 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             if balance < terms.gratis_amount {
                 return Ok(reject("insufficient balance"));
             }
+            let created_at = req.block_timestamp;
+            let Some(valid_until) = created_at.checked_add(PLEDGE_NOTE_VALIDITY_SECONDS) else {
+                return Ok(reject("pledge timestamp overflow"));
+            };
             let handle =
                 derive_pledge_note(state_key, req.account, req.amount, req.modify_auth.op_nonce)?;
             let ticket = PledgeLockTicket {
@@ -474,6 +494,8 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 issuance_currency: terms.issuance_currency,
                 asset_decimals: terms.asset_decimals,
                 valuation_price: terms.valuation_price,
+                created_at,
+                valid_until,
             };
             r.new_balance = write_amount(
                 &view_key,
@@ -541,6 +563,12 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     let expected = spend_auth_mac(&secret, bundle);
     if !constant_time_eq(&expected, &spend_auth) {
         return Ok(reject("invalid spend authorization"));
+    }
+    if req.block_timestamp < ticket.created_at {
+        return Ok(reject("pledge note not yet valid"));
+    }
+    if req.block_timestamp > ticket.valid_until {
+        return Ok(reject("pledge note expired"));
     }
 
     // Credit the EOA's OWN pledged ledger (pending -> active); no escrow move.
@@ -669,6 +697,7 @@ mod tests {
         GratisOpRequest {
             op,
             chain_id: CHAIN,
+            block_timestamp: 0,
             account: acct,
             amount,
             current_balance: Vec::new(),
@@ -930,6 +959,8 @@ mod tests {
             issuance_currency: 840,
             asset_decimals: 6,
             valuation_price: outbe_primitives::units::SCALE_1E18 / U256::from(2),
+            created_at: 28_799,
+            valid_until: 29_699,
         };
         let encoded = ticket.encode();
         assert_eq!(encoded.len(), RECORD_PLAINTEXT_LEN);
@@ -947,6 +978,7 @@ mod tests {
             assert!(read_ticket(&sk, handle, &tampered).is_err());
         }
         assert!(PledgeLockTicket::decode(&encoded[..136]).is_err());
+        assert!(PledgeLockTicket::decode(&encoded[..171]).is_err());
     }
 
     /// The MAC only covers `amount` (the stables figure), so the terms the host
@@ -1019,6 +1051,43 @@ mod tests {
             req.pledge_terms = Some(altered);
             assert_ne!(sealed, outbe_tee::protocol::gratis_op_canonical_hash(&req));
         }
+        req.pledge_terms = Some(original);
+        req.block_timestamp += 1;
+        assert_ne!(sealed, outbe_tee::protocol::gratis_op_canonical_hash(&req));
+    }
+
+    #[test]
+    fn pledge_timestamp_overflow_rejects_without_state_updates() {
+        let sk = state_key();
+        let mut m = req(GratisOp::Mint, alice(), U256::from(1000), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
+        let minted = apply_op(&sk, &m);
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(500), 1);
+        p.current_balance = minted.new_balance;
+        p.pledge_terms = Some(terms(p.amount, m.amount));
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
+        p.block_timestamp = u64::MAX - 900;
+        let accepted = apply_op(&sk, &p);
+        assert_eq!(accepted.status, GratisOpStatus::Applied);
+        let ticket = read_ticket(&sk, accepted.pledge_note, &accepted.new_pledge_record)
+            .unwrap()
+            .1;
+        assert_eq!(ticket.created_at, p.block_timestamp);
+        assert_eq!(ticket.valid_until, u64::MAX);
+
+        p.block_timestamp += 1;
+        let rejected = apply_op(&sk, &p);
+        assert_eq!(
+            rejected.status,
+            GratisOpStatus::Rejected {
+                reason: "pledge timestamp overflow".into(),
+            }
+        );
+        assert!(rejected.new_balance.is_empty());
+        assert!(rejected.new_pledged.is_empty());
+        assert!(rejected.new_pledge_record.is_empty());
+        assert_eq!(rejected.event_amount, U256::ZERO);
+        assert_eq!(rejected.next_op_nonce, 0);
     }
 
     #[test]

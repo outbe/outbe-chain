@@ -20,6 +20,98 @@ use crate::runtime;
 use crate::tests::common::*;
 
 #[test]
+fn issuance_checks_note_and_liquidity_expiry_independently() {
+    for (delay, reservation_lifetime, error) in [
+        (899, 1800, None),
+        (900, 1800, None),
+        (901, 1800, Some("pledge note expired")),
+        (899, 898, Some("reservation expired")),
+    ] {
+        let mut provider = env();
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let (note, _) = pledge_fixture(
+                storage.clone(),
+                alice(),
+                pledge_stables(),
+                asset(),
+                U256::MAX,
+                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+            )
+            .unwrap();
+            let reservation = seed_reservation_at(
+                &storage,
+                cca(),
+                alice(),
+                asset(),
+                pledge_stables(),
+                CREATED_AT + reservation_lifetime,
+            );
+            let spend = credis_spend_auth(alice(), note, alice());
+            fund_stake(&storage, pledge_stake());
+            advance_to(&storage, CREATED_AT + delay);
+            let result = storage.with_checkpoint(|| {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    note,
+                    spend,
+                    REFERENCE_ISO,
+                    reservation,
+                    pledge_stake(),
+                )
+            });
+            if let Some(reason) = error {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains(reason), "{error}");
+                assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+                assert_eq!(
+                    outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
+                    2
+                );
+                assert_eq!(
+                    outbe_vaultrouter::api::reservation_of(&storage, reservation)
+                        .unwrap()
+                        .amount,
+                    pledge_stables()
+                );
+                assert_eq!(
+                    outbe_gratisfactory::runtime::unpledge_gratis(
+                        storage.clone(),
+                        alice(),
+                        pledge_stables(),
+                        note,
+                        auth(GratisOp::Unpledge, alice(), pledge_stables(), 2)
+                    )
+                    .unwrap(),
+                    pledge_cost()
+                );
+                assert_eq!(view_balance(&storage, alice()), pledge_cost());
+                assert_eq!(
+                    outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                    U256::ZERO
+                );
+            } else {
+                let (id, principal) = result.unwrap();
+                assert_eq!(principal, pledge_stables());
+                let position = CredisContract::new(storage.clone())
+                    .get_position(id)
+                    .unwrap();
+                assert_eq!(position.collateral, pledge_cost());
+                assert_eq!(position.entry_price, oracle_rate());
+                assert_eq!(position.issued_at, CREATED_AT + delay);
+                assert!(
+                    outbe_gratis::api::consume_pledge(storage.clone(), note, alice(), spend)
+                        .is_err()
+                );
+            }
+        });
+        teardown();
+    }
+}
+
+#[test]
 fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
