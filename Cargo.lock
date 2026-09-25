@@ -8214,6 +8214,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -8227,6 +8228,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
  "thiserror 2.0.18",
@@ -8348,6 +8350,7 @@ dependencies = [
  "base64 0.22.1",
  "ring",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

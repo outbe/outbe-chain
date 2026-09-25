@@ -15,4 +15,6 @@ interface IAgentReward {
     /// caller's own risk control.
     /// @return gemId the Gem issued for the caller.
     function claimReward(uint8 pool, uint256 amount) external returns (uint256 gemId);
+    /// @notice Only CCA_REGISTRY_ADDRESS may issue; load uses six-decimal protocol units.
+    function issueCcaReward(address owner, uint256 load) external returns (uint256 gemId);
 }
