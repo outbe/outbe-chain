@@ -1619,6 +1619,27 @@ fn issue_merchant_gem_takes_each_maximum_independently() {
     }
 }
 
+/// Every Genesis gem carries a zero floor whatever its entry, and keeps its cost and call terms.
+#[test]
+fn a_genesis_floor_is_zero_at_every_entry_price() {
+    let unit = six_decimal_unit();
+    let load = U256::from(10u64) * unit;
+    for rate in [unit, U256::from(2u64) * unit, U256::from(7u64) * unit] {
+        with_storage(Some(rate), |storage| {
+            let gem_id =
+                issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+            let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+            assert_eq!(item.floor_price_minor, U256::ZERO);
+            assert_eq!(item.entry_price_minor, rate);
+            assert_eq!(
+                item.call_price_minor,
+                rate * U256::from(228u64) / U256::from(100u64)
+            );
+            assert_eq!(runtime::gem_cost_minor(&item).unwrap(), load * rate / unit);
+        });
+    }
+}
+
 #[test]
 fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
