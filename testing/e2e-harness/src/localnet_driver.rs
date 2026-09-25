@@ -218,7 +218,7 @@ impl LocalnetCli {
             data_dir: Some(self.data_dir.clone()),
             evidence_dir: None,
             artifact_manifest: None,
-            scenario_timeout_secs: 3_600,
+            scenario_timeout_secs: None,
             metadosis_p0_case: None,
             chain_bin: Some(self.repo.join("target/release/outbe-chain")),
             ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),

@@ -14,6 +14,8 @@ use crate::env::{Environment, TeeMode};
 use crate::ocomp_evidence::{hash_file, MemberDigestV1};
 
 const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
+// Keep aligned with the workspace Heartwood dependencies (checked below).
+const HEARTWOOD_REV: &str = "b76a17801329291153585ed31db61ee3c658046e";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -312,17 +314,21 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
         BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
     ) {
         commands.push(strings(&[
-            "build",
+            "install",
             "--locked",
-            "--release",
             "-j",
             &jobs,
-            "--manifest-path",
-            "../outbe-heartwood/Cargo.toml",
-            "--bin",
-            "rad",
-            "--bin",
-            "git-remote-rad",
+            "--git",
+            "https://github.com/outbe/outbe-heartwood.git",
+            "--rev",
+            HEARTWOOD_REV,
+            "--root",
+            "target/e2e-heartwood",
+            "--target-dir",
+            "target/e2e-heartwood/build",
+            "--bins",
+            "radicle-cli",
+            "radicle-remote-helper",
         ]));
     }
     commands.push(strings(&[
@@ -388,10 +394,7 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
         lane,
         BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
     ) {
-        let heartwood = repo
-            .parent()
-            .unwrap_or(repo)
-            .join("outbe-heartwood/target/release");
+        let heartwood = repo.join("target/e2e-heartwood/bin");
         artifacts.extend([
             artifact("rad", heartwood.join("rad"), true),
             artifact("git_remote_rad", heartwood.join("git-remote-rad"), true),
@@ -434,11 +437,7 @@ fn required_artifacts(
         artifacts.push(artifact("outbe_feeder", env.feeder_bin.clone(), true));
     }
     if tagged(feature, scenario, "radicle") {
-        let heartwood = env
-            .repo
-            .parent()
-            .unwrap_or(&env.repo)
-            .join("outbe-heartwood/target/release");
+        let heartwood = env.repo.join("target/e2e-heartwood/bin");
         artifacts.extend([
             artifact("rad", heartwood.join("rad"), true),
             artifact("git_remote_rad", heartwood.join("git-remote-rad"), true),
@@ -603,6 +602,55 @@ fn strings(values: &[&str]) -> Vec<String> {
 mod tests {
     use super::*;
     use cucumber::gherkin::GherkinEnv;
+
+    #[test]
+    fn heartwood_install_matches_workspace_pin_and_runtime_paths() {
+        let workspace = include_str!("../../../Cargo.toml");
+        let dependency = workspace
+            .lines()
+            .find(|line| line.starts_with("heartwood-outbe-radicle ="))
+            .unwrap();
+        assert!(dependency.contains(&format!("rev = \"{HEARTWOOD_REV}\"")));
+        let repo = tempfile::tempdir().unwrap();
+        let env = Environment {
+            repo: repo.path().to_owned(),
+            ..Environment::default()
+        };
+        let config = crate::internal::config::Config::resolve(&env);
+        for lane in [
+            BuildLane::Mock,
+            BuildLane::SgxNoAttest,
+            BuildLane::RadicleSgx,
+        ] {
+            let commands = build_commands(lane, 4);
+            let install = commands.iter().find(|args| args[0] == "install").unwrap();
+            assert!(install
+                .windows(2)
+                .any(|pair| pair == ["--rev", HEARTWOOD_REV]));
+            assert!(!commands
+                .iter()
+                .flatten()
+                .any(|arg| arg.contains("../outbe-heartwood")));
+            let root = install.windows(2).find(|pair| pair[0] == "--root").unwrap();
+            let bin = env.repo.join(&root[1]).join("bin");
+            assert_eq!(config.bin_rad, bin.join("rad"));
+            assert_eq!(config.bin_git_remote_rad, bin.join("git-remote-rad"));
+            let artifacts = lane_artifacts(&env.repo, lane);
+            for (name, path) in [
+                ("rad", &config.bin_rad),
+                ("git_remote_rad", &config.bin_git_remote_rad),
+            ] {
+                assert_eq!(
+                    &artifacts
+                        .iter()
+                        .find(|spec| spec.name == name)
+                        .unwrap()
+                        .path,
+                    path
+                );
+            }
+        }
+    }
 
     #[test]
     fn missing_artifact_fails_closed() {

@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["dependencies"]
+solc = "0.8.30"
+evm_version = "Prague"
+optimizer = true
+optimizer_runs = 200
+bytecode_hash = "none"
+cbor_metadata = false
+remappings = ["forge-std/=dependencies/forge-std-1.16.1/src/"]
+
+[soldeer]
+remappings_generate = false
+
+[dependencies]
+forge-std = { version = "1.16.1", git = "https://github.com/foundry-rs/forge-std", rev = "b3bc8b154382a75d0b0ef22d7fd4a0a5f0feee0e" }

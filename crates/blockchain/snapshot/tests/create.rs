@@ -1,3 +1,6 @@
+#[cfg(target_os = "linux")]
+use outbe_snapshot::create::create_snapshot;
+#[cfg(target_os = "linux")]
 use std::{
     fs,
     io::{Read, Write},
@@ -5,10 +8,10 @@ use std::{
     path::Path,
 };
 
+#[cfg(target_os = "linux")]
 use outbe_snapshot::fs::{PendingArchive, SourceRoot};
 use outbe_snapshot::{
     archive::read_archive_index,
-    create::create_snapshot,
     manifest::SnapshotManifestV1,
     provenance::{signing_digest, SignatureEnvelope},
 };
@@ -38,6 +41,7 @@ fn sign_manifest(raw: &[u8]) -> std::io::Result<SignatureEnvelope> {
     SignatureEnvelope::from_signature(raw, bytes)
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn signed_archive_is_portable_and_contains_unchanged_native_bytes() {
     let temp = tempfile::tempdir().unwrap();
@@ -106,6 +110,7 @@ fn archive_root_permissions_must_match_the_signed_entry() {
     assert!(read_archive_index(bytes.as_slice(), None).is_err());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn signing_failure_or_changed_source_never_publishes_an_archive() {
     for change_source in [false, true] {
@@ -134,6 +139,7 @@ fn signing_failure_or_changed_source_never_publishes_an_archive() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn replacing_the_source_root_does_not_publish_from_an_unlinked_old_directory() {
     let temp = tempfile::tempdir().unwrap();
@@ -157,6 +163,7 @@ fn replacing_the_source_root_does_not_publish_from_an_unlinked_old_directory() {
     assert!(!output.exists());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn changed_inventory_report_prevents_final_publication() {
     let temp = tempfile::tempdir().unwrap();
@@ -176,6 +183,7 @@ fn changed_inventory_report_prevents_final_publication() {
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_files_are_read_in_place_and_replacement_is_detected() {
     let temp = tempfile::tempdir().unwrap();
@@ -194,6 +202,7 @@ fn native_files_are_read_in_place_and_replacement_is_detected() {
     assert!(root.reopen(Path::new("native.db"), &identity).is_err());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn copying_does_not_follow_source_links_or_accept_hardlinks() {
     let temp = tempfile::tempdir().unwrap();
@@ -208,6 +217,7 @@ fn copying_does_not_follow_source_links_or_accept_hardlinks() {
     assert_eq!(fs::read(temp.path().join("secret")).unwrap(), b"private");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn pending_archive_publishes_once_and_cleans_only_its_unpublished_file() {
     let temp = tempfile::tempdir().unwrap();
@@ -235,6 +245,7 @@ fn pending_archive_publishes_once_and_cleans_only_its_unpublished_file() {
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn replaced_pending_file_is_neither_published_nor_removed() {
     let temp = tempfile::tempdir().unwrap();

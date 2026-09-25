@@ -33,9 +33,8 @@ const GEM_LOAD_MINOR: u128 = 100_000;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `GemState::Issued` / `Qualified` / `Called`.
+/// `GemState::Issued` / `Called`.
 const ISSUED: u8 = 0;
-const QUALIFIED: u8 = 1;
 const CALLED: u8 = 2;
 /// DEV calls a gem once the VWAP held above its Call Price on two of three days.
 const CALL_THRESHOLD_DAYS: u32 = 2;
@@ -43,7 +42,7 @@ const CALL_THRESHOLD_DAYS: u32 = 2;
 const CALL_LOOKBACK_DAYS: u64 = 3;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
-/// The daily trigger that opens the qualify sweep comes round every minute in e2e.
+/// Qualification is read off the seeded day, so it waits only for that block.
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
@@ -325,8 +324,15 @@ fn rate_above_gem_floor(world: &mut World) {
 #[then("both gems qualify")]
 fn both_gems_qualify(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
+    let deadline = Instant::now() + Duration::from_secs(QUALIFY_TIMEOUT_SECS);
     for gem_id in [mined_gem(world), forfeited_gem(world)] {
-        wait_for_gem_state(&url, gem_id, QUALIFIED, QUALIFY_TIMEOUT_SECS);
+        while !gem_is_qualified(&url, gem_id) {
+            assert!(
+                Instant::now() < deadline,
+                "gem {gem_id} did not qualify on the seeded day"
+            );
+            sleep(Duration::from_secs(2));
+        }
     }
 }
 
@@ -455,7 +461,7 @@ fn call_trigger_holds(world: &mut World) {
     )
     .expect("position at expiry baseline");
     assert_eq!(position.remainingCapacity, unissued_capacity());
-    assert_eq!(read_gem(&url, gem_id).state, QUALIFIED);
+    assert_eq!(read_gem(&url, gem_id).state, ISSUED);
     let pool = eth::read_call_at(
         &url,
         addresses::PROMIS_LIMIT_ADDR,
@@ -795,6 +801,15 @@ fn read_gem(url: &str, gem_id: U256) -> eth::IGem::GemData {
         &eth::IGem::getGemStatusCall { gemId: gem_id },
     )
     .unwrap_or_else(|| panic!("gem {gem_id} does not read back"))
+}
+
+pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {
+    eth::read_call(
+        url,
+        addresses::GEM_ADDR,
+        &eth::IGem::isQualifiedCall { gemId: gem_id },
+    )
+    .unwrap_or_else(|| panic!("gem {gem_id} qualification does not read back"))
 }
 
 fn wait_for_gem_state(url: &str, gem_id: U256, want: u8, timeout_secs: u64) {

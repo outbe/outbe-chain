@@ -8,6 +8,8 @@ use alloy_sol_types::SolCall;
 
 use crate::precompile::ICredisFactory;
 use outbe_credis::{CredisContract, CredisState};
+use outbe_oracle::{api::AddressPair, lifecycle::OracleLifecycle, schema::OracleContract};
+use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
@@ -16,6 +18,216 @@ use outbe_tee::protocol::GratisOp;
 
 use crate::runtime;
 use crate::tests::common::*;
+
+#[test]
+fn duplicate_issuance_preserves_a_different_pledge_for_the_next_block() {
+    let mut provider = env();
+    let (first, note, reservation, spend) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap_for(&storage, alice(), pledge_cost());
+        bootstrap_for(&storage, bob(), pledge_cost());
+        let first = open(&storage, 1);
+        assert_eq!(
+            first,
+            CredisContract::position_id(cca(), alice(), asset(), BLOCK_NUMBER)
+        );
+
+        // A different pledger and note target the same public issuance tuple.
+        let (note, _) = pledge_fixture(
+            storage.clone(),
+            bob(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, bob(), pledge_stables(), 1),
+        )
+        .unwrap();
+        let reservation = seed_reservation(&storage, alice(), pledge_stables());
+        let spend = credis_spend_auth(bob(), note, alice());
+        fund_stake(&storage, pledge_stake());
+
+        let credis = CredisContract::new(storage.clone());
+        let first_record = credis.get_position(first).unwrap();
+        let supply = outbe_gratis::api::total_supply(storage.clone()).unwrap();
+        let nonce = outbe_gratis::api::op_nonce(storage.clone(), bob()).unwrap();
+        let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
+        // Model the enclosing EVM frame, including rollback of pledge consumption.
+        let error = storage
+            .with_checkpoint(|| {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    note,
+                    spend,
+                    REFERENCE_ISO,
+                    reservation,
+                    pledge_stake(),
+                )
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert_eq!(credis.get_position(first).unwrap(), first_record);
+        assert_eq!(credis.total_positions().unwrap(), 1);
+        assert_eq!(credis.position_count_of(alice()).unwrap(), 1);
+        assert_eq!(credis.active_len().unwrap(), 1);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            supply
+        );
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), bob()).unwrap(),
+            nonce
+        );
+        assert_eq!(factory_balance(&storage), pledge_stake());
+        assert_eq!(storage.balance(alice()).unwrap(), pledge_stake());
+        assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
+            pledge_cost()
+        );
+        assert_eq!(
+            outbe_vaultrouter::api::reservation_of(&storage, reservation)
+                .unwrap()
+                .amount,
+            pledge_stables()
+        );
+        (first, note, reservation, spend)
+    });
+
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        // The exact same authorization succeeds without recreating the pledge.
+        let (second, amount) = runtime::issue_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            note,
+            spend,
+            REFERENCE_ISO,
+            reservation,
+            pledge_stake(),
+        )
+        .unwrap();
+        assert_eq!(amount, pledge_stables());
+        assert_eq!(
+            second,
+            CredisContract::position_id(cca(), alice(), asset(), BLOCK_NUMBER + 1)
+        );
+        assert_ne!(second, first);
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(credis.total_positions().unwrap(), 2);
+        assert_eq!(
+            credis.get_position(first).unwrap().principal,
+            pledge_stables()
+        );
+        assert_ne!(
+            credis.get_position(first).unwrap().eoa_ct,
+            credis.get_position(second).unwrap().eoa_ct
+        );
+        assert_eq!(view_pledged(&storage, bob()), pledge_cost());
+        assert_eq!(factory_balance(&storage), U256::ZERO);
+        assert_eq!(
+            storage.balance(alice()).unwrap(),
+            pledge_stake() * U256::from(2)
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn issuance_checks_note_and_liquidity_expiry_independently() {
+    for (delay, reservation_lifetime, error) in [
+        (899, 1800, None),
+        (900, 1800, None),
+        (901, 1800, Some("pledge note expired")),
+        (899, 898, Some("reservation expired")),
+    ] {
+        let mut provider = env();
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let (note, _) = pledge_fixture(
+                storage.clone(),
+                alice(),
+                pledge_stables(),
+                asset(),
+                U256::MAX,
+                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+            )
+            .unwrap();
+            let reservation = seed_reservation_at(
+                &storage,
+                cca(),
+                alice(),
+                asset(),
+                pledge_stables(),
+                CREATED_AT + reservation_lifetime,
+            );
+            let spend = credis_spend_auth(alice(), note, alice());
+            fund_stake(&storage, pledge_stake());
+            advance_to(&storage, CREATED_AT + delay);
+            let result = storage.with_checkpoint(|| {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    note,
+                    spend,
+                    REFERENCE_ISO,
+                    reservation,
+                    pledge_stake(),
+                )
+            });
+            if let Some(reason) = error {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains(reason), "{error}");
+                assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+                assert_eq!(
+                    outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
+                    2
+                );
+                assert_eq!(
+                    outbe_vaultrouter::api::reservation_of(&storage, reservation)
+                        .unwrap()
+                        .amount,
+                    pledge_stables()
+                );
+                assert_eq!(
+                    outbe_gratisfactory::runtime::unpledge_gratis(
+                        storage.clone(),
+                        alice(),
+                        pledge_stables(),
+                        note,
+                        auth(GratisOp::Unpledge, alice(), pledge_stables(), 2)
+                    )
+                    .unwrap(),
+                    pledge_cost()
+                );
+                assert_eq!(view_balance(&storage, alice()), pledge_cost());
+                assert_eq!(
+                    outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                    U256::ZERO
+                );
+            } else {
+                let (id, principal) = result.unwrap();
+                assert_eq!(principal, pledge_stables());
+                let position = CredisContract::new(storage.clone())
+                    .get_position(id)
+                    .unwrap();
+                assert_eq!(position.collateral, pledge_cost());
+                assert_eq!(position.entry_price, oracle_rate());
+                assert_eq!(position.issued_at, CREATED_AT + delay);
+                assert!(
+                    outbe_gratis::api::consume_pledge(storage.clone(), note, alice(), spend)
+                        .is_err()
+                );
+            }
+        });
+        teardown();
+    }
+}
 
 #[test]
 fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
@@ -64,8 +276,8 @@ fn issue_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(position.collateral, pledge_cost());
         assert_eq!(position.collateral_locked, pledge_cost());
         // Entry price is principal / gratis, sealed on the pledge (2.00 here).
-        // The call anchor is max(previous-day VWAP, current price); both are
-        // seeded at 2.00, so the call price is 3.28. See
+        // The call anchor is the previous-day VWAP, seeded at 2.00,
+        // so the call price is 3.28. See
         // `entry_price_stays_on_the_pledge_when_the_reference_price_moves`.
         assert_eq!(position.entry_price, oracle_rate());
         assert_eq!(position.call_anchor_price, oracle_rate());
@@ -171,7 +383,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             deploy_smart_account(&storage, bob());
             // The quote floors 13 / 2 to 6, and the note carries that exact amount.
             let reservation_id = seed_reservation(&storage, bob(), principal);
-            let (handle, quoted) = outbe_gratisfactory::runtime::pledge_gratis(
+            let (handle, quoted) = pledge_fixture(
                 storage.clone(),
                 alice(),
                 principal,
@@ -195,6 +407,11 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             )
             .unwrap();
             assert_eq!(disbursed, principal);
+            let accepted = CredisContract::new(storage.clone())
+                .get_position(id)
+                .unwrap();
+            assert_eq!(accepted.entry_price, U256::from(2_166_666));
+            assert_eq!(accepted.issuance_currency, ISSUANCE_ISO);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
             // Positive subunit interest floors to zero; returns ceiling and then cap.
@@ -376,33 +593,38 @@ fn settle_accepts_a_third_party_payer() {
 
 #[test]
 fn issue_credis_allows_an_owner_with_an_unresolved_call() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        // Both pledges are quoted at the seeded rate, before the price moves.
-        let (first_handle, first_reservation) = pledge(&storage, alice(), 1);
-        let (second_handle, second_reservation) = pledge(&storage, alice(), 2);
+    let mut provider = env();
+    let (first, second_handle, second_reservation) =
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost() * U256::from(2u64));
+            // Both pledges are quoted at the seeded rate, before the price moves.
+            let (first_handle, first_reservation) = pledge(&storage, alice(), 1);
+            let (second_handle, second_reservation) = pledge(&storage, alice(), 2);
 
-        let first_spend = credis_spend_auth(alice(), first_handle, alice());
-        fund_stake(&storage, pledge_stake());
-        let (first, _) = runtime::issue_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            first_handle,
-            first_spend,
-            REFERENCE_ISO,
-            first_reservation,
-            pledge_stake(),
-        )
-        .unwrap();
+            let first_spend = credis_spend_auth(alice(), first_handle, alice());
+            fund_stake(&storage, pledge_stake());
+            let (first, _) = runtime::issue_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                first_handle,
+                first_spend,
+                REFERENCE_ISO,
+                first_reservation,
+                pledge_stake(),
+            )
+            .unwrap();
 
-        // Call the first position.
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_called(first, now_of(&storage)).unwrap());
-        }
+            // Call the first position.
+            {
+                let mut credis = CredisContract::new(storage.clone());
+                assert!(credis.mark_called(first, now_of(&storage)).unwrap());
+            }
 
+            (first, second_handle, second_reservation)
+        });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
         // The called position does not gate origination: the second one opens
         // while the first is still unresolved, and both stand on their own.
         let spend = credis_spend_auth(alice(), second_handle, alice());
@@ -462,102 +684,196 @@ fn issue_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn the_void_burns_only_the_unpaid_share() {
+fn oracle_call_survives_half_repayment_then_voids_the_unpaid_share() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
+        let credis = CredisContract::new(storage.clone());
+        let issued = credis.get_position(position_id).unwrap();
+        assert_eq!(issued.lifecycle_state().unwrap(), CredisState::Open);
+        assert_eq!(view_pledged(&storage, alice()), issued.collateral);
 
-        // Settle half the principal, reclaiming half the collateral.
-        advance_to(&storage, CREATED_AT + 30 * DAY);
-        settle_principal(
-            &storage,
-            alice(),
-            position_id,
-            pledge_stables() / U256::from(2u64),
-        );
-        let unpaid_collateral = pledge_cost() / U256::from(2u64);
-        assert_eq!(view_pledged(&storage, alice()), unpaid_collateral);
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.config_is_initialized.write(true).unwrap();
+        // Snapshots are supplied directly; no validator vote tally is needed.
+        oracle.config_vote_period.write(0).unwrap();
+        let pair = AddressPair::new_coen_to(issued.reference_currency);
+        let price = issued.call_price + U256::ONE;
+        let threshold_days = u64::from(issued.call_threshold) / DAY;
+        assert!(threshold_days > 1);
+        assert!(issued.call_threshold <= issued.call_window);
+        let first_midnight = issued.issued_at - issued.issued_at % DAY;
+        let tick = |timestamp| {
+            advance_to(&storage, timestamp);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+                storage.clone(),
+            );
+            OracleLifecycle::begin_block(&ctx).unwrap();
+            crate::called::run_daily(&ctx).unwrap();
+        };
 
-        // Call it, then let the settlement window lapse.
-        let called_at = now_of(&storage);
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_called(position_id, called_at).unwrap());
+        // Only closed reference-currency VWAP days count. The current day's
+        // price cannot call the position before the final qualifying rollover.
+        for day in 0..threshold_days {
+            let now = now_of(&storage);
+            set_coen_rate_for(&storage, issued.reference_currency, price);
+            oracle
+                .write_snapshot(now, &[(pair, price, U256::ONE)])
+                .unwrap();
+            tick(now);
+            assert_eq!(
+                credis
+                    .get_position(position_id)
+                    .unwrap()
+                    .lifecycle_state()
+                    .unwrap(),
+                CredisState::Open
+            );
+            let next_day = first_midnight + (day + 1) * DAY;
+            tick(next_day);
+            assert_eq!(
+                oracle
+                    .get_utc_day_vwap_for_pair(
+                        last_closed_day(next_day),
+                        oracle.pair_index_of(pair).unwrap()
+                    )
+                    .unwrap(),
+                Some(price)
+            );
+            assert_eq!(
+                credis
+                    .get_position(position_id)
+                    .unwrap()
+                    .lifecycle_state()
+                    .unwrap(),
+                if day + 1 == threshold_days {
+                    CredisState::Called
+                } else {
+                    CredisState::Open
+                }
+            );
         }
 
-        // Encrypted cohort ledger before the burn - the burn records a sale
-        // cohort, so the ciphertext must change afterwards.
+        let called = credis.get_position(position_id).unwrap();
+        assert_eq!(called.called_at, now_of(&storage));
+        assert!(credis.has_called_position(alice()).unwrap());
+        let deadline = outbe_credis::settlement_deadline(&called);
+        let half = issued.principal / U256::from(2u64);
+        let interest = CredisContract::accrued_interest(&called, now_of(&storage)).unwrap();
+        assert!(!interest.is_zero());
+        assert_eq!(
+            settle_principal(&storage, alice(), position_id, half),
+            (half, interest)
+        );
+        let repaid = credis.get_position(position_id).unwrap();
+        let unpaid_collateral = issued.collateral / U256::from(2u64);
+        let released = issued.collateral - unpaid_collateral;
+        assert_eq!(repaid.lifecycle_state().unwrap(), CredisState::Called);
+        assert_eq!(repaid.outstanding, issued.principal - half);
+        assert_eq!(repaid.collateral_locked, unpaid_collateral);
+        assert_eq!(repaid.called_at, called.called_at);
+        assert_eq!(outbe_credis::settlement_deadline(&repaid), deadline);
+        assert!(credis.has_called_position(alice()).unwrap());
+        assert_eq!(view_pledged(&storage, alice()), unpaid_collateral);
+        assert_eq!(view_balance(&storage, alice()), released);
+
+        let ledger = || {
+            (
+                view_balance(&storage, alice()),
+                view_pledged(&storage, alice()),
+                outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+                outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                PromisLimitContract::new(storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+            )
+        };
+        let before = ledger();
+        assert_eq!(
+            before.2, issued.collateral,
+            "repayment releases without burning"
+        );
+        assert_eq!(before.3, unpaid_collateral);
         let cohorts_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
         assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
-        // One second inside the window the sweep must find nothing.
-        let deadline = called_at + NOTICE;
-        advance_to(&storage, deadline - 1);
-        finalize_through(&storage, deadline - 1);
-        assert_eq!(scan(&storage, deadline - 1), 0, "window still open");
-
-        advance_to(&storage, deadline);
-        finalize_through(&storage, deadline);
-        assert_eq!(scan(&storage, deadline), 1);
-
-        // Only the unpaid share was burned; the settled half stays with alice.
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
-        assert_eq!(view_balance(&storage, alice()), unpaid_collateral);
+        tick(deadline - 1);
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            pledge_cost() - unpaid_collateral
-        );
-        assert_eq!(
-            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
-
-        // The equivalent value was deposited 1:1 into the Promis Reserve.
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
                 .unwrap(),
-            unpaid_collateral
+            CredisState::Called
         );
+        assert_eq!(ledger(), before, "no burn before the settlement deadline");
 
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
-            .unwrap();
+        tick(deadline);
+        assert_eq!(credis.get_position(position_id).unwrap(), repaid);
+        assert_eq!(ledger(), before, "no burn at deadline equality");
+
+        tick(deadline + 1);
+        let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Void);
         assert!(position.outstanding.is_zero());
         assert!(position.collateral_locked.is_zero());
-
-        // A sale cohort was recorded for the burned collateral, so alice's
-        // encrypted cohort ledger changed (the RCFI-drop semantics itself is
-        // covered by the fidelity + enclave tests).
+        assert_eq!(credis.active_len().unwrap(), 0);
+        assert!(!credis.has_called_position(alice()).unwrap());
+        // Burn only the pledged remainder; preserve the returned liquid half
+        // and credit the same amount to the Promis reserve.
+        let expected = (
+            released,
+            U256::ZERO,
+            before.2 - unpaid_collateral,
+            before.3 - unpaid_collateral,
+            before.4 + unpaid_collateral,
+        );
+        assert_eq!(ledger(), expected);
         let cohorts_after = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
         assert_ne!(
             cohorts_before, cohorts_after,
-            "the void burn should record a sale cohort"
+            "the burn records a sale cohort"
         );
 
-        // Idempotent: a second sweep at the same height finds nothing to burn.
-        assert_eq!(scan(&storage, deadline), 0);
+        tick(deadline + 1);
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0,
-            "a voided position leaves the active index"
+            ledger(),
+            expected,
+            "a repeated sweep must not burn or credit twice"
+        );
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Void
+        );
+        assert_eq!(
+            outbe_fidelity::FidelityContract::new(storage.clone())
+                .cohorts_ct_of(alice())
+                .unwrap(),
+            cohorts_after
         );
     });
     teardown();
 }
 
 #[test]
-fn a_position_settled_inside_the_window_is_never_voided() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
+fn a_position_settled_at_the_deadline_is_never_voided() {
+    let mut provider = env();
+    let position_id = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        let position_id = open(&storage, 1);
+        open(&storage, 1)
+    });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
         // A second position keeps the active index non-empty after the first is
         // settled, so the scan really walks the book instead of returning at its
         // `len == 0` early exit and passing this test vacuously.
@@ -569,8 +885,8 @@ fn a_position_settled_inside_the_window_is_never_voided() {
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 
-        // Settle in full inside the window.
-        advance_to(&storage, called_at + NOTICE - DAY);
+        // Settle in full at deadline equality.
+        advance_to(&storage, called_at + NOTICE);
         settle_principal(&storage, alice(), position_id, pledge_stables());
 
         let deadline = called_at + NOTICE;
@@ -724,7 +1040,7 @@ fn the_void_leaves_the_stake_with_the_smart_account() {
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 
-        let deadline = called_at + NOTICE;
+        let deadline = called_at + NOTICE + 1;
         advance_to(&storage, deadline);
         finalize_through(&storage, deadline);
         assert_eq!(scan(&storage, deadline), 1);
@@ -774,7 +1090,7 @@ fn issue_credis_rejects_an_undeployed_smart_account() {
 }
 
 /// Moving the reference current price after the pledge does not reprice the entry.
-/// The call anchor does follow max(previous-day VWAP, that current price).
+/// The call anchor also ignores spot and keeps the previous-day VWAP.
 #[test]
 fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
     let mut storage = env();
@@ -783,6 +1099,9 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
         // Pledged at COEN/840 = 2.0, so entry = principal / gratis = 2.0.
         let (handle, reservation_id) = pledge(&storage, alice(), 1);
 
+        // Both current prices move after acceptance. Neither can change the
+        // principal, asset, collateral, entry or issuance currency on the ticket.
+        set_coen_rate(&storage, U256::from(4_000_000u64));
         // The reference current price moves to 3.0. Yesterday's VWAP stays 2.0.
         set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
 
@@ -806,10 +1125,13 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.collateral, pledge_cost());
+        assert_eq!(position.principal, pledge_stables());
+        assert_eq!(position.asset, asset());
+        assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.entry_price, oracle_rate());
-        // max(2.0, 3.0) = 3.0; 3.0 * 1.64 = 4.92.
-        assert_eq!(position.call_anchor_price, U256::from(3_000_000u64));
-        assert_eq!(position.call_price, U256::from(4_920_000u64));
+        // Yesterday's 2.0 VWAP * 1.64 = 3.28, regardless of spot.
+        assert_eq!(position.call_anchor_price, U256::from(2_000_000u64));
+        assert_eq!(position.call_price, U256::from(3_280_000u64));
     });
     teardown();
 }
@@ -877,7 +1199,7 @@ fn call_anchor_uses_the_previous_day_vwap_when_it_is_higher() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.entry_price, oracle_rate());
-        // max(2.50, 2.00) = 2.50; 2.50 * 1.64 = 4.10.
+        // 2.50 * 1.64 = 4.10, regardless of the lower spot price.
         assert_eq!(position.call_anchor_price, U256::from(2_500_000u64));
         assert_eq!(position.call_price, U256::from(4_100_000u64));
     });
@@ -885,7 +1207,7 @@ fn call_anchor_uses_the_previous_day_vwap_when_it_is_higher() {
 }
 
 /// principal 1,000 USD, gratis 500, previous-day COEN/EUR VWAP 1.80, current
-/// price 1.90. Entry stays 2.00 USD; the call is 3.116 EUR.
+/// price 1.90. Entry stays 2.00 USD; the call is 2.952 EUR.
 #[test]
 fn worked_example_keeps_entry_and_call_in_different_currencies() {
     let mut storage = env();
@@ -894,7 +1216,7 @@ fn worked_example_keeps_entry_and_call_in_different_currencies() {
         let gratis = U256::from(500_000_000u64);
         bootstrap(&storage, gratis);
         let reservation_id = seed_reservation(&storage, alice(), principal);
-        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+        let (handle, gratis_cost) = pledge_fixture(
             storage.clone(),
             alice(),
             principal,
@@ -930,8 +1252,8 @@ fn worked_example_keeps_entry_and_call_in_different_currencies() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.entry_price, U256::from(2_000_000u64));
-        assert_eq!(position.call_anchor_price, U256::from(1_900_000u64));
-        assert_eq!(position.call_price, U256::from(3_116_000u64));
+        assert_eq!(position.call_anchor_price, U256::from(1_800_000u64));
+        assert_eq!(position.call_price, U256::from(2_952_000u64));
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.reference_currency, REFERENCE_ISO);
     });
@@ -939,63 +1261,116 @@ fn worked_example_keeps_entry_and_call_in_different_currencies() {
 }
 
 #[test]
-fn issue_credis_rejects_a_missing_previous_day_vwap() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let (handle, reservation_id) = pledge(&storage, alice(), 1);
-        set_vwap(&storage, last_closed_day(now_of(&storage)), U256::ZERO);
-        fund_stake(&storage, pledge_stake());
-        let err = runtime::issue_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            handle,
-            credis_spend_auth(alice(), handle, alice()),
-            REFERENCE_ISO,
-            reservation_id,
-            pledge_stake(),
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("previous closed UTC-day VWAP"),
-            "got: {err}"
-        );
-    });
-    teardown();
+fn unavailable_previous_day_vwap_preserves_the_pledge_for_retry() {
+    for unfinalized in [false, true] {
+        let mut provider = env();
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let (handle, reservation_id) = pledge(&storage, alice(), 1);
+            let day = last_closed_day(now_of(&storage));
+            let oracle = OracleContract::new(storage.clone());
+            if unfinalized {
+                oracle.utc_day_vwap_last_finalized.write(0).unwrap();
+            } else {
+                set_vwap(&storage, day, U256::ZERO);
+            }
+            fund_stake(&storage, pledge_stake());
+            let issue = || {
+                runtime::issue_credis(
+                    storage.clone(),
+                    cca(),
+                    alice(),
+                    handle,
+                    credis_spend_auth(alice(), handle, alice()),
+                    REFERENCE_ISO,
+                    reservation_id,
+                    pledge_stake(),
+                )
+            };
+            let err = storage.with_checkpoint(issue).unwrap_err();
+            assert!(
+                err.to_string().contains("previous closed UTC-day VWAP"),
+                "{err}"
+            );
+            assert_eq!(
+                CredisContract::new(storage.clone())
+                    .total_positions()
+                    .unwrap(),
+                0
+            );
+            assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+            assert_eq!(factory_balance(&storage), pledge_stake());
+            assert_eq!(
+                outbe_ccaregistry::api::reward_weight(
+                    &storage,
+                    cca(),
+                    outbe_primitives::time::timestamp_to_date_key(CREATED_AT)
+                )
+                .unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                outbe_vaultrouter::api::reservation_of(&storage, reservation_id)
+                    .unwrap()
+                    .amount,
+                pledge_stables()
+            );
+
+            // The same pledge and reservation remain usable after the day is available.
+            set_vwap(&storage, day, oracle_rate());
+            let (id, amount) = issue().unwrap();
+            assert_eq!(amount, pledge_stables());
+            assert_eq!(
+                CredisContract::new(storage.clone())
+                    .get_position(id)
+                    .unwrap()
+                    .call_anchor_price,
+                oracle_rate()
+            );
+            assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        });
+        teardown();
+    }
 }
 
 #[test]
-fn issue_credis_rejects_a_stale_current_price() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let (handle, reservation_id) = pledge(&storage, alice(), 1);
-        let now = now_of(&storage);
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO),
-            oracle_rate(),
-            1,
-            now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
-        fund_stake(&storage, pledge_stake());
-        let err = runtime::issue_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            handle,
-            credis_spend_auth(alice(), handle, alice()),
-            REFERENCE_ISO,
-            reservation_id,
-            pledge_stake(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("stale"), "got: {err}");
-    });
-    teardown();
+fn issue_credis_ignores_stale_or_missing_spot() {
+    for missing in [false, true] {
+        let mut provider = env();
+        StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let (handle, reservation_id) = pledge(&storage, alice(), 1);
+            let now = now_of(&storage);
+            outbe_oracle::api::set_exchange_rate(
+                storage.clone(),
+                Address::ZERO,
+                AddressPair::new_coen_to(REFERENCE_ISO),
+                if missing { U256::ZERO } else { oracle_rate() },
+                1,
+                now - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+            )
+            .unwrap();
+            assert!(
+                outbe_oracle::api::fresh_coen_rate_for(storage.clone(), REFERENCE_ISO).is_err()
+            );
+            fund_stake(&storage, pledge_stake());
+            let (id, _) = runtime::issue_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                handle,
+                credis_spend_auth(alice(), handle, alice()),
+                REFERENCE_ISO,
+                reservation_id,
+                pledge_stake(),
+            )
+            .unwrap();
+            let position = CredisContract::new(storage).get_position(id).unwrap();
+            assert_eq!(position.call_anchor_price, oracle_rate());
+            assert_eq!(position.call_price, U256::from(3_280_000u64));
+        });
+        teardown();
+    }
 }
 
 #[test]
@@ -1159,7 +1534,7 @@ fn issue_credis_accepts_a_larger_reservation() {
         bootstrap(&storage, pledge_cost());
         let reservation_id =
             seed_reservation(&storage, alice(), pledge_stables() * U256::from(2u64));
-        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+        let (handle, gratis_cost) = pledge_fixture(
             storage.clone(),
             alice(),
             pledge_stables(),
@@ -1194,6 +1569,73 @@ fn issue_credis_accepts_a_larger_reservation() {
                 .unwrap()
                 .principal,
             pledge_stables()
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        let mut credis = CredisContract::new(storage.clone());
+        credis.mark_called(id, CREATED_AT).unwrap();
+        let deadline = outbe_credis::settlement_deadline(&credis.get_position(id).unwrap());
+        let principal = pledge_stables() / U256::from(4);
+        for now in [deadline - 1, deadline] {
+            advance_to(&storage, now);
+            let position = credis.get_position(id).unwrap();
+            let interest = CredisContract::accrued_interest(&position, now).unwrap();
+            let data = ICredisFactory::settleCall {
+                positionId: id,
+                amount: principal + interest,
+            }
+            .abi_encode();
+            let result =
+                crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap();
+            assert_eq!(
+                ICredisFactory::settleCall::abi_decode_returns(&result)
+                    .unwrap()
+                    .principal,
+                principal
+            );
+        }
+        let before = credis.get_position(id).unwrap();
+        let balance = view_balance(&storage, alice());
+        let pledged = view_pledged(&storage, alice());
+        assert_eq!(pledged, pledge_cost() / U256::from(2));
+        advance_to(&storage, deadline + 1);
+        let data = ICredisFactory::settleCall {
+            positionId: id,
+            amount: U256::MAX,
+        }
+        .abi_encode();
+        let error =
+            crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap_err();
+        assert!(error.to_string().contains("call window has lapsed"));
+        assert_eq!(credis.get_position(id).unwrap(), before);
+        assert_eq!(credis.active_len().unwrap(), 1);
+        assert!(credis.has_called_position(alice()).unwrap());
+        assert_eq!(view_balance(&storage, alice()), balance);
+        assert_eq!(view_pledged(&storage, alice()), pledged);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO
+        );
+
+        runtime::void_position(storage.clone(), id).unwrap();
+        assert_eq!(view_balance(&storage, alice()), balance);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            pledged
         );
     });
     teardown();

@@ -403,6 +403,8 @@ pub struct OcompPublicScenarioEvidenceV1 {
 #[derive(Debug)]
 pub struct FixtureState {
     #[cfg(feature = "ocomp-integration")]
+    pub(crate) credis: Option<crate::world::credis::CredisFixture>,
+    #[cfg(feature = "ocomp-integration")]
     pub(crate) offline_snapshot: Option<OfflineSnapshotEvidence>,
     #[cfg(feature = "ocomp-integration")]
     pub(crate) offline_snapshot_worker_inventory:
@@ -701,6 +703,8 @@ pub struct StablecoinFixture {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "ocomp-integration")]
+            credis: None,
             #[cfg(feature = "ocomp-integration")]
             offline_snapshot: None,
             #[cfg(feature = "ocomp-integration")]

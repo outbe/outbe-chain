@@ -9,16 +9,11 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Gems one qualify slice may inspect, shared across all reference currencies.
-/// The per-currency bin cursor resumes the rest next block.
-pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
-
 /// Gems one call slice may call before it gives out; the sweep resumes on the
 /// next block.
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of each daily sweep.
-pub const QUALIFY_SWEEP: u8 = 0;
+/// `SweepDaySkipped.sweep` of the Called sweep; 0 belonged to the retired qualify sweep.
 pub const CALL_SWEEP: u8 = 1;
 
 /// Slots one block's expiry sweep may step through. Low because a forfeit compacts

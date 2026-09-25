@@ -124,16 +124,8 @@ impl Config {
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
             bin_radicle: env.repo.join("target/release/outbe-radicle"),
-            bin_rad: env
-                .repo
-                .parent()
-                .unwrap_or(&env.repo)
-                .join("outbe-heartwood/target/release/rad"),
-            bin_git_remote_rad: env
-                .repo
-                .parent()
-                .unwrap_or(&env.repo)
-                .join("outbe-heartwood/target/release/git-remote-rad"),
+            bin_rad: env.repo.join("target/e2e-heartwood/bin/rad"),
+            bin_git_remote_rad: env.repo.join("target/e2e-heartwood/bin/git-remote-rad"),
             bin_enclave: env.enclave_bin.clone(),
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),

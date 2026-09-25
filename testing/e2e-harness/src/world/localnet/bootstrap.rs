@@ -76,6 +76,7 @@ pub struct BootstrapProfile {
     ocomp_vote_window_blocks: u64,
     governance_voting_window_blocks: u64,
     oracle_pairs: Option<Vec<(String, String, String)>>,
+    credis_accounts: Option<(alloy_primitives::Address, alloy_primitives::Address)>,
 }
 
 impl Default for BootstrapProfile {
@@ -100,11 +101,25 @@ impl Default for BootstrapProfile {
             ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
             governance_voting_window_blocks: 6,
             oracle_pairs: None,
+            credis_accounts: None,
         }
     }
 }
 
 impl BootstrapProfile {
+    /// Fund only this scenario's actors and seed its user's mineable Gem.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn with_credis_accounts(
+        mut self,
+        user: alloy_primitives::Address,
+        cca: alloy_primitives::Address,
+    ) -> Result<Self> {
+        if user.is_zero() || cca.is_zero() || user == cca {
+            bail!("Credis needs distinct, nonzero user and CCA addresses");
+        }
+        self.credis_accounts = Some((user, cca));
+        Ok(self)
+    }
     /// Bind the scenario's governance deadline to genesis before identities are prepared.
     pub fn with_governance_voting_window(mut self, blocks: u64) -> Result<Self> {
         outbe_chain_constants::GenesisProtocolParametersV1::resolve(Some(&json!({
@@ -941,6 +956,9 @@ impl Localnet {
         let root = seed
             .as_object_mut()
             .ok_or_else(|| eyre!("genesis seed root is not an object"))?;
+        if let Some((user, cca)) = profile.credis_accounts {
+            prepare_credis_seed(root, user, cca)?;
+        }
         let validator_set = root
             .entry("validator_set")
             .or_insert_with(|| json!({}))
@@ -1014,6 +1032,30 @@ impl Localnet {
         fs::write(&path, serde_json::to_string_pretty(&seed)? + "\n")?;
         Ok(path)
     }
+}
+
+fn prepare_credis_seed(
+    root: &mut serde_json::Map<String, serde_json::Value>,
+    user: alloy_primitives::Address,
+    cca: alloy_primitives::Address,
+) -> Result<()> {
+    let balances = root
+        .entry("balance")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| eyre!("seed balance is not an object"))?;
+    balances.insert(format!("{user:#x}"), json!("1000000000000000000000"));
+    // One billion COEN for the CCA bond plus 10,000 for origination and gas.
+    balances.insert(format!("{cca:#x}"), json!("1000010000000000000000000000"));
+    root.entry("gems")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(|| eyre!("seed gems is not an array"))?
+        .push(
+            json!({"owner": format!("{user:#x}"), "promis_load": "1000000000",
+            "issuance_currency": 840, "reference_currency": 840}),
+        );
+    Ok(())
 }
 
 fn read_rebootstrap_signing_key(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -1629,6 +1671,52 @@ mod tests {
                 "0".into(),
             )
         );
+    }
+
+    #[test]
+    fn credis_seed_is_scenario_local_and_preserves_other_accounts() {
+        use alloy_primitives::Address;
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::create_dir_all(&cfg.dir).unwrap();
+        let original = json!({"balance": {"existing": "17"}, "gems": [], "unrelated": true});
+        fs::write(&cfg.seed, serde_json::to_vec(&original).unwrap()).unwrap();
+        let localnet = Localnet::new(cfg);
+        let user = Address::repeat_byte(1);
+        let cca = Address::repeat_byte(2);
+        let profile = BootstrapProfile::default()
+            .with_credis_accounts(user, cca)
+            .unwrap();
+        let path = localnet.prepare_scenario_seed(&profile).unwrap();
+        let seed: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(seed["gems"][0]["owner"], format!("{user:#x}"));
+        assert_eq!(seed["gems"][0]["promis_load"], "1000000000");
+        assert_eq!(seed["balance"]["existing"], "17");
+        assert_eq!(seed["unrelated"], true);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&localnet.cfg.seed).unwrap())
+                .unwrap(),
+            original
+        );
+        let ordinary = localnet
+            .prepare_scenario_seed(&BootstrapProfile::default())
+            .unwrap();
+        let ordinary: serde_json::Value =
+            serde_json::from_slice(&fs::read(ordinary).unwrap()).unwrap();
+        assert_eq!(ordinary["balance"], original["balance"]);
+        assert_eq!(ordinary["gems"], original["gems"]);
+        assert!(BootstrapProfile::default()
+            .with_credis_accounts(user, user)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_credis_accounts(Address::ZERO, cca)
+            .is_err());
     }
 
     #[test]

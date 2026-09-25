@@ -78,6 +78,29 @@ const COST: u128 = 500;
 const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
+/// Closes the bucket's first full day above its floor, which qualifies it.
+fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16) {
+    let issued_at = NodContract::new(storage.clone())
+        .callable_bucket_issued_at
+        .read(&bucket_key)
+        .unwrap();
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let mut index = oracle.pair_index_of(pair).unwrap();
+    if index == 0 {
+        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+    }
+    let day = outbe_primitives::time::first_full_day(issued_at);
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, floor + U256::ONE)
+        .unwrap();
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+    }
+}
+
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner: each proof names that address as its owner,
 /// matching the Nod owner as `settleNodWithPayNote` requires. The depositor can be different.
@@ -221,9 +244,12 @@ fn fixture() -> (
                 params.floor_price_minor,
                 params.reference_currency,
             );
-            NodContract::new(storage.clone())
-                .qualify_bucket(&scope, &parent, bucket_key)
-                .unwrap();
+            qualify(
+                &storage,
+                bucket_key,
+                params.floor_price_minor,
+                params.reference_currency,
+            );
             nod_id
         })
     });
@@ -502,7 +528,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
 fn measure_settle_gem_gas_with_real_paynote() {
     use alloy_evm::{Evm as _, EvmFactory as _};
     use alloy_sol_types::SolEvent as _;
-    use outbe_gem::{GemAddParams, GemState};
+    use outbe_gem::GemAddParams;
     use outbe_gemfactory::precompile::IGemFactory;
     use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
     use reth_ethereum::evm::primitives::EvmEnv;
@@ -524,6 +550,25 @@ fn measure_settle_gem_gas_with_real_paynote() {
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        // A finalized day above the floor qualifies the gem, which settlement requires.
+        let pair = match outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_CURRENCY)
+            .unwrap()
+        {
+            Some(index) => index,
+            None => outbe_oracle::api::register_pair(
+                storage.clone(),
+                outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_CURRENCY),
+            )
+            .unwrap(),
+        };
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let day = outbe_primitives::time::first_full_day(BLOCK_TIMESTAMP);
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&pair, U256::from(1_080_001))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         outbe_gem::api::add_gem(
             &storage,
             GemAddParams {
@@ -536,7 +581,6 @@ fn measure_settle_gem_gas_with_real_paynote() {
                 call_rate: 128,
                 issuance_currency: REFERENCE_CURRENCY,
                 reference_currency: REFERENCE_CURRENCY,
-                initial_state: GemState::Qualified,
                 issued_at: BLOCK_TIMESTAMP,
             },
         )

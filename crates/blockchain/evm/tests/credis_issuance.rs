@@ -4,9 +4,12 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
-    addresses::{CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
+    addresses::{
+        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
+    },
     block::BlockContext,
     chain::CHAIN_ID,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
@@ -43,8 +46,9 @@ const NOW: u64 = 1_700_000_000;
 #[test]
 fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
     // 0: success; 1: ERC20 false; 2: ERC20 revert; 3: excess redeposit revert;
-    // 4: wrong contribution; 5: invalid spend authorization.
-    for failure in 0..6 {
+    // 4: wrong contribution; 5: invalid spend authorization; 6/7: changed asset metadata;
+    // 8: failed ERC20 payout followed by expiry and cancellation of the restored note.
+    for failure in 0..9 {
         test_enclave::install();
         let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
         let mut db = CacheDB::new(EmptyDB::default());
@@ -119,7 +123,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     smart_account: ACCOUNT,
                     cca: CCA,
                     vault: VAULT,
-                    expires_at: NOW + 900,
+                    expires_at: NOW + 1800,
                 })
                 .unwrap();
             let price = U256::from(2_000_000);
@@ -175,6 +179,9 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     gratis_amount: gratis,
                     asset: ASSET,
                     entry_price: price,
+                    issuance_currency: 840,
+                    asset_decimals: 6,
+                    valuation_price: U256::from(2) * outbe_primitives::units::SCALE_1E18,
                 },
                 auth(GratisOp::Pledge, price, 1),
             )
@@ -235,7 +242,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             .status,
             SubCallStatus::Success
         ));
-        if failure > 0 && failure <= 3 {
+        if (1..=3).contains(&failure) || failure >= 6 {
             let target = if failure == 3 { VAULT } else { ASSET };
             assert!(matches!(
                 call!(
@@ -243,7 +250,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     target,
                     U256::ZERO,
                     IFixture::configureCall {
-                        mode: U256::from(failure)
+                        mode: U256::from(if failure == 8 { 1 } else { failure })
                     }
                 )
                 .status,
@@ -351,6 +358,8 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                 IFixture::configureCall { mode: U256::ZERO }
             );
         }
+        // The restored note stays valid through equality, independently of liquidity expiry.
+        ctx.block.timestamp = U256::from(NOW + if failure == 8 { 901 } else { 900 });
         let retry = call!(
             CCA,
             CREDIS_FACTORY_ADDRESS,
@@ -362,10 +371,61 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         );
         assert_eq!(
             matches!(retry.status, SubCallStatus::Success),
-            failure != 0,
+            failure != 0 && failure != 8,
             "failed issuance must restore the note and position; success must prevent replay: {:?}",
             retry.status
         );
+        if failure == 8 {
+            assert!(String::from_utf8_lossy(&retry.returndata).contains("pledge note expired"));
+            let cancel = IGratisFactory::unpledgeGratisCall {
+                amountStables: U256::from(2_000_000),
+                pledgeNote: note,
+                mac: B256::from(modify_mac(
+                    &key,
+                    OWNER,
+                    GratisOp::Unpledge,
+                    U256::from(2_000_000),
+                    2,
+                    B256::from(U256::from(CHAIN_ID)),
+                )),
+                opNonce: 2,
+            };
+            assert!(matches!(
+                call!(OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
+                SubCallStatus::Success
+            ));
+            let returned: Vec<_> = ctx
+                .journaled_state
+                .logs()
+                .iter()
+                .filter_map(|log| IGratisFactory::GratisUnpledged::decode_log_data(&log.data).ok())
+                .collect();
+            assert_eq!(returned.len(), 1);
+            assert_eq!(returned[0].account, OWNER);
+            assert_eq!(returned[0].gratisAmount, U256::from(1_000_000));
+            // Even a fresh authorization cannot return the same collateral twice.
+            assert!(!matches!(
+                call!(
+                    OWNER,
+                    GRATIS_FACTORY_ADDRESS,
+                    U256::ZERO,
+                    IGratisFactory::unpledgeGratisCall {
+                        mac: B256::from(modify_mac(
+                            &key,
+                            OWNER,
+                            GratisOp::Unpledge,
+                            U256::from(2_000_000),
+                            3,
+                            B256::from(U256::from(CHAIN_ID))
+                        )),
+                        opNonce: 3,
+                        ..cancel
+                    }
+                )
+                .status,
+                SubCallStatus::Success
+            ));
+        }
         test_enclave::uninstall();
     }
 }

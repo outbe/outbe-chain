@@ -10,10 +10,10 @@
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
+use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
-use outbe_gratisfactory::runtime as gf;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -117,7 +117,7 @@ pub fn pledge_stake() -> U256 {
 /// it costs is derived from the seeded rate.
 pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, U256) {
     let reservation_id = seed_reservation(storage, who, pledge_stables());
-    let (handle, gratis_cost) = gf::pledge_gratis(
+    let (handle, gratis_cost) = pledge_fixture(
         storage.clone(),
         who,
         pledge_stables(),
@@ -128,6 +128,38 @@ pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, U
     .unwrap();
     assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
     (handle, reservation_id)
+}
+
+/// Seal a known FP18 quote independently of the unimplemented Oracle period
+/// helper. These tests exercise Credis consumption, not Oracle observation policy.
+pub fn pledge_fixture(
+    storage: StorageHandle<'_>,
+    who: Address,
+    principal: U256,
+    asset: Address,
+    max_gratis: U256,
+    auth: ModifyAuth,
+) -> outbe_primitives::error::Result<(B256, U256)> {
+    let valuation_price = U256::from(2) * outbe_primitives::units::SCALE_1E18;
+    let (gratis_amount, entry_price) =
+        outbe_primitives::math::scaled_math::checked_quote(principal, 6, valuation_price)?;
+    assert!(gratis_amount <= max_gratis);
+    let handle = outbe_gratis::api::pledge(
+        storage,
+        who,
+        principal,
+        outbe_gratis::api::PledgeTerms {
+            stables_amount: principal,
+            gratis_amount,
+            asset,
+            entry_price,
+            issuance_currency: ISSUANCE_ISO,
+            asset_decimals: 6,
+            valuation_price,
+        },
+        auth,
+    )?;
+    Ok((handle, gratis_amount))
 }
 
 /// Pledge and open a position for alice, originated by [`cca`].
@@ -253,7 +285,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the
-/// current price `issue_credis` compares with yesterday's VWAP.
+/// spot price, which must not affect the issuance-time daily VWAP anchor.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
@@ -434,6 +466,11 @@ pub fn env() -> HashMapStorageProvider {
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::decimalsCall::SELECTOR,
+        iso_word(6),
+    );
     StorageHandle::enter(&mut storage, |handle| {
         handle
             .increase_balance(

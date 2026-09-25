@@ -1,7 +1,6 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
-    constants::MAX_BIN_ID,
     reference_price,
     tree_math::{self, BinTreeStorage},
 };
@@ -66,7 +65,8 @@ impl GemContract<'_> {
 
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        Ok(crate::metadata::token_uri(&item))
+        let qualified = is_callable(item.state) && crate::api::is_qualified(&self.storage, &item)?;
+        Ok(crate::metadata::token_uri(&item, qualified))
     }
 
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
@@ -94,13 +94,9 @@ impl GemContract<'_> {
         let supply = self.total_supply.read()?;
         self.total_supply.write(supply + 1)?;
 
-        // Park unqualified gems in the bin index so the qualifier hook can
-        // skip non-candidates without scanning the full population.
-        if item.state == GemState::Issued as u8 {
-            self.insert_unqualified(item.gem_id, item.floor_price_minor, item.reference_currency)?;
-        } else if item.state == GemState::Qualified as u8 {
-            // Genesis gems are born Qualified - index them by call price.
-            self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
+        // Enroll into the call-price bin index the daily Called scan walks.
+        if is_callable(item.state) {
+            self.insert_call_bin(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
         if item.call_window_seconds
@@ -123,8 +119,8 @@ impl GemContract<'_> {
         self.gem_items.delete(item.gem_id)?;
 
         // Settled gems (promis mining) are in neither structure.
-        if item.state == GemState::Qualified as u8 {
-            self.remove_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
+        if is_callable(item.state) {
+            self.remove_call_bin(item.gem_id, item.call_price_minor, item.reference_currency)?;
         } else if item.state == GemState::Called as u8 {
             self.remove_called(item.gem_id)?;
         }
@@ -156,39 +152,25 @@ impl GemContract<'_> {
         })
     }
 
+    /// Only `Settled` is set here: a call goes through `mark_called`, and qualification is derived.
     pub(crate) fn set_state(&mut self, gem_id: U256, new_state: GemState) -> Result<()> {
+        if new_state != GemState::Settled {
+            return Err(GemError::InvalidState.into());
+        }
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        // Issued is the only state parked in the bin index; any transition
-        // out of Issued must clean it up. Idempotent if the gem isn't there.
-        if item.state == GemState::Issued as u8 && new_state != GemState::Issued {
-            self.remove_unqualified(gem_id, item.floor_price_minor, item.reference_currency)?;
+        if is_callable(item.state) {
+            self.remove_call_bin(gem_id, item.call_price_minor, item.reference_currency)?;
         }
-
-        match new_state {
-            GemState::Qualified => {
-                self.insert_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
-                item.qualified_at = self.storage.timestamp()?.to::<u64>();
-            }
-            GemState::Settled => {
-                // Qualified leaves the bin index; Called leaves it below.
-                if item.state == GemState::Qualified as u8 {
-                    self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
-                }
-                item.settled_at = self.storage.timestamp()?.to::<u64>();
-            }
-            _ => {}
-        }
-
-        if item.state == GemState::Called as u8 && new_state != GemState::Called {
+        if item.state == GemState::Called as u8 {
             self.remove_called(gem_id)?;
         }
-
+        item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = new_state as u8;
         self.gem_items.update(&item)?;
         self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
-    pub(crate) fn insert_qualified(
+    pub(crate) fn insert_call_bin(
         &mut self,
         gem_id: U256,
         call_price_minor: U256,
@@ -202,11 +184,12 @@ impl GemContract<'_> {
             gem_id,
         )?;
         self.qualified_bin_count.write(&scoped, count + 1)?;
-        tree_math::add(&QualifiedBins(self, reference_currency), bin_id)?;
+        tree_math::add(&CallBins(self, reference_currency), bin_id)?;
         Ok(())
     }
 
-    pub(crate) fn remove_qualified(
+    /// Idempotent: a gem not in its bin is left alone.
+    pub(crate) fn remove_call_bin(
         &mut self,
         gem_id: U256,
         call_price_minor: U256,
@@ -244,13 +227,13 @@ impl GemContract<'_> {
         self.qualified_bin_gems.clear(&last_key)?;
         self.qualified_bin_count.write(&scoped, last)?;
         if last == 0 {
-            tree_math::remove(&QualifiedBins(self, reference_currency), bin_id)?;
+            tree_math::remove(&CallBins(self, reference_currency), bin_id)?;
         }
         Ok(())
     }
 
-    /// Gems in one bin, snapshotted: qualifying or calling one shifts the bin.
-    pub(crate) fn qualified_bin_gems_at(
+    /// Gems in one bin, snapshotted: calling one shifts the bin.
+    pub(crate) fn call_bin_gems_at(
         &self,
         reference_currency: u16,
         bin_id: u32,
@@ -272,19 +255,17 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    /// `Qualified -> Called`. Records the call timestamp used to enforce the
-    /// notice-period settlement deadline. Qualified gems are not parked in the
-    /// unqualified bin index, so there is nothing to clean up here.
+    /// `Issued | Qualified -> Called`: stamps the call and moves the gem to the expiry queue.
     pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        if item.state != GemState::Qualified as u8 {
+        if !is_callable(item.state) {
             return Err(GemError::InvalidState.into());
         }
         item.state = GemState::Called as u8;
         item.called_at = called_at;
         self.gem_items.update(&item)?;
 
-        self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
+        self.remove_call_bin(gem_id, item.call_price_minor, item.reference_currency)?;
         self.push_called(
             gem_id,
             called_at + u64::from(item.call_notice_period_seconds),
@@ -428,7 +409,7 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    // --- Unqualified-gem bin index (PancakeSwap LB-style) ----------------
+    // --- Bin keys (PancakeSwap LB-style) ----------------------------------
 
     pub fn price_to_bin(price: U256) -> Result<u32> {
         if price.is_zero() {
@@ -454,79 +435,8 @@ impl GemContract<'_> {
         buf[6..10].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
-
-    pub(crate) fn insert_unqualified(
-        &mut self,
-        gem_id: U256,
-        floor_price_minor: U256,
-        reference_currency: u16,
-    ) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price_minor)?;
-        debug_assert!(bin_id <= MAX_BIN_ID);
-        let scoped = Self::scoped(reference_currency, bin_id);
-        let count = self.unqualified_bin_count.read(&scoped)?;
-        self.unqualified_bin_gems.write(
-            &Self::bin_index_key(reference_currency, bin_id, count),
-            gem_id,
-        )?;
-        self.unqualified_bin_count.write(&scoped, count + 1)?;
-        tree_math::add(&CurrencyBins(self, reference_currency), bin_id)?;
-        Ok(())
-    }
-
-    /// Remove `gem_id` from the bin at its `floor_price_minor`. Performs swap-and-pop
-    /// to keep the bin's index dense; clears the bin's trie bit when emptied.
-    pub(crate) fn remove_unqualified(
-        &mut self,
-        gem_id: U256,
-        floor_price_minor: U256,
-        reference_currency: u16,
-    ) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price_minor)?;
-        let scoped = Self::scoped(reference_currency, bin_id);
-        let count = self.unqualified_bin_count.read(&scoped)?;
-        if count == 0 {
-            return Ok(());
-        }
-        let mut found: Option<u32> = None;
-        for i in 0..count {
-            let key = Self::bin_index_key(reference_currency, bin_id, i);
-            if self.unqualified_bin_gems.read(&key)? == gem_id {
-                found = Some(i);
-                break;
-            }
-        }
-        let Some(idx) = found else {
-            return Ok(());
-        };
-        let last = count - 1;
-        let last_key = Self::bin_index_key(reference_currency, bin_id, last);
-        if idx != last {
-            let last_id = self.unqualified_bin_gems.read(&last_key)?;
-            self.unqualified_bin_gems.write(
-                &Self::bin_index_key(reference_currency, bin_id, idx),
-                last_id,
-            )?;
-        }
-        self.unqualified_bin_gems.clear(&last_key)?;
-        self.unqualified_bin_count.write(&scoped, last)?;
-        if last == 0 {
-            tree_math::remove(&CurrencyBins(self, reference_currency), bin_id)?;
-        }
-        Ok(())
-    }
 }
 
-// Adapter between one currency's slice of the contract's three bin-tree columns
-// and the `tree_math::BinTreeStorage` trait. Mirrors `nod::state::CurrencyBins`.
-//
-// The trait functions take `&self` - storage writes go through the DSL's
-// interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
-// Construct the view inline at each `tree_math` call rather than binding it, so
-// it never conflicts with a `&mut GemContract` borrow.
-pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
-
-/// The qualified (call-price) trie of one reference currency.
 /// Buckets holding a called gem whose notice period has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
 
@@ -551,9 +461,10 @@ impl BinTreeStorage for ExpiryDayTree<'_, '_> {
     }
 }
 
-pub(crate) struct QualifiedBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+/// The call-price trie of one reference currency.
+pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
-impl BinTreeStorage for QualifiedBins<'_, '_> {
+impl BinTreeStorage for CallBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
         self.0.qualified_bin_tree_root.read(&self.1)
     }
@@ -582,27 +493,7 @@ impl BinTreeStorage for QualifiedBins<'_, '_> {
     }
 }
 
-impl BinTreeStorage for CurrencyBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.bin_tree_mid.read(&GemContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bin_tree_mid
-            .write(&GemContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.bin_tree_leaf.read(&GemContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bin_tree_leaf
-            .write(&GemContract::scoped(self.1, key), value)
-    }
+/// Issued and Qualified gems wait in the bin index for a call.
+fn is_callable(state: u8) -> bool {
+    state == GemState::Issued as u8 || state == GemState::Qualified as u8
 }

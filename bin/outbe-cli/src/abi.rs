@@ -127,8 +127,8 @@ mod tests {
             keccak256("ProposerFelony(address,uint64,uint64)")
         );
         assert_eq!(
-            INod::NodBucketQualified::SIGNATURE_HASH,
-            keccak256("NodBucketQualified(bytes32,uint256,uint256,uint16)")
+            INod::NodBucketCalled::SIGNATURE_HASH,
+            keccak256("NodBucketCalled(bytes32,uint64,uint64)")
         );
         assert_eq!(
             ICycle::CycleTriggerExecuted::SIGNATURE_HASH,

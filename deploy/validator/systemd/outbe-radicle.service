@@ -17,7 +17,7 @@ ExecStart=/opt/outbe-chain/outbe-radicle \
   --control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \
   --listen 0.0.0.0:8776 \
   --status-listen 127.0.0.1:8876 \
-  --max-validators 16 \
+  --max-validators 128 \
   --external-inbound-reserve 16 \
   --advertise ${OUTBE_EXTERNAL_IP}:8776
 Restart=on-failure

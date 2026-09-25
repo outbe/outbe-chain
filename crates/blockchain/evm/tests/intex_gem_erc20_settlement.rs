@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
-use outbe_gem::{GemAddParams, GemState};
+use outbe_gem::GemAddParams;
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
@@ -199,7 +199,6 @@ impl World {
                         call_rate: 128,
                         issuance_currency: 840,
                         reference_currency: 840,
-                        initial_state: GemState::Qualified,
                         issued_at: TIMESTAMP,
                     },
                 )

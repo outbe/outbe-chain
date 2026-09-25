@@ -270,8 +270,14 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/ISO rate (scale 1e6) used to size `gratis_amount`.
+    /// Effective principal per Gratis, floored at six decimals.
     pub entry_price: U256,
+    /// ISO 4217 currency reported by the asset at pledge time.
+    pub issuance_currency: u16,
+    /// Asset atomic-unit scale, restricted to 0–18 decimals.
+    pub asset_decimals: u8,
+    /// Previous half-open eight-hour currency-per-COEN VWAP, scaled by 1e18.
+    pub valuation_price: U256,
 }
 
 /// Inputs for a single `ApplyGratisOp`. The host reads the current ciphertext
@@ -281,6 +287,9 @@ pub struct PledgeTerms {
 pub struct GratisOpRequest {
     pub op: GratisOp,
     pub chain_id: B256,
+    /// Execution block timestamp in seconds for Pledge/ConsumePledge; zero for
+    /// other operations. Supplied from chain execution, never caller calldata.
+    pub block_timestamp: u64,
     /// Balance/pledged-owning account (the EOA). For `ConsumePledge`/`ReleaseToEoa`/
     /// `BurnPledged` the EOA never appears in calldata or stored plaintext: the host first
     /// recovers it with a `RevealOwner` round-trip (decrypting the pledge ticket, or the
@@ -1356,6 +1365,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.push(req.op as u8);
     buf.extend_from_slice(req.chain_id.as_slice());
+    buf.extend_from_slice(&req.block_timestamp.to_be_bytes());
     buf.extend_from_slice(req.account.as_slice());
     buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
     push_bytes(&mut buf, &req.current_balance);
@@ -1392,6 +1402,9 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
             buf.extend_from_slice(&t.gratis_amount.to_be_bytes::<32>());
             buf.extend_from_slice(t.asset.as_slice());
             buf.extend_from_slice(&t.entry_price.to_be_bytes::<32>());
+            buf.extend_from_slice(&t.issuance_currency.to_be_bytes());
+            buf.push(t.asset_decimals);
+            buf.extend_from_slice(&t.valuation_price.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }

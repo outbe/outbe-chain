@@ -31,8 +31,6 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPositionParams {
-    /// The pledge note the position id derives from.
-    pub handle_id: U256,
     pub smart_account: Address,
     pub cca: Address,
     /// Sealed pledger EOA, opaque here.
@@ -141,7 +139,7 @@ impl CredisContract<'_> {
     }
 
     /// Opens a position and returns its derived
-    /// `position_id = keccak256(handle_id || smart_account)`.
+    /// `position_id = keccak256(cca || smart_account || asset || block_number)`.
     ///
     /// Everything the position will ever need is sealed here: the call price
     /// derives from `call_anchor_price`, `policy_rate` is pinned, and the four
@@ -160,7 +158,13 @@ impl CredisContract<'_> {
                 return Err(CredisError::InvalidAmount.into());
             }
 
-            let position_id = CredisContract::position_id(params.handle_id, params.smart_account);
+            let position_id = CredisContract::position_id(
+                params.cca,
+                params.smart_account,
+                params.asset,
+                storage.block_number()?,
+            );
+            // One position per CCA/account/asset tuple per execution block.
             if self.position_exists(position_id)? {
                 return Err(CredisError::PositionAlreadyExists.into());
             }
@@ -249,6 +253,7 @@ impl CredisContract<'_> {
     /// released is owed to the pledger recorded on the position, so a payer can
     /// never redirect value to themselves.
     ///
+    /// - called positions accept repayment through deadline equality;
     /// - a payment below the accrued interest is rejected outright;
     /// - only what the position needs is consumed, so an over-payment is not
     ///   over-pulled - the caller charges `Settlement::total_paid`;
@@ -262,6 +267,10 @@ impl CredisContract<'_> {
                 return Err(CredisError::PositionClosed.into())
             }
             CredisState::Open | CredisState::Called => {}
+        }
+
+        if state_before == CredisState::Called && now > settlement_deadline(&position) {
+            return Err(CredisError::CallWindowClosed.into());
         }
 
         let days = Self::elapsed_days(&position, now);
@@ -361,7 +370,7 @@ impl CredisContract<'_> {
             if position.lifecycle_state()? != CredisState::Called {
                 return Err(CredisError::NotCalled.into());
             }
-            if now < settlement_deadline(&position) {
+            if now <= settlement_deadline(&position) {
                 return Err(CredisError::CallWindowOpen.into());
             }
             if position.outstanding.is_zero() {

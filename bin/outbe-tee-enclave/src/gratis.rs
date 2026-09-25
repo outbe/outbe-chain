@@ -15,7 +15,6 @@
 use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
 
-use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, PledgeTerms};
 
 use crate::confidential::{FIELD_BALANCE, GRATIS};
@@ -34,8 +33,10 @@ const FIELD_EOA: u8 = 2;
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
-/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry_price(32)` = 136 bytes.
-const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32;
+/// `stables(32) || owner(20) || gratis(32) || asset(20) || entry(32) || iso(2) || decimals(1) || valuation(32) || created_at(8) || valid_until(8)`.
+/// Fresh-genesis format: tickets without authenticated timestamps are rejected.
+const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32 + 2 + 1 + 32 + 8 + 8;
+const PLEDGE_NOTE_VALIDITY_SECONDS: u64 = 900;
 
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
 
@@ -183,6 +184,11 @@ struct PledgeLockTicket {
     gratis_amount: U256,
     asset: Address,
     entry_price: U256,
+    issuance_currency: u16,
+    asset_decimals: u8,
+    valuation_price: U256,
+    created_at: u64,
+    valid_until: u64,
 }
 
 impl PledgeLockTicket {
@@ -193,6 +199,11 @@ impl PledgeLockTicket {
         b.extend_from_slice(&self.gratis_amount.to_be_bytes::<32>());
         b.extend_from_slice(self.asset.as_slice());
         b.extend_from_slice(&self.entry_price.to_be_bytes::<32>());
+        b.extend_from_slice(&self.issuance_currency.to_be_bytes());
+        b.push(self.asset_decimals);
+        b.extend_from_slice(&self.valuation_price.to_be_bytes::<32>());
+        b.extend_from_slice(&self.created_at.to_be_bytes());
+        b.extend_from_slice(&self.valid_until.to_be_bytes());
         b
     }
 
@@ -206,6 +217,19 @@ impl PledgeLockTicket {
             gratis_amount: U256::from_be_slice(&b[52..84]),
             asset: Address::from_slice(&b[84..104]),
             entry_price: U256::from_be_slice(&b[104..136]),
+            issuance_currency: u16::from_be_bytes([b[136], b[137]]),
+            asset_decimals: b[138],
+            valuation_price: U256::from_be_slice(&b[139..171]),
+            created_at: u64::from_be_bytes(
+                b[171..179]
+                    .try_into()
+                    .map_err(|_| TeeError::DecryptFailed)?,
+            ),
+            valid_until: u64::from_be_bytes(
+                b[179..187]
+                    .try_into()
+                    .map_err(|_| TeeError::DecryptFailed)?,
+            ),
         })
     }
 
@@ -215,6 +239,9 @@ impl PledgeLockTicket {
             gratis_amount: self.gratis_amount,
             asset: self.asset,
             entry_price: self.entry_price,
+            issuance_currency: self.issuance_currency,
+            asset_decimals: self.asset_decimals,
+            valuation_price: self.valuation_price,
         }
     }
 }
@@ -437,17 +464,25 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             if terms.asset.is_zero() {
                 return Ok(reject("pledge asset must not be zero"));
             }
-            // `entry_price` is the COEN rate that sized the gratis. Recompute that
-            // debit and reject a ticket whose price does not produce it.
-            let Some(scaled) = terms.stables_amount.checked_mul(SCALE_1E6_U256) else {
-                return Ok(reject("pledge entry price overflow"));
-            };
-            if terms.entry_price.is_zero() || scaled / terms.entry_price != terms.gratis_amount {
-                return Ok(reject("pledge entry price does not match the collateral"));
+            let quote = outbe_primitives::math::scaled_math::checked_quote(
+                terms.stables_amount,
+                terms.asset_decimals,
+                terms.valuation_price,
+            );
+            if !matches!(quote, Ok((gratis, entry))
+                if gratis == terms.gratis_amount && entry == terms.entry_price)
+            {
+                return Ok(reject(
+                    "pledge valuation or entry price does not match the collateral",
+                ));
             }
             if balance < terms.gratis_amount {
                 return Ok(reject("insufficient balance"));
             }
+            let created_at = req.block_timestamp;
+            let Some(valid_until) = created_at.checked_add(PLEDGE_NOTE_VALIDITY_SECONDS) else {
+                return Ok(reject("pledge timestamp overflow"));
+            };
             let handle =
                 derive_pledge_note(state_key, req.account, req.amount, req.modify_auth.op_nonce)?;
             let ticket = PledgeLockTicket {
@@ -456,6 +491,11 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 gratis_amount: terms.gratis_amount,
                 asset: terms.asset,
                 entry_price: terms.entry_price,
+                issuance_currency: terms.issuance_currency,
+                asset_decimals: terms.asset_decimals,
+                valuation_price: terms.valuation_price,
+                created_at,
+                valid_until,
             };
             r.new_balance = write_amount(
                 &view_key,
@@ -523,6 +563,12 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     let expected = spend_auth_mac(&secret, bundle);
     if !constant_time_eq(&expected, &spend_auth) {
         return Ok(reject("invalid spend authorization"));
+    }
+    if req.block_timestamp < ticket.created_at {
+        return Ok(reject("pledge note not yet valid"));
+    }
+    if req.block_timestamp > ticket.valid_until {
+        return Ok(reject("pledge note expired"));
     }
 
     // Credit the EOA's OWN pledged ledger (pending -> active); no escrow move.
@@ -651,6 +697,7 @@ mod tests {
         GratisOpRequest {
             op,
             chain_id: CHAIN,
+            block_timestamp: 0,
             account: acct,
             amount,
             current_balance: Vec::new(),
@@ -680,6 +727,9 @@ mod tests {
             gratis_amount: gratis,
             asset: asset(),
             entry_price: stables.checked_mul(SCALE_1E6_U256).unwrap() / gratis,
+            issuance_currency: 840,
+            asset_decimals: 6,
+            valuation_price: stables * outbe_primitives::units::SCALE_1E18 / gratis,
         }
     }
 
@@ -906,6 +956,11 @@ mod tests {
             gratis_amount: U256::from(1000u64),
             asset: asset(),
             entry_price: U256::from(500u64) * SCALE_1E6_U256 / U256::from(1000u64),
+            issuance_currency: 840,
+            asset_decimals: 6,
+            valuation_price: outbe_primitives::units::SCALE_1E18 / U256::from(2),
+            created_at: 28_799,
+            valid_until: 29_699,
         };
         let encoded = ticket.encode();
         assert_eq!(encoded.len(), RECORD_PLAINTEXT_LEN);
@@ -916,6 +971,14 @@ mod tests {
         let handle = derive_pledge_note(&sk, alice(), U256::from(500u64), 1).unwrap();
         let blob = write_ticket(&sk, handle, 0, &ticket).unwrap();
         assert_eq!(read_ticket(&sk, handle, &blob).unwrap().1, ticket);
+        // All newly appended metadata bytes are covered by the AEAD tag.
+        for offset in 136..RECORD_PLAINTEXT_LEN {
+            let mut tampered = blob.clone();
+            tampered[8 + offset] ^= 1;
+            assert!(read_ticket(&sk, handle, &tampered).is_err());
+        }
+        assert!(PledgeLockTicket::decode(&encoded[..136]).is_err());
+        assert!(PledgeLockTicket::decode(&encoded[..171]).is_err());
     }
 
     /// The MAC only covers `amount` (the stables figure), so the terms the host
@@ -969,13 +1032,99 @@ mod tests {
     }
 
     #[test]
-    fn canonical_hash_covers_the_pledge_entry_price() {
+    fn canonical_hash_covers_every_pledge_term() {
         let mut req = req(GratisOp::Pledge, alice(), U256::from(500u64), 1);
-        req.pledge_terms = Some(terms(U256::from(500u64), U256::from(1000u64)));
+        let original = terms(U256::from(500u64), U256::from(1000u64));
+        req.pledge_terms = Some(original);
         let sealed = outbe_tee::protocol::gratis_op_canonical_hash(&req);
-        req.pledge_terms.as_mut().unwrap().entry_price += U256::from(1u64);
-        let shifted = outbe_tee::protocol::gratis_op_canonical_hash(&req);
-        assert_ne!(sealed, shifted);
+        for field in 0..7 {
+            let mut altered = original;
+            match field {
+                0 => altered.stables_amount += U256::ONE,
+                1 => altered.gratis_amount += U256::ONE,
+                2 => altered.asset = alice(),
+                3 => altered.entry_price += U256::ONE,
+                4 => altered.issuance_currency += 1,
+                5 => altered.asset_decimals += 1,
+                _ => altered.valuation_price += U256::ONE,
+            }
+            req.pledge_terms = Some(altered);
+            assert_ne!(sealed, outbe_tee::protocol::gratis_op_canonical_hash(&req));
+        }
+        req.pledge_terms = Some(original);
+        req.block_timestamp += 1;
+        assert_ne!(sealed, outbe_tee::protocol::gratis_op_canonical_hash(&req));
+    }
+
+    #[test]
+    fn pledge_timestamp_overflow_rejects_without_state_updates() {
+        let sk = state_key();
+        let mut m = req(GratisOp::Mint, alice(), U256::from(1000), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
+        let minted = apply_op(&sk, &m);
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(500), 1);
+        p.current_balance = minted.new_balance;
+        p.pledge_terms = Some(terms(p.amount, m.amount));
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
+        p.block_timestamp = u64::MAX - 900;
+        let accepted = apply_op(&sk, &p);
+        assert_eq!(accepted.status, GratisOpStatus::Applied);
+        let ticket = read_ticket(&sk, accepted.pledge_note, &accepted.new_pledge_record)
+            .unwrap()
+            .1;
+        assert_eq!(ticket.created_at, p.block_timestamp);
+        assert_eq!(ticket.valid_until, u64::MAX);
+
+        p.block_timestamp += 1;
+        let rejected = apply_op(&sk, &p);
+        assert_eq!(
+            rejected.status,
+            GratisOpStatus::Rejected {
+                reason: "pledge timestamp overflow".into(),
+            }
+        );
+        assert!(rejected.new_balance.is_empty());
+        assert!(rejected.new_pledged.is_empty());
+        assert!(rejected.new_pledge_record.is_empty());
+        assert_eq!(rejected.event_amount, U256::ZERO);
+        assert_eq!(rejected.next_op_nonce, 0);
+    }
+
+    #[test]
+    fn enclave_checks_both_equations_and_accepts_fractional_gratis() {
+        let sk = state_key();
+        let mut m = req(GratisOp::Mint, alice(), U256::from(1000), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
+        let minted = apply_op(&sk, &m);
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(3), 1);
+        p.current_balance = minted.new_balance;
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
+        let mut accepted = terms(p.amount, U256::ONE);
+        accepted.valuation_price = U256::from(2) * outbe_primitives::units::SCALE_1E18;
+        p.pledge_terms = Some(accepted);
+        let result = apply_op(&sk, &p);
+        assert_eq!(result.status, GratisOpStatus::Applied);
+        assert_eq!(
+            read_ticket(&sk, result.pledge_note, &result.new_pledge_record)
+                .unwrap()
+                .1
+                .terms(),
+            accepted
+        );
+        for field in 0..4 {
+            let mut altered = accepted;
+            match field {
+                0 => altered.valuation_price = outbe_primitives::units::SCALE_1E18,
+                1 => altered.asset_decimals = 19,
+                2 => altered.gratis_amount += U256::ONE,
+                _ => altered.entry_price = U256::from(2_000_000),
+            }
+            p.pledge_terms = Some(altered);
+            let rejected = apply_op(&sk, &p);
+            assert!(matches!(rejected.status, GratisOpStatus::Rejected { .. }));
+            assert!(rejected.new_balance.is_empty());
+            assert!(rejected.new_pledge_record.is_empty());
+        }
     }
 
     /// Consume the collateral, then at expiry burn the remaining from the EOA's own

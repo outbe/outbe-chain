@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, U256};
+use alloy_primitives::{address, b256, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -67,11 +67,7 @@ fn eoa_ct() -> Vec<u8> {
     vec![0xEEu8; 48]
 }
 
-fn handle(tag: u8) -> U256 {
-    U256::from_be_bytes(keccak256([0x33, tag]).0)
-}
-
-fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+fn credis_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
@@ -88,13 +84,27 @@ fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
             "Test CCA".into(),
         )
         .unwrap();
-        f(storage)
+    });
+    storage
+}
+
+fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
+    StorageHandle::enter(&mut credis_provider(), f)
+}
+
+fn open_at_block(
+    provider: &mut HashMapStorageProvider,
+    block_number: u64,
+    params: OpenPositionParams,
+) -> U256 {
+    provider.set_block_number(block_number);
+    StorageHandle::enter(provider, |storage| {
+        CredisContract::new(storage).open_position(params).unwrap()
     })
 }
 
-fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
+fn params(owner: Address) -> OpenPositionParams {
     OpenPositionParams {
-        handle_id,
         smart_account: owner,
         cca: cca(),
         eoa_ct: eoa_ct(),
@@ -111,8 +121,8 @@ fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
 }
 
 /// Opens the worked-example position. Settleable from this point on.
-fn open_pos(credis: &mut CredisContract<'_>, tag: u8) -> U256 {
-    credis.open_position(params(handle(tag), alice())).unwrap()
+fn open_pos(credis: &mut CredisContract<'_>) -> U256 {
+    credis.open_position(params(alice())).unwrap()
 }
 
 /// Bonds the test CCA that `open_position` requires, for tests that keep the provider.
@@ -141,19 +151,33 @@ fn at(day: u64) -> u64 {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn position_id_matches_keccak() {
-    let id = CredisContract::position_id(handle(1), alice());
-    let mut buf = [0u8; 52];
-    buf[0..32].copy_from_slice(&handle(1).to_be_bytes::<32>());
-    buf[32..52].copy_from_slice(alice().as_slice());
-    assert_eq!(id, U256::from_be_bytes(keccak256(buf).0));
+fn position_id_matches_keccak_and_binds_every_field() {
+    let block_number = 0x0102_0304_0506_0708;
+    let id = CredisContract::position_id(cca(), alice(), asset(), block_number);
+    // Fixed packed-address/u64 vector, independently computed with `cast keccak`.
+    assert_eq!(
+        id,
+        U256::from_be_bytes(
+            b256!("f8e02c3a4a16fcf634e02bcc1eefa3568eae0b0d7076c79fe827c0d6438c137d").0
+        )
+    );
+    for other in [
+        CredisContract::position_id(bob(), alice(), asset(), block_number),
+        CredisContract::position_id(cca(), bob(), asset(), block_number),
+        CredisContract::position_id(cca(), alice(), bob(), block_number),
+        CredisContract::position_id(cca(), alice(), asset(), block_number + 1),
+        CredisContract::position_id(cca(), alice(), asset(), 0x0506_0708),
+        CredisContract::position_id(cca(), alice(), asset(), u64::MAX),
+    ] {
+        assert_ne!(id, other);
+    }
 }
 
 #[test]
 fn open_position_seals_the_call_price_from_the_call_anchor() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = credis.open_position(params(handle(1), alice())).unwrap();
+        let id = credis.open_position(params(alice())).unwrap();
         let p = credis.get_position(id).unwrap();
 
         // Entry stays 0.50. The anchor is 1.00, and 1.00 * 1.64 = 1.64.
@@ -184,19 +208,19 @@ fn open_position_seals_the_call_price_from_the_call_anchor() {
 fn open_position_rejects_duplicates_and_zero_amounts() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        credis.open_position(params(handle(1), alice())).unwrap();
+        credis.open_position(params(alice())).unwrap();
 
         let err = credis
-            .open_position(params(handle(1), alice()))
+            .open_position(params(alice()))
             .unwrap_err()
             .to_string();
         assert!(err.contains("already exists"), "got: {err}");
 
-        let mut zero_principal = params(handle(2), alice());
+        let mut zero_principal = params(alice());
         zero_principal.principal = U256::ZERO;
         assert!(credis.open_position(zero_principal).is_err());
 
-        let mut zero_collateral = params(handle(3), alice());
+        let mut zero_collateral = params(alice());
         zero_collateral.collateral = U256::ZERO;
         assert!(credis.open_position(zero_collateral).is_err());
     });
@@ -210,7 +234,7 @@ fn open_position_rejects_duplicates_and_zero_amounts() {
 fn worked_example_ledger_closes_exactly() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // --- Day 100: partial settlement of $400 while latched. -------------
         let first = credis
@@ -284,7 +308,7 @@ fn worked_example_ledger_closes_exactly() {
 fn settle_rejects_a_payment_below_the_accrued_interest() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         let position = credis.get_position(id).unwrap();
         let interest = CredisContract::accrued_interest(&position, at(100)).unwrap();
@@ -307,7 +331,7 @@ fn settle_rejects_a_payment_below_the_accrued_interest() {
 fn settle_of_exactly_the_interest_leaves_principal_and_restarts_accrual() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         let interest =
             CredisContract::accrued_interest(&credis.get_position(id).unwrap(), at(100)).unwrap();
@@ -332,7 +356,7 @@ fn settle_of_exactly_the_interest_leaves_principal_and_restarts_accrual() {
 fn settle_takes_only_what_the_position_needs() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // Wildly over-pay; only interest + outstanding principal is charged.
         let paid = credis
@@ -367,7 +391,7 @@ const FIFTH_YEAR: u64 = 73;
 fn settle_covers_the_accrued_interest_before_any_principal() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // I = 1_000_000_000 x 4% x 73/365 = 8_000_000, exactly.
         let expected_interest = U256::from(8_000_000u64);
@@ -398,7 +422,7 @@ fn settle_covers_the_accrued_interest_before_any_principal() {
 fn one_minor_unit_above_the_interest_pays_exactly_one_of_principal() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // The boundary: the first unit above the coupon is principal, and only
         // that unit. A payment that mixed the two would show more here.
@@ -419,7 +443,7 @@ fn one_minor_unit_above_the_interest_pays_exactly_one_of_principal() {
 fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // Three equal 73-day periods. Interest falls with the outstanding
         // principal, because accrual restarts on what is left rather than
@@ -497,7 +521,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
 fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // Reject at the first settlement: one unit short of the $8.00 coupon.
         let before = credis.get_position(id).unwrap();
@@ -545,7 +569,7 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
 fn settle_runs_from_open_and_is_rejected_after_closing() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = credis.open_position(params(handle(1), alice())).unwrap();
+        let id = credis.open_position(params(alice())).unwrap();
 
         credis
             .settle(id, U256::from(999_999_999_999u64), at(100))
@@ -563,8 +587,8 @@ fn settle_runs_from_open_and_is_rejected_after_closing() {
 fn settlement_stays_open_on_unchanged_terms_while_called() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
-        credis.mark_called(id, at(10)).unwrap();
+        let id = open_pos(&mut credis);
+        credis.mark_called(id, at(99)).unwrap();
 
         let paid = credis
             .settle(id, U256::from(400_000_000u64), at(100))
@@ -585,8 +609,8 @@ fn settlement_stays_open_on_unchanged_terms_while_called() {
 fn full_settlement_while_called_closes_the_position() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
-        credis.mark_called(id, at(10)).unwrap();
+        let id = open_pos(&mut credis);
+        credis.mark_called(id, at(99)).unwrap();
 
         let paid = credis
             .settle(id, U256::from(999_999_999_999u64), at(100))
@@ -607,7 +631,7 @@ fn repeated_partials_release_exactly_the_collateral() {
     for chunk in [1_000_000u64, 7_777_777, 123_456_789, 333_333_333] {
         with_credis(|storage| {
             let mut credis = CredisContract::new(storage);
-            let id = open_pos(&mut credis, 1);
+            let id = open_pos(&mut credis);
 
             let mut released = U256::ZERO;
             let mut day = 1u64;
@@ -638,7 +662,7 @@ fn repeated_partials_release_exactly_the_collateral() {
 fn interest_rounds_down_to_asset_minor_units() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // 1 day of interest on $1,000 at 4% = 109_589.041... minor units.
         let position = credis.get_position(id).unwrap();
@@ -666,7 +690,7 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
     ] {
         with_credis(|storage| {
             let mut credis = CredisContract::new(storage);
-            let mut terms = params(handle(1), alice());
+            let mut terms = params(alice());
             terms.principal = U256::from(10u64);
             terms.collateral = U256::from(6u64);
             let id = credis.open_position(terms).unwrap();
@@ -703,7 +727,7 @@ fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
 fn accrual_counts_whole_days_only() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         let position = credis.get_position(id).unwrap();
 
         assert_eq!(
@@ -720,7 +744,7 @@ fn accrual_counts_whole_days_only() {
 fn dust_settlements_cannot_evade_the_coupon() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // A dust settlement one second short of a whole day charges no
         // interest - and so must not consume accrual time either.
@@ -761,7 +785,7 @@ fn dust_settlements_cannot_evade_the_coupon() {
 fn the_accrual_anchor_advances_by_whole_days_only() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         // Settling 10.5 days in charges 10 days and leaves the half day on the
         // position, so the anchor lands on day 10 rather than the payment time.
@@ -784,7 +808,7 @@ fn the_accrual_anchor_advances_by_whole_days_only() {
 fn mark_called_does_not_move_the_deadline() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = credis.open_position(params(handle(1), alice())).unwrap();
+        let id = credis.open_position(params(alice())).unwrap();
 
         assert!(credis.mark_called(id, at(10)).unwrap());
         assert!(
@@ -800,10 +824,47 @@ fn mark_called_does_not_move_the_deadline() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn called_repayment_and_void_have_complementary_deadline_boundaries() {
+    for offset in [-1i64, 0, 1] {
+        with_credis(|storage| {
+            let mut credis = CredisContract::new(storage.clone());
+            let id = open_pos(&mut credis, 1);
+            credis.mark_called(id, at(10)).unwrap();
+            let before = credis.get_position(id).unwrap();
+            let now = settlement_deadline(&before)
+                .checked_add_signed(offset)
+                .unwrap();
+            let payment = CredisContract::accrued_interest(&before, now).unwrap() + U256::ONE;
+            let result = credis.settle(id, payment, now);
+            if offset <= 0 {
+                assert_eq!(result.unwrap().principal_paid, U256::ONE);
+                let repaid = credis.get_position(id).unwrap();
+                let error = credis.void_position(id, now).unwrap_err();
+                assert!(error.to_string().contains("window has not lapsed"));
+                assert_eq!(credis.get_position(id).unwrap(), repaid);
+            } else {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("call window has lapsed"));
+                assert_eq!(credis.get_position(id).unwrap(), before);
+                assert_eq!(credis.active_len().unwrap(), 1);
+                assert!(credis.has_called_position(alice()).unwrap());
+                assert_eq!(
+                    credis.void_position(id, now).unwrap().gratis_burned,
+                    before.collateral_locked
+                );
+                assert_eq!(credis.active_len().unwrap(), 0);
+            }
+        });
+    }
+}
+
+#[test]
 fn void_requires_a_called_position_past_its_window_with_a_remainder() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
 
         let err = credis.void_position(id, at(500)).unwrap_err().to_string();
         assert!(err.contains("not called"), "got: {err}");
@@ -820,7 +881,10 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
         credis
             .settle(id, U256::from(999_999_999_999u64), at(11))
             .unwrap();
-        let err = credis.void_position(id, deadline).unwrap_err().to_string();
+        let err = credis
+            .void_position(id, deadline + 1)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("closed") || err.contains("not called"),
             "got: {err}"
@@ -832,7 +896,7 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
 fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(10)).unwrap();
 
         let void = credis.void_position(id, at(24)).unwrap();
@@ -846,7 +910,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
 fn void_is_terminal() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(10)).unwrap();
         credis.void_position(id, at(24)).unwrap();
 
@@ -863,10 +927,11 @@ fn void_is_terminal() {
 
 #[test]
 fn has_called_position_tracks_the_owners_book() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let first = open_at_block(&mut provider, 1, params(alice()));
+    open_at_block(&mut provider, 2, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        let first = open_pos(&mut credis, 1);
-        let _second = open_pos(&mut credis, 2);
         assert!(!credis.has_called_position(alice()).unwrap());
 
         credis.mark_called(first, at(10)).unwrap();
@@ -890,7 +955,7 @@ fn has_called_position_tracks_the_owners_book() {
 fn the_called_counter_also_clears_on_a_void() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(10)).unwrap();
         assert!(credis.has_called_position(alice()).unwrap());
 
@@ -918,7 +983,7 @@ fn active_ids(credis: &CredisContract<'_>) -> Vec<U256> {
 fn the_active_index_holds_exactly_the_non_terminal_positions() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = credis.open_position(params(handle(1), alice())).unwrap();
+        let id = credis.open_position(params(alice())).unwrap();
         assert_eq!(active_ids(&credis), vec![id], "an open position is listed");
 
         // Calling keeps it listed - a called position is non-terminal.
@@ -942,7 +1007,7 @@ fn the_active_index_holds_exactly_the_non_terminal_positions() {
 fn a_void_leaves_the_active_index() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(10)).unwrap();
         credis.void_position(id, at(24)).unwrap();
         assert!(active_ids(&credis).is_empty());
@@ -951,11 +1016,12 @@ fn a_void_leaves_the_active_index() {
 
 #[test]
 fn removing_from_the_middle_keeps_the_active_index_consistent() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let first = open_at_block(&mut provider, 1, params(alice()));
+    let second = open_at_block(&mut provider, 2, params(alice()));
+    let third = open_at_block(&mut provider, 3, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        let first = open_pos(&mut credis, 1);
-        let second = open_pos(&mut credis, 2);
-        let third = open_pos(&mut credis, 3);
         assert_eq!(active_ids(&credis), vec![first, second, third]);
 
         // Close the middle one: the tail swaps into its slot.
@@ -982,11 +1048,12 @@ fn removing_from_the_middle_keeps_the_active_index_consistent() {
 
 #[test]
 fn sums_and_indexes_span_all_of_an_accounts_positions() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let first = open_at_block(&mut provider, 1, params(alice()));
+    open_at_block(&mut provider, 2, params(alice()));
+    open_at_block(&mut provider, 2, params(bob()));
+    StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        let first = open_pos(&mut credis, 1);
-        credis.open_position(params(handle(2), alice())).unwrap();
-        credis.open_position(params(handle(3), bob())).unwrap();
 
         assert_eq!(
             credis.principal_and_outstanding_of(alice()).unwrap(),
@@ -1036,7 +1103,7 @@ fn sums_and_indexes_span_all_of_an_accounts_positions() {
 fn enumeration_rejects_an_out_of_range_index() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        credis.open_position(params(handle(1), alice())).unwrap();
+        credis.open_position(params(alice())).unwrap();
 
         // One position exists, so index 1 is past the end of both indexes. An
         // out-of-range read must fail rather than report a zeroed position.
@@ -1083,7 +1150,7 @@ fn precompile_get_position_returns_the_full_record() {
     with_credis(|storage| {
         let id = {
             let mut credis = CredisContract::new(storage.clone());
-            open_pos(&mut credis, 1)
+            open_pos(&mut credis)
         };
 
         let data = ICredis::getPositionCall { positionId: id }.abi_encode();
@@ -1113,8 +1180,8 @@ fn precompile_enumerates_positions_globally_and_per_owner() {
     with_credis(|storage| {
         let (first, second) = {
             let mut credis = CredisContract::new(storage.clone());
-            let first = credis.open_position(params(handle(1), alice())).unwrap();
-            let second = credis.open_position(params(handle(2), bob())).unwrap();
+            let first = credis.open_position(params(alice())).unwrap();
+            let second = credis.open_position(params(bob())).unwrap();
             (first, second)
         };
 
@@ -1190,11 +1257,13 @@ fn precompile_enumerates_positions_globally_and_per_owner() {
 
 #[test]
 fn precompile_reports_principal_and_outstanding_together() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let first = open_at_block(&mut provider, 1, params(alice()));
+    open_at_block(&mut provider, 2, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
         let id = {
             let mut credis = CredisContract::new(storage.clone());
-            let id = open_pos(&mut credis, 1);
-            credis.open_position(params(handle(2), alice())).unwrap();
+            let id = first;
             // Settle one position in full so the two sums diverge.
             credis
                 .settle(id, U256::from(999_999_999_999u64), at(1))
@@ -1235,7 +1304,7 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
         )
         .unwrap();
         let mut credis = CredisContract::new(handle);
-        open_pos(&mut credis, 1)
+        open_pos(&mut credis)
     });
 
     // At origination nothing has accrued.
@@ -1282,17 +1351,18 @@ fn precompile_supports_erc165() {
 
 #[test]
 fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let initial = collateral();
+    let day = timestamp_to_date_key(ORIGINATED_AT);
+    let (id, deadline) = StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage.clone());
-        let id = open_pos(&mut credis, 1);
-        let initial = collateral();
-        let day = timestamp_to_date_key(ORIGINATED_AT);
+        let id = open_pos(&mut credis);
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
         // A duplicate opening must not accrue twice.
-        assert!(credis.open_position(params(handle(1), alice())).is_err());
+        assert!(credis.open_position(params(alice())).is_err());
         credis
             .settle(id, U256::from(PRINCIPAL / 2), ORIGINATED_AT)
             .unwrap();
@@ -1302,14 +1372,27 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         );
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        let void_day = timestamp_to_date_key(deadline);
-        storage.set_block_timestamp(U256::from(deadline)).unwrap();
+        let void_day = timestamp_to_date_key(deadline + 1);
+        storage
+            .set_block_timestamp(U256::from(deadline + 1))
+            .unwrap();
         let mut next = params(handle(2), alice());
         next.issued_at = deadline;
         credis.open_position(next).unwrap();
+        (id, deadline)
+    });
+    let void_day = timestamp_to_date_key(deadline);
+    provider.set_timestamp(U256::from(deadline));
+    let mut next = params(alice());
+    next.issued_at = deadline;
+    open_at_block(&mut provider, 1, next);
+    provider.set_block_number(2);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage.clone());
         outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
-        assert!(credis.open_position(params(handle(3), alice())).is_err());
-        let void = credis.void_position(id, deadline).unwrap();
+        let error = credis.open_position(params(alice())).unwrap_err();
+        assert!(!error.to_string().contains("already exists"));
+        let void = credis.void_position(id, deadline + 1).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
@@ -1318,7 +1401,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
-        assert!(credis.void_position(id, deadline).is_err());
+        assert!(credis.void_position(id, deadline + 1).is_err());
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
@@ -1328,12 +1411,12 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
 
 #[test]
 fn cca_buckets_follow_current_utc_day_without_cycle_state() {
-    with_credis(|storage| {
-        let day = timestamp_to_date_key(ORIGINATED_AT);
+    let mut provider = credis_provider();
+    let day = timestamp_to_date_key(ORIGINATED_AT);
+    let id = open_at_block(&mut provider, 1, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
         // UTC+14 is already on the next date at this timestamp.
         assert_ne!(day, worldwide_day_from_timestamp(ORIGINATED_AT));
-        let mut credis = CredisContract::new(storage.clone());
-        let id = open_pos(&mut credis, 1);
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
@@ -1347,14 +1430,15 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
             .unwrap(),
             U256::ZERO
         );
-
-        // Crossing UTC midnight selects a new bucket without any Cycle state.
-        let next_day = 20231115;
-        let midnight = date_key_to_utc_timestamp(next_day);
-        storage.set_block_timestamp(U256::from(midnight)).unwrap();
-        let mut pending = params(handle(2), alice());
-        pending.issued_at = midnight;
-        credis.open_position(pending).unwrap();
+    });
+    // Crossing UTC midnight selects a new bucket without any Cycle state.
+    let next_day = 20231115;
+    let midnight = date_key_to_utc_timestamp(next_day);
+    provider.set_timestamp(U256::from(midnight));
+    let mut pending = params(alice());
+    pending.issued_at = midnight;
+    open_at_block(&mut provider, 2, pending);
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             collateral()
@@ -1363,9 +1447,11 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
             outbe_ccaregistry::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral()
         );
-
-        // An older origination timestamp must not select an older reward bucket.
-        open_pos(&mut credis, 3);
+    });
+    // An older origination timestamp must not select an older reward bucket.
+    open_at_block(&mut provider, 3, params(alice()));
+    let deadline = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage.clone());
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), next_day).unwrap(),
             collateral() * U256::from(2)
@@ -1373,11 +1459,25 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
 
         credis.mark_called(id, midnight).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        storage.set_block_timestamp(U256::from(deadline)).unwrap();
-        let void_day = timestamp_to_date_key(deadline);
-        credis.void_position(id, deadline).unwrap();
+        storage
+            .set_block_timestamp(U256::from(deadline + 1))
+            .unwrap();
+        let void_day = timestamp_to_date_key(deadline + 1);
+        credis.void_position(id, deadline + 1).unwrap();
         // The burn offsets a later opening only in the current UTC day.
         open_pos(&mut credis, 4);
+        settlement_deadline(&credis.get_position(id).unwrap())
+    });
+    provider.set_timestamp(U256::from(deadline));
+    let void_day = timestamp_to_date_key(deadline);
+    StorageHandle::enter(&mut provider, |storage| {
+        CredisContract::new(storage)
+            .void_position(id, deadline)
+            .unwrap();
+    });
+    // The burn offsets a later opening only in the current UTC day.
+    open_at_block(&mut provider, 4, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             U256::ZERO
@@ -1395,19 +1495,26 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
 
 #[test]
 fn oversized_timestamp_rolls_back_opening_and_voiding() {
-    with_credis(|storage| {
+    let mut provider = credis_provider();
+    let id = open_at_block(&mut provider, 1, params(alice()));
+    provider.set_block_number(2);
+    StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage.clone());
-        let id = open_pos(&mut credis, 1);
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let before = credis.get_position(id).unwrap();
         let deadline = settlement_deadline(&before);
         for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
-            let invalid = params(handle(2), alice());
-            let new_id = CredisContract::position_id(invalid.handle_id, invalid.smart_account);
+            let invalid = params(alice());
+            let new_id = CredisContract::position_id(
+                invalid.cca,
+                invalid.smart_account,
+                invalid.asset,
+                storage.block_number().unwrap(),
+            );
             assert!(credis.open_position(invalid).is_err());
             assert!(!credis.position_exists(new_id).unwrap());
-            assert!(credis.void_position(id, deadline).is_err());
+            assert!(credis.void_position(id, deadline + 1).is_err());
             assert_eq!(credis.get_position(id).unwrap(), before);
         }
         let day = timestamp_to_date_key(ORIGINATED_AT);
@@ -1499,7 +1606,7 @@ fn open_position_announces_the_mint() {
     provider.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut provider, |storage| {
         bond_test_cca(&storage);
-        open_pos(&mut CredisContract::new(storage), 1)
+        open_pos(&mut CredisContract::new(storage))
     });
 
     let transfers: Vec<(Address, Address, U256)> = provider
@@ -1611,7 +1718,7 @@ fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value
 #[test]
 fn token_uri_renders_the_position_image_and_metadata() {
     with_credis(|storage| {
-        let id = open_pos(&mut CredisContract::new(storage.clone()), 1);
+        let id = open_pos(&mut CredisContract::new(storage.clone()));
         let (json, svg) = token_uri_parts(&storage, id);
 
         let short = outbe_common::nft_card::short_id(id);
@@ -1645,7 +1752,7 @@ fn token_uri_renders_the_position_image_and_metadata() {
 fn a_called_position_shows_its_settlement_deadline() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(3)).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
 
@@ -1667,7 +1774,7 @@ fn metadata_update_marks_call_settlement_and_void() {
     let id = StorageHandle::enter(&mut provider, |storage| {
         bond_test_cca(&storage);
         let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis, 1);
+        let id = open_pos(&mut credis);
         credis.mark_called(id, at(3)).unwrap();
         let interest =
             CredisContract::accrued_interest(&credis.get_position(id).unwrap(), at(5)).unwrap();
@@ -1675,7 +1782,7 @@ fn metadata_update_marks_call_settlement_and_void() {
             .settle(id, interest + U256::from(PRINCIPAL / 10), at(5))
             .unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        credis.void_position(id, deadline).unwrap();
+        credis.void_position(id, deadline + 1).unwrap();
         id
     });
 
