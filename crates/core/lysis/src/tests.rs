@@ -215,6 +215,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             &bodies,
             wwd,
             nominal / U256::from(5_u64),
+            T_NOW,
         ) {
             Ok(_) => panic!("the second Tribute must fail without an ISO 978 oracle pair"),
             Err(error) => error,
@@ -271,6 +272,33 @@ fn lysis_entry_price_is_previous_day_vwap_regardless_of_current_price() {
             });
         }
     }
+}
+
+/// The priced day follows the WorldwideDay's scheduled processing, not the block clock.
+#[test]
+fn entry_price_day_follows_the_scheduled_processing_time() {
+    const PROCESS_TIME: u64 = 1_700_000_000;
+    let late_block = PROCESS_TIME + 2 * SECONDS_PER_DAY;
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(late_block));
+    StorageHandle::enter(&mut provider, |storage| {
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        seed_entry_prices(&storage, PROCESS_TIME, 840, coen(150), U256::ZERO);
+        seed_entry_prices(&storage, late_block, 840, coen(900), U256::ZERO);
+
+        let prices = crate::api::freeze_entry_price_snapshot(
+            storage,
+            WorldwideDay::new(20260715),
+            PROCESS_TIME,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::runtime::resolve_entry_price_minor_for_test(&prices, 840).unwrap(),
+            coen(150),
+            "a block running late must not reprice the day"
+        );
+    });
 }
 
 #[test]
@@ -398,6 +426,7 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 &bodies,
                 wwd,
                 nominal / U256::from(10_u64),
+                T_NOW,
             ) {
                 Ok(_) => panic!("Current price and S-curve must not substitute for a missing or zero previous-day VWAP"),
                 Err(error) => error,
@@ -468,9 +497,15 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         );
         tribute.seal_day(wwd).unwrap();
 
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("GAS-08 dense Lysis day must complete");
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            lysis_limit_minor,
+            T_NOW,
+        )
+        .expect("GAS-08 dense Lysis day must complete");
 
         assert_eq!(
             result.tribute_ids.len(),
@@ -910,7 +945,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         })
         .expect("pure Lysis V1");
 
-        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor, T_NOW).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
         end_block(s, &scope).unwrap();
         (result, pure_result)
@@ -1193,7 +1228,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
         tribute.seal_day(wwd).unwrap();
 
-        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor, T_NOW).unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -1273,9 +1308,15 @@ fn lysis_records_contributors_aggregated_by_owner() {
         let total_nominal = coen(600u64);
         let lysis_limit_minor = total_nominal / U256::from(10u64);
 
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("lysis must complete");
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            lysis_limit_minor,
+            T_NOW,
+        )
+        .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
             3,
@@ -1356,9 +1397,15 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         let total_nominal = coen(600u64);
         let lysis_limit_minor = total_nominal / U256::from(10u64);
 
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("lysis must complete");
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            lysis_limit_minor,
+            T_NOW,
+        )
+        .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
             3,
