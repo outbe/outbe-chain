@@ -1135,6 +1135,12 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
+        assert_eq!(
+            fire.storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -1180,6 +1186,8 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         let expected_promis_load = validator_amount / U256::from(voters.len());
         let distributed = expected_promis_load * U256::from(voters.len());
         let validator_residue = validator_amount.checked_sub(distributed).unwrap();
+        let cca_pool = amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Cca);
+        let cca_credit = cca_pool * U256::from(32) / U256::from(100);
         let expected_terminal =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
                 .checked_add(amount_for(
@@ -1191,6 +1199,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                     ))
                 })
                 .and_then(|amount| amount.checked_add(validator_residue))
+                .and_then(|amount| amount.checked_add(cca_pool - cca_credit))
                 .unwrap();
         let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
         assert_eq!(formed.base_limit, expected_terminal);
@@ -1199,12 +1208,16 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_ccaregistry::constants::BOND_REQUIREMENT
-                + outbe_primitives::units::checked_protocol_to_native(amount_for(
-                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
-                ))
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "CCA custody holds only the bond"
+        );
+        assert_eq!(
+            retry
+                .storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
-            "retry must credit CCA exactly once"
+            outbe_primitives::units::checked_protocol_to_native(cca_credit).unwrap(),
+            "retry must credit CCA backing to AgentReward exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
         for voter in voters {

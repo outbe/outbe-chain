@@ -116,23 +116,6 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
     })
 }
 
-pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let mut contract = CcaContract::new(storage.clone());
-        contract.load(caller)?;
-        let amount = contract.reward_amounts.read(&caller)?;
-        if amount.is_zero() {
-            return Err(CcaError::NoRewards.into());
-        }
-        contract.reward_amounts.write(&caller, U256::ZERO)?;
-        storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
-        contract.emit(ICcaRegistry::RewardsClaimed {
-            cca: caller,
-            amount,
-        })
-    })
-}
-
 /// Trusted Rust entrypoint; called once by Credis with the current UTC reward day key (YYYYMMDD).
 pub fn position_opened(
     storage: &StorageHandle<'_>,
