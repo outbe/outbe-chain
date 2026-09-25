@@ -37,7 +37,7 @@ impl CredisState {
     }
 }
 
-/// Position record. Keyed by `position_id = keccak256(pledge_note || smart_account)`.
+/// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
 ///
 /// Every term - both currency codes included - is sealed at opening and never
 /// changes afterwards; only `outstanding`, `collateral_locked`,
@@ -224,11 +224,19 @@ pub struct CredisContract {
 }
 
 impl CredisContract<'_> {
-    /// position_id derivation: `keccak256(pledge_note || smart_account)`.
-    pub fn position_id(handle_id: U256, smart_account: Address) -> U256 {
-        let mut buf = [0u8; 52];
-        buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
-        buf[32..52].copy_from_slice(smart_account.as_slice());
+    /// `keccak256(cca || smart_account || asset || block_number)` with packed
+    /// 20-byte addresses and the execution block number as a big-endian u64.
+    pub fn position_id(
+        cca: Address,
+        smart_account: Address,
+        asset: Address,
+        block_number: u64,
+    ) -> U256 {
+        let mut buf = [0u8; 68];
+        buf[..20].copy_from_slice(cca.as_slice());
+        buf[20..40].copy_from_slice(smart_account.as_slice());
+        buf[40..60].copy_from_slice(asset.as_slice());
+        buf[60..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 

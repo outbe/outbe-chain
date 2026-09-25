@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{sol, SolCall};
 use outbe_credis::CredisContract;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
@@ -9,9 +9,10 @@ use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
+    math::scaled_math::checked_quote,
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
-    units::{checked_protocol_to_native, SCALE_1E6_U256},
+    units::{checked_protocol_to_native, SCALE_1E18, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -37,6 +38,12 @@ const CCA: Address = Address::repeat_byte(0xcc);
 const ASSET: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x08, 0x88,
 ]);
+
+sol! {
+    interface IERC20Metadata {
+        function decimals() external view returns (uint8);
+    }
+}
 
 pub struct CredisScenario;
 
@@ -171,12 +178,24 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
             expires_at: CREATED_AT + 15 * 60,
         })
         .map_err(|error| error.to_string())?;
-    let (pledge_note, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+    // NB: Seal a known quote for the issuance benchmark while the Oracle's
+    // previous eight-hour VWAP helper is unimplemented, as in the Credis tests.
+    let valuation_price = U256::from(2) * SCALE_1E18;
+    let (gratis_cost, entry_price) =
+        checked_quote(pledge_stables(), 6, valuation_price).map_err(|error| error.to_string())?;
+    let pledge_note = outbe_gratis::api::pledge(
         storage.clone(),
         ALICE,
         pledge_stables(),
-        ASSET,
-        U256::MAX,
+        outbe_gratis::api::PledgeTerms {
+            stables_amount: pledge_stables(),
+            gratis_amount: gratis_cost,
+            asset: ASSET,
+            entry_price,
+            issuance_currency: ISSUANCE_ISO,
+            asset_decimals: 6,
+            valuation_price,
+        },
         auth(GratisOp::Pledge, pledge_stables(), 1),
     )
     .map_err(|error| error.to_string())?;
@@ -214,6 +233,11 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_sub_call_stub();
         provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
         provider.stub_sub_call_at(ASSET, iso_word(ISSUANCE_ISO));
+        provider.stub_sub_call_at_selector(
+            ASSET,
+            IERC20Metadata::decimalsCall::SELECTOR,
+            iso_word(6),
+        );
         let (pledge_note, spend_auth, reservation_id) =
             StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {

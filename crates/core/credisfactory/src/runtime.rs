@@ -144,11 +144,10 @@ pub fn issue_credis(
     let call_anchor_price = previous_day_vwap.max(current_price);
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
-    // can address the right confidential pledged ledger. The `handle_id`
-    // building the position_id is the globally-unique pledge note.
+    // can address the right confidential pledged ledger. Its identity depends
+    // only on the CCA, destination, asset and execution block, not the pledge.
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.open_position(OpenPositionParams {
-        handle_id: U256::from_be_bytes(pledge_note.0),
         smart_account,
         cca: caller,
         eoa_ct,
