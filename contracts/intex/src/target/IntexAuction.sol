@@ -101,8 +101,7 @@ contract IntexAuction is
         return _s().escrowContract;
     }
 
-    /// @notice Live bid counters tracked while the auction runs. Flattened to match the
-    ///         original public-mapping getter ABI.
+    /// @notice Live bid counters tracked while the auction runs.
     function auctionRunningCounts(uint32 worldwideDay)
         external
         view

@@ -53,7 +53,7 @@ contract OriginRouter is
         mapping(uint256 idx => ParkedProceeds) parkedProceeds;
         /// @dev Next index to assign in `parkedProceeds`.
         uint256 nextParkedProceedsIdx;
-        // --- Multi-target registry (tail-appended; upgrade-safe) ---
+        // --- Multi-target registry ---
         /// @dev Registered target chainIds; membership is via `targetIndexPlus1`.
         uint32[] targetChainIds;
         /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.

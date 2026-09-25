@@ -22,11 +22,9 @@ contract CodecHarness {
 }
 
 /// @title IntexNFT1155BridgeCodecTest
-/// @notice The batch wire codec migrated from the hand-rolled
-///         `abi.encodePacked` packed concat to single-pass `abi.encode`/`abi.decode` with named
-///         `BatchPayload`/`MultiPayload` structs and a `V1 -> V2` body-version bump. Exercises the
-///         deep-module behaviour directly: round-trip, version gating, batch-size cap, and the
-///         malformed-address reject.
+/// @notice The batch wire codec: single-pass `abi.encode`/`abi.decode` over the named
+///         `BatchPayload`/`MultiPayload` structs. Exercises the deep-module behaviour directly:
+///         round-trip, version gating, batch-size cap, and the malformed-address reject.
 contract IntexNFT1155BridgeCodecTest is Test {
     CodecHarness internal harness;
 

@@ -152,7 +152,7 @@ interface ITargetRouter {
     error NoSuchParkedIssuance(uint256 idx);
     /// @notice `applyParkedMark` called for a series with nothing waiting in its slot.
     error NoParkedMark(bytes14 seriesId);
-    /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
+    /// @notice The parked entry at `idx` was already resolved; another retry would repeat its effect.
     error AlreadyResolved(uint256 idx);
 
     // --- Admin ---
