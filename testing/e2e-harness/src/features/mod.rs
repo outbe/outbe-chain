@@ -15,6 +15,8 @@ pub mod agent_reward;
 mod auction_expectations;
 pub mod common;
 #[cfg(feature = "ocomp-integration")]
+pub mod credis;
+#[cfg(feature = "ocomp-integration")]
 pub mod gem_lifecycle;
 pub mod governance;
 #[cfg(feature = "ocomp-integration")]
