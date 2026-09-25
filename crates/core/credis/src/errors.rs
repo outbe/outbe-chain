@@ -25,6 +25,8 @@ pub enum CredisError {
     NotCalled,
     #[error("call window has not lapsed")]
     CallWindowOpen,
+    #[error("call window has lapsed")]
+    CallWindowClosed,
     #[error("position has no outstanding principal")]
     NothingOutstanding,
     #[error("credis arithmetic overflow")]

@@ -588,7 +588,7 @@ fn settlement_stays_open_on_unchanged_terms_while_called() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis);
-        credis.mark_called(id, at(10)).unwrap();
+        credis.mark_called(id, at(99)).unwrap();
 
         let paid = credis
             .settle(id, U256::from(400_000_000u64), at(100))
@@ -610,7 +610,7 @@ fn full_settlement_while_called_closes_the_position() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis);
-        credis.mark_called(id, at(10)).unwrap();
+        credis.mark_called(id, at(99)).unwrap();
 
         let paid = credis
             .settle(id, U256::from(999_999_999_999u64), at(100))
@@ -824,6 +824,43 @@ fn mark_called_does_not_move_the_deadline() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn called_repayment_and_void_have_complementary_deadline_boundaries() {
+    for offset in [-1i64, 0, 1] {
+        with_credis(|storage| {
+            let mut credis = CredisContract::new(storage.clone());
+            let id = open_pos(&mut credis, 1);
+            credis.mark_called(id, at(10)).unwrap();
+            let before = credis.get_position(id).unwrap();
+            let now = settlement_deadline(&before)
+                .checked_add_signed(offset)
+                .unwrap();
+            let payment = CredisContract::accrued_interest(&before, now).unwrap() + U256::ONE;
+            let result = credis.settle(id, payment, now);
+            if offset <= 0 {
+                assert_eq!(result.unwrap().principal_paid, U256::ONE);
+                let repaid = credis.get_position(id).unwrap();
+                let error = credis.void_position(id, now).unwrap_err();
+                assert!(error.to_string().contains("window has not lapsed"));
+                assert_eq!(credis.get_position(id).unwrap(), repaid);
+            } else {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("call window has lapsed"));
+                assert_eq!(credis.get_position(id).unwrap(), before);
+                assert_eq!(credis.active_len().unwrap(), 1);
+                assert!(credis.has_called_position(alice()).unwrap());
+                assert_eq!(
+                    credis.void_position(id, now).unwrap().gratis_burned,
+                    before.collateral_locked
+                );
+                assert_eq!(credis.active_len().unwrap(), 0);
+            }
+        });
+    }
+}
+
+#[test]
 fn void_requires_a_called_position_past_its_window_with_a_remainder() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
@@ -844,7 +881,10 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
         credis
             .settle(id, U256::from(999_999_999_999u64), at(11))
             .unwrap();
-        let err = credis.void_position(id, deadline).unwrap_err().to_string();
+        let err = credis
+            .void_position(id, deadline + 1)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("closed") || err.contains("not called"),
             "got: {err}"
@@ -1332,6 +1372,13 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         );
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
+        let void_day = timestamp_to_date_key(deadline + 1);
+        storage
+            .set_block_timestamp(U256::from(deadline + 1))
+            .unwrap();
+        let mut next = params(handle(2), alice());
+        next.issued_at = deadline;
+        credis.open_position(next).unwrap();
         (id, deadline)
     });
     let void_day = timestamp_to_date_key(deadline);
@@ -1345,7 +1392,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
         let error = credis.open_position(params(alice())).unwrap_err();
         assert!(!error.to_string().contains("already exists"));
-        let void = credis.void_position(id, deadline).unwrap();
+        let void = credis.void_position(id, deadline + 1).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
@@ -1354,7 +1401,7 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             initial
         );
-        assert!(credis.void_position(id, deadline).is_err());
+        assert!(credis.void_position(id, deadline + 1).is_err());
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), void_day).unwrap(),
             initial - void.gratis_burned
@@ -1411,6 +1458,14 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         );
 
         credis.mark_called(id, midnight).unwrap();
+        let deadline = settlement_deadline(&credis.get_position(id).unwrap());
+        storage
+            .set_block_timestamp(U256::from(deadline + 1))
+            .unwrap();
+        let void_day = timestamp_to_date_key(deadline + 1);
+        credis.void_position(id, deadline + 1).unwrap();
+        // The burn offsets a later opening only in the current UTC day.
+        open_pos(&mut credis, 4);
         settlement_deadline(&credis.get_position(id).unwrap())
     });
     provider.set_timestamp(U256::from(deadline));
@@ -1459,7 +1514,7 @@ fn oversized_timestamp_rolls_back_opening_and_voiding() {
             );
             assert!(credis.open_position(invalid).is_err());
             assert!(!credis.position_exists(new_id).unwrap());
-            assert!(credis.void_position(id, deadline).is_err());
+            assert!(credis.void_position(id, deadline + 1).is_err());
             assert_eq!(credis.get_position(id).unwrap(), before);
         }
         let day = timestamp_to_date_key(ORIGINATED_AT);
@@ -1727,7 +1782,7 @@ fn metadata_update_marks_call_settlement_and_void() {
             .settle(id, interest + U256::from(PRINCIPAL / 10), at(5))
             .unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        credis.void_position(id, deadline).unwrap();
+        credis.void_position(id, deadline + 1).unwrap();
         id
     });
 

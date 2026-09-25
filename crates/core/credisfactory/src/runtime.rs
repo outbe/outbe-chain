@@ -5,9 +5,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, OpenPositionParams};
-use outbe_oracle::api::{
-    coen_pair_index_opt, fresh_coen_rate_for, get_policy_rate, get_utc_day_vwap,
-};
+use outbe_oracle::api::{coen_pair_index_opt, get_policy_rate, get_utc_day_vwap};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -36,10 +34,10 @@ use crate::sol_ext::IERC20;
 /// borrower gets the terms they accepted rather than whatever the oracle reads now.
 ///
 /// The call threshold is priced here, and only it. `reference_currency` is elected at
-/// this call and pinned for the position's life. The call anchor is the higher of that
-/// pair's previous closed UTC-day VWAP and its current price; the call price is the
-/// anchor times 1.64. Neither input is derived from the entry price. A missing previous-day
-/// VWAP or a missing or stale current price rejects the issuance. The policy rate is
+/// this call and pinned for the position's life. The call anchor is that pair's
+/// previous closed UTC-day VWAP; the call price is the anchor times 1.64.
+/// It is independent of the entry price and spot price. A missing previous-day
+/// VWAP rejects the issuance. The policy rate is
 /// pinned here too, off the issuance currency.
 ///
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
@@ -138,10 +136,8 @@ pub fn issue_credis(
     // Entry price was sealed on the pledge. The call anchor is a different
     // pair: COEN in the elected reference currency, not a conversion of the entry.
     let entry_price = terms.entry_price;
-    let previous_day_vwap =
+    let call_anchor_price =
         previous_closed_day_vwap(storage.clone(), reference_currency, current_time)?;
-    let current_price = fresh_coen_rate_for(storage.clone(), reference_currency)?;
-    let call_anchor_price = previous_day_vwap.max(current_price);
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
     // can address the right confidential pledged ledger. Its identity depends

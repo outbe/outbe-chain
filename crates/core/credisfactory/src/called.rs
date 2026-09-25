@@ -233,7 +233,7 @@ fn visit_price_path(
         // would compare `now` against `0 + call_notice_period`.
         void_due: entry_state == CredisState::Called
             && !position.outstanding.is_zero()
-            && now >= outbe_credis::settlement_deadline(position),
+            && now > outbe_credis::settlement_deadline(position),
     })
 }
 
