@@ -582,7 +582,7 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
-        function parkedMark(bytes14 seriesId) external view returns (uint8);
+        function parkedMark(bytes14 seriesId) external view returns (uint32);
         function applyParkedMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }

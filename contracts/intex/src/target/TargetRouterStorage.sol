@@ -25,12 +25,6 @@ struct ParkedIssuance {
     bool done;
 }
 
-/// @notice A lifecycle mark waiting for its series, with the origin's call time for a Called one.
-struct ParkedMark {
-    uint8 msgType;
-    uint32 calledAt;
-}
-
 /// @notice How far a day's chunk run has got: the declared span and how many chunks landed.
 struct ChunkProgress {
     uint16 totalChunks;
@@ -75,9 +69,9 @@ struct TargetRouterStorage {
     mapping(uint256 idx => ParkedIssuance) parkedIssuance;
     /// @dev Next index to assign in `parkedIssuance`; also the count ever enqueued.
     uint256 nextParkedIssuanceIdx;
-    /// @dev Called mark waiting for its series to land here (0 = none). It carries the origin's call time, so a
-    ///      slot applied later derives the same deadline.
-    mapping(bytes14 seriesId => ParkedMark) parkedMarks;
+    /// @dev Origin's call time of a Called mark waiting for its series to land here (0 = none), so a slot
+    ///      applied later derives the same deadline.
+    mapping(bytes14 seriesId => uint32 calledAt) parkedMarks;
     /// @dev Refund-run progress for a day: the span the first applied chunk declared (a chunk claiming
     ///      another total is a conflict, so an under-totaled header cannot close the day early), how many
     ///      landed, and the proceeds accrued so far - routed as one transfer once every chunk has arrived,

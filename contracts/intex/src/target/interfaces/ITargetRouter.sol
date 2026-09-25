@@ -114,10 +114,9 @@ interface ITargetRouter {
 
     /// @notice Emitted when a Called mark waits in its series' slot because the series has not landed here yet.
     /// @param seriesId Series the mark is for.
-    /// @param msgType Codec message type: MARK_CALLED.
-    event MarkParked(bytes14 indexed seriesId, uint8 indexed msgType);
+    event MarkParked(bytes14 indexed seriesId);
     /// @notice Emitted when a slotted mark is applied to its series.
-    event ParkedMarkApplied(bytes14 indexed seriesId, uint8 indexed msgType);
+    event ParkedMarkApplied(bytes14 indexed seriesId);
 
     /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
     /// @param to Recipient of the swept native balance.

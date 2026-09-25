@@ -20,7 +20,6 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
-    ParkedMark,
     BidsRelayProgress,
     ParkedIssuance,
     ParkedProceeds,
@@ -171,9 +170,9 @@ contract TargetRouter is
         return _ts().issuanceChunksApplied[worldwideDay] & (1 << chunkIndex) != 0;
     }
 
-    /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
-    function parkedMark(bytes14 seriesId) external view returns (uint8) {
-        return _ts().parkedMarks[seriesId].msgType;
+    /// @notice Call time of the Called mark waiting for `seriesId` to land here (0 = none).
+    function parkedMark(bytes14 seriesId) external view returns (uint32 calledAt) {
+        return _ts().parkedMarks[seriesId];
     }
 
     // --- Admin ---
@@ -430,18 +429,15 @@ contract TargetRouter is
     }
 
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
-    ///         series still will not take it, leaving the slot in place. A slot holding anything but a Called
-    ///         mark is cleared without effect.
+    ///         series still will not take it, leaving the slot in place.
     /// @param seriesId Series whose slotted mark to apply.
     function applyParkedMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        ParkedMark memory waiting = $.parkedMarks[seriesId];
-        uint8 msgType = waiting.msgType;
-        if (msgType == 0) revert NoParkedMark(seriesId);
+        uint32 calledAt = $.parkedMarks[seriesId];
+        if (calledAt == 0) revert NoParkedMark(seriesId);
         delete $.parkedMarks[seriesId];
-        if (msgType != BridgeMsgCodec.MSG_MARK_CALLED) return;
-        $.intex.markCalled(seriesId, waiting.calledAt);
-        emit ParkedMarkApplied(seriesId, msgType);
+        $.intex.markCalled(seriesId, calledAt);
+        emit ParkedMarkApplied(seriesId);
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.

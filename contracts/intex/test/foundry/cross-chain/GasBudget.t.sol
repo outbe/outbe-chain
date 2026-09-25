@@ -117,7 +117,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
-        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
@@ -127,7 +127,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256 spent = _measure(batch);
 
         for (uint256 i = 0; i < batch.length; ++i) {
-            assertEq(router.parkedMark(batch[i]), BridgeMsgCodec.MSG_MARK_CALLED, "every series waits in its slot");
+            assertEq(router.parkedMark(batch[i]), uint32(block.timestamp), "every series waits in its slot");
         }
         emit log_named_uint("park_batch8", spent);
         assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
@@ -336,7 +336,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
-        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
         assertEq(mocked.parkedMark(SERIES_PREFIX), 0, "its batch mate has no slot");
         assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
     }

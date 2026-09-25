@@ -121,7 +121,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
             BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
 
-        assertEq(bnbRouter.parkedMark(SERIES_ID), BridgeMsgCodec.MSG_MARK_CALLED, "the mark waits for its series");
+        assertEq(bnbRouter.parkedMark(SERIES_ID), uint32(block.timestamp), "the mark waits for its series");
     }
 
     /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
