@@ -1067,7 +1067,7 @@ fn clear_inner(
     }
 
     if result.issued_units == 0 {
-        // No series anywhere, so the day's recorded contributor map can never distribute.
+        // No series anywhere, so no proceeds can arrive for the day.
         outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
     } else {
         let mut legs = Vec::new();

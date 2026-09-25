@@ -9022,18 +9022,12 @@ name = "outbe-lysis"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "hex",
  "outbe-compressed-entities",
- "outbe-fidelity",
- "outbe-intex",
  "outbe-nod",
- "outbe-nodfactory",
  "outbe-ocomp-protocol",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-tribute",
  "serde",
  "serde_json",
 ]

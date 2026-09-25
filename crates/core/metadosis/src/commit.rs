@@ -1,8 +1,8 @@
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{B256, U256};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::Result,
-    storage::{MetadosisCycleLifecycle, MetadosisMutationPurpose, StorageHandle},
+    storage::{MetadosisMutationPurpose, StorageHandle},
 };
 use outbe_tribute::TributeContract;
 
@@ -93,38 +93,6 @@ where
         let result = effect(command_storage.clone())?;
         ValidatedWwdAggregate::load_and_validate(command_storage)?;
         Ok(result)
-    })
-}
-
-/// Broad fail-closed terminalization owned by the commit module. This is not a
-/// raw status setter: the exhaustive reducer decides whether the persisted WWD
-/// may enter (or replay) the emergency terminal state, and the normal command
-/// checkpoint owns record, membership, and ordered-event atomicity.
-#[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
-pub(crate) fn commit_emergency_fail(
-    storage: StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<()> {
-    let chain_id = storage.chain_id()?;
-    let block_number = storage.block_number()?;
-    let binding = keccak256(
-        [
-            b"OUTBE_METADOSIS_EMERGENCY_FAIL_V1".as_slice(),
-            &chain_id.to_be_bytes(),
-            &block_number.to_be_bytes(),
-            &worldwide_day.value().to_be_bytes(),
-        ]
-        .concat(),
-    );
-    commit_transition::<MetadosisCycleLifecycle, _>(storage.clone(), binding, |storage| {
-        let transition =
-            plan_outer_transition(storage.clone(), worldwide_day, OuterWwdEvent::EmergencyFail)?;
-        commit_outer_transition(
-            &mut MetadosisContract::new(storage),
-            worldwide_day,
-            &transition,
-            block_number,
-        )
     })
 }
 
@@ -549,7 +517,6 @@ mod tests {
     use super::*;
     use crate::{
         aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
-        constants::MAX_RECORDS_KEPT,
         fixture_kernel::ActivationFixture,
         ocomp::schema::{poc_schema_limits, ResponseDeadlineKey},
         schema::{
@@ -587,28 +554,6 @@ mod tests {
                 Ok::<_, outbe_primitives::error::PrecompileError>(())
             })
             .unwrap();
-    }
-
-    fn seed_full_terminal_retention(provider: &mut HashMapStorageProvider) -> WorldwideDay {
-        let oldest = WorldwideDay::new(2025_0001);
-        provider
-            .enter(|storage| {
-                let contract = MetadosisContract::new(storage);
-                for offset in 0..MAX_RECORDS_KEPT {
-                    let mut terminal = record(status::FAILED, day_type::GREEN);
-                    terminal.wwd = WorldwideDay::new(
-                        oldest
-                            .value()
-                            .checked_add(u32::try_from(offset).expect("retention offset fits u32"))
-                            .expect("retention WWD fits u32"),
-                    );
-                    contract.worldwide_days.create(&terminal)?;
-                    contract.closed_wwd.push_back(terminal.wwd)?;
-                }
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-        oldest
     }
 
     fn assert_ocomp_state_without_profile_is_rejected(
@@ -920,173 +865,5 @@ mod tests {
             .unwrap();
 
         assert!(!nested_effect_called.get());
-    }
-
-    #[test]
-    fn commit_owned_emergency_fail_is_atomic_and_idempotent() {
-        let mut provider = HashMapStorageProvider::new(1);
-        provider.set_block_number(17);
-        seed_active(&mut provider, &record(status::FORMING, day_type::UNKNOWN));
-        provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 2);
-
-        provider
-            .enter(|storage| commit_emergency_fail(storage, wwd()))
-            .unwrap();
-        let events_after_first = provider.events.clone();
-        let ordered_after_first = provider.get_ordered_events().to_vec();
-        provider
-            .enter(|storage| commit_emergency_fail(storage, wwd()))
-            .unwrap();
-        assert_eq!(provider.events, events_after_first);
-        assert_eq!(
-            provider.get_ordered_events(),
-            ordered_after_first.as_slice()
-        );
-        assert_eq!(ordered_after_first.len(), 1);
-
-        provider
-            .enter(|storage| {
-                let contract = MetadosisContract::new(storage);
-                assert_eq!(contract.get_wwd_status(wwd())?, WwdStatus::Failed);
-                assert!(contract.active_wwd.read_all()?.is_empty());
-                assert_eq!(contract.closed_wwd.read_all()?, vec![wwd()]);
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn emergency_fail_rolls_back_every_mutation_and_retries_once() {
-        let mut probe = HashMapStorageProvider::new(1);
-        probe.set_block_number(17);
-        seed_active(&mut probe, &record(status::FORMING, day_type::UNKNOWN));
-        probe.fail_after_mutation_at(usize::MAX);
-        probe.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        probe
-            .enter(|storage| commit_emergency_fail(storage, wwd()))
-            .unwrap();
-        let mutation_count = probe.clear_mutation_failure();
-        assert!(mutation_count >= 4);
-        let clean_storage = probe.storage.clone();
-        let clean_events = probe.events.clone();
-        let clean_ordered = probe.get_ordered_events().to_vec();
-
-        for operation in 0..mutation_count {
-            let mut provider = HashMapStorageProvider::new(1);
-            provider.set_block_number(17);
-            seed_active(&mut provider, &record(status::FORMING, day_type::UNKNOWN));
-            let storage_before = provider.storage.clone();
-            let events_before = provider.events.clone();
-            let ordered_before = provider.get_ordered_events().to_vec();
-            provider.fail_after_mutation_at(operation);
-            provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-
-            assert!(provider
-                .enter(|storage| commit_emergency_fail(storage, wwd()))
-                .is_err());
-            assert_eq!(provider.clear_mutation_failure(), operation + 1);
-            assert_eq!(provider.storage, storage_before, "storage at {operation}");
-            assert_eq!(provider.events, events_before, "events at {operation}");
-            assert_eq!(
-                provider.get_ordered_events(),
-                ordered_before.as_slice(),
-                "ordered events at {operation}"
-            );
-
-            provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-            provider
-                .enter(|storage| commit_emergency_fail(storage, wwd()))
-                .unwrap();
-            assert_eq!(
-                provider.storage, clean_storage,
-                "retry storage at {operation}"
-            );
-            assert_eq!(provider.events, clean_events, "retry events at {operation}");
-            assert_eq!(
-                provider.get_ordered_events(),
-                clean_ordered.as_slice(),
-                "retry ordered events at {operation}"
-            );
-            provider
-                .enter(|storage| {
-                    let contract = MetadosisContract::new(storage);
-                    assert_eq!(contract.get_wwd_status(wwd())?, WwdStatus::Failed);
-                    assert!(contract.active_wwd.read_all()?.is_empty());
-                    assert_eq!(contract.closed_wwd.read_all()?, vec![wwd()]);
-                    Ok::<_, outbe_primitives::error::PrecompileError>(())
-                })
-                .unwrap();
-        }
-    }
-
-    #[test]
-    fn emergency_fail_retention_eviction_rolls_back_every_mutation_and_retries_exactly() {
-        let prepare = |provider: &mut HashMapStorageProvider| {
-            provider.set_block_number(17);
-            let oldest = seed_full_terminal_retention(provider);
-            seed_active(provider, &record(status::FORMING, day_type::UNKNOWN));
-            oldest
-        };
-
-        let mut control = HashMapStorageProvider::new(1);
-        let oldest = prepare(&mut control);
-        control.fail_after_mutation_at(usize::MAX);
-        control.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-        control
-            .enter(|storage| commit_emergency_fail(storage, wwd()))
-            .unwrap();
-        let mutation_count = control.clear_mutation_failure();
-        assert!(
-            mutation_count >= 6,
-            "retention eviction must add terminal state and delete the oldest record"
-        );
-        let clean_storage = control.storage.clone();
-        let clean_events = control.events.clone();
-        let clean_ordered = control.get_ordered_events().to_vec();
-        control
-            .enter(|storage| {
-                assert!(!MetadosisContract::new(storage)
-                    .worldwide_days
-                    .exists(oldest)?);
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-
-        for operation in 0..mutation_count {
-            let mut provider = HashMapStorageProvider::new(1);
-            let oldest = prepare(&mut provider);
-            let storage_before = provider.storage.clone();
-            let events_before = provider.events.clone();
-            let ordered_before = provider.get_ordered_events().to_vec();
-            provider.fail_after_mutation_at(operation);
-            provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-
-            assert!(provider
-                .enter(|storage| commit_emergency_fail(storage, wwd()))
-                .is_err());
-            assert_eq!(provider.clear_mutation_failure(), operation + 1);
-            assert_eq!(provider.storage, storage_before, "storage at {operation}");
-            assert_eq!(provider.events, events_before, "events at {operation}");
-            assert_eq!(provider.get_ordered_events(), ordered_before.as_slice());
-
-            provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-            provider
-                .enter(|storage| commit_emergency_fail(storage, wwd()))
-                .unwrap();
-            assert_eq!(
-                provider.storage, clean_storage,
-                "retry storage at {operation}"
-            );
-            assert_eq!(provider.events, clean_events, "retry events at {operation}");
-            assert_eq!(provider.get_ordered_events(), clean_ordered.as_slice());
-            provider
-                .enter(|storage| {
-                    assert!(!MetadosisContract::new(storage)
-                        .worldwide_days
-                        .exists(oldest)?);
-                    Ok::<_, outbe_primitives::error::PrecompileError>(())
-                })
-                .unwrap();
-        }
     }
 }

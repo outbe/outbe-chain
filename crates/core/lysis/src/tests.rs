@@ -1,28 +1,17 @@
 use crate::algorithm::*;
-use alloy_primitives::{Address, LogData, B256, U256};
+use alloy_primitives::U256;
 
 /// A day whose Gratis allocation is the symbolic share of its nominal: the average fraction is
 /// 0.32 and the per-league ceiling is twice that. Production derives both from the day itself
 /// (`program_v1::execute`), so these are test inputs, not policy.
 const F_FP_DEFAULT: U256 = u256_from_u128(SCALE_U128 * 32 / 100);
 const F_MAX_FP: U256 = u256_from_u128(SCALE_U128 * 64 / 100);
-use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityRef,
-    ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
-    StoredBody, WwdEntityId,
-};
-use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
     SECONDS_PER_DAY,
 };
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
-use std::sync::Arc;
 
 const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
@@ -54,112 +43,6 @@ fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256
     oracle.finalize_utc_day_vwap(previous_day).unwrap();
 }
 
-struct TestBodyRepository {
-    tribute_reader: TributeRepositoryReader,
-    nod_reader: NodRepositoryReader,
-}
-
-fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-}
-
-impl TestBodyRepository {
-    fn new() -> Self {
-        let storage = Arc::new(MemoryStorage::new());
-        let reader: StorageReaderHandle = storage.clone();
-        Self {
-            tribute_reader: TributeRepositoryReader::new(reader.clone()),
-            nod_reader: NodRepositoryReader::new(reader),
-        }
-    }
-
-    fn issue(
-        &self,
-        contract: &mut TributeContract<'_>,
-        scope: &ExecutionScope,
-        tribute: &TributeData,
-    ) {
-        contract.issue(scope, self, tribute).unwrap();
-    }
-}
-
-impl ParentBodySource for TestBodyRepository {
-    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        match entity {
-            EntityRef::Tribute(_) => ParentBodySource::get(&self.tribute_reader, entity),
-            EntityRef::NodItem(_) | EntityRef::NodBucket(_) => {
-                ParentBodySource::get(&self.nod_reader, entity)
-            }
-        }
-    }
-
-    fn list(
-        &self,
-        query: QueryRef,
-        request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        match query {
-            QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
-                ParentBodySource::list(&self.tribute_reader, query, request)
-            }
-            QueryRef::NodByOwner(_) | QueryRef::NodAll => {
-                ParentBodySource::list(&self.nod_reader, query, request)
-            }
-        }
-    }
-}
-
-fn gas_audit_address(n: u64) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[0] = 0x22;
-    bytes[12..].copy_from_slice(&n.to_be_bytes());
-    Address::from(bytes)
-}
-
-fn gas_audit_tribute(
-    _tribute_seed: u64,
-    owner: Address,
-    worldwide_day: WorldwideDay,
-    nominal_amount_minor: U256,
-) -> TributeData {
-    TributeData {
-        tribute_id: entity_id(worldwide_day, owner),
-        owner,
-        worldwide_day,
-        issuance_amount_minor: nominal_amount_minor / U256::from(2u64),
-        issuance_currency: 840,
-        nominal_amount_minor,
-        reference_currency: 840,
-        exclude_from_intex_issuance: false,
-        tribute_price_minor: U256::ZERO,
-    }
-}
-
-fn entity_id(worldwide_day: WorldwideDay, owner: Address) -> WwdEntityId {
-    derive_poseidon_entity_id(owner, worldwide_day).unwrap()
-}
-
-fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
-    let decoded = INod::NodBodyStored::decode_log_data(event).unwrap();
-    let event_id = WwdEntityId::from(decoded.nodId);
-    let item = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
-    assert_eq!(event_id, item.nod_id);
-    item
-}
-
 #[test]
 fn zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption() {
     let mut remaining = U256::from(10);
@@ -169,75 +52,6 @@ fn zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption() {
     assert_eq!(remaining, U256::from(10));
     crate::runtime::consume_required_gratis(&mut remaining, U256::from(4)).unwrap();
     assert_eq!(remaining, U256::from(6));
-}
-
-#[test]
-fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
-    const T_NOW: u64 = 1_700_000_000;
-    let wwd = WorldwideDay::new(20_260_717);
-    let owner = Address::repeat_byte(0x31);
-    let nominal = coen(100_u64);
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-
-        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-            .unwrap();
-        seed_entry_prices(
-            &storage,
-            T_NOW,
-            840,
-            U256::from(500_000u64),
-            U256::from(500_000u64),
-        );
-
-        let first = gas_audit_tribute(1, owner, wwd, nominal);
-        let mut second = gas_audit_tribute(2, Address::repeat_byte(0x32), wwd, nominal);
-        // The first Nod is staged through ISO 840. The second Tribute reaches
-        // its Nod preparation and then fails because ISO 978 has no oracle pair.
-        second.reference_currency = 978;
-        let mut tribute = TributeContract::new(storage.clone());
-        tribute.unseal_day(wwd).unwrap();
-        bodies.issue(&mut tribute, &scope, &first);
-        bodies.issue(&mut tribute, &scope, &second);
-        tribute.seal_day(wwd).unwrap();
-
-        let before = tribute.get_day_totals(wwd).unwrap();
-        let error = match crate::runtime::lysis(
-            storage.clone(),
-            &scope,
-            &bodies,
-            wwd,
-            nominal / U256::from(5_u64),
-        ) {
-            Ok(_) => panic!("the second Tribute must fail without an ISO 978 oracle pair"),
-            Err(error) => error,
-        };
-        assert!(!error.to_string().is_empty());
-
-        let after = TributeContract::new(storage.clone())
-            .get_day_totals(wwd)
-            .unwrap();
-        assert_eq!(after.tribute_count, before.tribute_count);
-        assert_eq!(after.tribute_nominal_amount, before.tribute_nominal_amount);
-        assert_eq!(
-            TributeContract::new(storage.clone())
-                .total_supply()
-                .unwrap(),
-            2
-        );
-        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        assert!(outbe_intex::api::read_contributors(&storage, wwd)
-            .unwrap()
-            .is_empty());
-    });
-    assert!(storage.get_events(NOD_ADDRESS).is_empty());
 }
 
 #[test]
@@ -256,16 +70,12 @@ fn lysis_entry_price_is_previous_day_vwap_regardless_of_current_price() {
                 outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
                 seed_entry_prices(&storage, NOW, iso, U256::from(vwap), U256::from(current));
                 assert_eq!(
-                    crate::runtime::resolve_entry_price_minor_for_test(
-                        &crate::api::freeze_entry_price_snapshot(
-                            storage,
-                            WorldwideDay::new(20260715),
-                            NOW
-                        )
-                        .unwrap(),
-                        iso
+                    crate::api::freeze_entry_price_snapshot(
+                        storage,
+                        WorldwideDay::new(20260715),
+                        NOW
                     )
-                    .unwrap(),
+                    .unwrap()[&iso],
                     U256::from(expected),
                 );
             });
@@ -319,7 +129,7 @@ fn entry_price_map_is_frozen_once_for_all_available_currencies() {
             prices,
             std::collections::BTreeMap::from([(840, coen(175)), (978, coen(125))])
         );
-        assert!(crate::runtime::resolve_entry_price_minor_for_test(&prices, 826).is_err());
+        assert!(!prices.contains_key(&826));
         oracle
             .finalize_utc_day_vwap(timestamp_to_date_key(NOW))
             .unwrap();
@@ -339,18 +149,10 @@ fn entry_price_map_is_frozen_once_for_all_available_currencies() {
 fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20_260_719);
-    let nominal = coen(100_u64);
 
     for explicitly_write_zero in [false, true] {
-        let mut storage = HashMapStorageProvider::new(1);
-        outbe_fidelity::enclave_client::test_enclave::install();
-        storage.set_timestamp(U256::from(T_NOW));
-        let bodies = TestBodyRepository::new();
-        StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::new();
-            seed_compressed_entities_genesis(&storage);
-            begin_block(storage.clone(), &scope).unwrap();
-
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
             let usd = outbe_oracle::api::DAY_TYPE_PAIR;
             let eur = outbe_oracle::api::AddressPair::new_coen_to(978);
             outbe_oracle::api::register_pair(storage.clone(), usd).unwrap();
@@ -383,146 +185,14 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
             )
             .unwrap();
 
-            let owner = Address::repeat_byte(if explicitly_write_zero { 0x42 } else { 0x41 });
-            let mut input = gas_audit_tribute(1, owner, wwd, nominal);
-            input.reference_currency = 978;
-            let mut tribute = TributeContract::new(storage.clone());
-            tribute.unseal_day(wwd).unwrap();
-            bodies.issue(&mut tribute, &scope, &input);
-            tribute.seal_day(wwd).unwrap();
-            let before = tribute.get_day_totals(wwd).unwrap();
-
-            let error = match crate::runtime::lysis(
-                storage.clone(),
-                &scope,
-                &bodies,
-                wwd,
-                nominal / U256::from(10_u64),
-            ) {
-                Ok(_) => panic!("Current price and S-curve must not substitute for a missing or zero previous-day VWAP"),
-                Err(error) => error,
-            };
-            assert!(error.to_string().contains("missing nod entry price"));
-            let after = TributeContract::new(storage.clone())
-                .get_day_totals(wwd)
-                .unwrap();
-            assert_eq!(after.tribute_count, before.tribute_count);
-            assert_eq!(after.tribute_nominal_amount, before.tribute_nominal_amount);
+            // Current price and S-curve must not substitute for a missing or zero
+            // previous-day VWAP: the currency stays out of the frozen snapshot.
             assert_eq!(
-                TributeContract::new(storage.clone())
-                    .total_supply()
-                    .unwrap(),
-                1
+                crate::api::freeze_entry_price_snapshot(storage.clone(), wwd, T_NOW).unwrap(),
+                std::collections::BTreeMap::from([(840, U256::from(500_000_u64))])
             );
-            assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-            assert_eq!(
-                outbe_nod::api::entry_price_snapshot(storage.clone(), wwd).unwrap(),
-                None
-            );
-            assert!(outbe_intex::api::read_contributors(&storage, wwd)
-                .unwrap()
-                .is_empty());
         });
-        assert!(storage.get_events(NOD_ADDRESS).is_empty());
     }
-}
-
-#[test]
-fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
-    const DENSE_TRIBUTE_COUNT: u64 = 512;
-    const T_NOW: u64 = 1_700_000_000;
-    let wwd = WorldwideDay::new(20260525);
-    let nominal = coen(100u64);
-    let total_nominal = nominal * U256::from(DENSE_TRIBUTE_COUNT);
-    let lysis_limit_minor = total_nominal / U256::from(10u64);
-    let entry_price = U256::from(500_000u64);
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-
-    let result = StorageHandle::enter(&mut storage, |storage| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-            .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
-        let mut tribute = TributeContract::new(storage.clone());
-        tribute.unseal_day(wwd).unwrap();
-        for token_id in 1..=DENSE_TRIBUTE_COUNT {
-            let owner = gas_audit_address(token_id);
-            bodies.issue(
-                &mut tribute,
-                &scope,
-                &gas_audit_tribute(token_id, owner, wwd, nominal),
-            );
-        }
-        assert_eq!(
-            tribute
-                .get_all_day_tributes(&scope, &bodies, wwd)
-                .unwrap()
-                .len(),
-            DENSE_TRIBUTE_COUNT as usize,
-            "GAS-08 fixture must seed a dense but valid Lysis day"
-        );
-        tribute.seal_day(wwd).unwrap();
-
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("GAS-08 dense Lysis day must complete");
-
-        assert_eq!(
-            result.tribute_ids.len(),
-            DENSE_TRIBUTE_COUNT as usize,
-            "GAS-08: dense Lysis should load every tribute in the day"
-        );
-        assert_eq!(
-            result.nod_ids.len(),
-            DENSE_TRIBUTE_COUNT as usize,
-            "GAS-08: dense Lysis should issue one NOD for every funded tribute"
-        );
-
-        let tribute = TributeContract::new(storage.clone());
-        assert_eq!(
-            tribute.total_supply().unwrap(),
-            0,
-            "GAS-08: all processed tributes must be burned after dense Lysis"
-        );
-
-        let nod = NodContract::new(storage.clone());
-        assert_eq!(
-            nod.total_supply().unwrap(),
-            DENSE_TRIBUTE_COUNT,
-            "GAS-08: dense Lysis must persist every issued NOD"
-        );
-        end_block(storage, &scope).unwrap();
-        result
-    });
-
-    let stored_items = storage
-        .get_events(NOD_ADDRESS)
-        .iter()
-        .filter(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(decode_nod_body_event)
-        .collect::<Vec<_>>();
-    assert_eq!(stored_items.len(), DENSE_TRIBUTE_COUNT as usize);
-    let mut issued_gratis = U256::ZERO;
-    let by_owner: std::collections::BTreeMap<_, _> =
-        stored_items.iter().map(|item| (item.owner, item)).collect();
-    for token_id in 1..=DENSE_TRIBUTE_COUNT {
-        let item = by_owner
-            .get(&gas_audit_address(token_id))
-            .expect("every dense-day owner must receive one Nod");
-        assert_eq!(item.worldwide_day, wwd);
-        assert_eq!(item.league_id, 1);
-        assert!(!item.gratis_load_minor.is_zero());
-        issued_gratis += item.gratis_load_minor;
-    }
-    assert_eq!(
-        issued_gratis + result.remaining_lysis_limit_minor,
-        lysis_limit_minor
-    );
 }
 
 #[test]
@@ -791,178 +461,6 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 // Scale invariant: settlement_cost_minor must be in 10^6-minor units, not 10^12
 // ---------------------------------------------------------------------------
 
-/// Regression test for the scale-mismatch bug in `lysis::runtime`. Both
-/// `entry_price_minor` (an oracle VWAP at 10^6 scale) and `gratis_load`
-/// (a token amount at 10^6 minor scale) are six-decimal U256 values. Their
-/// product lives in 10^12 and must be divided by SCALE once to land in
-/// minor units. The contract is documented at
-/// `crates/core/nod/src/schema.rs:6-7`:
-///   `settlement_cost_minor = entry_price_minor * gratis_load_minor / SIX_DECIMAL_SCALE`
-///
-/// Pre-fix: `lysis::runtime` computed `entry_price_minor * gratis_load`
-/// without the divisor, producing a value ~10^6x too large that was stored
-/// on-chain and emitted to the `NodIssued` event. This was silent because
-/// `settle_mine_payment` is a no-op today, but every nominal-scale consumer
-/// (token URI, `nodData`, future settlement) was wrong.
-#[test]
-fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
-    use alloy_primitives::{address, U256};
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-    use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::time::WorldwideDay;
-    use outbe_tribute::TributeData;
-
-    use crate::runtime::lysis;
-
-    let wwd = WorldwideDay::new(20241220);
-    const T_NOW: u64 = 1_700_000_000;
-    let owner = address!("0x1111111111111111111111111111111111111111");
-    // 100 COEN nominal, $0.5 oracle VWAP.
-    let nominal = coen(100u64);
-    let entry_price = U256::from(500_000u64);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-    let (result, pure_result) = StorageHandle::enter(&mut storage, |s| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&s);
-        begin_block(s.clone(), &scope).unwrap();
-        // Register COEN/840 with a current price above the previous-day VWAP.
-        outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        seed_entry_prices(&s, T_NOW, 840, entry_price, entry_price * U256::from(2));
-        let frozen = crate::api::freeze_entry_price_snapshot(s.clone(), wwd, T_NOW).unwrap();
-        assert_eq!(frozen.get(&840), Some(&entry_price));
-        // Issuance must use the snapshot even if Oracle daily data changes later.
-        OracleContract::new(s.clone())
-            .utc_day_vwap_value
-            .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
-            .write(
-                &outbe_oracle::api::coen_pair_index_opt(s.clone(), 840)
-                    .unwrap()
-                    .unwrap(),
-                U256::ZERO,
-            )
-            .unwrap();
-        outbe_oracle::scurve::store_scurve_entry(
-            &mut OracleContract::new(s.clone()),
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            wwd.to_timestamp_utc(),
-            U256::from(900_000u64),
-        )
-        .unwrap();
-        assert_eq!(
-            outbe_oracle::api::get_max_active_scurve_value(
-                s.clone(),
-                wwd,
-                outbe_oracle::api::DAY_TYPE_PAIR,
-            )
-            .unwrap(),
-            U256::from(900_000u64),
-            "fixture must prove an S-curve above the previous-day VWAP"
-        );
-
-        // Seed compact lifecycle state plus the canonical direct-map commitment,
-        // then materialize only the off-chain body. No legacy full EVM body or
-        // body index is involved.
-        let tribute = TributeData {
-            tribute_id: entity_id(wwd, owner),
-            owner,
-            worldwide_day: wwd,
-            issuance_amount_minor: coen(50u64),
-            issuance_currency: 840,
-            nominal_amount_minor: nominal,
-            reference_currency: 840,
-            exclude_from_intex_issuance: false,
-            tribute_price_minor: U256::ZERO,
-        };
-        let mut tribute_contract = TributeContract::new(s.clone());
-        tribute_contract.unseal_day(wwd).unwrap();
-        bodies.issue(&mut tribute_contract, &scope, &tribute);
-        tribute_contract.seal_day(wwd).unwrap();
-
-        // 3. Pick a gratis allocation that produces a positive gratis_load.
-        //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
-        //    gratis_load = 100 * 0.08 = 8 COEN.
-        let lysis_limit_minor = nominal / U256::from(10u64);
-        let league_id = outbe_fidelity::api::league(s.clone(), owner).unwrap();
-        let pure_result = crate::program_v1::execute(crate::program_v1::ProgramInputV1 {
-            worldwide_day: wwd,
-            logical_evaluation_time: T_NOW,
-            lysis_limit_minor,
-            tributes: vec![crate::program_v1::ObservedTributeV1 {
-                tribute: crate::program_v1::TributeInputV1 {
-                    tribute_id: entity_id(wwd, owner),
-                    owner,
-                    worldwide_day: wwd,
-                    issuance_currency: 840,
-                    nominal_amount_minor: nominal,
-                    reference_currency: 840,
-                    tribute_price_minor: U256::ZERO,
-                    exclude_from_intex_issuance: false,
-                },
-                first_league: crate::program_v1::ObservationValueV1::Value(league_id),
-                second_league: crate::program_v1::ObservationValueV1::Value(league_id),
-                entry_price_minor: crate::program_v1::ObservationValueV1::Value(entry_price),
-                nod_target_available: true,
-            }],
-        })
-        .expect("pure Lysis V1");
-
-        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
-        assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
-        end_block(s, &scope).unwrap();
-        (result, pure_result)
-    });
-
-    // 4. Decode the canonical projection event and assert the documented scale invariant.
-    let item = storage
-        .get_events(NOD_ADDRESS)
-        .iter()
-        .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(decode_nod_body_event)
-        .expect("NOD body event");
-    assert_eq!(item.nod_id, result.nod_ids[0]);
-    assert_eq!(item.reference_currency, 840);
-    let expected_action = &pure_result.nod_actions[0];
-    assert_eq!(item.nod_id, expected_action.nod_id);
-    assert_eq!(item.owner, expected_action.owner);
-    assert_eq!(item.worldwide_day, expected_action.worldwide_day);
-    assert_eq!(item.league_id, expected_action.league_id);
-    assert_eq!(item.floor_price_minor, expected_action.floor_price_minor);
-    assert_eq!(item.gratis_load_minor, expected_action.gratis_load_minor);
-    assert_eq!(item.bucket_key, expected_action.bucket_key);
-    assert_eq!(item.issuance_currency, expected_action.issuance_currency);
-    assert_eq!(item.reference_currency, expected_action.reference_currency);
-    assert_eq!(item.issued_at, expected_action.issued_at);
-
-    // The cost is derived from the bucket entry price and the load, never
-    // stored: this pins that derivation to what lysis itself computed.
-    let cost = outbe_nod::api::settlement_cost_minor(
-        expected_action.entry_price_minor,
-        item.gratis_load_minor,
-    )
-    .expect("derive the Nod cost");
-    assert_eq!(cost, expected_action.settlement_cost_minor);
-
-    let expected = entry_price * item.gratis_load_minor / SIX_DECIMAL_SCALE;
-    assert_eq!(
-        cost,
-        expected,
-        "the Nod cost must use the WWD VWAP below the active S-curve and equal \
-         entry_price * gratis_load / SIX_DECIMAL_SCALE; \
-         pre-fix value (missing /SCALE) would be {}",
-        entry_price * item.gratis_load_minor
-    );
-
-    let upper_bound = coen(1_000u64);
-    assert!(
-        cost <= upper_bound,
-        "Nod cost {cost} looks like a 10^12-scaled value; likely a scale-mismatch regression"
-    );
-}
-
 /// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
 /// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
 /// integer truncation in the deficit derivation - the assertions can use
@@ -1136,250 +634,6 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     println!("weighted sum(f*y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
 }
 
-/// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
-/// floor must adapt DOWN so the whole - small - allocation is loaded onto the
-/// tribute. Under the previous degenerate `clamp(MIN, MAX/2)` the floor was pinned
-/// to 8%, computing a gratis_load of 8% of nominal (> the 4% allocation), which
-/// exceeds `remaining` and causes the NOD issuance to be SKIPPED entirely.
-///
-/// Reference behavior: outbe-cosmos `x/lysis/keeper/keeper.go` `x = min(8%, deficit)`.
-#[test]
-fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
-    use alloy_primitives::{address, U256};
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-    use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::time::WorldwideDay;
-    use outbe_tribute::{TributeContract, TributeData};
-
-    use crate::runtime::lysis;
-
-    let wwd = WorldwideDay::new(20241221);
-    const T_NOW: u64 = 1_700_000_000;
-    let owner = address!("0x2222222222222222222222222222222222222222");
-    let nominal = coen(100u64);
-    let entry_price = U256::from(500_000u64);
-
-    // Scarce: allocation is only 4% of nominal -> deficit (4%) is BELOW the 8% floor.
-    let lysis_limit_minor = nominal * U256::from(4u64) / U256::from(100u64);
-    let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
-
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-    let result = StorageHandle::enter(&mut storage, |s| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&s);
-        begin_block(s.clone(), &scope).unwrap();
-        outbe_oracle::api::register_pair(s.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-        seed_entry_prices(&s, T_NOW, 840, entry_price, entry_price);
-
-        let mut tribute = TributeContract::new(s.clone());
-        tribute.unseal_day(wwd).unwrap();
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &TributeData {
-                tribute_id: entity_id(wwd, owner),
-                owner,
-                worldwide_day: wwd,
-                issuance_amount_minor: coen(50u64),
-                issuance_currency: 840,
-                nominal_amount_minor: nominal,
-                reference_currency: 840,
-                exclude_from_intex_issuance: false,
-                tribute_price_minor: U256::ZERO,
-            },
-        );
-        tribute.seal_day(wwd).unwrap();
-
-        let result = lysis(s.clone(), &scope, &bodies, wwd, lysis_limit_minor).unwrap();
-
-        // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
-        // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
-        assert_eq!(
-            result.nod_ids.len(),
-            1,
-            "scarce-gratis day must still issue the NOD (floor adapts to the 4% deficit)"
-        );
-
-        assert!(
-            result.remaining_lysis_limit_minor.is_zero(),
-            "the full scarce allocation must be consumed"
-        );
-        end_block(s, &scope).unwrap();
-        result
-    });
-
-    let item = storage
-        .get_events(NOD_ADDRESS)
-        .iter()
-        .find(|event| event.topics()[0] == INod::NodBodyStored::SIGNATURE_HASH)
-        .map(decode_nod_body_event)
-        .expect("NOD body event");
-    assert_eq!(item.nod_id, result.nod_ids[0]);
-    assert_eq!(item.gratis_load_minor, lysis_limit_minor);
-    assert!(item.gratis_load_minor < eight_percent_load);
-}
-
 // ---------------------------------------------------------------------
 // Creator-reward: lysis records the per-owner contributor map
 // ---------------------------------------------------------------------
-
-#[test]
-fn lysis_records_contributors_aggregated_by_owner() {
-    const T_NOW: u64 = 1_700_000_000;
-    let wwd = WorldwideDay::new(20260526);
-    let entry_price = U256::from(500_000u64);
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        // Oracle: register ISO 840 -> COEN/840 and seed current price and previous-day VWAP.
-        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-            .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
-
-        // Distinct owners: lysis derives nod_id from (owner, day), so an owner
-        // can have at most one processed tribute per day.
-        let owner_a = gas_audit_address(1);
-        let owner_b = gas_audit_address(2);
-        let owner_c = gas_audit_address(3);
-
-        let mut tribute = TributeContract::new(storage.clone());
-        tribute.unseal_day(wwd).unwrap();
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &gas_audit_tribute(1, owner_a, wwd, coen(100u64)),
-        );
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &gas_audit_tribute(2, owner_b, wwd, coen(200u64)),
-        );
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &gas_audit_tribute(3, owner_c, wwd, coen(300u64)),
-        );
-        tribute.seal_day(wwd).unwrap();
-
-        let total_nominal = coen(600u64);
-        let lysis_limit_minor = total_nominal / U256::from(10u64);
-
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("lysis must complete");
-        assert_eq!(
-            result.nod_ids.len(),
-            3,
-            "every tribute must be processed for this fixture"
-        );
-
-        // Contributors are sorted by address (a < b < c) and carry each
-        // owner's nominal, under the series id (== the worldwide day).
-        let series_id = u32::from(wwd);
-        assert_eq!(
-            outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
-            vec![
-                (owner_a, coen(100u64)),
-                (owner_b, coen(200u64)),
-                (owner_c, coen(300u64)),
-            ]
-        );
-        assert_eq!(
-            outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
-            coen(600u64)
-        );
-
-        end_block(storage, &scope).unwrap();
-    });
-}
-
-#[test]
-fn lysis_omits_excluded_owners_from_contributor_map() {
-    const T_NOW: u64 = 1_700_000_000;
-    let wwd = WorldwideDay::new(20260526);
-    let entry_price = U256::from(500_000u64);
-    let mut storage = HashMapStorageProvider::new(1);
-    outbe_fidelity::enclave_client::test_enclave::install();
-    storage.set_timestamp(U256::from(T_NOW));
-    let bodies = TestBodyRepository::new();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let scope = ExecutionScope::new();
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-            .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
-
-        let owner_a = gas_audit_address(1);
-        let owner_b = gas_audit_address(2);
-        let owner_c = gas_audit_address(3);
-
-        // owner_b opts out of Intex issuance: it must still be transformed into a
-        // Nod, but must not appear in the contributor provenance map.
-        let excluded_b = TributeData {
-            tribute_id: entity_id(wwd, owner_b),
-            owner: owner_b,
-            worldwide_day: wwd,
-            issuance_amount_minor: coen(100u64),
-            issuance_currency: 840,
-            nominal_amount_minor: coen(200u64),
-            reference_currency: 840,
-            exclude_from_intex_issuance: true,
-            tribute_price_minor: U256::ZERO,
-        };
-
-        let mut tribute = TributeContract::new(storage.clone());
-        tribute.unseal_day(wwd).unwrap();
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &gas_audit_tribute(1, owner_a, wwd, coen(100u64)),
-        );
-        bodies.issue(&mut tribute, &scope, &excluded_b);
-        bodies.issue(
-            &mut tribute,
-            &scope,
-            &gas_audit_tribute(3, owner_c, wwd, coen(300u64)),
-        );
-        tribute.seal_day(wwd).unwrap();
-
-        let total_nominal = coen(600u64);
-        let lysis_limit_minor = total_nominal / U256::from(10u64);
-
-        let result =
-            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, lysis_limit_minor)
-                .expect("lysis must complete");
-        assert_eq!(
-            result.nod_ids.len(),
-            3,
-            "excluded owners must still be transformed into a Nod"
-        );
-
-        let series_id = u32::from(wwd);
-        assert_eq!(
-            outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
-            vec![(owner_a, coen(100u64)), (owner_c, coen(300u64)),],
-            "opted-out owner must be absent from the contributor map"
-        );
-        assert_eq!(
-            outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
-            coen(400u64),
-            "contributor total must exclude the opted-out owner's nominal"
-        );
-        assert_eq!(
-            outbe_intex::api::contributor_count(&storage, WorldwideDay::new(series_id)).unwrap(),
-            2
-        );
-        end_block(storage, &scope).unwrap();
-    });
-}

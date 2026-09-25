@@ -71,11 +71,13 @@ use outbe_validatorset::{
 };
 
 #[cfg(test)]
+use crate::constants::{FORMING_PERIOD_HOURS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS};
+#[cfg(test)]
 use crate::errors::MetadosisError;
 #[cfg(test)]
 use crate::schema::{DayLimitFormationReceiptStateEntryExt, WorldwideDayEntryExt};
 use crate::{
-    constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
+    constants::MAX_ACTIVE_WWDS,
     ocomp::{
         activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
@@ -134,6 +136,7 @@ pub(crate) fn inject_receipt_fault(
 /// `test-utils` builds so predecessor state and intentional corruption remain
 /// owned by one private module instead of leaking through `MetadosisContract`.
 pub(crate) trait FixtureKernelExt {
+    #[cfg(test)]
     fn create_worldwide_day(
         &mut self,
         wwd: WorldwideDay,
@@ -218,6 +221,7 @@ pub(crate) trait FixtureKernelExt {
 }
 
 impl FixtureKernelExt for MetadosisContract<'_> {
+    #[cfg(test)]
     fn create_worldwide_day(
         &mut self,
         wwd: WorldwideDay,

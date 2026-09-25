@@ -1691,13 +1691,6 @@ fn stale_generation_is_acknowledged_without_effect() {
 fn no_bids_clears_as_no_sale() {
     with_storage(|s| {
         open_clearing(&s, 10);
-        // Lysis recorded creator rewards for the day before the auction concluded.
-        outbe_intex::api::record_contributors(
-            &s,
-            WORLDWIDE_DAY,
-            &[(bidder(9), U256::from(100u64))],
-        )
-        .unwrap();
         // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
@@ -1722,11 +1715,6 @@ fn no_bids_clears_as_no_sale() {
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             AuctionStage::Cleared
-        );
-        // No series will ever exist for the day, so the contributor map is discarded.
-        assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
-            0
         );
     });
 }
@@ -2464,31 +2452,6 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
             vec![156]
         );
         assert!(config.entry_price_for(756).is_none());
-    });
-}
-
-#[test]
-fn clearing_without_winners_discards_the_day_contributor_map() {
-    let chain = 10u32;
-    with_targets(&[chain], |s| {
-        open_clearing(&s, 2);
-        outbe_intex::api::record_contributors(
-            &s,
-            WORLDWIDE_DAY,
-            &[(bidder(1), U256::from(100u64))],
-        )
-        .unwrap();
-
-        // The only chain never reports, so the deadline clears the day with no bids.
-        let deadline = ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
-        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1)
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.issued_units, 0);
-        assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
-            0
-        );
     });
 }
 

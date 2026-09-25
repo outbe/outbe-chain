@@ -100,19 +100,11 @@ mod kernel {
         committee::OcompKeyRegistrationV1, intent::JobIntentV1, receipts::ActivationOutcome,
         result::LysisResultV1, vote::ResultVoteV1, SchemaLimits,
     };
-    use outbe_primitives::time::WorldwideDay;
-    use outbe_primitives::{
-        error::{PrecompileError, Result},
-        storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag},
-    };
+    use outbe_primitives::error::Result;
 
     use crate::{
-        aggregate::{ValidatedWwdAggregate, WwdMembership, WwdStatus},
-        fixture_kernel::{
-            fork_install_fixture, ActivationFixture, FixtureKernelExt, RollbackSnapshot,
-        },
+        fixture_kernel::{fork_install_fixture, ActivationFixture, RollbackSnapshot},
         ocomp::schema::poc_schema_limits,
-        schema::MetadosisContract,
         OcompForkInstallClassification, OcompForkInstallV1,
     };
 
@@ -121,53 +113,6 @@ mod kernel {
 
     pub(super) struct ActivationKernel {
         inner: ActivationFixture,
-    }
-
-    pub(super) struct EmergencyFailKernel {
-        provider: HashMapStorageProvider,
-        worldwide_day: WorldwideDay,
-    }
-
-    impl EmergencyFailKernel {
-        pub(super) fn forming(
-            worldwide_day: WorldwideDay,
-            chain_id: u64,
-            block_number: u64,
-        ) -> Result<Self> {
-            if !worldwide_day.is_valid() {
-                return Err(PrecompileError::Revert(
-                    "emergency fixture requires a valid WorldwideDay".into(),
-                ));
-            }
-            let mut provider = HashMapStorageProvider::new(chain_id);
-            provider.set_block_number(block_number);
-            provider.enter(|storage| {
-                let mut metadosis = MetadosisContract::new(storage);
-                metadosis.create_worldwide_day(worldwide_day, 1, 1, 1)?;
-                metadosis.add_active_wwd(worldwide_day)
-            })?;
-            Ok(Self {
-                provider,
-                worldwide_day,
-            })
-        }
-
-        pub(super) fn fail(&mut self) -> Result<()> {
-            self.provider
-                .enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-            self.provider
-                .enter(|storage| crate::commit::commit_emergency_fail(storage, self.worldwide_day))
-        }
-
-        pub(super) fn observation(&mut self) -> Result<(WwdStatus, WwdMembership)> {
-            self.provider.enter(|storage| {
-                let aggregate = ValidatedWwdAggregate::load_and_validate(storage)?;
-                let projection = aggregate.record(self.worldwide_day).ok_or_else(|| {
-                    PrecompileError::Fatal("emergency fixture WWD disappeared".into())
-                })?;
-                Ok((projection.status, projection.membership))
-            })
-        }
     }
 
     impl ActivationKernel {
@@ -261,38 +206,6 @@ impl fmt::Debug for ActivationCheckpoint {
             .debug_tuple("ActivationCheckpoint")
             .field(&"<opaque>")
             .finish()
-    }
-}
-
-/// Typed durable observation of the commit-owned emergency transition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EmergencyFailObservation {
-    pub status: crate::WwdStatus,
-    pub membership: crate::WwdMembership,
-}
-
-/// Opaque scenario for the broad, private emergency terminalization command.
-pub struct EmergencyFailScenario {
-    inner: kernel::EmergencyFailKernel,
-}
-
-impl EmergencyFailScenario {
-    /// Creates one valid active FORMING predecessor without exposing storage.
-    pub fn forming(worldwide_day: WorldwideDay, chain_id: u64, block_number: u64) -> Result<Self> {
-        Ok(Self {
-            inner: kernel::EmergencyFailKernel::forming(worldwide_day, chain_id, block_number)?,
-        })
-    }
-
-    /// Executes the commit-owned production emergency command.
-    pub fn fail(&mut self) -> Result<()> {
-        self.inner.fail()
-    }
-
-    /// Reads only the typed outer status and membership after the command.
-    pub fn observation(&mut self) -> Result<EmergencyFailObservation> {
-        let (status, membership) = self.inner.observation()?;
-        Ok(EmergencyFailObservation { status, membership })
     }
 }
 
