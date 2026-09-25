@@ -382,7 +382,7 @@ fn pledge_rejects_a_quote_that_rounds_to_zero_without_changing_balances() {
             auth(GratisOp::Pledge, alice(), U256::ONE, 1),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("amount"), "{error}");
+        assert!(error.to_string().contains("rounds to zero"), "{error}");
         assert_eq!(view_balance(&storage, alice()), U256::ONE);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
@@ -667,7 +667,7 @@ fn rejects_msg_value() {
 }
 
 #[test]
-fn pledge_validates_metadata_and_vault_before_locking() {
+fn pledge_rejects_invalid_metadata_missing_vault_or_unavailable_price_before_locking() {
     for (selector, value, expected) in [
         (IERC20::decimalsCall::SELECTOR, iso_word(19), "unsupported"),
         (
@@ -688,7 +688,8 @@ fn pledge_validates_metadata_and_vault_before_locking() {
         (
             crate::sol_ext::IReferenceCurrency::isoCodeCall::SELECTOR,
             iso_word(999),
-            "not a registered",
+            // A decodable currency without a valuation fails at the price read.
+            "valuation price unavailable",
         ),
         (
             IVaultRouter::assetVaultsCountCall::SELECTOR,
