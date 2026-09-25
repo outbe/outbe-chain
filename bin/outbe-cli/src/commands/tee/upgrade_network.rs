@@ -372,13 +372,15 @@ async fn collect_proof(
         load_finalized_admission_anchor_v1(rpc, genesis, finalized_height, context).await?;
 
     let mut next_transition_epoch = 1_u64;
-    let mut admission = None;
-    for height in 1..=finalized_height {
+    let (admission, signing_epoch) =
+        admission_history::certified_admission(rpc, finalized_height).await?;
+    for height in 1..finalized_height {
         let Some(public) = admission_history::admission_public(
             rpc,
             height,
             finalized_height,
             next_transition_epoch,
+            signing_epoch,
         )
         .await?
         else {
@@ -404,10 +406,11 @@ async fn collect_proof(
                     .ok_or_else(|| eyre::eyre!("committee transition epoch overflow"))?;
             }
         }
-        if height == finalized_height {
-            admission = Some(compact);
-        }
     }
+    eyre::ensure!(
+        next_transition_epoch.checked_sub(1) == Some(signing_epoch),
+        "admission certificate committee history is incomplete"
+    );
 
     let registry_account = MptAccountProofV1 {
         nonce: json_hex_u64_field(&opening, "nonce")?,
@@ -432,7 +435,7 @@ async fn collect_proof(
         return Err(eyre::eyre!("eth_getProof omitted a required TeeRegistry slot").into());
     }
     let admission_witness = FinalizedAdmissionWitnessV1 {
-        admission: admission.expect("positive finalized height sets admission proof"),
+        admission,
         registry_account,
         registry_storage,
     }

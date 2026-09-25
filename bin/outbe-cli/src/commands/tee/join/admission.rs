@@ -313,13 +313,15 @@ async fn stream_finalized_admission_attempt_v1(
         admission_history::registry_opening(rpc, finalized_height, &slot_params).await?;
 
     let mut next_transition_epoch = 1_u64;
-    let mut admission = None;
-    for height in 1..=finalized_height {
+    let (admission, signing_epoch) =
+        admission_history::certified_admission(rpc, finalized_height).await?;
+    for height in 1..finalized_height {
         let Some(public) = admission_history::admission_public(
             rpc,
             height,
             finalized_height,
             next_transition_epoch,
+            signing_epoch,
         )
         .await?
         else {
@@ -346,9 +348,9 @@ async fn stream_finalized_admission_attempt_v1(
                     .ok_or_else(|| eyre::eyre!("committee transition epoch overflow"))?;
             }
         }
-        if height == finalized_height {
-            admission = Some(compact);
-        }
+    }
+    if next_transition_epoch.checked_sub(1) != Some(signing_epoch) {
+        return Err(eyre::eyre!("admission certificate committee history is incomplete").into());
     }
 
     let registry_account = MptAccountProofV1 {
@@ -374,7 +376,7 @@ async fn stream_finalized_admission_attempt_v1(
         return Err(eyre::eyre!("eth_getProof omitted a required TeeRegistry slot").into());
     }
     let admission_witness = FinalizedAdmissionWitnessV1 {
-        admission: admission.expect("positive finalized height sets admission proof"),
+        admission,
         registry_account,
         registry_storage,
     }

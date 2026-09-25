@@ -69,16 +69,18 @@ pub(super) async fn admission_public(
     height: u64,
     finalized_height: u64,
     next_transition_epoch: u64,
+    signing_epoch: u64,
 ) -> Result<Option<serde_json::Value>> {
     eyre::ensure!(
         height > 0 && height <= finalized_height,
         "invalid admission history height"
     );
     if height < finalized_height
-        && !matches!(
-            history_artifact(rpc, height).await?,
-            Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) if epoch == next_transition_epoch
-        )
+        && (next_transition_epoch > signing_epoch
+            || !matches!(
+                history_artifact(rpc, height).await?,
+                Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) if epoch == next_transition_epoch
+            ))
     {
         return Ok(None);
     }
@@ -86,6 +88,23 @@ pub(super) async fn admission_public(
         .await
         .wrap_err_with(|| format!("read required finalization at height {height}"))
         .map(Some)
+}
+
+/// Pin the exact admission certificate before discovering its committee chain.
+/// A preannounce may already exist for a committee that has not started signing;
+/// advancing to that committee would discard the verifier needed by this proof.
+pub(super) async fn certified_admission(
+    rpc: &(impl Rpc + Sync),
+    height: u64,
+) -> Result<(CertifiedHeaderV1, u64)> {
+    let public = rpc
+        .outbe_get_finality_proof(height)
+        .await
+        .wrap_err_with(|| format!("read required admission finalization at height {height}"))?;
+    let (_, admission) = compact_header(&public, height)?;
+    let certificate =
+        outbe_consensus::follow::decode_public_finalization(&admission.finalization, 256)?;
+    Ok((admission, certificate.proposal.round.epoch().get()))
 }
 
 /// Convert RPC transport into the compact proof checked inside the enclave.
@@ -228,7 +247,52 @@ mod tests {
         // MockRpc deliberately has no finalization endpoint. This was the
         // migration failure for an indirectly finalized ordinary block 43.
         let rpc = history_rpc(43, None);
-        assert!(admission_public(&rpc, 43, 48, 1).await.unwrap().is_none());
+        assert!(admission_public(&rpc, 43, 48, 1, 1)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn preannounced_successor_is_not_loaded_before_its_signing_epoch() {
+        // The second hardware upgrade reached a preannounce for epoch 4 while
+        // the admission certificate was still signed by epoch 3. Loading that
+        // transition discarded epoch 3 inside the enclave and broke admission.
+        let rpc = history_rpc(
+            1176,
+            Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+                epoch: 4,
+                outcome: vec![1].into(),
+            }),
+        );
+        assert!(admission_public(&rpc, 1176, 1180, 4, 3)
+            .await
+            .unwrap()
+            .is_none());
+        // Once a certificate really uses epoch 4, its transition is required;
+        // the missing certificate must fail rather than be silently skipped.
+        assert!(admission_public(&rpc, 1176, 1201, 4, 4)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("required finalization at height 1176"));
+    }
+
+    #[tokio::test]
+    async fn epoch_zero_admission_does_not_fetch_unneeded_successor_history() {
+        // No transition is needed for an epoch-0 admission, even when the
+        // untrusted history endpoint is unavailable. The final certificate is
+        // still mandatory and cannot be skipped by the same bound.
+        let rpc = MockRpc::default();
+        assert!(admission_public(&rpc, 275, 280, 1, 0)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(admission_public(&rpc, 280, 280, 1, 0)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("required finalization at height 280"));
     }
 
     #[tokio::test]
@@ -240,12 +304,12 @@ mod tests {
                 outcome: vec![1].into(),
             }),
         );
-        let error = admission_public(&rpc, 43, 48, 1).await.unwrap_err();
+        let error = admission_public(&rpc, 43, 48, 1, 1).await.unwrap_err();
         assert!(error
             .to_string()
             .contains("required finalization at height 43"));
         let rpc = history_rpc(48, None);
-        let error = admission_public(&rpc, 48, 48, 1).await.unwrap_err();
+        let error = admission_public(&rpc, 48, 48, 1, 1).await.unwrap_err();
         assert!(error
             .to_string()
             .contains("required finalization at height 48"));
@@ -254,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_history_height_is_rejected() {
         let rpc = history_rpc(44, None);
-        assert!(admission_public(&rpc, 43, 48, 1)
+        assert!(admission_public(&rpc, 43, 48, 1, 1)
             .await
             .unwrap_err()
             .to_string()
