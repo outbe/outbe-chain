@@ -9,13 +9,6 @@ use crate::{
 };
 
 wire_enum_u8! {
-    pub enum AuctionEntryPriceSource {
-        LastClosedDayVwap = 1,
-        CurrentVwapFallback = 2,
-    }
-}
-
-wire_enum_u8! {
     pub enum DayType {
         Green = 1,
         Red = 2,
@@ -35,25 +28,6 @@ wire_enum_u8! {
 }
 
 wire_struct! {
-    /// One reference currency's price as the oracle read it at pre-admission. No
-    /// auction uses it - Desis prices a day at its start - but the receipt hash
-    /// commits it.
-    pub struct ReferenceEntryPriceV1 {
-        pub reference_currency: u16,
-        pub entry_price_minor: U256,
-        pub source: AuctionEntryPriceSource,
-        pub source_day: u32,
-    }
-}
-
-fn validate_pre_admission_envelope(
-    envelope: &PreAdmissionEnvelopeV1,
-    _limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    envelope.validate_price_table()
-}
-
-wire_struct! {
     pub struct PreAdmissionEnvelopeV1 {
         pub chain_id: u64,
         pub genesis_hash: B256,
@@ -67,7 +41,6 @@ wire_struct! {
         pub fidelity_league_snapshot_root: B256,
         pub oracle_wwd_pair_entries_observed: u32,
         pub active_scurve_entries_observed: u32,
-        pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub oracle_state_version: u64,
         pub fidelity_opening_upper_bound: u32,
         pub oracle_opening_upper_bound: u32,
@@ -79,7 +52,6 @@ wire_struct! {
         pub correctness_profile_id: B256,
         pub capacity_profile_id: B256,
     }
-    validate = validate_pre_admission_envelope;
 }
 impl_top_level_codec!(PreAdmissionEnvelopeV1, PreAdmissionEnvelopeV1);
 
@@ -95,7 +67,6 @@ wire_struct! {
         pub day_gratis_limit_minor: U256,
         pub lysis_limit_minor: U256,
         pub desis_limit_minor: U256,
-        pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub request_limit_split_receipt_hash: B256,
     }
 }
@@ -216,18 +187,6 @@ impl_top_level_codec!(FinalizedIntentProofV1, FinalizedIntentProofV1);
 impl PreAdmissionEnvelopeV1 {
     pub fn envelope_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         hash_framed(HashDomain::PreAdmission, &self.encode_canonical(limits)?)
-    }
-
-    /// Strictly ascending by currency: the rows are hashed in order, so
-    /// two orderings of the same prices would otherwise be two different days.
-    pub fn validate_price_table(&self) -> Result<(), ProtocolError> {
-        for pair in self.auction_entry_prices.windows(2) {
-            require(
-                pair[0].reference_currency < pair[1].reference_currency,
-                "entry prices strictly ordered by currency",
-            )?;
-        }
-        Ok(())
     }
 }
 

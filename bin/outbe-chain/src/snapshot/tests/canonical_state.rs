@@ -545,7 +545,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             day_gratis_limit_minor: U256::from(10),
             lysis_limit_minor: U256::from(10),
             desis_limit_minor: U256::ZERO,
-            auction_entry_prices: Vec::new(),
             request_limit_split_receipt_hash: hash,
         },
         logical_evaluation_height: 90,

@@ -166,10 +166,7 @@ fn build_and_commit_request(
     let candidate_tribute_projection =
         candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-    let oracle = outbe_oracle::api::ocomp_pre_admission_projection(
-        ctx.storage.clone(),
-        ctx.block.timestamp,
-    )?;
+    let oracle = outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone())?;
     // The per-owner league snapshot and its root were committed during the
     // active-phase prepare step (`build_fidelity_league_snapshot`). This terminal
     // request runs after the provisional seal and cannot enumerate tributes, so
@@ -214,10 +211,7 @@ fn build_and_commit_request(
         &PreAdmissionInputs {
             tribute: sealed_tribute_projection,
             fidelity_league_snapshot_root: snapshot_root,
-            oracle: outbe_oracle::api::ocomp_pre_admission_projection(
-                ctx.storage.clone(),
-                ctx.block.timestamp,
-            )?,
+            oracle: outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone())?,
         },
     )?;
     let PreAdmissionDecision::Eligible(sealed_envelope) = sealed_decision else {
@@ -265,7 +259,6 @@ fn build_and_commit_request(
         day_limit,
         lysis_limit_minor,
         nominal_total,
-        auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
     };
 
@@ -339,7 +332,6 @@ fn build_and_commit_request(
             day_gratis_limit_minor: calculation.day_gratis_limit_minor,
             lysis_limit_minor,
             desis_limit_minor: receipt.desis_limit_minor,
-            auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_limit_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: ctx.block.block_number,

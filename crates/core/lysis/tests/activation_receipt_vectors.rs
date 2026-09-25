@@ -292,7 +292,6 @@ fn receipt_verifier_rejects_a_budget_effect_with_a_future_nonce_or_anchor() {
             anchor_fixture.request_receipt.protocol_bundle_hash,
             anchor_fixture.request_receipt.wwd,
             desis_limit_minor,
-            &anchor_fixture.request_receipt.auction_entry_prices,
             anchor_fixture.request_receipt.logical_anchor,
         )
         .unwrap(),

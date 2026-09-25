@@ -22,8 +22,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         let last_closed_start = outbe_primitives::time::date_key_to_utc_timestamp(last_closed);
         let last_closed_price = coen_iso(125);
 
-        let uninitialized =
-            crate::api::ocomp_pre_admission_projection(storage.clone(), timestamp).unwrap();
+        let uninitialized = crate::api::ocomp_pre_admission_projection(storage.clone()).unwrap();
         assert!(!uninitialized.profile_ready);
         assert_eq!(uninitialized.oracle_state_version, 0);
 
@@ -48,37 +47,23 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         .unwrap();
 
         let registered_pairs = oracle.pair_count.read().unwrap();
-        let closed =
-            crate::api::ocomp_pre_admission_projection(storage.clone(), timestamp).unwrap();
+        let closed = crate::api::ocomp_pre_admission_projection(storage.clone()).unwrap();
         assert!(closed.profile_ready);
-        // Only a currency whose own pair closed on the last UTC day is present.
-        assert_eq!(closed.auction_entry_prices.len(), 1);
-        let day_type_row = &closed.auction_entry_prices[0];
-        assert_eq!(
-            day_type_row.reference_currency,
-            crate::constants::DAY_TYPE_ISO
-        );
-        assert_eq!(day_type_row.entry_price_minor, last_closed_price);
-        assert_eq!(
-            day_type_row.source,
-            crate::api::OcompAuctionEntryPriceSource::LastClosedDayVwap
-        );
-        assert_eq!(day_type_row.source_day, last_closed);
         assert_eq!(closed.oracle_state_version, 5);
         // The opening bound is now the registry size, not a per-day entry count.
         assert_eq!(closed.wwd_pair_entries, registered_pairs);
         assert_eq!(closed.active_scurve_entries, 1);
 
-        // The next day's last closed UTC day carries no price, so the day-type row is
-        // omitted rather than substituted: an unpriced day announces itself as empty.
-        let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
-        let unpriced = crate::api::ocomp_pre_admission_projection(storage, next_timestamp).unwrap();
-        assert!(unpriced.profile_ready);
-        assert!(unpriced.auction_entry_prices.is_empty());
-        assert_eq!(unpriced.oracle_state_version, 5);
-        // Registry-derived, so it does not drop to zero on a day with no snapshot.
-        assert_eq!(unpriced.wwd_pair_entries, registered_pairs);
-        assert_eq!(unpriced.active_scurve_entries, 1);
+        // Only a currency whose own pair closed on the UTC day is present.
+        assert_eq!(
+            crate::api::priced_reference_currencies(storage.clone(), last_closed).unwrap(),
+            vec![(crate::constants::DAY_TYPE_ISO, last_closed_price)]
+        );
+        // A day with no price omits the day-type row rather than substituting one.
+        let next_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+        assert!(crate::api::priced_reference_currencies(storage, next_day)
+            .unwrap()
+            .is_empty());
     });
 }
 

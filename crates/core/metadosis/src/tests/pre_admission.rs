@@ -1,8 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{codec::CodecLimits, profile::CapacityProfileV1, SchemaLimits};
-use outbe_oracle::api::{
-    OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection, OcompReferenceEntryPrice,
-};
+use outbe_oracle::api::OcompOraclePreAdmissionProjection;
 use outbe_primitives::error::PrecompileError;
 use outbe_tribute::TributePreAdmissionProjection;
 
@@ -72,12 +70,6 @@ fn inputs() -> PreAdmissionInputs {
         fidelity_league_snapshot_root: B256::repeat_byte(0x6a),
         oracle: OcompOraclePreAdmissionProjection {
             profile_ready: true,
-            auction_entry_prices: vec![OcompReferenceEntryPrice {
-                reference_currency: 840,
-                entry_price_minor: U256::from(12),
-                source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: 20260722,
-            }],
             oracle_state_version: 91,
             wwd_pair_entries: 256,
             active_scurve_entries: 256,
@@ -248,22 +240,4 @@ fn pre_admission_state_version_overflow_is_fatal() {
             Err(PrecompileError::Fatal(_))
         ));
     });
-}
-
-#[test]
-fn a_day_the_oracle_cannot_price_is_admitted_with_an_empty_table() {
-    let mut unpriced = inputs();
-    unpriced.oracle.auction_entry_prices.clear();
-
-    let PreAdmissionDecision::Eligible(envelope) =
-        evaluate_pre_admission(&context(), &unpriced).unwrap()
-    else {
-        panic!("an unpriced day is admitted; the empty table is how Desis is told");
-    };
-    assert!(envelope.auction_entry_prices.is_empty());
-    // Emptiness is a well-formed day, not a malformed envelope: the table only has
-    // to be strictly ascending, and an empty one trivially is.
-    envelope
-        .validate_price_table()
-        .expect("an empty price table is well-formed");
 }

@@ -39,7 +39,6 @@ const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 const LYSIS_LIMIT: U256 = U256::from_limbs([700, 0, 0, 0]);
 const DESIS_LIMIT: U256 = U256::from_limbs([300, 0, 0, 0]);
-const AUCTION_ENTRY_PRICE: U256 = U256::from_limbs([55, 0, 0, 0]);
 
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
     CapacityProfileV1 {
@@ -181,29 +180,12 @@ fn receipt() -> RequestLimitSplitReceiptV1 {
         desis_limit_minor: DESIS_LIMIT,
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
-            desis_request_brief_hash(
-                protocol_bundle_hash,
-                WWD.value(),
-                DESIS_LIMIT,
-                &entry_prices(),
-                REQUEST_TIME,
-            )
-            .unwrap(),
+            desis_request_brief_hash(protocol_bundle_hash, WWD.value(), DESIS_LIMIT, REQUEST_TIME)
+                .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        auction_entry_prices: entry_prices(),
         logical_anchor: REQUEST_TIME,
     }
-}
-
-/// The day's frozen price table for these fixtures.
-fn entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
-    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-        entry_price_minor: AUCTION_ENTRY_PRICE,
-        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: 20_251_231,
-    }]
 }
 
 fn intent(
@@ -238,7 +220,6 @@ fn intent(
             day_gratis_limit_minor: DAY_LIMIT,
             lysis_limit_minor: LYSIS_LIMIT,
             desis_limit_minor: DESIS_LIMIT,
-            auction_entry_prices: entry_prices(),
             request_limit_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: request_height,

@@ -111,12 +111,6 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
             day_gratis_limit_minor: U256::from(20),
             lysis_limit_minor: U256::from(300),
             desis_limit_minor: U256::from(700),
-            auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-                entry_price_minor: U256::from(95),
-                source: AuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: 6,
-            }],
             request_limit_split_receipt_hash: B256::repeat_byte(9),
         },
         logical_evaluation_height: block_number,

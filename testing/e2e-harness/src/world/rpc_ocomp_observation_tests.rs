@@ -45,7 +45,6 @@ fn pending_record() -> OcompJobRecordV1 {
                 day_gratis_limit_minor: U256::ZERO,
                 lysis_limit_minor: U256::ZERO,
                 desis_limit_minor: U256::ZERO,
-                auction_entry_prices: vec![],
                 request_limit_split_receipt_hash: hash(113),
             },
             logical_evaluation_height: 100,

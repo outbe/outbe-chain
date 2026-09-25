@@ -419,17 +419,6 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 
 // --- Auction brief ---
 
-/// The frozen price table an OCOMP request brings: the same single row the
-/// in-process fixtures use, in the wire shape the receipt commits.
-fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
-    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: REFERENCE_ISO,
-        entry_price_minor: U256::from(ENTRY_PRICE),
-        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: WORLDWIDE_DAY.value(),
-    }]
-}
-
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
@@ -504,7 +493,6 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -524,7 +512,7 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
         assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
-        // The receipt commits the price table; the auction does not run on it.
+        // The brief carries no prices; the auction prices the day at its start.
         assert!(contract
             .read_auction_config(WORLDWIDE_DAY)
             .unwrap()
@@ -541,7 +529,6 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -552,7 +539,6 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -578,7 +564,6 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::MAX,
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -635,7 +620,6 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -657,7 +641,6 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -682,7 +665,6 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -702,7 +684,6 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )

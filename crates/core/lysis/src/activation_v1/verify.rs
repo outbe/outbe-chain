@@ -103,7 +103,6 @@ pub fn verify_result(
             day_limit: intent.frozen_metadosis_values.day_limit,
             lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
             desis_limit_minor: intent.frozen_metadosis_values.desis_limit_minor,
-            auction_entry_prices: intent.frozen_metadosis_values.auction_entry_prices.clone(),
             logical_anchor: intent.logical_evaluation_time,
         },
         nod: nod_apply(NodGenerationApplyPartsV1 {
