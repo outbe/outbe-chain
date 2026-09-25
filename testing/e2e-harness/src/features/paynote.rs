@@ -17,6 +17,7 @@ use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
 use outbe_paynote::Field;
 use outbe_paynote::PayNoteSuit;
+use outbe_paynote::PayNoteTree;
 use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
@@ -26,6 +27,8 @@ use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witnes
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
+
+mod capacity;
 
 /// A note this scenario owns: the spend key it was built around plus the
 /// leaf the pool will derive from the deposit.
@@ -122,7 +125,12 @@ pub(crate) fn deposit_and_prove(
 /// against the same root the chain will check it under — including any notes
 /// other scenarios deposited.
 pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address) -> Vec<u8> {
-    let mut tree = new_tree(note.chain_id).expect("paynote tree");
+    let tree = read_tree(world, port, note.chain_id);
+    prove_full_spend(note, owner, &tree)
+}
+
+fn read_tree(world: &World, port: u16, chain_id: u64) -> PayNoteTree {
+    let mut tree = new_tree(chain_id).expect("paynote tree");
     for (index, commitment) in deposited_leaves(world, port) {
         assert_eq!(
             tree.leaves().len(),
@@ -131,8 +139,12 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address)
         );
         tree.append(commitment).expect("append NewNote commitment");
     }
+    tree
+}
+
+fn prove_full_spend(note: &Note, owner: Address, tree: &PayNoteTree) -> Vec<u8> {
     let (leaf_index, auth_path) =
-        witness(&tree, note.commitment).expect("the scenario's own deposit must be in the pool");
+        witness(tree, note.commitment).expect("the scenario's own deposit must be in the pool");
 
     let public = PublicInputs {
         chain_id: note.chain_id,
