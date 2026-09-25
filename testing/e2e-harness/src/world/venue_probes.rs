@@ -367,7 +367,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
                 Some(6) => "issuance instructions".to_owned(),
                 Some(7) => "refund instructions".to_owned(),
                 Some(8) => "mark called".to_owned(),
-                Some(9) => "mark qualified".to_owned(),
+                Some(10) => "bids remaining".to_owned(),
                 Some(11) => "daily vwap".to_owned(),
                 Some(other) => format!("message type {other}"),
                 None => "unreadable message type".to_owned(),
