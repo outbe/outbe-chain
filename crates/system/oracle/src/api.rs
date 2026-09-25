@@ -152,14 +152,15 @@ pub fn four_hour_vwap(
     oracle.four_hour_vwap(pair, end_date)
 }
 
-/// Returns previous 8 hours half-open vwap
-/// ```
+/// Previous half-open eight-hour VWAP, scaled by `SCALE_1E18` (1.0 = 10^18).
+///
+/// The period implementation is pending; currently returns `None`.
+///
 /// | current_timestamp, UTC | Returned period value  |
 /// | --- | --- |
 /// | 00:00 <= time < 08:00 | Previous day's 16:00-24:00 |
 /// | 08:00 <= time < 16:00 | Same day's 00:00-08:00 |
 /// | 16:00 <= time < 24:00 | Same day's 08:00-16:00 |
-/// ```
 pub fn previous_half_open_8hours_vwap(
     storage: StorageHandle,
     pair: AddressPair,

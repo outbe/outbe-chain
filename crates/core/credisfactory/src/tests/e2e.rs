@@ -173,7 +173,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             deploy_smart_account(&storage, bob());
             // The quote floors 13 / 2 to 6, and the note carries that exact amount.
             let reservation_id = seed_reservation(&storage, bob(), principal);
-            let (handle, quoted) = outbe_gratisfactory::runtime::pledge_gratis(
+            let (handle, quoted) = pledge_fixture(
                 storage.clone(),
                 alice(),
                 principal,
@@ -197,6 +197,11 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             )
             .unwrap();
             assert_eq!(disbursed, principal);
+            let accepted = CredisContract::new(storage.clone())
+                .get_position(id)
+                .unwrap();
+            assert_eq!(accepted.entry_price, U256::from(2_166_666));
+            assert_eq!(accepted.issuance_currency, ISSUANCE_ISO);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
             // Positive subunit interest floors to zero; returns ceiling and then cap.
@@ -872,6 +877,9 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
         // Pledged at COEN/840 = 2.0, so entry = principal / gratis = 2.0.
         let (handle, reservation_id) = pledge(&storage, alice(), 1);
 
+        // Both current prices move after acceptance. Neither can change the
+        // principal, asset, collateral, entry or issuance currency on the ticket.
+        set_coen_rate(&storage, U256::from(4_000_000u64));
         // The reference current price moves to 3.0. Yesterday's VWAP stays 2.0.
         set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
 
@@ -895,6 +903,9 @@ fn entry_price_stays_on_the_pledge_when_the_reference_price_moves() {
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.collateral, pledge_cost());
+        assert_eq!(position.principal, pledge_stables());
+        assert_eq!(position.asset, asset());
+        assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.entry_price, oracle_rate());
         // max(2.0, 3.0) = 3.0; 3.0 * 1.64 = 4.92.
         assert_eq!(position.call_anchor_price, U256::from(3_000_000u64));
@@ -983,7 +994,7 @@ fn worked_example_keeps_entry_and_call_in_different_currencies() {
         let gratis = U256::from(500_000_000u64);
         bootstrap(&storage, gratis);
         let reservation_id = seed_reservation(&storage, alice(), principal);
-        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+        let (handle, gratis_cost) = pledge_fixture(
             storage.clone(),
             alice(),
             principal,
@@ -1248,7 +1259,7 @@ fn issue_credis_accepts_a_larger_reservation() {
         bootstrap(&storage, pledge_cost());
         let reservation_id =
             seed_reservation(&storage, alice(), pledge_stables() * U256::from(2u64));
-        let (handle, gratis_cost) = outbe_gratisfactory::runtime::pledge_gratis(
+        let (handle, gratis_cost) = pledge_fixture(
             storage.clone(),
             alice(),
             pledge_stables(),

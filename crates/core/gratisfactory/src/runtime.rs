@@ -18,15 +18,15 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
-use crate::sol_ext::IReferenceCurrency;
+use crate::sol_ext::{IReferenceCurrency, IVaultRouter, IERC20};
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
-use outbe_oracle::api::fresh_coen_rate_for;
-use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
+use outbe_oracle::api::{previous_half_open_8hours_vwap, AddressPair};
+use outbe_primitives::addresses::{GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::math::scaled_math::checked_mul_div_floor;
+use outbe_primitives::math::scaled_math::checked_pledge_quote;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
+use outbe_primitives::units::checked_protocol_to_native;
 
 /// Reads the pledged asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
@@ -38,27 +38,35 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+    IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&ret)
         .map_err(|_| GratisFactoryError::AssetIsoUndecodable.into())
 }
 
-/// Convert canonical six-decimal stablecoin raw units to six-decimal GRATIS,
-/// rounded down in the user's favor (C34).
-/// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
-/// Returns `(gratis_cost, entry_price)`, where `entry_price` is the COEN rate
-/// that sized the gratis.
-fn convert_stables_to_gratis(
-    storage: StorageHandle<'_>,
-    amount_stables: U256,
-    asset: Address,
-) -> Result<(U256, U256)> {
-    let iso_code = read_iso_code(&storage, asset)?;
-    let rate = fresh_coen_rate_for(storage, iso_code)?;
-    let gratis = checked_mul_div_floor(amount_stables, SCALE_1E6_U256, rate).map_err(|_| {
-        let error: PrecompileError = GratisFactoryError::OracleConversionOverflow.into();
-        error
-    })?;
-    Ok((gratis, rate))
+/// Validate the live asset before quoting or locking any Gratis.
+fn asset_metadata(storage: &StorageHandle<'_>, asset: Address) -> Result<(u16, u8)> {
+    if asset.is_zero() || storage.with_account_info(asset, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(GratisFactoryError::InvalidAsset.into());
+    }
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall { asset }
+            .abi_encode()
+            .into(),
+    )?;
+    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns_validate(&ret)
+        .map_err(|_| GratisFactoryError::ReserveVaultUnavailable)?;
+    if vaults.is_zero() {
+        return Err(GratisFactoryError::ReserveVaultUnavailable.into());
+    }
+    let iso = read_iso_code(storage, asset)?;
+    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), iso)?;
+    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&ret)
+        .map_err(|_| GratisFactoryError::AssetDecimalsUndecodable)?;
+    if decimals > 18 {
+        return Err(GratisFactoryError::UnsupportedAssetDecimals.into());
+    }
+    Ok((iso, decimals))
 }
 
 /// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
@@ -77,35 +85,51 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    if asset.is_zero() {
-        return Err(GratisFactoryError::InvalidAsset.into());
-    }
     if stables_amount.is_zero() {
         return Err(GratisFactoryError::InvalidAmount.into());
     }
-
+    let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
+    let block_timestamp = storage.timestamp()?.to::<u64>();
+    let valuation_price = previous_half_open_8hours_vwap(
+        storage.clone(),
+        AddressPair::new_coen_to(issuance_currency),
+        block_timestamp,
+    )?
+    .filter(|price| !price.is_zero())
+    .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
     let (gratis_amount, entry_price) =
-        convert_stables_to_gratis(storage.clone(), stables_amount, asset)?;
-    if gratis_amount.is_zero() {
-        return Err(GratisFactoryError::InvalidAmount.into());
-    }
-    if gratis_amount > max_gratis {
-        return Err(GratisFactoryError::GratisCapExceeded.into());
-    }
+        checked_pledge_quote(stables_amount, asset_decimals, valuation_price)?;
     let terms = PledgeTerms {
         stables_amount,
         gratis_amount,
         asset,
         entry_price,
+        issuance_currency,
+        asset_decimals,
+        valuation_price,
     };
+    pledge_priced(storage, caller, terms, max_gratis, auth)
+}
 
+/// Commit a fully quoted pledge after applying the transaction's slippage cap.
+pub(super) fn pledge_priced(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    terms: PledgeTerms,
+    max_gratis: U256,
+    auth: ModifyAuth,
+) -> Result<(B256, U256)> {
+    let gratis_amount = terms.gratis_amount;
+    if gratis_amount > max_gratis {
+        return Err(GratisFactoryError::GratisCapExceeded.into());
+    }
     // Fold a read-only league probe into the pledge round-trip (no separate
     // fidelity call): the pledge op returns the caller's current league.
     let now = storage.timestamp()?.to::<u64>();
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
     let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, stables_amount, terms, auth, section)?;
+        gratis::pledge_with_fidelity(storage, caller, terms.stables_amount, terms, auth, section)?;
     // todo implement correct fidelity eligibility check on `outcome.league`
     if outcome.league == u16::MAX {
         return Err(GratisFactoryError::FidelityNotEligible.into());

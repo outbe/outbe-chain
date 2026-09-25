@@ -40,6 +40,9 @@ fn terms(stables: U256, gratis: U256) -> api::PledgeTerms {
         gratis_amount: gratis,
         asset: asset(),
         entry_price: stables * U256::from(1_000_000u64) / gratis,
+        issuance_currency: 840,
+        asset_decimals: 6,
+        valuation_price: stables * outbe_primitives::units::SCALE_1E18 / gratis,
     }
 }
 
