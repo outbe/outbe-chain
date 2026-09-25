@@ -75,20 +75,11 @@ fn validator_receives_reward_gem(world: &mut World) {
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     assert_eq!(gem.owner, owner);
     match gem.gemType {
-        // Genesis: no floor, so every price clears it and it qualifies from birth.
-        0 => {
-            assert!(
-                gem.floorPrice.is_zero(),
-                "a Genesis reward Gem carries no floor"
-            );
-            assert!(
-                crate::features::gem_lifecycle::gem_is_qualified(
-                    &world.rpc.url(world.validators.primary_port()),
-                    gem_id
-                ),
-                "a Genesis reward Gem qualifies from birth"
-            );
-        }
+        // Genesis: no floor, so it qualifies on its first closed day at any positive price.
+        0 => assert!(
+            gem.floorPrice.is_zero(),
+            "a Genesis reward Gem carries no floor"
+        ),
         // Validator: floor = rate x 1.08, so it qualifies once a day closes above it.
         1 => assert!(
             !gem.floorPrice.is_zero(),
@@ -380,9 +371,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // A Validator reward Gem is born Issued against its floor. It qualifies on a closed day
-    // it held in full, and this one was delivered minutes ago: stamp it behind the day that
-    // is then seeded above its floor.
+    // A reward Gem is born Issued and qualifies on a closed day it held in full, and this one
+    // was delivered minutes ago: stamp it behind the day that is then seeded above its floor.
     if gem.state == 0 {
         let now = world
             .rpc
@@ -404,9 +394,11 @@ fn validator_redeems_reward_gem(world: &mut World) {
             DEPLOYER_KEY,
             USD_ISO,
             1,
+            // A Genesis floor is zero, and a zero VWAP is no price at all.
             gem.floorPrice
                 .checked_mul(U256::from(2u64))
-                .expect("qualifying day VWAP"),
+                .expect("qualifying day VWAP")
+                .max(gem.entryPrice),
         )
         .expect("seed the closed day's VWAP above the reward Gem floor");
         // The daily trigger that opens the qualify sweep comes round every minute in e2e.

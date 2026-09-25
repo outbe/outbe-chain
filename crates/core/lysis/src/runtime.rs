@@ -215,10 +215,8 @@ fn program_error(error: ProgramErrorV1) -> PrecompileError {
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-/// Freeze the finalized VWAPs of the UTC day preceding the WorldwideDay's scheduled
-/// processing, once per day. `process_time` is that scheduled second, so the priced day
-/// follows the schedule and not the clock of whichever block froze first. Oracle
-/// COEN/ISO prices already use six-decimal Gratis units.
+/// Freeze, once per WorldwideDay, the finalized VWAPs of the UTC day before its scheduled
+/// processing `process_time`. Oracle COEN/ISO prices already use six-decimal Gratis units.
 pub fn freeze_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,

@@ -10,7 +10,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     if params.owner.is_zero() {
         return Err(GemError::InvalidOwner.into());
     }
-    // A zero floor qualifies the gem from birth, which only the genesis type may do.
+    // Only the genesis type is issued without a floor.
     if params.floor_price_minor.is_zero() && params.gem_type != crate::schema::GENESIS_GEM_TYPE {
         return Err(GemError::ZeroFloorPrice.into());
     }
