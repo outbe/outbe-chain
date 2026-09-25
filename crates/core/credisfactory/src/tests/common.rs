@@ -285,7 +285,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the
-/// current price `issue_credis` compares with yesterday's VWAP.
+/// spot price, which must not affect the issuance-time daily VWAP anchor.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(

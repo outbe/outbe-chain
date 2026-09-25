@@ -158,7 +158,7 @@ pub struct Position {
     pub call_threshold: u32,
 
     /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
-    /// the higher of the previous closed UTC-day VWAP and the current price.
+    /// the previous closed UTC-day VWAP, independent of spot.
     /// Immutable. `call_price` is this value times 1.64.
     #[attribute(order = 21)]
     pub call_anchor_price: U256,

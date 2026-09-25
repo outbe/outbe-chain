@@ -107,7 +107,7 @@ fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        let lapsed = at + DAY;
+        let lapsed = at + DAY + 1;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
@@ -398,7 +398,7 @@ fn the_call_and_the_void_compose_across_runs() {
 
         // The window lapses with the whole principal outstanding: the entire
         // collateral is burned and credited to the Promis Reserve.
-        let lapsed = at + NOTICE;
+        let lapsed = at + NOTICE + 1;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
@@ -620,7 +620,7 @@ fn voiding_several_positions_in_one_pass_skips_none() {
             }
         }
 
-        let lapsed = called_at + NOTICE;
+        let lapsed = called_at + NOTICE + 1;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 3, "all three voided in one pass");

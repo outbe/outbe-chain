@@ -249,6 +249,7 @@ impl CredisContract<'_> {
     /// released is owed to the pledger recorded on the position, so a payer can
     /// never redirect value to themselves.
     ///
+    /// - called positions accept repayment through deadline equality;
     /// - a payment below the accrued interest is rejected outright;
     /// - only what the position needs is consumed, so an over-payment is not
     ///   over-pulled - the caller charges `Settlement::total_paid`;
@@ -262,6 +263,10 @@ impl CredisContract<'_> {
                 return Err(CredisError::PositionClosed.into())
             }
             CredisState::Open | CredisState::Called => {}
+        }
+
+        if state_before == CredisState::Called && now > settlement_deadline(&position) {
+            return Err(CredisError::CallWindowClosed.into());
         }
 
         let days = Self::elapsed_days(&position, now);
@@ -361,7 +366,7 @@ impl CredisContract<'_> {
             if position.lifecycle_state()? != CredisState::Called {
                 return Err(CredisError::NotCalled.into());
             }
-            if now < settlement_deadline(&position) {
+            if now <= settlement_deadline(&position) {
                 return Err(CredisError::CallWindowOpen.into());
             }
             if position.outstanding.is_zero() {
