@@ -6,7 +6,7 @@ use outbe_primitives::units::checked_protocol_to_native;
 
 use outbe_gemfactory::schema::GemTypes;
 
-use crate::distribution::{calculate_distribution_with_cap, distribute_daily, PoolKind};
+use crate::distribution::{distribute_daily, PoolKind};
 use crate::schema::{AgentRewardContract, RewardPool};
 
 const CHAIN_ID: u64 = 1;
@@ -112,145 +112,6 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
             "GAS-06: SRA day index must be cleared after dense distribution"
         );
     });
-}
-
-// ---------------------------------------------------------------------------
-// calculate_distribution_with_cap unit tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_distribution_single_address() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-    let pool = U256::from(1000u64);
-    let counts = vec![(alice, 10u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    // Single address with 100% of tributes: capped at 32%.
-    assert_eq!(rewards.len(), 1);
-    assert_eq!(rewards[0].address, alice);
-    // Cap: 1000 * 32 / 100 = 320
-    let expected = U256::from(320u64);
-    assert_eq!(rewards[0].reward_amount, expected);
-    // Excess = 1000 - 320 = 680
-    assert_eq!(excess, U256::from(680u64));
-}
-
-#[test]
-fn test_distribution_equal_shares() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-    let bob = address!("0x2222222222222222222222222222222222222222");
-    let carol = address!("0x3333333333333333333333333333333333333333");
-    let dave = address!("0x4444444444444444444444444444444444444444");
-
-    // 4 addresses with equal tributes, each gets 25%.
-    // 25% < 32% cap so no capping; all pool is distributed.
-    let pool = U256::from(1000u64);
-    let counts = vec![(alice, 1u64), (bob, 1u64), (carol, 1u64), (dave, 1u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert_eq!(rewards.len(), 4);
-    // Each gets 1000 * 1 / 4 = 250
-    for r in &rewards {
-        assert_eq!(r.reward_amount, U256::from(250u64));
-    }
-    // Integer division: 4 * 250 = 1000, no rounding loss here.
-    assert_eq!(excess, U256::ZERO);
-}
-
-#[test]
-fn test_distribution_with_cap() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-    let bob = address!("0x2222222222222222222222222222222222222222");
-
-    // Alice has 9 tributes, Bob has 1 - Alice would get 90% but is capped at 32%.
-    // Excess (58%) is redistributed to Bob who is uncapped; Bob ends up at 32%
-    // as well because 68% > 32%. Final excess = 100% - 32% - 32% = 36%.
-    let pool = U256::from(1000u64);
-    let counts = vec![(alice, 9u64), (bob, 1u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert_eq!(rewards.len(), 2);
-
-    let alice_reward = rewards.iter().find(|r| r.address == alice).unwrap();
-    let bob_reward = rewards.iter().find(|r| r.address == bob).unwrap();
-
-    // Both capped at 320 (32% of 1000).
-    assert_eq!(alice_reward.reward_amount, U256::from(320u64));
-    assert_eq!(bob_reward.reward_amount, U256::from(320u64));
-    assert_eq!(excess, U256::from(360u64));
-}
-
-#[test]
-fn test_distribution_all_capped() {
-    // 4 addresses, each with equal tributes.
-    // Total pool = 1000, each would proportionally get 250 (25%), under the 32% cap.
-    // No capping occurs, all pool is distributed.
-    let a = address!("0x1111111111111111111111111111111111111111");
-    let b = address!("0x2222222222222222222222222222222222222222");
-    let c = address!("0x3333333333333333333333333333333333333333");
-    let d = address!("0x4444444444444444444444444444444444444444");
-
-    let pool = U256::from(1000u64);
-    let counts = vec![(a, 25u64), (b, 25u64), (c, 25u64), (d, 25u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert_eq!(rewards.len(), 4);
-    for r in &rewards {
-        assert_eq!(r.reward_amount, U256::from(250u64));
-    }
-    assert_eq!(excess, U256::ZERO);
-}
-
-#[test]
-fn test_distribution_all_capped_with_excess() {
-    // 3 addresses with exactly equal shares - 33.3% each, all exceed 32% cap.
-    // After capping: each gets 32%, total = 96%, excess = 4%.
-    // Redistribution cannot help (all capped), so excess stays.
-    let a = address!("0x1111111111111111111111111111111111111111");
-    let b = address!("0x2222222222222222222222222222222222222222");
-    let c = address!("0x3333333333333333333333333333333333333333");
-
-    let pool = U256::from(300u64);
-    let counts = vec![(a, 1u64), (b, 1u64), (c, 1u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert_eq!(rewards.len(), 3);
-    // max_share = 300 * 32 / 100 = 96
-    // proportional share = 300 * 1 / 3 = 100 > 96, so capped.
-    for r in &rewards {
-        assert_eq!(r.reward_amount, U256::from(96u64));
-    }
-    // excess = 300 - 3*96 = 300 - 288 = 12
-    assert_eq!(excess, U256::from(12u64));
-}
-
-#[test]
-fn test_distribution_empty_counts() {
-    let pool = U256::from(1000u64);
-    let counts: Vec<(alloy_primitives::Address, u64)> = vec![];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert!(rewards.is_empty());
-    // Full pool returned as excess.
-    assert_eq!(excess, pool);
-}
-
-#[test]
-fn test_distribution_zero_pool() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-    let pool = U256::ZERO;
-    let counts = vec![(alice, 5u64)];
-
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
-
-    assert!(rewards.is_empty());
-    assert_eq!(excess, U256::ZERO);
 }
 
 #[test]
@@ -827,13 +688,13 @@ mod distribute_daily_tests {
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                     .unwrap(),
-                bond + native(150)
+                bond + native(48)
             );
             assert_eq!(
                 outbe_ccaregistry::api::get_cca(&ctx.storage, cca)
                     .unwrap()
                     .rewardAmount,
-                native(150)
+                native(48)
             );
         });
     }
@@ -944,6 +805,7 @@ fn iagentreward_sol_matches_contract_public_annotations() {
         ("getClaimableBalance", "address", true, "uint256"),
         ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
         ("claimReward", "uint8,uint256", false, "uint256"),
+        ("issueCcaReward", "address,uint256", false, "uint256"),
     ];
     for (name, args_types, is_view, ret_types) in expected {
         let canon = sol_function_canonical(SOL, name)
@@ -1012,4 +874,66 @@ fn canonical_type_list(list: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+#[test]
+fn distribution_failure_restores_prior_pools_and_counts() {
+    with_contract_mut(|storage, contract| {
+        let alice = Address::repeat_byte(1);
+        let day = WorldwideDay::new(20231113);
+        contract.increment_waa_tribute(day, alice).unwrap();
+        contract.increment_sra_tribute(day, alice).unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Sra, alice, U256::MAX)
+            .unwrap();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            storage.clone(),
+        );
+        assert!(distribute_daily(
+            &ctx,
+            day,
+            &[
+                (PoolKind::Waa, U256::from(1000)),
+                (PoolKind::Sra, U256::from(1000))
+            ]
+        )
+        .is_err());
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Waa, alice)
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Sra, alice)
+                .unwrap(),
+            U256::MAX
+        );
+        assert_eq!(contract.get_all_waa_counts(day).unwrap(), vec![(alice, 1)]);
+        assert_eq!(contract.get_all_sra_counts(day).unwrap(), vec![(alice, 1)]);
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
+fn reward_timestamp_narrowing_rejects_overflow() {
+    with_contract_mut(|storage, _| {
+        seed_oracle(&storage, ONE_COEN);
+        storage.set_block_timestamp(U256::MAX).unwrap();
+        let error = crate::runtime::issue_reward_gem(
+            &storage,
+            Address::repeat_byte(1),
+            GemTypes::Cca,
+            U256::from(100),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("timestamp overflow"));
+    });
 }

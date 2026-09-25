@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::{AgentRewardContract, RewardPool};
 
@@ -39,5 +39,26 @@ impl AgentRewardContract<'_> {
             return Ok(U256::ZERO);
         }
         self.claim_reward(pool, sender, amount)
+    }
+    #[contract_public("issueCcaReward(address,uint256) returns (uint256)")]
+    fn _abi_issue_cca_reward(
+        &mut self,
+        sender: Address,
+        owner: Address,
+        load: U256,
+    ) -> Result<U256> {
+        if sender != outbe_primitives::addresses::CCA_REGISTRY_ADDRESS {
+            return Err(PrecompileError::Revert(
+                "only CCA registry may issue CCA rewards".into(),
+            ));
+        }
+        self.storage.with_checkpoint(|| {
+            crate::runtime::issue_reward_gem(
+                &self.storage,
+                owner,
+                outbe_gemfactory::schema::GemTypes::Cca,
+                load,
+            )
+        })
     }
 }

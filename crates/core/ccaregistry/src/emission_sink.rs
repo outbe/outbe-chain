@@ -4,7 +4,8 @@ use crate::{
     precompile::ICcaRegistry,
     schema::{address_day_key, CcaContract},
 };
-use alloy_primitives::{U256, U512};
+use alloy_primitives::U256;
+use outbe_common::distribution::calculate_distribution_with_cap;
 use outbe_primitives::{
     addresses::CCA_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
     units::checked_protocol_to_native,
@@ -20,26 +21,19 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
         let mut contract = CcaContract::new(ctx.storage.clone());
         // TODO: O(active CCAs) per daily settlement; fine because of a few active CCAs.
         let mut weights = Vec::new();
-        let mut total = U256::ZERO;
         for cca in contract.active.read_all()? {
             let weight = contract
                 .gratis_sum_per_utc_day
                 .read(&address_day_key(cca, day))?;
-            total = total.checked_add(weight).ok_or(CcaError::Arithmetic)?;
-            weights.push((cca, weight));
-        }
-        if total.is_zero() {
-            return Ok(amount);
-        }
-        let mut distributed = U256::ZERO;
-        for (cca, weight) in weights {
-            // The product of two U256 values fits U512. Since weight <= total,
-            // the quotient is <= amount and fits U256; still check the conversion.
-            let wide_share = U512::from(amount) * U512::from(weight) / U512::from(total);
-            if wide_share > U512::from(U256::MAX) {
-                return Err(CcaError::Arithmetic.into());
+            if !weight.is_zero() {
+                weights.push((cca, weight));
             }
-            let share = wide_share.wrapping_to::<U256>();
+        }
+        let (rewards, excess) =
+            calculate_distribution_with_cap(amount, &weights).map_err(|_| CcaError::Arithmetic)?;
+        for reward in rewards {
+            let cca = reward.address;
+            let share = reward.reward_amount;
             if share.is_zero() {
                 continue;
             }
@@ -56,10 +50,7 @@ pub fn distribute_daily(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Re
                 utcDay: day,
                 amount: native,
             })?;
-            distributed = distributed.checked_add(share).ok_or(CcaError::Arithmetic)?;
         }
-        amount
-            .checked_sub(distributed)
-            .ok_or_else(|| CcaError::Arithmetic.into())
+        Ok(excess)
     })
 }

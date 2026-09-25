@@ -6,6 +6,7 @@ pub mod errors;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
+mod sol_ext;
 mod state;
 
 #[cfg(test)]

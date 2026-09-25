@@ -1,155 +1,10 @@
 use crate::schema::{AgentRewardContract, RewardPool};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::checked_protocol_to_native;
 
-/// Maximum share per address (32% cap).
-const MAX_ADDRESS_SHARE_PCT: u64 = 32;
-
-/// Maximum redistribution iterations.
-const MAX_REDISTRIBUTION_ITERATIONS: usize = 10;
-
-/// Reward allocated to a single address.
-pub struct AddressReward {
-    pub address: Address,
-    pub tribute_count: u64,
-    pub reward_amount: U256,
-}
-
-/// Distributes a pool with a 32% per-address cap and iterative redistribution.
-///
-/// The algorithm:
-/// 1. Computes proportional shares based on tribute counts.
-/// 2. Caps any individual share at 32% of the total pool.
-/// 3. Redistributes the excess from capped addresses to uncapped ones,
-///    iterating up to `MAX_REDISTRIBUTION_ITERATIONS` times.
-///
-/// Returns `(rewards, remaining_excess)`. The remaining excess is non-zero
-/// only when all addresses are capped and excess cannot be distributed further.
-pub fn calculate_distribution_with_cap(
-    total_pool: U256,
-    counts: &[(Address, u64)],
-) -> (Vec<AddressReward>, U256) {
-    if counts.is_empty() || total_pool.is_zero() {
-        return (vec![], total_pool);
-    }
-
-    let total_tributes: u64 = counts.iter().map(|(_, c)| c).sum();
-    if total_tributes == 0 {
-        return (vec![], total_pool);
-    }
-
-    // max_share = total_pool * 32 / 100
-    let max_share = total_pool * U256::from(MAX_ADDRESS_SHARE_PCT) / U256::from(100u64);
-
-    let mut sorted_counts = counts.to_vec();
-    sorted_counts.sort_by_key(|(addr, _)| *addr);
-
-    // Initial proportional allocation with cap applied immediately.
-    // Each entry: (address, tribute_count, current_share, is_capped)
-    let mut shares: Vec<(Address, u64, U256, bool)> = sorted_counts
-        .iter()
-        .map(|(addr, count)| {
-            let share = total_pool * U256::from(*count) / U256::from(total_tributes);
-            if share > max_share {
-                (*addr, *count, max_share, true)
-            } else {
-                (*addr, *count, share, false)
-            }
-        })
-        .collect();
-
-    // Calculate the initial excess (pool minus what was distributed).
-    let total_distributed: U256 = shares
-        .iter()
-        .map(|(_, _, s, _)| *s)
-        .fold(U256::ZERO, |a, b| a + b);
-    let mut excess = total_pool.saturating_sub(total_distributed);
-
-    // Iterative redistribution: give excess to uncapped addresses up to their cap.
-    for _ in 0..MAX_REDISTRIBUTION_ITERATIONS {
-        if excess.is_zero() {
-            break;
-        }
-        let available: U256 = shares
-            .iter()
-            .filter(|(_, _, share, capped)| !*capped && *share < max_share)
-            .map(|(_, _, share, _)| max_share.saturating_sub(*share))
-            .fold(U256::ZERO, |acc, v| acc + v);
-
-        if available.is_zero() {
-            break;
-        }
-
-        for entry in shares.iter_mut() {
-            let (_, _, ref mut share, ref mut capped) = entry;
-            if *capped || *share >= max_share {
-                continue;
-            }
-
-            let can_receive = max_share.saturating_sub(*share);
-            if can_receive.is_zero() {
-                continue;
-            }
-
-            let proportional = excess * can_receive / available;
-            let to_give = can_receive.min(proportional);
-            if to_give.is_zero() {
-                continue;
-            }
-            *share += to_give;
-            excess -= to_give;
-
-            if *share >= max_share {
-                *capped = true;
-            }
-            if excess.is_zero() {
-                break;
-            }
-        }
-
-        if excess.is_zero() {
-            break;
-        }
-
-        let mut dust_distributed = false;
-        for entry in shares.iter_mut() {
-            let (_, _, ref mut share, ref mut capped) = entry;
-            if *capped || *share >= max_share {
-                continue;
-            }
-            let can_receive = max_share.saturating_sub(*share);
-            if can_receive.is_zero() {
-                continue;
-            }
-            let to_give = can_receive.min(excess);
-            *share += to_give;
-            excess -= to_give;
-            dust_distributed = true;
-            if *share >= max_share {
-                *capped = true;
-            }
-            if excess.is_zero() {
-                break;
-            }
-        }
-        if !dust_distributed {
-            break;
-        }
-    }
-
-    let rewards = shares
-        .into_iter()
-        .map(|(addr, count, share, _)| AddressReward {
-            address: addr,
-            tribute_count: count,
-            reward_amount: share,
-        })
-        .collect();
-
-    (rewards, excess)
-}
+use outbe_common::distribution::calculate_distribution_with_cap;
 
 // ------------------------------------------------------------------------
 // New daily orchestrator surface
@@ -186,7 +41,7 @@ pub enum PoolKind {
 /// Excess accounting (per pool kind):
 /// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
 ///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: rounding residue, or the whole pool when no active weight exists.
+/// * `Cca`: cap and rounding residue, or the whole pool when no active weight exists.
 ///
 /// Mint/burn parity is enforced inside the WAA/SRA helpers: each pool
 /// is minted onto `AGENT_REWARD_ADDRESS` before distribution, and the
@@ -198,22 +53,26 @@ pub fn distribute_daily(
     prev_day: WorldwideDay,
     pools: &[(PoolKind, U256)],
 ) -> Result<U256> {
-    let mut total_excess = U256::ZERO;
-    for (kind, amount) in pools {
-        let excess = match kind {
-            PoolKind::Waa => distribute_capped(ctx, prev_day, PoolKind::Waa, *amount)?,
-            PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
-            PoolKind::Cca => {
-                outbe_ccaregistry::emission_sink::distribute_daily(ctx, prev_day.value(), *amount)?
-            }
-        };
-        total_excess = total_excess.checked_add(excess).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(
-                "agentreward distribute_daily overflow".into(),
-            )
-        })?;
-    }
-    Ok(total_excess)
+    ctx.storage.with_checkpoint(|| {
+        let mut total_excess = U256::ZERO;
+        for (kind, amount) in pools {
+            let excess = match kind {
+                PoolKind::Waa => distribute_capped(ctx, prev_day, PoolKind::Waa, *amount)?,
+                PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
+                PoolKind::Cca => outbe_ccaregistry::emission_sink::distribute_daily(
+                    ctx,
+                    prev_day.value(),
+                    *amount,
+                )?,
+            };
+            total_excess = total_excess.checked_add(excess).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Revert(
+                    "agentreward distribute_daily overflow".into(),
+                )
+            })?;
+        }
+        Ok(total_excess)
+    })
 }
 
 /// Capped pool flow used for both WAA and SRA. Distribution math and the
@@ -258,7 +117,12 @@ fn distribute_capped(
         PoolKind::Sra => RewardPool::Sra,
         _ => unreachable!(),
     };
-    let (rewards, excess) = calculate_distribution_with_cap(amount, &counts);
+    let weights: Vec<_> = counts
+        .into_iter()
+        .map(|(address, count)| (address, U256::from(count)))
+        .collect();
+    let (rewards, excess) = calculate_distribution_with_cap(amount, &weights)
+        .map_err(|error| PrecompileError::Revert(error.to_string()))?;
     for r in &rewards {
         if !r.reward_amount.is_zero() {
             let native_reward = checked_protocol_to_native(r.reward_amount).ok_or_else(|| {

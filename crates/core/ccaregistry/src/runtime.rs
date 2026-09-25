@@ -4,10 +4,17 @@ use crate::{
     errors::CcaError,
     precompile::ICcaRegistry,
     schema::{address_day_key, CcaContract, CcaRecord},
+    sol_ext::IAgentReward,
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
+use alloy_sol_types::SolCall;
+use outbe_primitives::{
+    addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
+    error::{PrecompileError, Result},
+    storage::StorageHandle,
+    units::{checked_protocol_to_native, native_to_protocol_floor},
+};
 
 fn now(storage: &StorageHandle<'_>) -> Result<u64> {
     // Execution timestamps must fit Unix seconds in u64; reject rather than truncate.
@@ -116,20 +123,43 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
     })
 }
 
-pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
+/// Converts only whole protocol units; the native remainder remains claimable.
+pub fn claim_rewards(storage: StorageHandle<'_>, caller: Address, amount: U256) -> Result<U256> {
     storage.with_checkpoint(|| {
         let mut contract = CcaContract::new(storage.clone());
         contract.load(caller)?;
-        let amount = contract.reward_amounts.read(&caller)?;
-        if amount.is_zero() {
+        let balance = contract.reward_amounts.read(&caller)?;
+        if balance.is_zero() {
             return Err(CcaError::NoRewards.into());
         }
-        contract.reward_amounts.write(&caller, U256::ZERO)?;
-        storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
+        let requested = if amount.is_zero() { balance } else { amount };
+        if requested > balance {
+            return Err(CcaError::InsufficientRewards.into());
+        }
+        let load = native_to_protocol_floor(requested);
+        if load.is_zero() {
+            return Err(CcaError::InvalidAmount.into());
+        }
+        let burned = checked_protocol_to_native(load).ok_or(CcaError::Arithmetic)?;
+        let output = storage.call(
+            AGENT_REWARD_ADDRESS,
+            U256::ZERO,
+            IAgentReward::issueCcaRewardCall {
+                owner: caller,
+                load,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        let gem_id = IAgentReward::issueCcaRewardCall::abi_decode_returns(&output)
+            .map_err(|_| PrecompileError::Revert("issueCcaReward return undecodable".into()))?;
+        storage.decrease_balance(CCA_REGISTRY_ADDRESS, burned)?;
+        contract.reward_amounts.write(&caller, balance - burned)?;
         contract.emit(ICcaRegistry::RewardsClaimed {
             cca: caller,
-            amount,
-        })
+            amount: burned,
+        })?;
+        Ok(gem_id)
     })
 }
 

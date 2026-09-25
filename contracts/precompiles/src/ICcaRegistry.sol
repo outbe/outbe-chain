@@ -32,7 +32,8 @@ interface ICcaRegistry {
     function bond(string calldata name) external payable;
     function unbond() external;
     function claimUnbonded() external;
-    function claimRewards() external;
+    /// @notice Convert native COEN rewards into a CCA Gem; zero requests the full balance.
+    function claimRewards(uint256 amount) external returns (uint256 gemId);
     function getCca(address cca) external view returns (Cca memory);
     function getCcaState(address cca) external view returns (State);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

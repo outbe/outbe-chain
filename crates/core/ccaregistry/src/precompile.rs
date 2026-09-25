@@ -3,7 +3,7 @@ use crate::{api, runtime};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
 };
 use outbe_primitives::{erc::ERC165_INTERFACE_ID, error::Result, storage::StorageHandle};
 
@@ -34,8 +34,8 @@ pub fn dispatch(
             claimUnbonded(c) => mutate_void(c, caller, |sender, _| {
                 runtime::claim_unbonded(storage.clone(), sender)
             }),
-            claimRewards(c) => mutate_void(c, caller, |sender, _| {
-                runtime::claim_rewards(storage.clone(), sender)
+            claimRewards(c) => mutate(c, caller, |sender, c| {
+                runtime::claim_rewards(storage.clone(), sender, c.amount)
             }),
             getCca(c) => view(c, |c| api::get_cca(&storage, c.cca)),
             getCcaState(c) => view(c, |c| api::cca_state(&storage, c.cca)),

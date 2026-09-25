@@ -127,22 +127,11 @@ impl AgentRewardContract<'_> {
         }
         let burned = checked_protocol_to_native(gem_load)
             .ok_or_else(|| PrecompileError::Revert("native AgentReward claim overflow".into()))?;
-        let entry_price = resolve_gem_entry_price(&self.storage)?.ok_or_else(|| {
-            PrecompileError::Revert("agentreward has no usable COEN price yet".into())
-        })?;
         let gem_type = match pool {
             RewardPool::Waa => GemTypes::Wallet,
             RewardPool::Sra => GemTypes::Sra,
         };
-        let gem_id = outbe_gemfactory::api::issue_gem(
-            &self.storage,
-            address,
-            gem_type,
-            gem_load,
-            AGENT_GEM_CURRENCY,
-            AGENT_GEM_CURRENCY,
-            entry_price,
-        )?;
+        let gem_id = issue_reward_gem(&self.storage, address, gem_type, gem_load)?;
         self.storage
             .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
         self.write_pool_claimable_reward(pool, address, balance - burned)?;
@@ -223,8 +212,33 @@ impl AgentRewardContract<'_> {
     }
 }
 
+/// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
+pub(crate) fn issue_reward_gem(
+    storage: &StorageHandle<'_>,
+    owner: Address,
+    gem_type: GemTypes,
+    load: U256,
+) -> Result<U256> {
+    let entry_price = resolve_gem_entry_price(storage)?.ok_or_else(|| {
+        PrecompileError::Revert("agentreward has no usable COEN price yet".into())
+    })?;
+    outbe_gemfactory::api::issue_gem(
+        storage,
+        owner,
+        gem_type,
+        load,
+        AGENT_GEM_CURRENCY,
+        AGENT_GEM_CURRENCY,
+        entry_price,
+    )
+}
+
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
-    let now = storage.timestamp()?.to::<u64>();
+    // Unix seconds must fit u64; reject malformed timestamps instead of truncating.
+    let now: u64 = storage
+        .timestamp()?
+        .try_into()
+        .map_err(|_| PrecompileError::Revert("reward timestamp overflow".into()))?;
     let day = previous_date_key(timestamp_to_date_key(now));
     outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, AGENT_GEM_CURRENCY)
 }
