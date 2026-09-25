@@ -10,7 +10,8 @@ contract CredisIssuance {
     uint256 public mode;
     function configure(uint256 value) external { mode = value; }
     function mint(address account, uint256 amount) external { balanceOf[account] += amount; }
-    function isoCode() external pure returns (uint16) { return 840; }
+    function isoCode() external view returns (uint16) { return mode == 6 ? 978 : 840; }
+    function decimals() external view returns (uint8) { return mode == 7 ? 18 : 6; }
     function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount; return true;
     }

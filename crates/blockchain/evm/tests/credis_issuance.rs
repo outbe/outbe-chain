@@ -43,8 +43,8 @@ const NOW: u64 = 1_700_000_000;
 #[test]
 fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
     // 0: success; 1: ERC20 false; 2: ERC20 revert; 3: excess redeposit revert;
-    // 4: wrong contribution; 5: invalid spend authorization.
-    for failure in 0..6 {
+    // 4: wrong contribution; 5: invalid spend authorization; 6/7: changed asset metadata.
+    for failure in 0..8 {
         test_enclave::install();
         let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
         let mut db = CacheDB::new(EmptyDB::default());
@@ -175,6 +175,9 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     gratis_amount: gratis,
                     asset: ASSET,
                     entry_price: price,
+                    issuance_currency: 840,
+                    asset_decimals: 6,
+                    valuation_price: U256::from(2) * outbe_primitives::units::SCALE_1E18,
                 },
                 auth(GratisOp::Pledge, price, 1),
             )
@@ -235,7 +238,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             .status,
             SubCallStatus::Success
         ));
-        if failure > 0 && failure <= 3 {
+        if (1..=3).contains(&failure) || failure >= 6 {
             let target = if failure == 3 { VAULT } else { ASSET };
             assert!(matches!(
                 call!(

@@ -120,10 +120,17 @@ pub fn issue_credis(
         return Err(CredisFactoryError::CcaStakeMismatch.into());
     }
 
-    // Derive the issuance currency from the disbursed asset (it self-reports its
-    // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin that currency's
-    // official policy rate for the position's life.
-    let issuance_currency = read_iso_code(&storage, asset)?;
+    // Preserve authenticated pledge metadata; a changed token cannot silently
+    // reinterpret the accepted principal or its six-decimal entry price.
+    let issuance_currency = terms.issuance_currency;
+    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&ret)
+        .map_err(|_| PrecompileError::Revert("asset decimals undecodable".into()))?;
+    if read_iso_code(&storage, asset)? != issuance_currency || decimals != terms.asset_decimals {
+        return Err(PrecompileError::Revert(
+            "asset metadata conflicts with pledge".into(),
+        ));
+    }
     let policy_rate = policy_rate_for(storage.clone(), issuance_currency)?;
 
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
@@ -360,6 +367,6 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+    IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&ret)
         .map_err(|_| CredisFactoryError::AssetIsoUndecodable.into())
 }
