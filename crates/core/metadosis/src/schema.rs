@@ -19,7 +19,6 @@ pub mod status {
     pub const OFFERING: u8 = 2;
     pub const WAITING: u8 = 3;
     pub const READY: u8 = 4;
-    pub const RESERVED_IN_PROGRESS: u8 = 5;
     pub const COMPLETED: u8 = 6;
     pub const FAILED: u8 = 7;
     pub const OFFCHAIN_PENDING: u8 = 8;

@@ -84,13 +84,11 @@ fn fresh_devnet_sentinel_probe_is_test_only_and_checks_per_day_residue() {
 #[test]
 fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
     with_storage(|storage| {
-        let reserved_status = IMetadosis::getWorldwideDaysByStatusCall {
-            status: status::RESERVED_IN_PROGRESS,
-        };
+        let unused_status = IMetadosis::getWorldwideDaysByStatusCall { status: 5 };
         assert!(matches!(
             metadosis_dispatch(
                 storage.clone(),
-                &reserved_status.abi_encode(),
+                &unused_status.abi_encode(),
                 Address::ZERO,
                 U256::ZERO,
             ),

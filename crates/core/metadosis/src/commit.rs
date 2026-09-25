@@ -630,13 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn reserved_persisted_status_is_rejected_for_green_and_red_before_effects() {
+    fn unknown_persisted_status_is_rejected_for_green_and_red_before_effects() {
         for day_type in [day_type::GREEN, day_type::RED] {
             let mut provider = HashMapStorageProvider::new(1);
-            seed_active(
-                &mut provider,
-                &record(status::RESERVED_IN_PROGRESS, day_type),
-            );
+            seed_active(&mut provider, &record(5, day_type));
             provider
                 .enter(|storage| {
                     assert!(matches!(

@@ -171,7 +171,7 @@ export const WWD_STATUS = [
   "OFFERING",
   "WAITING",
   "READY",
-  "IN_PROGRESS",
+  undefined,
   "COMPLETED",
   "FAILED",
 ] as const;
