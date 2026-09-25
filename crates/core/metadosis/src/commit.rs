@@ -540,7 +540,6 @@ mod tests {
     use std::cell::Cell;
 
     use alloy_primitives::{B256, U256};
-    use outbe_ocomp_protocol::profile::CapacityProfileV1;
     use outbe_primitives::storage::{
         hashmap::HashMapStorageProvider, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
         MetadosisMutationPurposeTag,
@@ -552,7 +551,7 @@ mod tests {
         aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
         constants::MAX_RECORDS_KEPT,
         fixture_kernel::ActivationFixture,
-        ocomp::schema::{poc_schema_limits, OcompRequestProfile, ResponseDeadlineKey},
+        ocomp::schema::{poc_schema_limits, ResponseDeadlineKey},
         schema::{
             day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
             WorldwideDayEntryExt,
@@ -610,34 +609,6 @@ mod tests {
             })
             .unwrap();
         oldest
-    }
-
-    fn request_profile() -> OcompRequestProfile {
-        OcompRequestProfile {
-            chain_id: 1,
-            genesis_hash: B256::repeat_byte(0x11),
-            fork_id: B256::repeat_byte(0x21),
-            protocol_bundle_hash: B256::repeat_byte(0x41),
-            correctness_profile_id: B256::repeat_byte(0x24),
-            capacity_profile: CapacityProfileV1 {
-                profile_id: B256::repeat_byte(0x25),
-                max_tributes_per_work_shard: 256,
-                max_workers_per_domain: 4,
-                max_intents_per_block: 1,
-                max_activations_per_block: 1,
-                max_ready_inspections_per_block: 1,
-                max_expirations_per_block: 1,
-                ready_backoff_blocks: 1,
-                max_reference_currencies: 256,
-                max_oracle_wwd_pair_entries: 256,
-                max_active_scurve_entries: 256,
-                result_deadline_blocks:
-                    outbe_chain_constants::DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
-                source_retention_after_terminal_blocks: 64,
-                generated_limits_manifest_hash: B256::repeat_byte(0x23),
-            },
-            source_availability_policy_id: B256::repeat_byte(0x35),
-        }
     }
 
     fn assert_ocomp_state_without_profile_is_rejected(
@@ -798,9 +769,11 @@ mod tests {
         provider
             .enter(|storage| {
                 let mut contract = MetadosisContract::new(storage.clone());
-                let profile = request_profile();
-                let schema_limits = poc_schema_limits();
-                contract.initialize_ocomp_request_profile(&profile, &schema_limits)?;
+                crate::fixture_kernel::seed_registry_authority(
+                    &storage,
+                    &crate::fixture_kernel::fixture_authority(1),
+                    &poc_schema_limits(),
+                )?;
                 contract.enqueue_ocomp_ready(wwd(), 10)?;
                 contract.ocomp_fsm_states.get_bytes(&wwd()).clear()?;
 

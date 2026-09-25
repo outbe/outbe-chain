@@ -76,8 +76,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let owner = address!("7100000000000000000000000000000000000071");
     let nominal = U256::from(1_000);
     let day_limit = U256::from(100);
-    let mut profile = request_profile();
-    profile.chain_id = chain::CHAIN_ID;
+    let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
     provider.set_block_number(block_number);
     provider.set_timestamp(U256::from(block_time));
 
@@ -112,8 +111,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         oracle.finalize_utc_day_vwap(price_day).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
+        crate::fixture_kernel::seed_registry_authority(&storage, &authority, &poc_schema_limits())
             .unwrap();
         metadosis
             .create_worldwide_day(
@@ -321,7 +319,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 B256::repeat_byte(0x46),
                 B256::repeat_byte(0x98),
                 finality_recorded_height,
-                profile.capacity_profile.result_deadline_blocks,
+                authority
+                    .request_profile
+                    .capacity_profile
+                    .result_deadline_blocks,
                 &poc_schema_limits(),
             )
             .unwrap();
@@ -670,22 +671,13 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
     outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
-    let initial_activation_height = fixture.block_number - 1;
     let successor_activation_height = fixture.block_number + 1;
-    let install = crate::fixture_kernel::fork_install_fixture(
-        crate::OcompForkInstallClassification::Measurement,
-        initial_activation_height,
-        chain::CHAIN_ID,
-        genesis_hash,
-    );
-    let initial_authority = outbe_ocompregistry::OcompProtocolAuthorityV1 {
-        request_profile: outbe_ocompregistry::OcompRequestProfile::decode_canonical(
-            &install.request_profile.encode_canonical(&limits).unwrap(),
-            &limits,
-        )
-        .unwrap(),
-        protocol_bundle: install.protocol_bundle.clone(),
-    };
+    let initial_authority = StorageHandle::enter(&mut provider, |storage| {
+        outbe_ocompregistry::OcompRegistry::new(storage)
+            .active_authority(&limits)
+            .unwrap()
+            .unwrap()
+    });
     let initial_bundle_hash = initial_authority.request_profile.protocol_bundle_hash;
     let mut successor_bundle = initial_authority.protocol_bundle.clone();
     successor_bundle.protocol_version += 1;
@@ -706,19 +698,6 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
             protocol_bundle: successor_bundle,
         },
     };
-
-    provider.set_block_number(initial_activation_height);
-    StorageHandle::enter(&mut provider, |storage| {
-        outbe_ocompregistry::OcompRegistry::new(storage)
-            .initialize_genesis_authority(
-                &initial_authority,
-                install.install_hash(&limits).unwrap(),
-                initial_activation_height,
-                initial_activation_height,
-                &limits,
-            )
-            .unwrap();
-    });
 
     provider.set_block_number(fixture.block_number);
     let first_intent_id = StorageHandle::enter(&mut provider, |storage| {
@@ -1228,8 +1207,7 @@ fn prepare_request_fixture_with_day_type(
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7200000000000000000000000000000000000072");
     let nominal = U256::from(1_000);
-    let mut profile = request_profile();
-    profile.chain_id = chain::CHAIN_ID;
+    let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
 
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
@@ -1247,8 +1225,7 @@ fn prepare_request_fixture_with_day_type(
         }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
+        crate::fixture_kernel::seed_registry_authority(&storage, &authority, &poc_schema_limits())
             .unwrap();
         metadosis
             .create_worldwide_day(
@@ -1325,8 +1302,7 @@ fn prepare_ready_days_fixture(
     let third_wwd = outbe_primitives::time::WorldwideDay::new(2026_0712);
     let block_number = 29;
     let block_time = third_wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
-    let mut profile = request_profile();
-    profile.chain_id = chain::CHAIN_ID;
+    let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
 
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
@@ -1342,8 +1318,7 @@ fn prepare_ready_days_fixture(
         }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
+        crate::fixture_kernel::seed_registry_authority(&storage, &authority, &poc_schema_limits())
             .unwrap();
         for wwd in [first_wwd, later_wwd, third_wwd] {
             metadosis
@@ -1480,8 +1455,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     // The day traded far below its emission ceiling: it issues its own nominal and no more.
     let nominal = U256::from(100);
     let day_limit = U256::from(1_000);
-    let mut profile = request_profile();
-    profile.chain_id = chain::CHAIN_ID;
+    let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
     provider.set_block_number(block_number);
     provider.set_timestamp(U256::from(block_time));
 
@@ -1495,8 +1469,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
+        crate::fixture_kernel::seed_registry_authority(&storage, &authority, &poc_schema_limits())
             .unwrap();
         metadosis
             .create_worldwide_day(

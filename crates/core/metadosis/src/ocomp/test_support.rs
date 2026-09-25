@@ -714,6 +714,49 @@ pub fn fork_install_fixture(
     }
 }
 
+/// A request profile and protocol bundle that agree with each other on `chain_id`.
+#[cfg(test)]
+pub fn fixture_authority(chain_id: u64) -> outbe_ocompregistry::OcompProtocolAuthorityV1 {
+    let install = fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        chain_id,
+        hash(17),
+    );
+    outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: install.request_profile,
+        protocol_bundle: install.protocol_bundle,
+    }
+}
+
+/// Leaves `OcompRegistry` holding `authority` the way the genesis install does,
+/// without that install's activation-height and chain-identity gates.
+pub fn seed_registry_authority(
+    storage: &StorageHandle<'_>,
+    authority: &outbe_ocompregistry::OcompProtocolAuthorityV1,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> PrecompileResult<()> {
+    let registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
+    registry
+        .active_request_profile
+        .write(&authority.request_profile.encode_canonical(limits)?)?;
+    registry.active_protocol_bundle.write(
+        &authority
+            .protocol_bundle
+            .encode_canonical(limits)
+            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+    )?;
+    registry
+        .active_protocol_bundle_hash
+        .write(authority.request_profile.protocol_bundle_hash)?;
+    if registry.active_authority(limits)?.as_ref() != Some(authority) {
+        return Err(PrecompileError::Fatal(
+            "seeded OCOMP Registry authority does not read back".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
     RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: bundle_hash,
@@ -1452,12 +1495,15 @@ impl ActivationFixture {
                 capacity_profile: capacity_profile(),
                 source_availability_policy_id: hash(44),
             };
-            contract
-                .initialize_ocomp_request_profile(&profile, &limits)
-                .unwrap();
-            contract
-                .initialize_ocomp_activation_authority(&bundle, &limits)
-                .unwrap();
+            seed_registry_authority(
+                &storage,
+                &outbe_ocompregistry::OcompProtocolAuthorityV1 {
+                    request_profile: profile,
+                    protocol_bundle: bundle.clone(),
+                },
+                &limits,
+            )
+            .unwrap();
             let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
                 &contract,
                 TEST_WWD,
@@ -1468,6 +1514,9 @@ impl ActivationFixture {
             // sized, so the accumulator holds at least what this receipt says the auction draws.
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .checked_add_carry_over(request_receipt.desis_limit_minor)
+                .unwrap();
+            outbe_ocompregistry::OcompRegistry::new(storage.clone())
+                .pin_lineage(intent_id, &limits)
                 .unwrap();
             contract
                 .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)

@@ -60,16 +60,48 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
     }
 }
 
-pub(super) fn request_profile() -> OcompRequestProfile {
-    OcompRequestProfile {
-        chain_id: 1,
-        genesis_hash: B256::repeat_byte(0x11),
-        fork_id: B256::repeat_byte(0x21),
-        protocol_bundle_hash: B256::repeat_byte(0x41),
-        correctness_profile_id: B256::repeat_byte(0x24),
-        capacity_profile: capacity_profile(),
-        source_availability_policy_id: B256::repeat_byte(0x35),
+fn authority() -> outbe_ocompregistry::OcompProtocolAuthorityV1 {
+    let mut protocol_bundle = crate::fixture_kernel::fixture_authority(1).protocol_bundle;
+    protocol_bundle.fork_id = B256::repeat_byte(0x21);
+    protocol_bundle.correctness_profile_id = B256::repeat_byte(0x24);
+    protocol_bundle.capacity_profile_id = capacity_profile().profile_id;
+    let protocol_bundle_hash = protocol_bundle
+        .protocol_bundle_hash(&poc_schema_limits())
+        .unwrap();
+    outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: OcompRequestProfile {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            fork_id: B256::repeat_byte(0x21),
+            protocol_bundle_hash,
+            correctness_profile_id: B256::repeat_byte(0x24),
+            capacity_profile: capacity_profile(),
+            source_availability_policy_id: B256::repeat_byte(0x35),
+        },
+        protocol_bundle,
     }
+}
+
+pub(super) fn request_profile() -> OcompRequestProfile {
+    authority().request_profile
+}
+
+/// Commits `intent` as the terminal request does, with its lineage pinned to the active bundle.
+fn commit_request(
+    contract: &mut MetadosisContract<'_>,
+    transition: &OuterWwdTransition,
+    intent: &JobIntentV1,
+    receipt: &RequestLimitSplitReceiptV1,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) {
+    crate::fixture_kernel::seed_registry_authority(&contract.storage, &authority(), limits)
+        .unwrap();
+    outbe_ocompregistry::OcompRegistry::new(contract.storage.clone())
+        .pin_lineage(intent.intent_id(limits).unwrap(), limits)
+        .unwrap();
+    contract
+        .commit_ocomp_request(transition, intent, receipt, limits)
+        .unwrap();
 }
 
 #[test]
@@ -180,7 +212,7 @@ fn outer_transition(contract: &MetadosisContract<'_>, event: OuterWwdEvent) -> O
 }
 
 fn receipt() -> RequestLimitSplitReceiptV1 {
-    let protocol_bundle_hash = B256::repeat_byte(0x41);
+    let protocol_bundle_hash = request_profile().protocol_bundle_hash;
     RequestLimitSplitReceiptV1 {
         protocol_bundle_hash,
         wwd: WWD.value(),
@@ -231,7 +263,7 @@ fn intent(
         wwd: WWD.value(),
         pending_nonce,
         attempt,
-        protocol_bundle_hash: B256::repeat_byte(0x41),
+        protocol_bundle_hash: request_profile().protocol_bundle_hash,
         ce_sealed_root: B256::repeat_byte(0x31),
         sealed_tribute_collection_key: B256::repeat_byte(0x32),
         sealed_tribute_collection_root: B256::repeat_byte(0x33),
@@ -298,11 +330,7 @@ fn open_job(
     intent_id: B256,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> outbe_ocomp_protocol::state::OcompFinalizedJobV1 {
-    // Production installs this immutable profile at genesis activation. These
-    // storage-focused tests construct records directly, so mirror that
-    // prerequisite before exercising finality.
-    contract
-        .initialize_ocomp_request_profile(&request_profile(), limits)
+    crate::fixture_kernel::seed_registry_authority(&contract.storage, &authority(), limits)
         .unwrap();
     let finalized = contract
         .record_ocomp_finality(
@@ -335,15 +363,16 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         );
         let intent_id = requested.intent_id(&limits).unwrap();
         let mut contract = MetadosisContract::new(storage.clone());
-        contract
-            .initialize_ocomp_request_profile(&request_profile(), &limits)
-            .unwrap();
         create_ready_day(&mut contract, WWD);
         contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &requested,
+            &receipt,
+            &limits,
+        );
 
         let finality_height = REQUEST_HEIGHT + 1;
         let ctx = BlockRuntimeContext::new(
@@ -435,9 +464,13 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &first_intent,
+            &receipt,
+            &limits,
+        );
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
@@ -511,9 +544,13 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
         create_ready_day(&mut contract, WWD);
         contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &requested,
+            &receipt,
+            &limits,
+        );
 
         assert_eq!(
             contract.ocomp_job_record(intent_id, &limits).unwrap(),
@@ -608,9 +645,13 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &first_intent,
+            &receipt,
+            &limits,
+        );
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
