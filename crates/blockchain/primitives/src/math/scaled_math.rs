@@ -38,10 +38,6 @@ pub fn checked_quote(
 }
 
 fn convert_to_u256(value: U512) -> Result<U256> {
-    if value.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    
     // A quote is stored as U256: explicitly reject values outside that bound
     // instead of truncating the high limbs (covered by quote boundary tests).
     let value = U256::checked_from_limbs_slice(value.as_limbs())
