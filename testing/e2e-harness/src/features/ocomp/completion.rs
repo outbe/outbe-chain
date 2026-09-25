@@ -210,7 +210,7 @@ fn release_pending_v1_workers_after_exact_exports(world: &mut World) {
     arm_case_one_artifact_phase(
         world,
         install.request_profile.protocol_bundle_hash,
-        request.intent_id,
+        request.job_id,
         Duration::from_secs(600),
     )
     .expect("arm exact V1 incarnations before releasing workers");
