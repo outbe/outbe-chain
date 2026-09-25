@@ -365,11 +365,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
-      // A node without the view still answers the rest.
-      const [metadata, qualified] = await Promise.all([
-        seriesMetadata(n, series),
-        seriesQualified(n, series).catch(() => undefined),
-      ]);
+      const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
       return ok({
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
@@ -393,7 +389,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
-        ...(qualified === undefined ? {} : { qualified }),
+        qualified,
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
@@ -466,7 +462,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             const deadlineSec =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
             // Only outbe has the factory that derives it.
-            const qualified = await seriesQualified(n, seriesHex).catch(() => undefined);
+            const qualified = n.name === "outbe-testnet" ? await seriesQualified(n, seriesHex) : undefined;
             return {
               ...base,
               series: fromSeriesId(seriesHex),
