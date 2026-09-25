@@ -19,10 +19,6 @@ pub enum CcaError {
     NoUnbond,
     #[error("CCA unbond cooldown has not completed")]
     Cooldown,
-    #[error("CCA has no claimable rewards")]
-    NoRewards,
-    #[error("CCA insufficient claimable rewards")]
-    InsufficientRewards,
     #[error("invalid CCA state: {0}")]
     InvalidState(u8),
     #[error("CCA arithmetic overflow or underflow")]

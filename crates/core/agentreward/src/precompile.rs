@@ -1,9 +1,14 @@
 use alloy_primitives::{Address, U256};
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use crate::schema::{AgentRewardContract, RewardPool};
+
+alloy_sol_types::sol!(
+    #[sol(all_derives)]
+    "../../../contracts/precompiles/src/IAgentReward.sol"
+);
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -35,30 +40,12 @@ impl AgentRewardContract<'_> {
         // amount = 0 means claim the whole pool balance, and nothing to claim is
         // then a no-op rather than a failure - the pre-Gem claim behaved the same
         // way.
-        if amount.is_zero() && self.get_pool_claimable_reward(pool, sender)?.is_zero() {
+        if pool != RewardPool::Cca
+            && amount.is_zero()
+            && self.get_pool_claimable_reward(pool, sender)?.is_zero()
+        {
             return Ok(U256::ZERO);
         }
         self.claim_reward(pool, sender, amount)
-    }
-    #[contract_public("issueCcaReward(address,uint256) returns (uint256)")]
-    fn _abi_issue_cca_reward(
-        &mut self,
-        sender: Address,
-        owner: Address,
-        load: U256,
-    ) -> Result<U256> {
-        if sender != outbe_primitives::addresses::CCA_REGISTRY_ADDRESS {
-            return Err(PrecompileError::Revert(
-                "only CCA registry may issue CCA rewards".into(),
-            ));
-        }
-        self.storage.with_checkpoint(|| {
-            crate::runtime::issue_reward_gem(
-                &self.storage,
-                owner,
-                outbe_gemfactory::schema::GemTypes::Cca,
-                load,
-            )
-        })
     }
 }
