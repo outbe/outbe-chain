@@ -159,7 +159,7 @@ pub struct GemContract {
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
     #[attribute(order = 26)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
