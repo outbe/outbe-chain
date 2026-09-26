@@ -144,45 +144,6 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(_measure(one), IntexGas.markCalled(1), "a single mark must fit the quote");
     }
 
-    /// @dev A qualified batch whose series have not landed: every mark slots instead of applying, which is
-    ///      the dearer of the two paths and the one the budget has to cover.
-    function test_TheQuoteCoversAQualifiedBatchThatSlots() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, batch);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("qualified_slot_8", spent);
-        assertLt(spent, IntexGas.markQualified(batch.length), "a full slotting qualified batch must fit");
-    }
-
-    function test_TheQuoteCoversASingleQualifiedMark() public {
-        bytes14[] memory one = MarkBatchLib.sized(SERIES_PREFIX, 1);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, one);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("qualified_slot_1", spent);
-        assertLt(spent, IntexGas.markQualified(1), "a single slotting qualified mark must fit");
-    }
-
-    function test_TheQuoteCoversAMarkQualifiedBatch() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
-        _seed(batch);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, batch);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("mark_qualified_8", spent);
-        assertLt(spent, IntexGas.markQualified(batch.length), "a full qualified batch must fit the quote");
-    }
-
     function test_TheQuoteCoversIssuanceAtItsWidest() public {
         uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
         address[] memory to = new address[](recipients);
@@ -283,8 +244,6 @@ contract GasBudgetTest is CrossChainTest {
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);
         dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
-        intex.markQualified(SERIES_PREFIX);
-        dstToken.markQualified(SERIES_PREFIX);
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
@@ -329,8 +288,6 @@ contract GasBudgetTest is CrossChainTest {
 
         _seed(MarkBatchLib.one(SERIES_PREFIX));
         dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
-        intex.markQualified(SERIES_PREFIX);
-        dstToken.markQualified(SERIES_PREFIX);
 
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);

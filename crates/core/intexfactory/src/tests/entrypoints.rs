@@ -62,7 +62,7 @@ fn config_unset_resolves_by_chain_id() {
 #[test]
 fn config_dev_profile_drives_issuance_and_qualification() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let f = IntexFactoryContract::new(s.clone());
         // Select the dev profile through the single selector byte.
         f.config_profile.write(crate::config::PROFILE_DEV).unwrap();
         assert_eq!(
@@ -93,17 +93,16 @@ fn config_dev_profile_drives_issuance_and_qualification() {
             }
         );
 
-        // Promotion is the floor comparison alone: a rate one unit past the
-        // dev-derived floor qualifies the day.
-        let rate = r.floor_price_minor + U256::from(1);
-        assert_eq!(qualify_day(&s, &mut f, 7, rate), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
+        // Qualification is the floor comparison alone: a day closing one unit past
+        // the dev-derived floor qualifies the series.
+        write_day_vwap(
+            &OracleContract::new(s.clone()),
+            REFERENCE_ISO,
+            PAIR_ID,
+            ISSUED_AT as u64 + 2 * DAY,
+            r.floor_price_minor + U256::from(1),
         );
+        assert!(runtime::is_series_qualified(&s, sid(7)).unwrap());
     });
 }
 

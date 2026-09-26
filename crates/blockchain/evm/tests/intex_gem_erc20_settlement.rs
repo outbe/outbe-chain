@@ -185,7 +185,6 @@ impl World {
                         },
                     )
                     .unwrap();
-                    outbe_intex::api::mark_qualified(&storage, series_id).unwrap();
                     U256::ZERO
                 }
                 Factory::Gem => outbe_gem::api::add_gem(

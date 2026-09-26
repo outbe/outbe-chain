@@ -9,7 +9,9 @@ use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{
+    first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay,
+};
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -31,7 +33,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex, enroll it in the floor-bin index, and send
+/// Capture series identity in Intex, enroll it in the call-price bin index, and send
 /// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
 /// broadcast (including a loopback leg on the origin), so there is no in-process
@@ -107,11 +109,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         })
         .collect();
 
-    // Enroll into the unqualified floor-bin index the daily qualify sweep walks.
-    factory.insert_unqualified(
+    // Enroll into the call-price bin index the daily Called scan walks.
+    factory.insert_call_bin(
         params.series_id,
         params.reference_currency,
-        floor_price_minor,
+        call_price_minor,
     )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
@@ -794,18 +796,18 @@ fn settle(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let state = series.lifecycle_state()?;
-    // Settle is allowed in Qualified (voluntary) and Called (forced).
-    if state != IntexState::Qualified && state != IntexState::Called {
-        return Err(IntexFactoryError::NotSettleable(series.state).into());
-    }
-    // The deadline only constrains forced settlement (Called).
-    if state == IntexState::Called {
-        let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-        if now > deadline {
-            return Err(IntexFactoryError::DeadlineExpired.into());
+    // The call check is one read; the qualification walk goes last.
+    match series.lifecycle_state()? {
+        IntexState::Called => {
+            let now = storage.timestamp()?.to::<u64>();
+            let deadline =
+                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
+            if now > deadline {
+                return Err(IntexFactoryError::DeadlineExpired.into());
+            }
         }
+        IntexState::Issued | IntexState::Qualified if is_qualified(storage, &series)? => {}
+        _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 
     let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;
@@ -954,6 +956,23 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
     )?;
     IERC1155::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+}
+
+/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
+pub fn is_qualified(
+    storage: &StorageHandle<'_>,
+    series: &outbe_intex::SeriesRecord,
+) -> Result<bool> {
+    outbe_oracle::api::closed_above_floor(
+        storage.clone(),
+        series.reference_currency,
+        series.floor_price_minor,
+        first_full_day(u64::from(series.issued_at)),
+    )
+}
+
+pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
+    is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
 }
 
 /// What settling `amount` units of `series_id` with `payment_token` costs, and

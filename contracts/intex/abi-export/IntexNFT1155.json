@@ -448,6 +448,25 @@
     },
     {
       "type": "function",
+      "name": "isQualified",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "issue",
       "inputs": [
         {
@@ -501,19 +520,6 @@
           "name": "calledAt",
           "type": "uint32",
           "internalType": "uint32"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "markQualified",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
         }
       ],
       "outputs": [],
@@ -1823,17 +1829,6 @@
         },
         {
           "name": "actual",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidStateForSettle",
-      "inputs": [
-        {
-          "name": "state",
           "type": "uint8",
           "internalType": "uint8"
         }

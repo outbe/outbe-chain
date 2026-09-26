@@ -1,4 +1,4 @@
-//! Daily Called scan: force-calls a Qualified series once its COEN VWAP exceeded
+//! Daily Called scan: force-calls a series once its COEN VWAP exceeded
 //! the call trigger on `call_threshold_seconds` of the last `call_window_seconds`. Candidates
 //! come from the call-trigger bin index; counts are recomputed each run from the
 //! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
@@ -23,11 +23,13 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{CALL_SWEEP, MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
-use crate::qualified::ScanBudget;
+use crate::constants::{
+    CALL_SWEEP, MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
+    ORIGIN_ROUTER_ADDRESS,
+};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
-use crate::state::{Group, QualifiedBinTree};
+use crate::state::{CallBins, Group};
 
 /// Schedule the day the Oracle has just finalized: open a Called sweep over it and
 /// run its first slice, or queue it behind the sweep still in flight.
@@ -108,10 +110,9 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
     let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
     let oracle = OracleContract::new(ctx.storage.clone());
-    let start =
-        crate::qualified::currency_position(&currencies, factory.call_currency_cursor.read()?);
+    let start = currency_position(&currencies, factory.call_currency_cursor.read()?);
 
-    let mut budget = ScanBudget::for_qualify();
+    let mut budget = ScanBudget::for_call();
     let mut called: u32 = 0;
     // One pass down the list: a currency closed behind the cursor is never walked
     // again, so every sweep ends however much it leaves undecided.
@@ -150,7 +151,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(called)
 }
 
-/// Scans one currency's qualified groups on the shared `budget`. Returns the calls
+/// Scans one currency's call-price bins on the shared `budget`. Returns the calls
 /// made and whether its eligible range was walked to the end.
 fn call_currency(
     ctx: &BlockRuntimeContext,
@@ -210,21 +211,19 @@ fn call_currency(
             finished = false;
             break;
         }
-        let next = match tree_math::find_first_left_inclusive(
-            &QualifiedBinTree(&factory, iso_code),
-            cursor,
-        )? {
-            Some(b) if b <= p_bin => b,
-            _ => {
-                // End of the eligible range: the next run sweeps this currency afresh.
-                factory.call_scan_cursor.write(&iso_code, 0)?;
-                break;
-            }
-        };
+        let next =
+            match tree_math::find_first_left_inclusive(&CallBins(&factory, iso_code), cursor)? {
+                Some(b) if b <= p_bin => b,
+                _ => {
+                    // End of the eligible range: the next run sweeps this currency afresh.
+                    factory.call_scan_cursor.write(&iso_code, 0)?;
+                    break;
+                }
+            };
 
         // Snapshot the bin before mutating: a called group leaves it.
-        for worldwide_day in factory.qualified_groups_in_bin(iso_code, next)? {
-            let group = factory.qualified_group(iso_code, worldwide_day)?;
+        for worldwide_day in factory.call_bin_groups(iso_code, next)? {
+            let group = factory.call_bin_group(iso_code, worldwide_day)?;
             if !budget.admits_actions(group.members.len() as u32) {
                 // Called groups have left this bin, so resuming on it redoes nothing.
                 factory.call_scan_cursor.write(&iso_code, next)?;
@@ -267,10 +266,8 @@ fn call_currency(
     Ok((called, finished))
 }
 
-/// Cycle daily-trigger entry: opens the day's qualification and Called sweeps,
-/// discarding the counts.
+/// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::qualified::scan_and_qualify(ctx)?;
     scan_and_call(ctx)?;
     Ok(())
 }
@@ -391,7 +388,10 @@ pub(crate) fn try_call_group(
         return Ok(0);
     };
     let series = outbe_intex::api::read_series(storage, first)?;
-    if series.lifecycle_state()? != IntexState::Qualified {
+    if !matches!(
+        series.lifecycle_state()?,
+        IntexState::Issued | IntexState::Qualified
+    ) {
         return Ok(0);
     }
     let trigger = series.call_price_minor;
@@ -433,7 +433,7 @@ pub(crate) fn try_call_group(
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
     // Park it with its members: the expiry sweep has no other way back to them.
-    factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
+    factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
     factory.push_called_group(
         group.iso_code,
         group.worldwide_day,
@@ -444,10 +444,10 @@ pub(crate) fn try_call_group(
     // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
     // the `intex_drain_notices` trigger. Each carries its own series: the group has left the index by then.
     for &series_id in &group.members {
-        crate::qualified::enqueue_notice(
+        crate::notify::enqueue_notice(
             factory,
-            crate::qualified::NOTICE_CALLED,
-            crate::qualified::pack_called_notice(series_id, called_at),
+            crate::notify::NOTICE_CALLED,
+            crate::notify::pack_called_notice(series_id, called_at),
         )?;
     }
 
@@ -500,4 +500,49 @@ pub(crate) fn notify_called(
         }
     }
     Ok(())
+}
+
+/// Index of the currency the cursor names, or the head when the registry dropped it.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
+}
+
+/// Work one scan may do, split by cost: deciding a group is a single read,
+/// applying it writes once per series and queues its notice.
+pub(crate) struct ScanBudget {
+    decisions: u32,
+    actions: u32,
+    actions_full: u32,
+}
+
+impl ScanBudget {
+    pub(crate) fn for_call() -> Self {
+        Self {
+            decisions: MAX_GROUP_DECISIONS_PER_BLOCK,
+            actions: MAX_SERIES_ACTIONS_PER_BLOCK,
+            actions_full: MAX_SERIES_ACTIONS_PER_BLOCK,
+        }
+    }
+
+    pub(crate) fn is_spent(&self) -> bool {
+        self.decisions == 0 || self.actions == 0
+    }
+
+    /// Whole groups only. A transition shrinks its bin, so stopping on actions
+    /// resumes past the work done; stopping on decisions would restart on the
+    /// same groups, so they bound the scan at the next bin boundary instead.
+    pub(crate) fn admits_actions(&self, members: u32) -> bool {
+        members <= self.actions || self.actions == self.actions_full
+    }
+
+    pub(crate) fn spend_decision(&mut self) {
+        self.decisions = self.decisions.saturating_sub(1);
+    }
+
+    pub(crate) fn spend_actions(&mut self, series: u32) {
+        self.actions = self.actions.saturating_sub(series);
+    }
 }

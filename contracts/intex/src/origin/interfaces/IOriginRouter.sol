@@ -87,12 +87,7 @@ interface IOriginRouter {
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
-    /// @notice Emitted when a mark-qualified message is sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
-    event MarkQualifiedSent(bytes32 indexed sendId, bytes14 indexed seriesId);
-
-    /// @notice Emitted when one finalized day is sent to a target chain. `sendId` is 0 when the leg parked.
+    /// @notice `sendId` is 0 when the leg parked.
     event DailyVwapSent(bytes32 indexed sendId, uint32 indexed dstChainId, uint32 indexed utcDay);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
@@ -320,9 +315,6 @@ interface IOriginRouter {
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
-    /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
-    ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.
-    function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Sends one finalized day to every registered target but this chain, whose NFT reads the IntexFactory.
     /// @return legs Legs sent or parked.

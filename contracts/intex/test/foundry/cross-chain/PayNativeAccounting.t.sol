@@ -74,7 +74,6 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         // Series + owner balance so markCalled/owner enumeration and the entry-path bridge sends have tokens.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
-        intex.markQualified(SERIES_ID);
         intex.issue(owner, 5, SERIES_ID);
     }
 
