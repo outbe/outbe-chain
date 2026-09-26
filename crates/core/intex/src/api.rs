@@ -2,19 +2,18 @@
 //!
 //! This is the only surface IntexFactory uses to read and write the registry.
 //! The lifecycle gates mirror the Origin `IntexNFT1155` state machine
-//! (`markQualified` / `markCalled`). There is no precompile dispatch for writes
+//! (`markCalled`). There is no precompile dispatch for writes
 //! and access is Rust-to-Rust only, so no trusted-caller checks are needed.
 //!
-//! The legacy registry remains a thin ledger whose record validation is the
-//! `issued_at` existence sentinel. Once a certified contributor generation is
-//! installed, its series identity is closed to legacy contributor writes so
-//! the two storage models cannot become competing authorities. Independent
-//! series creation remains valid because activation may precede auction
-//! completion. Other business validation (caps, defaults, zero economic
-//! parameters) belongs to the caller (IntexFactory).
+//! The registry is a thin ledger whose record validation is the `issued_at`
+//! existence sentinel. Contributor authority is the certified contributor root
+//! installed by OCOMP activation; series creation stays independent of it
+//! because activation may precede auction completion. Other business
+//! validation (caps, defaults, zero economic parameters) belongs to the caller
+//! (IntexFactory).
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
@@ -26,14 +25,14 @@ use crate::payout::{
 use crate::schema::SeriesRecordEntryExt;
 use crate::schema::{
     CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
-    DistProgress, IntexContract, IntexState, SeriesId, SeriesRecord,
+    IntexContract, IntexState, SeriesId, SeriesRecord,
 };
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///
-/// An absent legacy series starts at version 0 and an existing legacy series
-/// at version 1. A certified root installation advances that exact version
-/// once; the version is active output authority, not reservation state.
+/// An absent series starts at version 0 and an existing series at version 1.
+/// A certified root installation advances that exact version once; the
+/// version is active output authority, not reservation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompContributorTargetProjection {
     pub worldwide_day: u32,
@@ -70,21 +69,6 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         worldwide_day: params.worldwide_day,
     };
     registry.create_series_record(&record)
-}
-
-/// `Issued -> Qualified`. Mirrors `markQualified`.
-pub fn mark_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    let mut record = registry.load_series(series_id)?;
-    if record.lifecycle_state()? != IntexState::Issued {
-        return Err(IntexError::InvalidState {
-            expected: IntexState::Issued as u8,
-            actual: record.state,
-        }
-        .into());
-    }
-    record.state = IntexState::Qualified as u8;
-    registry.update_series_record(&record)
 }
 
 /// `Issued | Qualified -> Called`. Mirrors `markCalled`. `called_at` is the
@@ -388,42 +372,23 @@ pub fn ocomp_contributor_target_projection(
     worldwide_day: WorldwideDay,
 ) -> Result<OcompContributorTargetProjection> {
     let registry = IntexContract::new(storage.clone());
-    let exists = registry.day_has_series(worldwide_day)?;
-    let legacy_count = registry.read_contributor_count(worldwide_day)?;
-    let legacy_total = registry.read_contributor_total(worldwide_day)?;
-    if (legacy_count == 0) != legacy_total.is_zero() {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Intex legacy contributor aggregate is malformed".into(),
-        ));
-    }
-    let certified = registry.ocomp_certified_contributor_generation(worldwide_day)?;
-    if certified.is_some() && (legacy_count != 0 || !legacy_total.is_zero()) {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Intex series has conflicting legacy and certified contributor authority".into(),
-        ));
-    }
-    if !exists && certified.is_none() && (legacy_count != 0 || !legacy_total.is_zero()) {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Intex absent series has residual contributor state".into(),
-        ));
-    }
-
-    let base_version = u64::from(exists);
-    let (expected_series_version, contributor_count, contributor_total) = match certified {
-        Some(certified) => {
-            if certified.series_version < base_version {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
-                    "Intex certified contributor version precedes the series ledger".into(),
-                ));
+    let base_version = u64::from(registry.day_has_series(worldwide_day)?);
+    let (expected_series_version, contributor_count, contributor_total) =
+        match registry.ocomp_certified_contributor_generation(worldwide_day)? {
+            Some(certified) => {
+                if certified.series_version < base_version {
+                    return Err(outbe_primitives::error::PrecompileError::Fatal(
+                        "Intex certified contributor version precedes the series ledger".into(),
+                    ));
+                }
+                (
+                    certified.series_version,
+                    certified.contributor_count,
+                    certified.eligible_nominal_total,
+                )
             }
-            (
-                certified.series_version,
-                certified.contributor_count,
-                certified.eligible_nominal_total,
-            )
-        }
-        None => (base_version, legacy_count, legacy_total),
-    };
+            None => (base_version, 0, U256::ZERO),
+        };
     Ok(OcompContributorTargetProjection {
         worldwide_day: worldwide_day.value(),
         expected_series_version,
@@ -576,130 +541,6 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 }
 
 // -------------------------------------------------------------------------
-// Creator-reward: contributors + paginated distribution
-// -------------------------------------------------------------------------
-
-/// Record the (pre-deduplicated) legacy contributor list for a series. Called
-/// once per series by legacy Lysis, before the tributes are burned. Each entry
-/// is `(tribute owner, sum nominal_amount_minor)`. A certified generation closes
-/// this path for that exact series identity.
-pub fn record_contributors(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    contributors: &[(Address, U256)],
-) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    if registry
-        .ocomp_certified_contributor_generation(worldwide_day)?
-        .is_some()
-    {
-        return Err(PrecompileError::Revert(
-            "legacy contributors cannot replace certified contributor authority".into(),
-        ));
-    }
-    registry.write_contributors(worldwide_day, contributors)
-}
-
-/// Number of contributors recorded for a series (0 if none).
-pub fn contributor_count(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u32> {
-    IntexContract::new(storage.clone()).read_contributor_count(worldwide_day)
-}
-
-/// sum of all contributor nominals for a series (the proportionality denominator).
-pub fn contributor_total(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
-    IntexContract::new(storage.clone()).read_contributor_total(worldwide_day)
-}
-
-/// `(owner, nominal)` of the contributor at a dense index.
-pub fn contributor_at(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    index: u32,
-) -> Result<(Address, U256)> {
-    IntexContract::new(storage.clone()).read_contributor_at(worldwide_day, index)
-}
-
-/// Full contributor list for a series.
-pub fn read_contributors(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<Vec<(Address, U256)>> {
-    let registry = IntexContract::new(storage.clone());
-    let count = registry.read_contributor_count(worldwide_day)?;
-    let mut out = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        out.push(registry.read_contributor_at(worldwide_day, i)?);
-    }
-    Ok(out)
-}
-
-/// Open a paginated distribution for a series: create the progress record
-/// (cursor 0, nothing paid yet) and enroll the series in the active set the
-/// begin-block hook drains.
-pub fn start_distribution(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    amount: U256,
-    total_nominal: U256,
-) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    registry.create_dist_progress(&DistProgress {
-        worldwide_day,
-        amount,
-        total_nominal,
-        paid_so_far: U256::ZERO,
-        cursor: 0,
-        active: 1,
-    })?;
-    registry.push_active_dist(worldwide_day)
-}
-
-/// In-flight distribution progress for a series; `None` when none is open.
-pub fn get_progress(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<Option<DistProgress>> {
-    IntexContract::new(storage.clone()).get_dist_progress(worldwide_day)
-}
-
-/// Persist an updated progress record (advanced cursor / paid total).
-pub fn save_progress(storage: &StorageHandle<'_>, progress: &DistProgress) -> Result<()> {
-    IntexContract::new(storage.clone()).update_dist_progress(progress)
-}
-
-/// Finish a distribution: drop the progress record, the active-set entry, and
-/// the (now spent) contributor list.
-pub fn clear_distribution(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    registry.delete_dist_progress(worldwide_day)?;
-    registry.remove_active_dist(worldwide_day)?;
-    registry.clear_contributors(worldwide_day)
-}
-
-/// End one distribution round without touching the contributor map: drop the
-/// progress record and the active-set entry only. Used by the multi-chain
-/// proceeds flow, which decides separately whether to retain the map for a
-/// later top-up ([`finalize_proceeds`]) or clear it.
-pub fn finish_distribution_round(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    registry.delete_dist_progress(worldwide_day)?;
-    registry.remove_active_dist(worldwide_day)
-}
-
-/// Number of in-flight distributions (for the begin-block drain).
-pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
-    IntexContract::new(storage.clone()).read_active_dist_count()
-}
-
-/// `worldwide_day` of the active distribution at a dense index.
-pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<WorldwideDay> {
-    IntexContract::new(storage.clone()).read_active_dist_at(index)
-}
-
-// -------------------------------------------------------------------------
 // Creator-reward: multi-chain proceeds fan-in aggregation
 // -------------------------------------------------------------------------
 
@@ -770,7 +611,7 @@ pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
         .read(&worldwide_day)
 }
 
-/// Read and clear the accumulated pot (handed to a distribution round).
+/// Read and clear the accumulated pot.
 pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
     let registry = IntexContract::new(storage.clone());
     let pot = registry.proceeds_pot.read(&worldwide_day)?;
@@ -778,42 +619,16 @@ pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     Ok(pot)
 }
 
-/// Mark whether the current distribution round should finalize the series on
-/// completion (all expected chains in) or retain its map for a later top-up.
-pub fn set_proceeds_finalize_on_done(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    finalize: bool,
-) -> Result<()> {
-    IntexContract::new(storage.clone())
-        .proceeds_finalize_on_done
-        .write(&worldwide_day, u8::from(finalize))
-}
-
-/// Whether the in-flight round finalizes the series on completion.
-pub fn proceeds_finalize_on_done(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<bool> {
-    Ok(IntexContract::new(storage.clone())
-        .proceeds_finalize_on_done
-        .read(&worldwide_day)?
-        != 0)
-}
-
-/// Finalize proceeds aggregation for a series: clear the pot/deadline/counters,
-/// drop it from the awaiting set, and clear the (now spent) contributor map.
-/// The per-(series, chain) flags are left as harmless dead entries - a series id
-/// (the worldwide day) never recurs.
+/// Finalize proceeds aggregation for a series: clear the pot/deadline/counters
+/// and drop it from the awaiting set. The per-(series, chain) flags are left as
+/// harmless dead entries - a series id (the worldwide day) never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.proceeds_pot.clear(&worldwide_day)?;
     registry.proceeds_deadline.clear(&worldwide_day)?;
     registry.proceeds_expected_count.clear(&worldwide_day)?;
     registry.proceeds_arrived_count.clear(&worldwide_day)?;
-    registry.proceeds_finalize_on_done.clear(&worldwide_day)?;
-    registry.remove_awaiting_proceeds(worldwide_day)?;
-    registry.clear_contributors(worldwide_day)
+    registry.remove_awaiting_proceeds(worldwide_day)
 }
 
 /// Number of series awaiting proceeds fan-in (for the begin-block deadline sweep).

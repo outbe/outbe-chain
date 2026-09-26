@@ -275,6 +275,35 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     }
 }
 
+/// The seeder writes the Nod FIFO bounds as raw slots; read them back through the schema.
+#[test]
+fn seeded_nod_fifo_reads_back_through_the_schema() {
+    use outbe_primitives::addresses::NOD_ADDRESS;
+
+    let (_tmp, genesis, _raw) = run_seed_genesis(
+        FIXTURE_GENESIS,
+        FIXTURE_SEED,
+        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
+    );
+    let entry = alloc_entry(&genesis, &alloy_primitives::hex::encode(NOD_ADDRESS));
+    let mut provider = HashMapStorageProvider::new(1);
+    for (key, value) in entry["storage"].as_object().expect("seeded Nod storage") {
+        provider.storage.insert(
+            (NOD_ADDRESS, key.parse().expect("storage key")),
+            value
+                .as_str()
+                .expect("hex value")
+                .parse()
+                .expect("storage value"),
+        );
+    }
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = outbe_nod::NodContract::new(storage);
+        assert_eq!(nod.ocomp_materialization_head_sequence.read().unwrap(), 1);
+        assert_eq!(nod.ocomp_materialization_tail_sequence.read().unwrap(), 1);
+    });
+}
+
 /// reth22-2: three-way bind of the EIP-161 preservation contract. Every
 /// *stateful* dispatch-registered precompile (`outbe_precompile_addresses`)
 /// must be preserved across state-root computation by EITHER the executor's

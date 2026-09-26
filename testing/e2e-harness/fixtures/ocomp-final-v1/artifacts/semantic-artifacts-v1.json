@@ -3,27 +3,27 @@
   "kind": "outbe-ocomp-semantic-artifacts-v1",
   "source_sets": {
     "generator": "0x477f694fb6515c5f3b107b1051cc57039b68f26f1d5ab85f730285ad07441cb2",
-    "registry": "0xc6d9de2614f60c00809f4a166385740e792b143b55e1a210d41300b2eaee97ce"
+    "registry": "0xb9d9a3e9160cdedc3b4880ecae51c13efdbc5a72ddf79447d8cc6310d4d50164"
   },
   "artifacts": {
-    "intent_codec_id": "0x50dec50e03054703721ea10ade4f94abbb2384f2455b0a49bd8c62e6ccd746a0",
-    "finalized_intent_proof_codec_id": "0x16234b275fad924e7d24777da5ce8cb30863d6edc375bdfea32b07f33c6cadc7",
-    "result_codec_id": "0x5a96a2d5c17f86ad36caaf54ae87c295ab3e5b08f8afec3f83159171e491eed4",
-    "action_codec_id": "0x68ed596f80bbc087cef9e0b666c1f8ff8f23b0d3d98feeebb3f85ab2f2f89ce7",
-    "activation_codec_id": "0x5987cbe9a664902b375313c5d9372cdd5bcb8836dfd9358503126706d0e70f46",
-    "evidence_codec_id": "0xbb88ba033a643ad221e219d26cbf99fffb2083c973fa5f4c9460c6e2fe0a7550",
-    "arithmetic_profile_id": "0x48184ede705e5326a6e24d2052116fa5a6a0fa08f055c3a9b483fd1f732c5e60",
-    "lysis_program_semantics_hash": "0x9765939754b7a94e6b92a5886a72fb075e22664353f78c514bb3eafb9212ba13",
-    "activation_apply_semantics_hash": "0xfa2b97dc64558def7118bdb8b04122e61656107ff9f39d153fc8fd1f59dc47cf",
-    "effect_contract_registry_hash": "0x0af2b771e57de345d952d3b3a717d82a2687d19bb309bf72b582174c4ce69d8d",
-    "object_codec_registry_hash": "0x7d46a686f4612ed9c5979effe21153902b0246a42e1fcbd066e4104a3e491de1",
-    "list_root_scheme_id": "0x30f5a24e35802ba9b28232c232702951c5ca49c0d54d351f489f3b1b62f736c4",
-    "result_signature_profile_id": "0x15a15cea1ad55da4bfcd2ad2dd47055cc8345569771d52156afdd3fd30386279",
-    "finality_verifier_and_vote_domain_id": "0x6087ff3b71a2338b4c47898f27e158117c277df606f0761b10dc971556cb7a03",
-    "anti_equivocation_journal_schema_hash": "0xa9be9234ba269067f467a2816e8c33f4f54afbe6cd80926b68787680ace6b940",
-    "mode_pause_revocation_semantics_hash": "0x605da7f86d6d38dbf7eec43f44c58888fac5f1881277af798050b3e4a784ee13",
-    "upgrade_fsm_semantics_hash": "0x4f511dadfc0d71dfcb983988eee10e4c841165d45bb096b17e685f6edaf24360",
-    "release_placeholder_hash": "0x940caa1095c5c5104bf82353728755c7d7209964f4030621222c0aa21231bd6a",
-    "source_availability_policy_id": "0xc8343b8d501bfa7cda0a6dd66a7e27302d4698f9601ff67d6d3af93c6646d6f9"
+    "intent_codec_id": "0xe532607cbfaa39c05cf1f3675e278466933f8a8814abc5b8c4863b83ddd7009c",
+    "finalized_intent_proof_codec_id": "0xe9371d6de8023a46b2faa9b6defee059398cd04b73cf39daa408dc2cdb01e17d",
+    "result_codec_id": "0xd98c8dcd7b18e56d4c48bd508cbdef45aa9bc6e7f02c2932100589530aed0296",
+    "action_codec_id": "0x07b5d27cfe2fa7928211c92e952bd6947723a41a8c016429a925b43c8b77e2c0",
+    "activation_codec_id": "0x07ecf04f83acd89d4cc294a2a6735d2e1bcecba1382d9ed87b6a6ac6a560e1a3",
+    "evidence_codec_id": "0x516832eb62b88ddfdd0af6719e67da7e8c5bde291115804f2686da3d70a3db26",
+    "arithmetic_profile_id": "0xa8795279181ed0753cc6f7f018c51a8b0a953730148bd7cf458e3301eefdbdaa",
+    "lysis_program_semantics_hash": "0xbaba9a160fe80ba75d7face05123936c7c0193494d616686ea0376da49fcbe38",
+    "activation_apply_semantics_hash": "0x9d531cbb4a73f07945b4f4e1a9bad67665f5542a22c9fd5a85bb2f41593f59cd",
+    "effect_contract_registry_hash": "0x1aa0d5c45f978dc12fbac89e1126a4cf95f6f1dbb2086cf196dd64875d3ebf2b",
+    "object_codec_registry_hash": "0x2d89ea82ca6581fe69a7270a3943212e3c4769ad6ee09f01c4091a39648cf459",
+    "list_root_scheme_id": "0x015d5ce088fbb29b795956529df4aa7e859b4ae5673b536745dfe86052c79d09",
+    "result_signature_profile_id": "0x157883d42b4cff6e56c700deb4579bde0e44d806911dfdfa9f91fe776cde1878",
+    "finality_verifier_and_vote_domain_id": "0x6ccd42b4fb2ba52adba0216a554b860e51a64491a0092b098f85b84679f8d648",
+    "anti_equivocation_journal_schema_hash": "0xbad1420bd38a7398b194c140dfe824494430c5709205966625dcc28381faadd2",
+    "mode_pause_revocation_semantics_hash": "0xa56467f167527f74497eb63e28debc69adc1e49584a73a660b4b16ed8e046a47",
+    "upgrade_fsm_semantics_hash": "0x5b9410e0eead32b81edf8d83347f0440ae3cf0a822dca8f3d6dda4413de792cd",
+    "release_placeholder_hash": "0x47b7b7736ee43f4f3542072aefd4f788bbe85bd89f197d2b51a8b75b29394f8c",
+    "source_availability_policy_id": "0xb555db0f58445f18ee8101b903a68d10883417eb571529ec550ec526e032b476"
   }
 }

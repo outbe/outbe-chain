@@ -206,8 +206,8 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
         seed_genesis.seed_nod_materialization_fifo(storage)
 
-        self.assertEqual(storage.entries[seed_genesis.hex32(19)], seed_genesis.hex32(1))
-        self.assertEqual(storage.entries[seed_genesis.hex32(20)], seed_genesis.hex32(1))
+        self.assertEqual(storage.entries[seed_genesis.hex32(13)], seed_genesis.hex32(1))
+        self.assertEqual(storage.entries[seed_genesis.hex32(14)], seed_genesis.hex32(1))
 
     def test_cycle_active_day_is_seeded_from_header_timestamp(self):
         genesis = {

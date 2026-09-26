@@ -972,8 +972,8 @@ def seed_nod_materialization_fifo(storage: StorageBuilder):
     """Initialize the canonical NOD materialization FIFO bounds."""
     # Pinned by `materialization_fifo_slots_match_the_genesis_seeder` in
     # `crates/core/nod/src/adr006_tests.rs`.
-    storage.set_slot(19, 1)  # head_sequence
-    storage.set_slot(20, 1)  # tail_sequence (next-free)
+    storage.set_slot(13, 1)  # head_sequence
+    storage.set_slot(14, 1)  # tail_sequence (next-free)
 
 
 def seed_metadosis(storage: StorageBuilder, config: dict):

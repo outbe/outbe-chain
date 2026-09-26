@@ -2,10 +2,9 @@ use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
-        DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
-        TributeInputBindingV1,
+        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::poc_schema_limits,
     receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
@@ -67,12 +66,6 @@ fn request_receipt(day_type: DayType) -> RequestLimitSplitReceiptV1 {
     let protocol_bundle_hash = hash(41);
     let wwd = 7;
     let desis_limit_minor = U256::from(40);
-    let auction_entry_prices = vec![ReferenceEntryPriceV1 {
-        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-        entry_price_minor: U256::from(9),
-        source: AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: 6,
-    }];
     let logical_anchor = 1_000;
     let green = day_type == DayType::Green;
     RequestLimitSplitReceiptV1 {
@@ -93,13 +86,11 @@ fn request_receipt(day_type: DayType) -> RequestLimitSplitReceiptV1 {
                 protocol_bundle_hash,
                 wwd,
                 if green { desis_limit_minor } else { U256::ZERO },
-                &auction_entry_prices,
                 logical_anchor,
             )
             .unwrap(),
         ),
         carry_over_credit: if green { U256::ZERO } else { desis_limit_minor },
-        auction_entry_prices,
         logical_anchor,
     }
 }
@@ -129,12 +120,6 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             day_gratis_limit_minor: U256::from(60),
             lysis_limit_minor: U256::from(60),
             desis_limit_minor: U256::from(40),
-            auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-                entry_price_minor: U256::from(9),
-                source: AuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: 6,
-            }],
             request_limit_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: 100,

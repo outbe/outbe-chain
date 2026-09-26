@@ -13,10 +13,6 @@ pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRE
 #[cfg(feature = "e2e-test")]
 pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-/// Max contributor payouts per `distribute` pass (pagination chunk size).
-/// Large series are drained across several blocks by the begin-block hook.
-pub const DIST_CHUNK_LIMIT: u32 = 200;
-
 /// Proceeds fan-in window: creators are paid once every winning chain has
 /// routed its proceeds, or this long after issuance - whichever comes first.
 /// A full day absorbs legitimate escrow-finalize retries so, in virtually all
@@ -31,8 +27,7 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of each daily sweep.
-pub const QUALIFY_SWEEP: u8 = 0;
+/// `SweepDaySkipped.sweep` of the Called sweep; 0 belonged to the retired qualify sweep.
 pub const CALL_SWEEP: u8 = 1;
 
 /// Router calls one `intex_drain_notices` firing may make; an entry costing none still
@@ -84,7 +79,7 @@ pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 24;
 /// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 
-/// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
+/// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 

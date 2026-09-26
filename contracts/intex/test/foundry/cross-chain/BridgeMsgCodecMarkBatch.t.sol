@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 
-/// @dev MARK_CALLED and MARK_QUALIFIED carry one day's series in one reference currency, so both
-///      round-trip a batch and both refuse an empty or over-sized one.
+/// @dev MARK_CALLED carries one day's series in one reference currency, so it round-trips a batch and
+///      refuses an empty or over-sized one.
 contract BridgeMsgCodecMarkBatchTest is Test {
     /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
@@ -23,20 +23,8 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
 
-    function exposedDecodeMarkQualified(bytes calldata p)
-        external
-        pure
-        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
-    {
-        return BridgeMsgCodec.decodeMarkQualified(p);
-    }
-
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
-    }
-
-    function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkQualified(day, ids);
     }
 
     function test_markCalledRoundTripsTheWholeBatch() public view {
@@ -48,15 +36,6 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         assertEq(ids.length, 2, "both series survive");
         assertEq(ids[0], FIRST, "first series");
         assertEq(ids[1], SECOND, "second series");
-    }
-
-    function test_markQualifiedRoundTripsTheWholeBatch() public view {
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(FIRST, SECOND));
-
-        (uint32 day, bytes14[] memory ids) = this.exposedDecodeMarkQualified(packet);
-
-        assertEq(day, WORLDWIDE_DAY, "worldwideDay survives");
-        assertEq(ids.length, 2, "both series survive");
     }
 
     function test_aFullBatchRoundTrips() public view {
@@ -76,12 +55,9 @@ contract BridgeMsgCodecMarkBatchTest is Test {
 
     function test_theHeaderNamesTheMessageType() public view {
         bytes memory called = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
-        bytes memory qualified = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(FIRST));
 
         assertEq(uint8(called[0]), BridgeMsgCodec.BODY_VERSION_V1, "called version");
         assertEq(uint8(called[1]), BridgeMsgCodec.MSG_MARK_CALLED, "called type");
-        assertEq(uint8(qualified[0]), BridgeMsgCodec.BODY_VERSION_V1, "qualified version");
-        assertEq(uint8(qualified[1]), BridgeMsgCodec.MSG_MARK_QUALIFIED, "qualified type");
     }
 
     function test_anEmptyBatchIsRefusedOnBothSides() public {
@@ -112,23 +88,23 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         );
 
         vm.expectRevert(expected);
-        this.exposedEncodeMarkQualified(WORLDWIDE_DAY, batch);
+        this.exposedEncodeMarkCalled(WORLDWIDE_DAY, batch);
 
-        bytes memory forged = abi.encodePacked(hex"0109", abi.encode(WORLDWIDE_DAY, batch));
+        bytes memory forged = abi.encodePacked(hex"0108", abi.encode(WORLDWIDE_DAY, CALLED_AT, batch));
         vm.expectRevert(expected);
-        this.exposedDecodeMarkQualified(forged);
+        this.exposedDecodeMarkCalled(forged);
     }
 
     function test_aBodyShorterThanOneSeriesIsRefused() public {
-        bytes memory tooShort = abi.encodePacked(hex"0109", new bytes(96));
+        bytes memory tooShort = abi.encodePacked(hex"0108", new bytes(128));
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_QUALIFIED,
+                BridgeMsgCodec.MSG_MARK_CALLED,
                 tooShort.length,
-                BridgeMsgCodec.MIN_LEN_MARK_QUALIFIED
+                BridgeMsgCodec.MIN_LEN_MARK_CALLED
             )
         );
-        this.exposedDecodeMarkQualified(tooShort);
+        this.exposedDecodeMarkCalled(tooShort);
     }
 }

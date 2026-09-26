@@ -359,7 +359,7 @@ mod tests {
                     .profile_ready
             );
             assert!(
-                outbe_oracle::api::ocomp_pre_admission_projection(storage, 0)
+                outbe_oracle::api::ocomp_pre_admission_projection(storage)
                     .unwrap()
                     .profile_ready
             );

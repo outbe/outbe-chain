@@ -46,24 +46,11 @@ fn issue_rejects_duplicate_series() {
 #[test]
 fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
-        // Lysis recorded contributors for the day, but this group had no winners.
-        outbe_intex::api::record_contributors(
-            &s,
-            WorldwideDay::new(7),
-            &[(owner(), U256::from(100u64))],
-        )
-        .unwrap();
         let mut p = sample(7);
         p.issued_units = 0;
         runtime::issue(&s, p).unwrap();
 
-        // No series is created, and the day's map is left for its caller to
-        // decide on: sibling groups of the same day may still distribute.
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
-        assert_eq!(
-            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
-            1
-        );
     });
 }
 

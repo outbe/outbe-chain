@@ -39,7 +39,6 @@ const REQUEST_TIME: u64 = 1_753_315_200;
 const DAY_LIMIT: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 const LYSIS_LIMIT: U256 = U256::from_limbs([700, 0, 0, 0]);
 const DESIS_LIMIT: U256 = U256::from_limbs([300, 0, 0, 0]);
-const AUCTION_ENTRY_PRICE: U256 = U256::from_limbs([55, 0, 0, 0]);
 
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
     CapacityProfileV1 {
@@ -60,93 +59,83 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
     }
 }
 
-pub(super) fn request_profile() -> OcompRequestProfile {
-    OcompRequestProfile {
-        chain_id: 1,
-        genesis_hash: B256::repeat_byte(0x11),
-        fork_id: B256::repeat_byte(0x21),
-        protocol_bundle_hash: B256::repeat_byte(0x41),
-        correctness_profile_id: B256::repeat_byte(0x24),
-        capacity_profile: capacity_profile(),
-        source_availability_policy_id: B256::repeat_byte(0x35),
+fn authority() -> outbe_ocompregistry::OcompProtocolAuthorityV1 {
+    let mut protocol_bundle = crate::fixture_kernel::fixture_authority(1).protocol_bundle;
+    protocol_bundle.fork_id = B256::repeat_byte(0x21);
+    protocol_bundle.correctness_profile_id = B256::repeat_byte(0x24);
+    protocol_bundle.capacity_profile_id = capacity_profile().profile_id;
+    let protocol_bundle_hash = protocol_bundle
+        .protocol_bundle_hash(&poc_schema_limits())
+        .unwrap();
+    outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: OcompRequestProfile {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            fork_id: B256::repeat_byte(0x21),
+            protocol_bundle_hash,
+            correctness_profile_id: B256::repeat_byte(0x24),
+            capacity_profile: capacity_profile(),
+            source_availability_policy_id: B256::repeat_byte(0x35),
+        },
+        protocol_bundle,
     }
 }
 
-#[test]
-fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let mut contract = MetadosisContract::new(storage);
-        let profile = request_profile();
+pub(super) fn request_profile() -> OcompRequestProfile {
+    authority().request_profile
+}
 
-        contract
-            .initialize_ocomp_request_profile(&profile, &limits)
-            .unwrap();
-        assert_eq!(
-            contract.read_ocomp_request_profile(&limits).unwrap(),
-            Some(profile.clone())
-        );
-        contract
-            .initialize_ocomp_request_profile(&profile, &limits)
-            .unwrap();
-
-        let mut changed = profile;
-        changed.protocol_bundle_hash = B256::repeat_byte(0x42);
-        assert!(contract
-            .initialize_ocomp_request_profile(&changed, &limits)
-            .is_err());
-        assert_eq!(
-            contract.read_ocomp_request_profile(&limits).unwrap(),
-            Some(request_profile())
-        );
-    });
+/// Commits `intent` as the terminal request does, with its lineage pinned to the active bundle.
+fn commit_request(
+    contract: &mut MetadosisContract<'_>,
+    transition: &OuterWwdTransition,
+    intent: &JobIntentV1,
+    receipt: &RequestLimitSplitReceiptV1,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) {
+    crate::fixture_kernel::seed_registry_authority(&contract.storage, &authority(), limits)
+        .unwrap();
+    outbe_ocompregistry::OcompRegistry::new(contract.storage.clone())
+        .pin_lineage(intent.intent_id(limits).unwrap(), limits)
+        .unwrap();
+    contract
+        .commit_ocomp_request(transition, intent, receipt, limits)
+        .unwrap();
 }
 
 #[test]
-fn fork_install_is_exactly_profile_plus_bundle_and_keeps_reserved_slot_zero() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let install = crate::fixture_kernel::fork_install_fixture(
-            OcompForkInstallClassification::Measurement,
-            1,
-            1,
-            B256::repeat_byte(0x11),
-        );
-        let encoded = install.encode_canonical(&limits).unwrap();
-        let nested_bytes = install
-            .request_profile
+fn fork_install_is_exactly_profile_plus_bundle() {
+    let limits = poc_schema_limits();
+    let install = crate::fixture_kernel::fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        1,
+        B256::repeat_byte(0x11),
+    );
+    let encoded = install.encode_canonical(&limits).unwrap();
+    let nested_bytes = install
+        .request_profile
+        .encode_canonical(&limits)
+        .unwrap()
+        .len()
+        + install
+            .protocol_bundle
             .encode_canonical(&limits)
             .unwrap()
-            .len()
-            + install
-                .protocol_bundle
-                .encode_canonical(&limits)
-                .unwrap()
-                .len();
-        let founder_bytes = install
-            .founder_registrations
-            .iter()
-            .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
-            .sum::<usize>();
-        assert_eq!(
-            encoded.len() - nested_bytes,
-            4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
-        );
-        assert_eq!(
-            crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
-            install
-        );
-
-        let mut contract = MetadosisContract::new(storage);
-        contract
-            .initialize_ocomp_fork_install(&install, 1, &limits)
-            .unwrap();
-        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
-        contract
-            .initialize_ocomp_fork_install(&install, 1, &limits)
-            .unwrap();
-        assert!(contract.ocomp_result_committee_snapshot.is_empty().unwrap());
-    });
+            .len();
+    let founder_bytes = install
+        .founder_registrations
+        .iter()
+        .map(|registration| 4 + registration.encode_canonical(&limits).unwrap().len())
+        .sum::<usize>();
+    assert_eq!(
+        encoded.len() - nested_bytes,
+        4 + 2 + 1 + 8 + 4 + 4 + 4 + founder_bytes
+    );
+    assert_eq!(
+        crate::config::OcompForkInstallV1::decode_canonical(&encoded, &limits).unwrap(),
+        install
+    );
 }
 
 #[test]
@@ -180,7 +169,7 @@ fn outer_transition(contract: &MetadosisContract<'_>, event: OuterWwdEvent) -> O
 }
 
 fn receipt() -> RequestLimitSplitReceiptV1 {
-    let protocol_bundle_hash = B256::repeat_byte(0x41);
+    let protocol_bundle_hash = request_profile().protocol_bundle_hash;
     RequestLimitSplitReceiptV1 {
         protocol_bundle_hash,
         wwd: WWD.value(),
@@ -191,29 +180,12 @@ fn receipt() -> RequestLimitSplitReceiptV1 {
         desis_limit_minor: DESIS_LIMIT,
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(
-            desis_request_brief_hash(
-                protocol_bundle_hash,
-                WWD.value(),
-                DESIS_LIMIT,
-                &entry_prices(),
-                REQUEST_TIME,
-            )
-            .unwrap(),
+            desis_request_brief_hash(protocol_bundle_hash, WWD.value(), DESIS_LIMIT, REQUEST_TIME)
+                .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        auction_entry_prices: entry_prices(),
         logical_anchor: REQUEST_TIME,
     }
-}
-
-/// The day's frozen price table for these fixtures.
-fn entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
-    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-        entry_price_minor: AUCTION_ENTRY_PRICE,
-        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: 20_251_231,
-    }]
 }
 
 fn intent(
@@ -231,7 +203,7 @@ fn intent(
         wwd: WWD.value(),
         pending_nonce,
         attempt,
-        protocol_bundle_hash: B256::repeat_byte(0x41),
+        protocol_bundle_hash: request_profile().protocol_bundle_hash,
         ce_sealed_root: B256::repeat_byte(0x31),
         sealed_tribute_collection_key: B256::repeat_byte(0x32),
         sealed_tribute_collection_root: B256::repeat_byte(0x33),
@@ -248,7 +220,6 @@ fn intent(
             day_gratis_limit_minor: DAY_LIMIT,
             lysis_limit_minor: LYSIS_LIMIT,
             desis_limit_minor: DESIS_LIMIT,
-            auction_entry_prices: entry_prices(),
             request_limit_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: request_height,
@@ -298,11 +269,7 @@ fn open_job(
     intent_id: B256,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> outbe_ocomp_protocol::state::OcompFinalizedJobV1 {
-    // Production installs this immutable profile at genesis activation. These
-    // storage-focused tests construct records directly, so mirror that
-    // prerequisite before exercising finality.
-    contract
-        .initialize_ocomp_request_profile(&request_profile(), limits)
+    crate::fixture_kernel::seed_registry_authority(&contract.storage, &authority(), limits)
         .unwrap();
     let finalized = contract
         .record_ocomp_finality(
@@ -335,15 +302,16 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         );
         let intent_id = requested.intent_id(&limits).unwrap();
         let mut contract = MetadosisContract::new(storage.clone());
-        contract
-            .initialize_ocomp_request_profile(&request_profile(), &limits)
-            .unwrap();
         create_ready_day(&mut contract, WWD);
         contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &requested,
+            &receipt,
+            &limits,
+        );
 
         let finality_height = REQUEST_HEIGHT + 1;
         let ctx = BlockRuntimeContext::new(
@@ -435,9 +403,13 @@ fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &first_intent,
+            &receipt,
+            &limits,
+        );
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
@@ -511,9 +483,13 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
         create_ready_day(&mut contract, WWD);
         contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &requested,
+            &receipt,
+            &limits,
+        );
 
         assert_eq!(
             contract.ocomp_job_record(intent_id, &limits).unwrap(),
@@ -608,9 +584,13 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash, &snapshot);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
-            .unwrap();
+        commit_request(
+            &mut contract,
+            &request_transition,
+            &first_intent,
+            &receipt,
+            &limits,
+        );
 
         open_job(&mut contract, first_intent_id, &limits);
         let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);

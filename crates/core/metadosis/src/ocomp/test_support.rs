@@ -35,12 +35,12 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, AuctionEntryPriceSource,
-        CertifiedParentAccountingMetadataV2, ContributorTargetPreconditionV1, DayType,
-        ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FinalizedIntentVerificationError,
-        FinalizedRequestBindingV1, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        ParentProofKind, ReferenceEntryPriceV1, TributeInputBindingV1, VerifiedFinalizedIntentV1,
+        intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
+        ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
+        FinalizedIntentProofV1, FinalizedIntentVerificationError, FinalizedRequestBindingV1,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
+        VerifiedFinalizedIntentV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{
@@ -71,14 +71,13 @@ use outbe_validatorset::{
 };
 
 #[cfg(test)]
+use crate::constants::{FORMING_PERIOD_HOURS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS};
+#[cfg(test)]
 use crate::errors::MetadosisError;
 #[cfg(test)]
-use crate::schema::{
-    DayLimitFormationReceiptStateEntryExt, OcompDayLimitFormationStateEntryExt,
-    WorldwideDayEntryExt,
-};
+use crate::schema::{DayLimitFormationReceiptStateEntryExt, WorldwideDayEntryExt};
 use crate::{
-    constants::{FORMING_PERIOD_HOURS, MAX_ACTIVE_WWDS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
+    constants::MAX_ACTIVE_WWDS,
     ocomp::{
         activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
@@ -137,6 +136,7 @@ pub(crate) fn inject_receipt_fault(
 /// `test-utils` builds so predecessor state and intentional corruption remain
 /// owned by one private module instead of leaking through `MetadosisContract`.
 pub(crate) trait FixtureKernelExt {
+    #[cfg(test)]
     fn create_worldwide_day(
         &mut self,
         wwd: WorldwideDay,
@@ -221,6 +221,7 @@ pub(crate) trait FixtureKernelExt {
 }
 
 impl FixtureKernelExt for MetadosisContract<'_> {
+    #[cfg(test)]
     fn create_worldwide_day(
         &mut self,
         wwd: WorldwideDay,
@@ -272,9 +273,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
                 self.capacity_forfeiture_receipts.delete(wwd)?;
             }
             self.worldwide_days.delete(wwd)?;
-            if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
-                self.ocomp_day_limit_formations.delete(wwd)?;
-            }
             if self
                 .day_limit_formation_receipts
                 .entry(wwd)
@@ -289,7 +287,12 @@ impl FixtureKernelExt for MetadosisContract<'_> {
 
     #[cfg(test)]
     fn set_metadosis_limit(&mut self, wwd: WorldwideDay, amount: U256) -> PrecompileResult<()> {
-        if self.ocomp_day_limit_formations.entry(wwd).formed().read()? {
+        if self
+            .day_limit_formation_receipts
+            .entry(wwd)
+            .formed()
+            .read()?
+        {
             return Err(PrecompileError::Revert(
                 "formed OCOMP day limit is immutable".into(),
             ));
@@ -351,9 +354,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .entry(wwd)
             .metadosis_limit_amount()
             .read()?;
-        let formation = self.ocomp_day_limit_formations.entry(wwd);
-        formation.carry_over_taken().write(U256::ZERO)?;
-        formation.formed().write(true)?;
         let receipt = self.day_limit_formation_receipts.entry(wwd);
         receipt.base_limit().write(day_limit)?;
         receipt.carry_over_before().write(U256::ZERO)?;
@@ -714,6 +714,49 @@ pub fn fork_install_fixture(
     }
 }
 
+/// A request profile and protocol bundle that agree with each other on `chain_id`.
+#[cfg(test)]
+pub fn fixture_authority(chain_id: u64) -> outbe_ocompregistry::OcompProtocolAuthorityV1 {
+    let install = fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        1,
+        chain_id,
+        hash(17),
+    );
+    outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: install.request_profile,
+        protocol_bundle: install.protocol_bundle,
+    }
+}
+
+/// Leaves `OcompRegistry` holding `authority` the way the genesis install does,
+/// without that install's activation-height and chain-identity gates.
+pub fn seed_registry_authority(
+    storage: &StorageHandle<'_>,
+    authority: &outbe_ocompregistry::OcompProtocolAuthorityV1,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> PrecompileResult<()> {
+    let registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
+    registry
+        .active_request_profile
+        .write(&authority.request_profile.encode_canonical(limits)?)?;
+    registry.active_protocol_bundle.write(
+        &authority
+            .protocol_bundle
+            .encode_canonical(limits)
+            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+    )?;
+    registry
+        .active_protocol_bundle_hash
+        .write(authority.request_profile.protocol_bundle_hash)?;
+    if registry.active_authority(limits)?.as_ref() != Some(authority) {
+        return Err(PrecompileError::Fatal(
+            "seeded OCOMP Registry authority does not read back".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
     RequestLimitSplitReceiptV1 {
         protocol_bundle_hash: bundle_hash,
@@ -729,25 +772,13 @@ fn request_receipt(bundle_hash: B256) -> RequestLimitSplitReceiptV1 {
                 bundle_hash,
                 TEST_WWD.value(),
                 U256::from(40),
-                &test_entry_prices(),
                 TEST_LOGICAL_TIME,
             )
             .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        auction_entry_prices: test_entry_prices(),
         logical_anchor: TEST_LOGICAL_TIME,
     }
-}
-
-/// The day's frozen price table used across these fixtures: one dollar row.
-pub(crate) fn test_entry_prices() -> Vec<ReferenceEntryPriceV1> {
-    vec![ReferenceEntryPriceV1 {
-        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-        entry_price_minor: U256::from(9),
-        source: AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: TEST_WWD.value(),
-    }]
 }
 
 fn intent(
@@ -779,7 +810,6 @@ fn intent(
             day_gratis_limit_minor: U256::from(60),
             lysis_limit_minor: U256::from(60),
             desis_limit_minor: U256::from(40),
-            auction_entry_prices: test_entry_prices(),
             request_limit_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: TEST_REQUEST_HEIGHT,
@@ -1452,12 +1482,15 @@ impl ActivationFixture {
                 capacity_profile: capacity_profile(),
                 source_availability_policy_id: hash(44),
             };
-            contract
-                .initialize_ocomp_request_profile(&profile, &limits)
-                .unwrap();
-            contract
-                .initialize_ocomp_activation_authority(&bundle, &limits)
-                .unwrap();
+            seed_registry_authority(
+                &storage,
+                &outbe_ocompregistry::OcompProtocolAuthorityV1 {
+                    request_profile: profile,
+                    protocol_bundle: bundle.clone(),
+                },
+                &limits,
+            )
+            .unwrap();
             let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
                 &contract,
                 TEST_WWD,
@@ -1468,6 +1501,9 @@ impl ActivationFixture {
             // sized, so the accumulator holds at least what this receipt says the auction draws.
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .checked_add_carry_over(request_receipt.desis_limit_minor)
+                .unwrap();
+            outbe_ocompregistry::OcompRegistry::new(storage.clone())
+                .pin_lineage(intent_id, &limits)
                 .unwrap();
             contract
                 .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)

@@ -419,17 +419,6 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 
 // --- Auction brief ---
 
-/// The frozen price table an OCOMP request brings: the same single row the
-/// in-process fixtures use, in the wire shape the receipt commits.
-fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
-    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: REFERENCE_ISO,
-        entry_price_minor: U256::from(ENTRY_PRICE),
-        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: WORLDWIDE_DAY.value(),
-    }]
-}
-
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
@@ -504,7 +493,6 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -524,7 +512,7 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
         assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
-        // The receipt commits the price table; the auction does not run on it.
+        // The brief carries no prices; the auction prices the day at its start.
         assert!(contract
             .read_auction_config(WORLDWIDE_DAY)
             .unwrap()
@@ -541,7 +529,6 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -552,7 +539,6 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -578,7 +564,6 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::MAX,
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -635,7 +620,6 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -657,7 +641,6 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -682,7 +665,6 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -702,7 +684,6 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * LOAD_MINOR),
-            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -1710,13 +1691,6 @@ fn stale_generation_is_acknowledged_without_effect() {
 fn no_bids_clears_as_no_sale() {
     with_storage(|s| {
         open_clearing(&s, 10);
-        // Lysis recorded creator rewards for the day before the auction concluded.
-        outbe_intex::api::record_contributors(
-            &s,
-            WORLDWIDE_DAY,
-            &[(bidder(9), U256::from(100u64))],
-        )
-        .unwrap();
         // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
@@ -1741,11 +1715,6 @@ fn no_bids_clears_as_no_sale() {
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             AuctionStage::Cleared
-        );
-        // No series will ever exist for the day, so the contributor map is discarded.
-        assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
-            0
         );
     });
 }
@@ -2483,31 +2452,6 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
             vec![156]
         );
         assert!(config.entry_price_for(756).is_none());
-    });
-}
-
-#[test]
-fn clearing_without_winners_discards_the_day_contributor_map() {
-    let chain = 10u32;
-    with_targets(&[chain], |s| {
-        open_clearing(&s, 2);
-        outbe_intex::api::record_contributors(
-            &s,
-            WORLDWIDE_DAY,
-            &[(bidder(1), U256::from(100u64))],
-        )
-        .unwrap();
-
-        // The only chain never reports, so the deadline clears the day with no bids.
-        let deadline = ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
-        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1)
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.issued_units, 0);
-        assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
-            0
-        );
     });
 }
 

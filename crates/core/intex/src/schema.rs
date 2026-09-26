@@ -11,12 +11,13 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Qualified -> Called -> Expired`, where
-/// `Expired` means the call window closed, not that anything burned.
+/// Series lifecycle state. `Issued -> Called -> Expired`, where `Expired` means
+/// the call window closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
+    /// Never written: qualification is derived from daily VWAPs. Kept so records that carry it decode.
     Qualified = 1,
     Called = 2,
     Expired = 3,
@@ -283,35 +284,6 @@ impl SeriesRecord {
     }
 }
 
-/// Paginated creator-reward distribution progress for a worldwide day. Exists
-/// while a distribution is in flight; `active != 0` is the existence sentinel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = active)]
-pub struct DistProgress {
-    #[key]
-    pub worldwide_day: WorldwideDay,
-
-    /// Total native COEN received for that day's distribution.
-    #[attribute(order = 0)]
-    pub amount: U256,
-
-    /// sum of contributor nominals (the proportionality denominator).
-    #[attribute(order = 1)]
-    pub total_nominal: U256,
-
-    /// Native COEN already paid out across chunks so far.
-    #[attribute(order = 2)]
-    pub paid_so_far: U256,
-
-    /// Index of the next contributor to pay.
-    #[attribute(order = 3)]
-    pub cursor: u32,
-
-    /// Existence sentinel: 1 while in flight.
-    #[attribute(order = 4)]
-    pub active: u8,
-}
-
 /// Open payout round over a certified contributor root.
 ///
 /// `amount` is frozen when the round opens (the proceeds pot at that moment) so
@@ -375,43 +347,8 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // --- Creator-reward: per-day contributors (owner -> nominal share) ---
-    // Orders 3-23 are keyed by worldwide day, not by series id.
-    /// worldwide_day -> number of contributors.
-    #[attribute(order = 3)]
-    pub contributor_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> contributor owner.
-    #[attribute(order = 4)]
-    pub contributor_owner_at: outbe_primitives::storage::dsl::Map<B256, Address>,
-
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> contributor nominal share.
-    #[attribute(order = 5)]
-    pub contributor_nominal_at: outbe_primitives::storage::dsl::Map<B256, U256>,
-
-    /// worldwide_day -> sum nominal across all contributors.
-    #[attribute(order = 6)]
-    pub contributor_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    // --- Creator-reward: paginated distribution progress + active set ---
-    /// worldwide_day -> in-flight distribution progress.
-    #[attribute(order = 7)]
-    pub dist_progress: outbe_primitives::storage::dsl::Map<WorldwideDay, DistProgress>,
-
-    /// Number of in-flight distributions (dense active set for the begin-block drain).
-    #[attribute(order = 8)]
-    pub active_dist_count: outbe_primitives::storage::dsl::Value<u32>,
-
-    /// dense index -> worldwide_day.
-    #[attribute(order = 9)]
-    pub active_dist_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-
-    /// worldwide_day -> (active index + 1); 0 = not active.
-    #[attribute(order = 10)]
-    pub active_dist_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
     // --- Creator-reward: multi-chain proceeds fan-in aggregation ---
-    /// worldwide_day -> proceeds accumulated but not yet handed to a distribution round.
+    /// worldwide_day -> proceeds accumulated but not yet handed to a payout round.
     #[attribute(order = 11)]
     pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
@@ -434,11 +371,6 @@ pub struct IntexContract {
     /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 once that chain's proceeds arrived.
     #[attribute(order = 16)]
     pub proceeds_arrived: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    /// worldwide_day -> 1 if the in-flight distribution round should finalize (clear the
-    /// contributor map + aggregation state) on completion; 0 = retain for a late top-up.
-    #[attribute(order = 17)]
-    pub proceeds_finalize_on_done: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 
     // Awaiting-proceeds set (dense) for the begin-block deadline sweep.
     #[attribute(order = 18)]
@@ -502,20 +434,11 @@ pub struct IntexContract {
 }
 
 impl IntexContract<'_> {
-    /// Composite key for per-day contributor index lists:
-    /// `keccak256(worldwide_day_be32 ++ index_be32)`.
     /// Composite key for the per-owner ledgers: `keccak256(series_id ++ owner)`.
     pub fn owner_units_key(series_id: SeriesId, owner: Address) -> B256 {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
         buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
-        keccak256(buf)
-    }
-
-    pub fn contributor_index_key(worldwide_day: WorldwideDay, index: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 

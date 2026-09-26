@@ -672,9 +672,9 @@ mod active_inventory {
     #[test]
     fn malformed_native_scheduler_propagates_through_inventory_without_source_writes() {
         // Current Metadosis schema places the one-slot scheduler StorageBytes
-        // immediately before the fixed OCOMP job-records mapping base slot 21.
+        // immediately before the fixed OCOMP job-records mapping base slot 20.
         // Raw corruption is test setup only; the inventory calls the owner view.
-        let scheduler_slot = U256::from(20);
+        let scheduler_slot = U256::from(19);
         for version in [1, 2] {
             for oversized in [false, true] {
                 let mut owner = queued_owner(0);
@@ -5873,13 +5873,11 @@ mod pin_authority {
                         job.intent.protocol_bundle_hash,
                         job.intent.wwd,
                         frozen.desis_limit_minor,
-                        &frozen.auction_entry_prices,
                         job.intent.logical_evaluation_time,
                     )
                     .unwrap(),
                 ),
                 carry_over_credit: U256::ZERO,
-                auction_entry_prices: frozen.auction_entry_prices.clone(),
                 logical_anchor: job.intent.logical_evaluation_time,
             };
             let receipt_hash = receipt.receipt_hash(&limits).unwrap();
@@ -5994,16 +5992,16 @@ mod pin_authority {
                         .write(bytes)
                         .unwrap();
                 };
-                write(U256::from(20), &live_index);
+                write(U256::from(19), &live_index);
                 write(
-                    DAY.mapping_slot(U256::from(22)),
+                    DAY.mapping_slot(U256::from(21)),
                     &receipt.encode_canonical(&limits).unwrap(),
                 );
-                write(DAY.mapping_slot(U256::from(25)), &scheduler);
+                write(DAY.mapping_slot(U256::from(24)), &scheduler);
                 write(
                     outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
                         .unwrap()
-                        .mapping_slot(U256::from(21)),
+                        .mapping_slot(U256::from(20)),
                     &job.encode_canonical(&limits).unwrap(),
                 );
                 if let Some(finalized) = &job.finalized {
@@ -6013,7 +6011,7 @@ mod pin_authority {
                     response.extend_from_slice(&finalized.deadline_height.to_be_bytes());
                     response.extend_from_slice(finalized.job_id.as_slice());
                     response.extend_from_slice(intent_id.as_slice());
-                    write(U256::from(33), &response);
+                    write(U256::from(28), &response);
                 }
                 assert_eq!(
                     read_live_ocomp_jobs(storage).unwrap(),
@@ -7090,7 +7088,6 @@ mod pin_authority {
                 day_gratis_limit_minor: U256::from(10),
                 lysis_limit_minor: U256::from(10),
                 desis_limit_minor: U256::ZERO,
-                auction_entry_prices: Vec::new(),
                 request_limit_split_receipt_hash: hash,
             },
             logical_evaluation_height: request.inner.number,
@@ -7222,7 +7219,7 @@ mod pin_authority {
             // Metadosis slots directly or imports its private schema.
             let slot = intent_storage_key(intent_id)
                 .unwrap()
-                .mapping_slot(U256::from(21));
+                .mapping_slot(U256::from(20));
             StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
                 .write(encoded)
                 .unwrap();
@@ -7671,10 +7668,9 @@ mod lease_inventory {
     };
     use outbe_ocomp::{control::poc_schema_limits, exporter::TributeStreamSummary};
     use outbe_ocomp_protocol::intent::{
-        ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
-        DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
-        TributeInputBindingV1,
+        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     };
     use outbe_offchain_storage::{
         AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, RocksDbReader, RocksDbStorage,
@@ -7729,12 +7725,6 @@ mod lease_inventory {
                 day_gratis_limit_minor: U256::ZERO,
                 lysis_limit_minor: nominal,
                 desis_limit_minor: U256::ZERO,
-                auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                    reference_currency: 840,
-                    entry_price_minor: nominal,
-                    source: AuctionEntryPriceSource::LastClosedDayVwap,
-                    source_day: day - 1,
-                }],
                 request_limit_split_receipt_hash: hash(8),
             },
             logical_evaluation_height: 100,
@@ -8289,10 +8279,9 @@ mod export_inventory {
             InputManifestV1,
         },
         intent::{
-            ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
-            DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-            MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
-            TributeInputBindingV1,
+            ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+            FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+            MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
         },
         profile::ProtocolBundleV1,
         registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
@@ -8387,12 +8376,6 @@ mod export_inventory {
                 day_gratis_limit_minor: U256::ZERO,
                 lysis_limit_minor: nominal,
                 desis_limit_minor: U256::ZERO,
-                auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                    reference_currency: 840,
-                    entry_price_minor: nominal,
-                    source: AuctionEntryPriceSource::LastClosedDayVwap,
-                    source_day: day - 1,
-                }],
                 request_limit_split_receipt_hash: hash(seed.wrapping_add(8)),
             },
             logical_evaluation_height: cursor,
@@ -9065,7 +9048,7 @@ mod canonical_composition {
                 // Exact corruption already exercised by active_inventory.
                 StorageHandle::enter(&mut owner, |storage| {
                     outbe_primitives::storage::types::StorageBytes::new(
-                        U256::from(20),
+                        U256::from(19),
                         outbe_primitives::addresses::METADOSIS_ADDRESS,
                         storage,
                     )

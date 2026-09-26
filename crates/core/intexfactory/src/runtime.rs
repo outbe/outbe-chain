@@ -9,7 +9,9 @@ use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{
+    first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay,
+};
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -18,7 +20,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
+    INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
     ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
@@ -31,7 +33,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex, enroll it in the floor-bin index, and send
+/// Capture series identity in Intex, enroll it in the call-price bin index, and send
 /// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
 /// broadcast (including a loopback leg on the origin), so there is no in-process
@@ -107,11 +109,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         })
         .collect();
 
-    // Enroll into the unqualified floor-bin index the daily qualify sweep walks.
-    factory.insert_unqualified(
+    // Enroll into the call-price bin index the daily Called scan walks.
+    factory.insert_call_bin(
         params.series_id,
         params.reference_currency,
-        floor_price_minor,
+        call_price_minor,
     )?;
 
     // Arm the creator-reward proceeds fan-in: the winning chains are expected to
@@ -305,9 +307,9 @@ pub(crate) fn settlement_units(
 }
 
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
-/// one target chain into the day's pot. Gated to the OriginRouter. Creators are
-/// paid once every winning chain has routed its proceeds (or the fan-in deadline
-/// passes); the payout itself runs in the begin-block drain. Because proceeds
+/// one target chain into the day's pot. Gated to the OriginRouter. The day's
+/// payout round opens once every winning chain has routed its proceeds (or the
+/// fan-in deadline passes); `payContributorBatch` pays it out. Because proceeds
 /// arrive once per winning chain (loopback same-block, remote minutes later),
 /// the credit only accumulates - it never reverts on a repeat or ownerless day,
 /// which would strand that chain's delivery.
@@ -342,19 +344,14 @@ pub fn distribute(
     try_settle_proceeds(storage, worldwide_day, now)
 }
 
-/// Start a distribution round for a series if its proceeds fan-in is satisfied
-/// (all winning chains in) or its deadline has passed. Idempotent: it no-ops
-/// while a round is still draining, so repeated arrivals and the begin-block
-/// sweep can both call it safely.
+/// Open the payout round for a series if its proceeds fan-in is satisfied
+/// (all winning chains in) or its deadline has passed. Idempotent, so repeated
+/// arrivals and the begin-block sweep can both call it safely.
 pub(crate) fn try_settle_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     now: u64,
 ) -> Result<()> {
-    // Never overlap a round that is still paying out.
-    if outbe_intex::api::get_progress(storage, worldwide_day)?.is_some() {
-        return Ok(());
-    }
     // Batches drain a certified round, not this sweep, and a day gets exactly
     // one - anything arriving after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, worldwide_day.value())?.is_some() {
@@ -382,10 +379,9 @@ pub(crate) fn try_settle_proceeds(
     }
 
     let certified = outbe_intex::api::certified_contributor_generation(storage, worldwide_day)?;
-    let legacy_total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
     // Proceeds can complete before quorum installs the root, so hold the pot
     // until the window closes rather than burn a day about to become payable.
-    if certified.is_none() && legacy_total.is_zero() && now < deadline {
+    if certified.is_none() && now < deadline {
         return Ok(());
     }
 
@@ -419,20 +415,12 @@ pub(crate) fn try_settle_proceeds(
         return Ok(());
     }
 
-    let total = legacy_total;
-    if total.is_zero() {
-        // Ownerless proceeds: burn instead of stranding them.
-        burn_ownerless_proceeds(storage, worldwide_day, pot)?;
-        if complete {
-            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
-        }
-        return Ok(());
+    // Ownerless proceeds: burn instead of stranding them.
+    burn_ownerless_proceeds(storage, worldwide_day, pot)?;
+    if complete {
+        outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
     }
-
-    // Finalize on completion only when every winning chain is in; otherwise the
-    // deadline forced a partial payout and the map is retained for a top-up.
-    outbe_intex::api::set_proceeds_finalize_on_done(storage, worldwide_day, complete)?;
-    outbe_intex::api::start_distribution(storage, worldwide_day, pot, total)
+    Ok(())
 }
 
 /// Pay one chunk-aligned range of certified contributors.
@@ -653,100 +641,6 @@ fn burn_ownerless_proceeds(
     )
 }
 
-/// Pay up to `limit` contributors of an in-flight distribution, advancing the
-/// cursor. The last contributor absorbs the integer-division remainder so the
-/// full `amount` is paid out exactly. On reaching the last contributor the
-/// distribution is finalized (progress + contributor map cleared). Driven by
-/// the begin-block drain.
-pub(crate) fn pay_chunk(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    limit: u32,
-) -> Result<()> {
-    let mut progress = outbe_intex::api::get_progress(storage, worldwide_day)?
-        .ok_or(IntexFactoryError::NoDistribution(worldwide_day.value()))?;
-    let count = outbe_intex::api::contributor_count(storage, worldwide_day)?;
-    let end = progress.cursor.saturating_add(limit).min(count);
-
-    // A zero denominator would panic on divide; begin-block panics halt the chain (not checkpoint-isolated),
-    // so fail as an isolated Err instead.
-    if progress.total_nominal.is_zero() {
-        return Err(IntexFactoryError::NoContributors(worldwide_day.value()).into());
-    }
-
-    let mut paid = progress.paid_so_far;
-    for i in progress.cursor..end {
-        let (owner, nominal) = outbe_intex::api::contributor_at(storage, worldwide_day, i)?;
-        // The final contributor absorbs the rounding remainder so the sum of
-        // payouts equals `amount` exactly. checked_mul: isolated Err over a silent wrap.
-        let share =
-            if i == count - 1 {
-                progress.amount - paid
-            } else {
-                progress.amount.checked_mul(nominal).ok_or(
-                    IntexFactoryError::DistributionOverflow(worldwide_day.value()),
-                )? / progress.total_nominal
-            };
-        storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
-        paid += share;
-    }
-
-    if end == count {
-        // End this round (progress + active-set entry). Whether the contributor
-        // map is also cleared depends on the fan-in: finalize when every winning
-        // chain is in, otherwise retain the map for a late top-up.
-        outbe_intex::api::finish_distribution_round(storage, worldwide_day)?;
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::ProceedsDistributed {
-                worldwideDay: worldwide_day.value(),
-                amount: progress.amount,
-                contributors: count,
-            },
-        )?;
-        if outbe_intex::api::proceeds_finalize_on_done(storage, worldwide_day)? {
-            // A straggler (or a chain sending its proceeds in parts) can top the
-            // pot up while this final round drains. finalize clears the map, so
-            // pay any such top-up over it first and finalize only once the pot is
-            // empty - otherwise the top-up is later burned as ownerless.
-            let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
-            if pot.is_zero() {
-                outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
-            } else {
-                let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
-                outbe_intex::api::start_distribution(storage, worldwide_day, pot, total)?;
-            }
-        }
-    } else {
-        progress.cursor = end;
-        progress.paid_so_far = paid;
-        outbe_intex::api::save_progress(storage, &progress)?;
-    }
-    Ok(())
-}
-
-/// Begin-block drain: advance every in-flight distribution by one chunk
-/// (`DIST_CHUNK_LIMIT` payouts). Completed distributions remove themselves from
-/// the active set inside `pay_chunk`, so the snapshot avoids iterating a set
-/// that mutates underneath us.
-pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
-    let count = outbe_intex::api::active_dist_count(storage)?;
-    // One open round per day, and each pays at most a chunk per block, so the
-    // set is a handful. Read it before paying: finishing a round removes from it.
-    let mut worldwide_days = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        worldwide_days.push(outbe_intex::api::active_dist_at(storage, i)?);
-    }
-    for worldwide_day in worldwide_days {
-        // Per-series isolation: Err reverts the series' checkpoint, retried next block.
-        let res = storage.with_checkpoint(|| pay_chunk(storage, worldwide_day, DIST_CHUNK_LIMIT));
-        if let Err(e) = res {
-            tracing::warn!(target: "outbe::intexfactory", worldwide_day = worldwide_day.value(), error = ?e, "distribution drain: skipping series");
-        }
-    }
-    Ok(())
-}
-
 /// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
@@ -794,18 +688,18 @@ fn settle(
     }
 
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let state = series.lifecycle_state()?;
-    // Settle is allowed in Qualified (voluntary) and Called (forced).
-    if state != IntexState::Qualified && state != IntexState::Called {
-        return Err(IntexFactoryError::NotSettleable(series.state).into());
-    }
-    // The deadline only constrains forced settlement (Called).
-    if state == IntexState::Called {
-        let now = storage.timestamp()?.to::<u64>();
-        let deadline = u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-        if now > deadline {
-            return Err(IntexFactoryError::DeadlineExpired.into());
+    // The call check is one read; the qualification walk goes last.
+    match series.lifecycle_state()? {
+        IntexState::Called => {
+            let now = storage.timestamp()?.to::<u64>();
+            let deadline =
+                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
+            if now > deadline {
+                return Err(IntexFactoryError::DeadlineExpired.into());
+            }
         }
+        IntexState::Issued | IntexState::Qualified if is_qualified(storage, &series)? => {}
+        _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 
     let balance = nft_balance_of(storage, intex_owner, issued_token_id(series_id))?;
@@ -954,6 +848,23 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
     )?;
     IERC1155::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+}
+
+/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
+pub fn is_qualified(
+    storage: &StorageHandle<'_>,
+    series: &outbe_intex::SeriesRecord,
+) -> Result<bool> {
+    outbe_oracle::api::closed_above_floor(
+        storage.clone(),
+        series.reference_currency,
+        series.floor_price_minor,
+        first_full_day(u64::from(series.issued_at)),
+    )
+}
+
+pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
+    is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
 }
 
 /// What settling `amount` units of `series_id` with `payment_token` costs, and

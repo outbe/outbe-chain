@@ -1,4 +1,4 @@
-//! Pure sequential Lysis V1 semantic program and its staged legacy adapter seam.
+//! Pure sequential Lysis V1 semantic program.
 
 use std::collections::BTreeMap;
 #[cfg(test)]

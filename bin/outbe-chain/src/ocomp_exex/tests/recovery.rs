@@ -902,7 +902,6 @@ pub(super) mod copied_native {
                 day_gratis_limit_minor: U256::ZERO,
                 lysis_limit_minor: nominal,
                 desis_limit_minor: U256::ZERO,
-                auction_entry_prices: Vec::new(),
                 request_limit_split_receipt_hash: hash(seed.wrapping_add(8)),
             },
             logical_evaluation_height: cursor,

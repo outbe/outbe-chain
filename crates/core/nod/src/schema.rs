@@ -179,8 +179,8 @@ impl NodCertifiedGenerationProjection {
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=60 in declaration order. New fields append, which keeps the
-/// genesis-seeded materialization FIFO counters at slots 19 and 20.
+/// 0..=47 in declaration order, with the genesis-seeded materialization FIFO
+/// counters at slots 13 and 14.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
@@ -189,26 +189,12 @@ pub struct NodContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // Retired with the qualify sweep, as is every `retired_*` below: kept only to hold slots.
-    #[attribute(order = 10)]
-    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-    #[attribute(order = 11)]
-    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 12)]
-    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 13)]
-    pub retired_unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 14)]
-    pub retired_unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
-    #[attribute(order = 17)]
-    pub retired_unqualified_bin_scan_cursor: outbe_primitives::storage::dsl::Map<u64, u32>,
-
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
     pub bucket_worldwide_day: Mapping<B256, WorldwideDay>,
 
-    /// Per-WWD certified Nod namespace generation. Legacy issuance does not
-    /// touch it; OCM-18 compare-and-sets it only through certified activation.
+    /// Per-WWD certified Nod namespace generation, compare-and-set only through
+    /// certified activation.
     #[attribute(order = 19)]
     pub ocomp_target_generation: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
@@ -294,11 +280,6 @@ pub struct NodContract {
     #[attribute(order = 37)]
     pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 
-    #[attribute(order = 38)]
-    pub retired_callable_buckets: outbe_primitives::storage::dsl::List<B256>,
-    #[attribute(order = 39)]
-    pub retired_callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-
     /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at issuance so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
@@ -311,9 +292,6 @@ pub struct NodContract {
     /// Block timestamp the bucket was force-called; `0` until called.
     #[attribute(order = 42)]
     pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-
-    #[attribute(order = 43)]
-    pub retired_call_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     /// Protocol bundle the certified generation was produced under. Materialization
     /// reads it here rather than from a runtime job registry, which the node is free
@@ -362,15 +340,6 @@ pub struct NodContract {
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
     pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-
-    #[attribute(order = 55)]
-    pub retired_qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 56)]
-    pub retired_qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 57)]
-    pub retired_qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 58)]
-    pub retired_qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     // Frozen-day call sweep: 0 = idle; one day waits behind the in-flight one at most.
     /// UTC day an unfinished call sweep is pinned to.
