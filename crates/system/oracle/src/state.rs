@@ -842,11 +842,82 @@ impl OracleContract<'_> {
         Ok((!vwap.is_zero()).then_some(vwap))
     }
 
-    /// The only writer of a day's VWAP.
+    /// The only writer of a day's VWAP, so the month maximum and the earliest recorded day
+    /// cannot drift from the days themselves.
     pub fn record_utc_day_vwap(&self, utc_day: u32, index: PairIndex, vwap: U256) -> Result<()> {
-        self.utc_day_vwap_value
-            .get_nested(&utc_day)
-            .write(&index, vwap)
+        let days = self.utc_day_vwap_value.get_nested(&utc_day);
+        let previous = days.read(&index)?;
+        if previous == vwap {
+            return Ok(());
+        }
+        days.write(&index, vwap)?;
+        let first = self.utc_day_vwap_first_recorded.read()?;
+        if first == 0 || utc_day < first {
+            self.utc_day_vwap_first_recorded.write(utc_day)?;
+        }
+        let month = utc_day / 100;
+        let maxima = self.utc_month_vwap_max.get_nested(&month);
+        let max = maxima.read(&index)?;
+        if vwap >= max {
+            maxima.write(&index, vwap)
+        } else if previous == max {
+            // The day holding the maximum went down, so the month is read again.
+            maxima.write(&index, self.month_day_vwap_max(index, month, 1, 31, None)?)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Largest finalized day VWAP of `index` from `from_utc_day` to the watermark. The two edge
+    /// months are read day by day and every month between once; it stops above `stop_above`.
+    pub(crate) fn max_finalized_day_vwap_since(
+        &self,
+        index: PairIndex,
+        from_utc_day: u32,
+        stop_above: Option<U256>,
+    ) -> Result<U256> {
+        let last = self.utc_day_vwap_last_finalized.read()?;
+        let from = from_utc_day.max(self.utc_day_vwap_first_recorded.read()?);
+        if from_utc_day == 0 || last < from {
+            return Ok(U256::ZERO);
+        }
+        let (first_month, last_month) = (from / 100, last / 100);
+        if first_month == last_month {
+            return self.month_day_vwap_max(index, first_month, from % 100, last % 100, stop_above);
+        }
+        let mut max = self.month_day_vwap_max(index, first_month, from % 100, 31, stop_above)?;
+        let mut month = next_month(first_month);
+        while month < last_month && !exceeds(max, stop_above) {
+            max = max.max(self.utc_month_vwap_max.get_nested(&month).read(&index)?);
+            month = next_month(month);
+        }
+        if exceeds(max, stop_above) {
+            return Ok(max);
+        }
+        Ok(max.max(self.month_day_vwap_max(index, last_month, 1, last % 100, stop_above)?))
+    }
+
+    /// Largest VWAP of `index` over days `first_dd..=last_dd` of one `yyyymm` month.
+    fn month_day_vwap_max(
+        &self,
+        index: PairIndex,
+        month: u32,
+        first_dd: u32,
+        last_dd: u32,
+        stop_above: Option<U256>,
+    ) -> Result<U256> {
+        let mut max = U256::ZERO;
+        for dd in first_dd..=last_dd.min(31) {
+            let vwap = self
+                .utc_day_vwap_value
+                .get_nested(&(month * 100 + dd))
+                .read(&index)?;
+            max = max.max(vwap);
+            if exceeds(max, stop_above) {
+                break;
+            }
+        }
+        Ok(max)
     }
 
     /// Returns the full finalized VWAP set for `utc_day` as
@@ -873,4 +944,16 @@ impl OracleContract<'_> {
         }
         Ok((bases, quotes, vwaps))
     }
+}
+
+fn next_month(month: u32) -> u32 {
+    if month % 100 == 12 {
+        (month / 100 + 1) * 100 + 1
+    } else {
+        month + 1
+    }
+}
+
+fn exceeds(max: U256, stop_above: Option<U256>) -> bool {
+    stop_above.is_some_and(|stop| max > stop)
 }

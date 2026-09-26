@@ -263,4 +263,10 @@ pub struct OracleContract {
     // registered Oracle pairs. Rates are annualized at scale 1e6.
     pub policy_rate_currencies: StorageVec<u16>,
     pub policy_rate: Mapping<u16, U256>,
+
+    // === Bounded reads of the UTC-day VWAP history (slots 76-77) ===
+    // Both are kept by `record_utc_day_vwap`, the only writer of `utc_day_vwap_value`.
+    #[slot(76)]
+    pub(crate) utc_month_vwap_max: Mapping<u32, Mapping<PairIndex, U256>>,
+    pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
 }
