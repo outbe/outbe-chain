@@ -8,6 +8,8 @@ publish.workspace = true
 [features]
 default = []
 test-marshal-drop = []
+# Test-only byzantine behaviour for e2e scenarios (never in release builds).
+test-protocol-overrides = []
 # Exposes `test_harness` and other in-crate test scaffolding publicly so the
 # `outbe-engine` crate can reuse the multi-node deterministic Simplex harness
 # for its own stack_tests. Always enabled by `outbe-engine`'s dev-dependencies.

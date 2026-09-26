@@ -214,3 +214,100 @@ pub(super) fn recovery_finalization_fixture(
     let _ = provider.register(round.epoch(), verifier);
     (provider, finalization)
 }
+
+/// Finalized-header provider stub: serves sealed headers carrying chosen
+/// consensus header artifacts, optionally blocking one height on a barrier.
+#[derive(Clone, Default)]
+pub(super) struct MockFinalizedHeaderProvider {
+    headers: BTreeMap<u64, SealedHeader<OutbeHeader>>,
+    sealed_header_barrier: Option<(u64, Arc<Barrier>, Arc<Barrier>)>,
+}
+
+impl MockFinalizedHeaderProvider {
+    pub(super) fn insert(&mut self, number: u64, artifact: Option<ConsensusHeaderArtifact>) {
+        let extra_data = outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
+            &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
+                consensus_header_artifact: artifact,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        self.headers.insert(
+            number,
+            SealedHeader::seal_slow(OutbeHeader::new(Header {
+                number,
+                extra_data,
+                ..Default::default()
+            })),
+        );
+    }
+
+    pub(super) fn block_sealed_header_at(
+        &mut self,
+        number: u64,
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+    ) {
+        self.sealed_header_barrier = Some((number, entered, release));
+    }
+
+    pub(super) fn without_sealed_header_barrier(&self) -> Self {
+        Self {
+            headers: self.headers.clone(),
+            sealed_header_barrier: None,
+        }
+    }
+}
+
+impl BlockHashReader for MockFinalizedHeaderProvider {
+    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+        Ok(self.headers.get(&number).map(SealedHeader::hash))
+    }
+
+    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+        Ok((start..end)
+            .filter_map(|height| self.headers.get(&height).map(SealedHeader::hash))
+            .collect())
+    }
+}
+
+impl HeaderProvider for MockFinalizedHeaderProvider {
+    type Header = OutbeHeader;
+
+    fn header(&self, block_hash: B256) -> ProviderResult<Option<Self::Header>> {
+        Ok(self
+            .headers
+            .values()
+            .find(|header| header.hash() == block_hash)
+            .map(|header| header.header().clone()))
+    }
+
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<Self::Header>> {
+        Ok(self.headers.get(&num).map(|header| header.header().clone()))
+    }
+
+    fn headers_range(
+        &self,
+        _range: impl std::ops::RangeBounds<u64>,
+    ) -> ProviderResult<Vec<Self::Header>> {
+        Ok(Vec::new())
+    }
+
+    fn sealed_header(&self, number: u64) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+        if let Some((blocked_number, entered, release)) = &self.sealed_header_barrier {
+            if number == *blocked_number {
+                entered.wait();
+                release.wait();
+            }
+        }
+        Ok(self.headers.get(&number).cloned())
+    }
+
+    fn sealed_headers_while(
+        &self,
+        _range: impl std::ops::RangeBounds<u64>,
+        _predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        Ok(Vec::new())
+    }
+}

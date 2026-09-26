@@ -45,4 +45,5 @@ pub(super) async fn validate_header_consensus_artifacts(
         ancestry,
     )
     .await
+    .map_err(|error| error.to_string())
 }

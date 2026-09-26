@@ -9,13 +9,10 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_consensus::{
     digest::Digest,
-    follow::{decode_public_finalization, CommitteeChain},
+    follow::{decode_public_finalization, AdmissionPolicy, CommitteeChain},
 };
 use outbe_primitives::{
-    addresses::TEE_REGISTRY_ADDRESS,
-    reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact},
-    tee_attestation_v1::TrustedNetworkDescriptorV1,
-    OutbeHeader,
+    addresses::TEE_REGISTRY_ADDRESS, tee_attestation_v1::TrustedNetworkDescriptorV1, OutbeHeader,
 };
 use outbe_tee::{
     dcap_protocol::DcapOnboardingContextV1,
@@ -106,23 +103,12 @@ impl FinalizedAdmissionVerifierV1 {
             return Err("committee transition was not finalized by the current committee".into());
         }
         self.chain
-            .verify_finalization(epoch, &finalization)
-            .map_err(|error| format!("committee transition finalization rejected: {error}"))?;
-        let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
-            .map_err(|error| format!("committee transition artifacts rejected: {error:?}"))?;
-        let Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
-            epoch: next,
-            outcome,
-        }) = artifacts.consensus_header_artifact
-        else {
-            return Err("committee transition lacks a pre-announce".into());
-        };
-        if next != epoch.get().saturating_add(1) {
-            return Err("committee transition does not announce the immediate successor".into());
-        }
-        self.chain
-            .register_epoch_from_outcome(Epoch::new(next), &outcome)
-            .map_err(|error| format!("successor committee rejected: {error}"))?;
+            .admit(
+                &finalization,
+                header.extra_data().as_ref(),
+                AdmissionPolicy::Successor,
+            )
+            .map_err(|error| format!("committee transition rejected: {error}"))?;
         self.chain.retain_only_highest();
         self.previous_height = header.number();
         Ok(())
@@ -405,6 +391,64 @@ mod tests {
             Some(Epoch::new(LAST_EPOCH))
         );
         assert_eq!(verifier.previous_height, LAST_EPOCH);
+    }
+
+    #[test]
+    fn committee_transition_rejects_wrong_epoch_or_missing_successor() {
+        use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+        use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
+
+        let context = DcapOnboardingContextV1 {
+            chain_id: U256::ZERO.to_be_bytes(),
+            ..context()
+        };
+        let committee = FinalityCommitteeFixture::new(90);
+        let descriptor = TrustedNetworkDescriptorV1 {
+            network_binding: NetworkBindingV1 {
+                chain_id: context.chain_id,
+                genesis_hash: context.genesis_hash,
+                attestation_mode:
+                    outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
+            },
+            genesis_consensus_keys: committee.public_keys_min_pk(),
+        };
+        let mut verifier = FinalizedAdmissionVerifierV1::new(
+            &descriptor,
+            &context,
+            &committee.outcome(Epoch::new(0)),
+        )
+        .unwrap();
+        let transition = |epoch: u64, extra_data: Vec<u8>| {
+            let certified = committee.certify_block(
+                Epoch::new(epoch),
+                1,
+                1_000,
+                B256::repeat_byte(0x91),
+                extra_data,
+            );
+            compact_certified_header(&certified.finalization, &certified.block)
+                .encode_canonical()
+                .unwrap()
+        };
+
+        for (name, encoded) in [
+            (
+                "certificate from a not-yet-trusted epoch",
+                transition(1, committee.preannounce_extra_data(Epoch::new(2))),
+            ),
+            (
+                "pre-announce of a non-successor epoch",
+                transition(0, committee.preannounce_extra_data(Epoch::new(2))),
+            ),
+            ("no pre-announce", transition(0, Vec::new())),
+        ] {
+            assert!(verifier.advance_committee(&encoded).is_err(), "{name}");
+            assert_eq!(
+                verifier.chain.highest_registered(),
+                Some(Epoch::new(0)),
+                "{name}: a rejected transition must not change the committee"
+            );
+        }
     }
 
     #[test]

@@ -281,13 +281,37 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
 
     let manager = DkgManagerMailbox::new();
     manager.note_ceremony_completed(completed_boundary.clone());
-    let announced = commonware_runtime::tokio::Runner::default()
-        .start(|_| async move { manager.pending_next_epoch_artifact(Epoch::new(3)).await });
+    let planned = commonware_runtime::tokio::Runner::default().start(|_| async move {
+        manager
+            .plan_header_artifact(None, Epoch::new(3), 105, &NoAncestry)
+            .await
+    });
     assert_eq!(
-        announced,
-        Some(completed_boundary),
-        "a durable completed boundary must be publishable before activation"
+        planned.map(|plan| plan.artifact),
+        Ok(Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: completed_boundary.epoch,
+            outcome: completed_boundary.outcome,
+        })),
+        "a durable completed boundary must be pre-announced before activation"
     );
+}
+
+/// Ancestry that is never consulted: with no parent and no current-epoch
+/// boundary pending, the plan is decided from local DKG state alone.
+struct NoAncestry;
+
+impl dkg_manager::AncestryReader for NoAncestry {
+    fn get_block_by_height<'a>(&'a self, _height: u64) -> dkg_manager::BlockLookupFuture<'a> {
+        Box::pin(async { None })
+    }
+
+    fn get_block_by_hash<'a>(&'a self, _hash: B256) -> dkg_manager::BlockLookupFuture<'a> {
+        Box::pin(async { None })
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
 }
 
 #[test]
@@ -565,4 +589,67 @@ fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
         genesis_formation_gate_decision(crash_recovery, genesis, 3, &evidence),
         GenesisFormationGate::ExistingChainJoin
     );
+}
+
+#[test]
+fn decode_boundary_output_rejects_an_invalid_full_dkg_flag() {
+    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let mut artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(2),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 2,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: false,
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+    let mut outcome = artifact.outcome.to_vec();
+    outcome[13] = 2;
+    artifact.outcome = Bytes::from(outcome);
+
+    assert!(decode_boundary_output(&artifact).is_err());
+}
+
+#[test]
+fn decode_boundary_output_rejects_an_outcome_labelled_for_another_epoch() {
+    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let mut artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(2),
+        validator_set: &validator_set,
+        output: &output,
+        is_full_dkg: false,
+        dkg_cycle: 2,
+        freeze_height: 10,
+        planned_activation_height: 20,
+        vrf_material_version: 2,
+        is_validator_set_change: false,
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+    artifact.epoch = 3;
+
+    let error = decode_boundary_output(&artifact).unwrap_err().to_string();
+    assert!(error.contains("does not match artifact epoch 3"), "{error}");
 }

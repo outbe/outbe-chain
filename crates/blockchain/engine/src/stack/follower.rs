@@ -349,9 +349,10 @@ where
     use commonware_storage::archive::immutable;
     use outbe_consensus::follow::{
         run_follow_engine, CommitteeChain, FinalizedSource as _, FollowEngineConfig,
+        SharedCommitteeChain,
     };
     use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     // -- 0. Startup chain-state sources -----------------------------------
     let genesis_hash = genesis_hash(&node)?;
@@ -371,7 +372,7 @@ where
     let chain = CommitteeChain::new(Epoch::new(0), anchor_participants);
     let certificate_scheme_provider: HybridSchemeProvider<MinSig> = chain.scheme_provider().clone();
     let anchor_epoch = Epoch::new(chain.anchor_epoch());
-    let chain = Arc::new(Mutex::new(chain));
+    let chain = SharedCommitteeChain::new(chain);
 
     // -- 2. Page cache + marshal archives (mirrors run_consensus_stack) ---
     let page_cache = CacheRef::from_pooler(

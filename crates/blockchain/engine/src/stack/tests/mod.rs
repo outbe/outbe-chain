@@ -59,9 +59,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod boundary_promotion;
 mod configuration;
 mod dkg_persistence;
 mod epoch_handoff;
+mod epoch_transition_harness;
 mod fixtures;
 mod follower;
 mod genesis_formation;
@@ -79,7 +81,7 @@ mod signer_replacement;
 
 use fixtures::{
     recovery_block, recovery_finalization_fixture, run_test_dkg, run_test_dkg_complete,
-    test_boundary_with_vrf_hash,
+    test_boundary_with_vrf_hash, MockFinalizedHeaderProvider,
 };
 
 use harness::{start_recovery_marshal, start_recovery_marshal_with_reporter};
