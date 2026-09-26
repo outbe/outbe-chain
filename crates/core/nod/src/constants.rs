@@ -60,5 +60,5 @@ pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
 /// case, so the burst needs its own cap.
 pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of the Called sweep; 0 belonged to the retired qualify sweep.
+/// `SweepDaySkipped.sweep` of the Called sweep.
 pub const CALL_SWEEP: u8 = 1;

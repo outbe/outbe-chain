@@ -1977,7 +1977,7 @@ def apply_seed(
         print(f"  Oracle: {len(pairs)} pairs, "
               f"{len(oracle_storage.entries)} storage entries")
 
-    # Seed the profile selectors (prod seeds nothing).
+    # Seed the profile selectors (auto seeds nothing).
     for section, address, slot, label in (
         ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
         ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
