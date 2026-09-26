@@ -163,6 +163,17 @@ pub(crate) fn block_with_number(number: u64) -> ConsensusBlock {
     block_with_number_and_parent(number, B256::ZERO)
 }
 
+/// A block at `number` whose beneficiary is the protocol rewards address, so it
+/// passes the non-genesis beneficiary check and reaches artifact validation.
+pub(crate) fn rewarded_block_with_number(number: u64) -> ConsensusBlock {
+    let mut block = Block::default();
+    block.header.number = number;
+    block.header.beneficiary = outbe_primitives::addresses::REWARDS_ADDRESS;
+    block.header.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(number);
+    let block = block.map_header(OutbeHeader::new);
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
 pub(crate) fn block_with_number_and_parent(number: u64, parent_hash: B256) -> ConsensusBlock {
     let mut block = Block::default();
     block.header.number = number;

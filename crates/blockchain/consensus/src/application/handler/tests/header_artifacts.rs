@@ -335,3 +335,247 @@ async fn dealer_log_header_artifact_rejects_wrong_ceremony() {
     .await
     .is_err());
 }
+
+// ---- Header-artifact admission regressions -------------------------------
+//
+// A parent that already carries the pending epoch boundary puts the verifier in
+// `AlreadyCommitted`. Every artifact a block carries there must still pass the
+// same admission rule as in `NoPending`; a pre-announce is only admissible for
+// the direct successor epoch and only with this node's own reconstructed outcome.
+
+fn boundary_for_epoch(
+    epoch: u64,
+    validator_set: &crate::validators::ValidatorSet,
+    output: &commonware_cryptography::bls12381::dkg::feldman_desmedt::Output<
+        MinSig,
+        bls12381::PublicKey,
+    >,
+) -> outbe_primitives::consensus::DkgBoundaryArtifact {
+    dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(epoch),
+        validator_set,
+        output,
+        is_full_dkg: true,
+        dkg_cycle: epoch,
+        freeze_height: 0,
+        planned_activation_height: 0,
+        vrf_material_version: epoch,
+        is_validator_set_change: true,
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap()
+}
+
+async fn verify_carried(
+    block: &crate::block::ConsensusBlock,
+    parent: Option<&crate::block::ConsensusBlock>,
+    round_epoch: u64,
+    proposer: &bls12381::PublicKey,
+    validator_set: &crate::validators::ValidatorSet,
+    manager: &DkgManagerMailbox,
+) -> Result<(), String> {
+    let (scheme_provider, committee_provider) =
+        leader_binding_providers(Epoch::new(round_epoch), validator_set);
+    validate_header_consensus_artifacts(
+        block,
+        parent,
+        Round::new(Epoch::new(round_epoch), View::new(3)),
+        proposer,
+        outbe_primitives::chain::CHAIN_ID,
+        ValidatorRole::Signer,
+        &scheme_provider,
+        &committee_provider,
+        manager,
+        &TestAncestryReader::ready(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn already_committed_rejects_forged_preannounce() {
+    let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    let pending = boundary_for_epoch(0, &validator_set, &output);
+    let manager = DkgManagerMailbox::new();
+    manager.note_bootstrap_outcome(pending.clone());
+    let parent = block_with_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(pending));
+    let forged = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: 1,
+        outcome: dkg_manager::encode_outcome(Epoch::new(1), &output, true),
+    };
+
+    let verdict = verify_carried(
+        &block_with_header_artifact(&forged),
+        Some(&parent),
+        0,
+        &keys[0].public_key(),
+        &validator_set,
+        &manager,
+    )
+    .await;
+
+    assert!(
+        verdict.is_err(),
+        "a pre-announce this node cannot verify must not ride an AlreadyCommitted block"
+    );
+}
+
+#[tokio::test]
+async fn already_committed_verifies_dealer_log() {
+    let (keys, participants, output, _polynomial, dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    let pending = boundary_for_epoch(0, &validator_set, &output);
+    let parent =
+        block_with_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(pending.clone()));
+    let block = block_with_header_artifact(&ConsensusHeaderArtifact::DealerLog(dealer_log));
+
+    let matching = DkgManagerMailbox::new();
+    matching.note_bootstrap_outcome(pending.clone());
+    matching
+        .note_ceremony_started(Epoch::new(0), 7, None, participants.clone())
+        .unwrap();
+    assert!(verify_carried(
+        &block,
+        Some(&parent),
+        0,
+        &keys[0].public_key(),
+        &validator_set,
+        &matching
+    )
+    .await
+    .is_ok());
+
+    let other_ceremony = DkgManagerMailbox::new();
+    other_ceremony.note_bootstrap_outcome(pending);
+    other_ceremony
+        .note_ceremony_started(Epoch::new(0), 8, None, participants)
+        .unwrap();
+    assert!(
+        verify_carried(
+            &block,
+            Some(&parent),
+            0,
+            &keys[0].public_key(),
+            &validator_set,
+            &other_ceremony
+        )
+        .await
+        .is_err(),
+        "a dealer log for another ceremony must be rejected after the boundary committed"
+    );
+}
+
+#[tokio::test]
+async fn already_committed_rejects_duplicate_boundary_and_accepts_empty() {
+    let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    let pending = boundary_for_epoch(0, &validator_set, &output);
+    let manager = DkgManagerMailbox::new();
+    manager.note_bootstrap_outcome(pending.clone());
+    let artifact = ConsensusHeaderArtifact::BoundaryOutcome(pending);
+    let parent = block_with_header_artifact(&artifact);
+    let proposer = keys[0].public_key();
+
+    let duplicate = verify_carried(
+        &block_with_header_artifact(&artifact),
+        Some(&parent),
+        0,
+        &proposer,
+        &validator_set,
+        &manager,
+    )
+    .await
+    .unwrap_err();
+    assert!(duplicate.contains("duplicate DKG BoundaryOutcome"));
+
+    assert!(verify_carried(
+        &block_with_number(0),
+        Some(&parent),
+        0,
+        &proposer,
+        &validator_set,
+        &manager
+    )
+    .await
+    .is_ok());
+}
+
+#[tokio::test]
+async fn no_pending_rejects_non_successor_preannounce() {
+    let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    // The local pending boundary is for epoch 2 while the round is epoch 0: the
+    // carried bytes match it exactly, but epoch 2 is not the round's successor.
+    let pending = boundary_for_epoch(2, &validator_set, &output);
+    let manager = DkgManagerMailbox::new();
+    manager.note_ceremony_completed(pending.clone());
+    let preannounce = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: 2,
+        outcome: pending.outcome,
+    };
+
+    let verdict = verify_carried(
+        &block_with_header_artifact(&preannounce),
+        None,
+        0,
+        &keys[0].public_key(),
+        &validator_set,
+        &manager,
+    )
+    .await;
+
+    assert!(
+        verdict.is_err(),
+        "a pre-announce must name the round's direct successor epoch"
+    );
+}
+
+#[tokio::test]
+async fn no_pending_accepts_successor_preannounce() {
+    let (keys, _participants, output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    let pending = boundary_for_epoch(1, &validator_set, &output);
+    let manager = DkgManagerMailbox::new();
+    manager.note_ceremony_completed(pending.clone());
+    let preannounce = ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: 1,
+        outcome: pending.outcome,
+    };
+
+    assert!(verify_carried(
+        &block_with_header_artifact(&preannounce),
+        None,
+        0,
+        &keys[0].public_key(),
+        &validator_set,
+        &manager
+    )
+    .await
+    .is_ok());
+}
+
+/// Block 1 without the genesis `BoundaryOutcome` is already rejected by the
+/// system-tx set rule, before header-artifact admission runs; this pins that the
+/// admission table needs no separate height-1 row.
+#[tokio::test]
+async fn height_one_without_boundary_is_rejected_by_system_tx_set() {
+    let (keys, _participants, _output, _polynomial, _dealer_log) = dkg_runtime_artifacts();
+    let validator_set = validator_set_from_keys(&keys);
+    let manager = DkgManagerMailbox::new();
+
+    let verdict = verify_carried(
+        &rewarded_block_with_number(1),
+        None,
+        0,
+        &keys[0].public_key(),
+        &validator_set,
+        &manager,
+    )
+    .await;
+
+    let error = verdict.unwrap_err();
+    assert!(
+        error.contains("block 1 must carry a BoundaryOutcome"),
+        "unexpected rejection: {error}"
+    );
+}

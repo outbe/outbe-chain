@@ -15,6 +15,7 @@ use crate::config::PROPOSE_RESOLUTION_TIMEOUT;
 use crate::digest::Digest;
 
 use crate::dkg_manager::BoundaryRequirement;
+use crate::dkg_manager::ProposalForfeit;
 
 use crate::finalization::parent_cert_store::CertifiedParentProofKey;
 
@@ -32,7 +33,6 @@ use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::projection::ProjectionCheckpoint;
 
 use outbe_primitives::reshare_artifact::encode_outbe_block_artifacts;
-use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
 use outbe_primitives::reshare_artifact::OutbeBlockArtifacts;
 
@@ -431,10 +431,6 @@ impl ApplicationShared {
         // `genesis_dkg_boundary_not_ready` reason - never propose block 1
         // without a real boundary artifact.
         let proposed_height = parent_height.get().saturating_add(1);
-        let pending_boundary = self
-            .dkg_manager
-            .pending_boundary_artifact(round.epoch())
-            .await;
         let ancestry = super::ancestry::marshal_ancestry_reader(
             self.marshal_mailbox.clone(),
             self.block_cache.clone(),
@@ -443,29 +439,18 @@ impl ApplicationShared {
             PROPOSE_RESOLUTION_TIMEOUT,
             clock.child("ancestry"),
         );
-        let consensus_header_artifact = match self
+        let plan = match self
             .dkg_manager
-            .resolve_boundary(parent_block.as_ref(), pending_boundary.as_ref(), &ancestry)
+            .plan_header_artifact(
+                parent_block.as_ref(),
+                round.epoch(),
+                proposed_height,
+                &ancestry,
+            )
             .await
         {
-            Ok(BoundaryRequirement::AlreadyCommitted) => {
-                crate::metrics::record_dkg_boundary_requirement(
-                    crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
-                );
-                None
-            }
-            Ok(BoundaryRequirement::MustEmit) => {
-                let Some(boundary) = pending_boundary else {
-                    return Err(eyre::eyre!(
-                        "boundary requirement requested emission without pending artifact"
-                    ));
-                };
-                crate::metrics::record_dkg_boundary_requirement(
-                    crate::metrics::DkgBoundaryDecision::MustEmit,
-                );
-                Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))
-            }
-            Ok(BoundaryRequirement::NoPending) if proposed_height == 1 => {
+            Ok(plan) => plan,
+            Err(ProposalForfeit::GenesisBoundaryNotReady) => {
                 debug!(
                     %round,
                     proposed_height,
@@ -477,33 +462,7 @@ impl ApplicationShared {
                 );
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
-            Ok(BoundaryRequirement::NoPending) => {
-                crate::metrics::record_dkg_boundary_requirement(
-                    crate::metrics::DkgBoundaryDecision::NoPending,
-                );
-                // If the DKG for the NEXT epoch has completed (its boundary is
-                // pending) but this is not yet its activation block, PRE-ANNOUNCE
-                // that committee in this E-1 block so a follower authenticates it via
-                // the already-trusted E-1 committee - before the self-finalized
-                // activation boundary at E*L+1 (Path A committee-chaining). Otherwise
-                // a DKG is still in flight, so emit a dealer log.
-                if let Some(boundary) = self
-                    .dkg_manager
-                    .pending_next_epoch_artifact(round.epoch())
-                    .await
-                {
-                    Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
-                        epoch: boundary.epoch,
-                        outcome: boundary.outcome,
-                    })
-                } else {
-                    self.dkg_manager
-                        .get_dealer_log(round.epoch())
-                        .await
-                        .map(ConsensusHeaderArtifact::DealerLog)
-                }
-            }
-            Err(error) => {
+            Err(ProposalForfeit::Boundary(error)) => {
                 warn!(
                     %round,
                     proposed_height,
@@ -518,6 +477,14 @@ impl ApplicationShared {
                 return Ok(BuildBlockOutcome::BoundaryUnavailable);
             }
         };
+        crate::metrics::record_dkg_boundary_requirement(match plan.requirement {
+            BoundaryRequirement::NoPending => crate::metrics::DkgBoundaryDecision::NoPending,
+            BoundaryRequirement::AlreadyCommitted => {
+                crate::metrics::DkgBoundaryDecision::AlreadyCommitted
+            }
+            BoundaryRequirement::MustEmit => crate::metrics::DkgBoundaryDecision::MustEmit,
+        });
+        let consensus_header_artifact = plan.artifact;
 
         // Non-blocking direct-parent proof selection
         // (finalization first -> certified-notarization -> marshal-archive

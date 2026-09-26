@@ -281,13 +281,37 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
 
     let manager = DkgManagerMailbox::new();
     manager.note_ceremony_completed(completed_boundary.clone());
-    let announced = commonware_runtime::tokio::Runner::default()
-        .start(|_| async move { manager.pending_next_epoch_artifact(Epoch::new(3)).await });
+    let planned = commonware_runtime::tokio::Runner::default().start(|_| async move {
+        manager
+            .plan_header_artifact(None, Epoch::new(3), 105, &NoAncestry)
+            .await
+    });
     assert_eq!(
-        announced,
-        Some(completed_boundary),
-        "a durable completed boundary must be publishable before activation"
+        planned.map(|plan| plan.artifact),
+        Ok(Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: completed_boundary.epoch,
+            outcome: completed_boundary.outcome,
+        })),
+        "a durable completed boundary must be pre-announced before activation"
     );
+}
+
+/// Ancestry that is never consulted: with no parent and no current-epoch
+/// boundary pending, the plan is decided from local DKG state alone.
+struct NoAncestry;
+
+impl dkg_manager::AncestryReader for NoAncestry {
+    fn get_block_by_height<'a>(&'a self, _height: u64) -> dkg_manager::BlockLookupFuture<'a> {
+        Box::pin(async { None })
+    }
+
+    fn get_block_by_hash<'a>(&'a self, _hash: B256) -> dkg_manager::BlockLookupFuture<'a> {
+        Box::pin(async { None })
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
 }
 
 #[test]
