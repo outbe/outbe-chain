@@ -648,7 +648,7 @@ fn compute_floor(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let floor_price = match gem_type {
-        // A zero floor qualifies the gem from birth: every price clears it.
+        // A zero floor clears at any price on the gem's first full day.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
             U256::ZERO

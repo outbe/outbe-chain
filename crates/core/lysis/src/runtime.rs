@@ -33,10 +33,11 @@ pub fn lysis(
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
     lysis_limit_minor: U256,
+    process_time: u64,
 ) -> Result<LysisResult> {
-    storage
-        .clone()
-        .with_checkpoint(|| lysis_inner(storage, scope, parent, wwd, lysis_limit_minor))
+    storage.clone().with_checkpoint(|| {
+        lysis_inner(storage, scope, parent, wwd, lysis_limit_minor, process_time)
+    })
 }
 
 fn lysis_inner(
@@ -45,6 +46,7 @@ fn lysis_inner(
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
     lysis_limit_minor: U256,
+    process_time: u64,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
     let mut tributes = load_day_tributes(storage.clone(), scope, parent, wwd)?;
@@ -82,7 +84,7 @@ fn lysis_inner(
     let mut execution =
         program_v1::prepare(wwd, tribute_inputs, first_leagues, lysis_limit_minor, now)
             .map_err(program_error)?;
-    let entry_prices = freeze_entry_price_snapshot(storage.clone(), wwd, now)?;
+    let entry_prices = freeze_entry_price_snapshot(storage.clone(), wwd, process_time)?;
 
     let mut nod_ids = Vec::with_capacity(tributes.len());
     for loaded in &tributes {
@@ -213,17 +215,17 @@ fn program_error(error: ProgramErrorV1) -> PrecompileError {
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-/// Freeze the previous UTC day's finalized VWAPs during preparation, once per
-/// WorldwideDay. Oracle COEN/ISO prices already use six-decimal Gratis units.
+/// Freeze, once per WorldwideDay, the finalized VWAPs of the UTC day before its scheduled
+/// processing `process_time`. Oracle COEN/ISO prices already use six-decimal Gratis units.
 pub fn freeze_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,
-    now: u64,
+    process_time: u64,
 ) -> Result<BTreeMap<u16, U256>> {
     if let Some(prices) = outbe_nod::api::entry_price_snapshot(storage.clone(), day)? {
         return Ok(prices);
     }
-    let previous_day = previous_date_key(timestamp_to_date_key(now));
+    let previous_day = previous_date_key(timestamp_to_date_key(process_time));
     let mut prices = BTreeMap::new();
     for iso in outbe_oracle::api::reference_currencies(storage.clone())? {
         if let Some(vwap) =
@@ -232,7 +234,7 @@ pub fn freeze_entry_price_snapshot(
             prices.insert(iso, vwap);
         }
     }
-    outbe_nod::api::store_entry_price_snapshot(storage, day, &prices)?;
+    outbe_nod::api::store_entry_price_snapshot(storage, day, previous_day, &prices)?;
     Ok(prices)
 }
 

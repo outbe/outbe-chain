@@ -1159,7 +1159,7 @@ fn compressed_body(
     };
     let package = world
         .rpc
-        .compressed_entity(port, request)
+        .compressed_entity_ready(port, request)
         .expect("finalized compressed Nod proof");
     assert!(
         package.header.block_number >= minimum,
