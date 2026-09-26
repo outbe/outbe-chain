@@ -119,11 +119,7 @@ pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
 fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
     // The value column is keyed by the pair's registry index.
     let pair_id = oracle.pair_index_of(pair).unwrap();
-    oracle
-        .utc_day_vwap_value
-        .get_nested(&utc_day)
-        .write(&pair_id, value)
-        .unwrap();
+    oracle.record_utc_day_vwap(utc_day, pair_id, value).unwrap();
     // Mirror the begin-block hook: the watermark covers every seeded day.
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
         oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
@@ -391,11 +387,7 @@ mod call_sweep {
 
     fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
         let pair_id = oracle.pair_index_of(pair).unwrap();
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&utc_day)
-            .write(&pair_id, value)
-            .unwrap();
+        oracle.record_utc_day_vwap(utc_day, pair_id, value).unwrap();
         if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
             oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
         }
@@ -1449,11 +1441,7 @@ mod called_pstar {
 
     fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
         let pair_id = oracle.pair_index_of(pair).unwrap();
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&utc_day)
-            .write(&pair_id, value)
-            .unwrap();
+        oracle.record_utc_day_vwap(utc_day, pair_id, value).unwrap();
         if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
             oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
         }

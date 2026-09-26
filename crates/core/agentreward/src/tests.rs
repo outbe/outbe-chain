@@ -300,9 +300,7 @@ fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
         .expect("COEN/840 registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW));
     outbe_oracle::schema::OracleContract::new(storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, vwap)
+        .record_utc_day_vwap(day, index, vwap)
         .unwrap();
 }
 

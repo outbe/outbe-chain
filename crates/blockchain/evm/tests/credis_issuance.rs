@@ -145,11 +145,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
                 .unwrap()
                 .unwrap();
-            oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&index, price)
-                .unwrap();
+            oracle.record_utc_day_vwap(day, index, price).unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
             let auth = |op, amount, op_nonce| ModifyAuth {
                 mac: modify_mac(

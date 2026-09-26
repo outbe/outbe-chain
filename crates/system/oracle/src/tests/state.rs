@@ -1366,9 +1366,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
             .write(&7u32, U256::from(333u64))
             .unwrap();
         oracle
-            .utc_day_vwap_value
-            .get_nested(&20260302u32)
-            .write(&7u32, U256::from(444u64))
+            .record_utc_day_vwap(20260302u32, 7u32, U256::from(444u64))
             .unwrap();
 
         // Direct (non-mapping) slots.
@@ -1626,9 +1624,7 @@ fn seed_closed_days(oracle: &mut OracleContract, iso: u16, days: &[(u32, u64)], 
     let index = oracle.register_pair(AddressPair::new_coen_to(iso)).unwrap();
     for &(day, vwap) in days {
         oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, U256::from(vwap))
+            .record_utc_day_vwap(day, index, U256::from(vwap))
             .unwrap();
     }
     oracle.utc_day_vwap_last_finalized.write(watermark).unwrap();
@@ -1645,9 +1641,7 @@ fn closed_above_floor_needs_a_finalized_day_strictly_above_the_floor() {
             20260302,
         );
         oracle
-            .utc_day_vwap_value
-            .get_nested(&20260303u32)
-            .write(&1u32, U256::from(500u64))
+            .record_utc_day_vwap(20260303u32, 1u32, U256::from(500u64))
             .unwrap();
 
         let crossed = |floor: u64| {
@@ -1694,9 +1688,7 @@ fn max_utc_day_vwap_since_reads_the_same_days_as_the_floor_check() {
             20260302,
         );
         oracle
-            .utc_day_vwap_value
-            .get_nested(&20260303u32)
-            .write(&1u32, U256::from(900u64))
+            .record_utc_day_vwap(20260303u32, 1u32, U256::from(900u64))
             .unwrap();
 
         let max = |iso: u16, from: u32| {

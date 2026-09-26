@@ -24,11 +24,7 @@ fn list(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
 }
 
 fn close_day(oracle: &OracleContract, day: u32, pair_id: u32, vwap: U256) {
-    oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&pair_id, vwap)
-        .unwrap();
+    oracle.record_utc_day_vwap(day, pair_id, vwap).unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
     }

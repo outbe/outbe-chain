@@ -64,9 +64,7 @@ fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16)
     }
     let day = outbe_primitives::time::first_full_day(issued_at);
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, floor + U256::ONE)
+        .record_utc_day_vwap(day, index, floor + U256::ONE)
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();

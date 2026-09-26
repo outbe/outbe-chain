@@ -45,9 +45,7 @@ fn seed_day_vwap(ctx: &BlockRuntimeContext, day: u32, vwap: U256) {
         .unwrap()
         .expect("COEN/840 registered");
     outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, vwap)
+        .record_utc_day_vwap(day, index, vwap)
         .unwrap();
 }
 

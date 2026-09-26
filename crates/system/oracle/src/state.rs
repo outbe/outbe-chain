@@ -842,6 +842,13 @@ impl OracleContract<'_> {
         Ok((!vwap.is_zero()).then_some(vwap))
     }
 
+    /// The only writer of a day's VWAP.
+    pub fn record_utc_day_vwap(&self, utc_day: u32, index: PairIndex, vwap: U256) -> Result<()> {
+        self.utc_day_vwap_value
+            .get_nested(&utc_day)
+            .write(&index, vwap)
+    }
+
     /// Returns the full finalized VWAP set for `utc_day` as
     /// `(bases, quotes, vwaps)`. All vectors are empty when the day is
     /// unfinalized or had no data.
