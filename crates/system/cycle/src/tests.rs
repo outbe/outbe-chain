@@ -143,9 +143,7 @@ fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
     );
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, U256::from(2_000_000u64))
+        .record_utc_day_vwap(day, index, U256::from(2_000_000u64))
         .unwrap();
 }
 
@@ -1736,10 +1734,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let mut day = previous_date_key(timestamp_to_date_key(midnight));
             oracle.utc_day_vwap_last_finalized.write(day)?;
             for _ in 0..28 {
-                oracle
-                    .utc_day_vwap_value
-                    .get_nested(&day)
-                    .write(&index, U256::from(100))?;
+                oracle.record_utc_day_vwap(day, index, U256::from(100))?;
                 day = previous_date_key(day);
             }
             let issue = |owner, floor| {
@@ -1785,10 +1780,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // rather than replaying the same latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
-            oracle
-                .utc_day_vwap_value
-                .get_nested(&previous)
-                .write(&index, U256::from(100))?;
+            oracle.record_utc_day_vwap(previous, index, U256::from(100))?;
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;

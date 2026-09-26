@@ -703,11 +703,7 @@ mod tests {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
         );
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, rate_6)
-            .unwrap();
+        oracle.record_utc_day_vwap(day, index, rate_6).unwrap();
     }
 
     fn one_coen840() -> U256 {
@@ -1147,9 +1143,7 @@ mod tests {
                 outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
             );
             outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair_index, U256::ZERO)
+                .record_utc_day_vwap(day, pair_index, U256::ZERO)
                 .unwrap();
 
             assert_eq!(

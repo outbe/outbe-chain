@@ -125,10 +125,7 @@ pub fn dispatch(
         let pair_id = oracle.pair_index_of(pair)?;
         let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
         for _ in 0..call.days {
-            oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair_id, call.value)?;
+            oracle.record_utc_day_vwap(day, pair_id, call.value)?;
             if oracle.utc_day_vwap_last_finalized.read()? < day {
                 oracle.utc_day_vwap_last_finalized.write(day)?;
             }

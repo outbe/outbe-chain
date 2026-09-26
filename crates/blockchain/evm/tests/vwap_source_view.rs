@@ -57,9 +57,7 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
                 .unwrap();
         for (day, vwap) in [(20_231_110u32, 7u64), (20_231_111, 9)] {
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&index, U256::from(vwap))
+                .record_utc_day_vwap(day, index, U256::from(vwap))
                 .unwrap();
         }
         oracle

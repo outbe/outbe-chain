@@ -20,9 +20,7 @@ fn seed_positive_ocomp_admission_fixture(
             outbe_primitives::time::timestamp_to_date_key(scheduled),
         );
         oracle
-            .utc_day_vwap_value
-            .get_nested(&previous_day)
-            .write(&index, U256::from(250_000))
+            .record_utc_day_vwap(previous_day, index, U256::from(250_000))
             .unwrap();
         oracle
             .exchange_rate

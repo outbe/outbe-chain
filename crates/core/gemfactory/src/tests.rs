@@ -646,9 +646,7 @@ fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
         .unwrap();
     let day = outbe_primitives::time::first_full_day(item.issued_at);
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&pair, item.floor_price_minor + U256::ONE)
+        .record_utc_day_vwap(day, pair, item.floor_price_minor + U256::ONE)
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
@@ -1554,9 +1552,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
         .expect("COEN pair registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW));
     OracleContract::new(storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, vwap)
+        .record_utc_day_vwap(day, index, vwap)
         .unwrap();
 }
 

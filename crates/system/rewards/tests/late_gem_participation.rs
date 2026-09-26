@@ -60,9 +60,7 @@ fn seed(ctx: &BlockRuntimeContext) {
     oracle.utc_day_vwap_last_finalized.write(DAY).unwrap();
     let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
     oracle
-        .utc_day_vwap_value
-        .get_nested(&DAY)
-        .write(&index, U256::from(1_000_000))
+        .record_utc_day_vwap(DAY, index, U256::from(1_000_000))
         .unwrap();
 }
 

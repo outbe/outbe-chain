@@ -398,9 +398,11 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 .unwrap();
             if explicitly_write_zero {
                 oracle
-                    .utc_day_vwap_value
-                    .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
-                    .write(&eur_index, U256::ZERO)
+                    .record_utc_day_vwap(
+                        previous_date_key(timestamp_to_date_key(T_NOW)),
+                        eur_index,
+                        U256::ZERO,
+                    )
                     .unwrap();
             }
             outbe_oracle::scurve::store_scurve_entry(
@@ -871,10 +873,9 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         assert_eq!(frozen.get(&840), Some(&entry_price));
         // Issuance must use the snapshot even if Oracle daily data changes later.
         OracleContract::new(s.clone())
-            .utc_day_vwap_value
-            .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
-            .write(
-                &outbe_oracle::api::coen_pair_index_opt(s.clone(), 840)
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(T_NOW)),
+                outbe_oracle::api::coen_pair_index_opt(s.clone(), 840)
                     .unwrap()
                     .unwrap(),
                 U256::ZERO,

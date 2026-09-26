@@ -217,7 +217,7 @@ pub struct OracleContract {
     // Inner key is the registry [`PairIndex`], as for the WorldwideDay column
     // above. slot 58 - pinned against the retired 56-57 hole.
     #[slot(58)]
-    pub utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
+    pub(crate) utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
     // Monotonic watermark: most recent fully-closed UTC day that has been
     // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
     // so every day <= this watermark is considered finalized.
@@ -263,4 +263,10 @@ pub struct OracleContract {
     // registered Oracle pairs. Rates are annualized at scale 1e6.
     pub policy_rate_currencies: StorageVec<u16>,
     pub policy_rate: Mapping<u16, U256>,
+
+    // === Bounded reads of the UTC-day VWAP history (slots 76-77) ===
+    // Both are kept by `record_utc_day_vwap`, the only writer of `utc_day_vwap_value`.
+    #[slot(76)]
+    pub(crate) utc_month_vwap_max: Mapping<u32, Mapping<PairIndex, U256>>,
+    pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
 }

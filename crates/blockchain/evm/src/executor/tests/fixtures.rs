@@ -961,8 +961,6 @@ pub(super) fn seed_previous_day_vwap(
         outbe_primitives::time::timestamp_to_date_key(block_ts),
     );
     outbe_oracle::schema::OracleContract::new(storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, rate)
+        .record_utc_day_vwap(day, index, rate)
         .unwrap();
 }

@@ -152,9 +152,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         .ok_or("benchmark COEN pair is not registered")?;
     let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT));
     oracle
-        .utc_day_vwap_value
-        .get_nested(&closed_day)
-        .write(&index, oracle_rate())
+        .record_utc_day_vwap(closed_day, index, oracle_rate())
         .map_err(|error| error.to_string())?;
     oracle
         .utc_day_vwap_last_finalized

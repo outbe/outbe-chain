@@ -92,9 +92,7 @@ fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16)
     }
     let day = outbe_primitives::time::first_full_day(issued_at);
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, floor + U256::ONE)
+        .record_utc_day_vwap(day, index, floor + U256::ONE)
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
@@ -564,9 +562,7 @@ fn measure_settle_gem_gas_with_real_paynote() {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let day = outbe_primitives::time::first_full_day(BLOCK_TIMESTAMP);
         oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&pair, U256::from(1_080_001))
+            .record_utc_day_vwap(day, pair, U256::from(1_080_001))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         outbe_gem::api::add_gem(

@@ -1164,11 +1164,7 @@ fn utc_day_vwap_for_iso_preserves_scale_and_absent_prices() {
 
         // Use fractional six-decimal units to catch accidental rescaling.
         let price = U256::from(133_333_333u64);
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, price)
-            .unwrap();
+        oracle.record_utc_day_vwap(day, index, price).unwrap();
         assert_eq!(
             get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
             Some(price)
@@ -1186,11 +1182,7 @@ fn utc_day_vwap_for_iso_preserves_scale_and_absent_prices() {
             None
         );
 
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, U256::ZERO)
-            .unwrap();
+        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
         assert_eq!(
             get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
             None

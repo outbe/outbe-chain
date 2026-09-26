@@ -44,9 +44,7 @@ pub(crate) fn close_day_above(storage: &StorageHandle<'_>, iso: u16, floor: U256
         index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
     }
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, floor + U256::from(1))
+        .record_utc_day_vwap(day, index, floor + U256::from(1))
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();

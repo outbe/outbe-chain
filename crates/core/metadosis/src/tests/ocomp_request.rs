@@ -173,9 +173,11 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         // The request is delayed across UTC midnight; newer daily and current
         // prices must not replace the preparation snapshot.
         oracle
-            .utc_day_vwap_value
-            .get_nested(&previous_date_key(timestamp_to_date_key(block_time)))
-            .write(&usd_index, U256::from(700_000))
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(block_time)),
+                usd_index,
+                U256::from(700_000),
+            )
             .unwrap();
 
         end_block(storage.clone(), &scope).unwrap();

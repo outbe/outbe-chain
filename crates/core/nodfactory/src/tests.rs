@@ -278,9 +278,7 @@ impl World {
                 storage.timestamp().unwrap().to::<u64>(),
             ));
             outbe_oracle::schema::OracleContract::new(storage.clone())
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&index, rate)
+                .record_utc_day_vwap(day, index, rate)
                 .unwrap();
         });
     }
@@ -375,9 +373,7 @@ impl World {
             }
             let day = outbe_primitives::time::first_full_day(issued_at);
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&index, item.floor_price_minor + U256::from(1))
+                .record_utc_day_vwap(day, index, item.floor_price_minor + U256::from(1))
                 .unwrap();
             if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
                 oracle.utc_day_vwap_last_finalized.write(day).unwrap();

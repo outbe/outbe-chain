@@ -158,6 +158,22 @@
     },
     {
       "type": "error",
+      "name": "DayAlreadyRecorded",
+      "inputs": [
+        {
+          "name": "utcDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NotRouter",
       "inputs": [
         {
