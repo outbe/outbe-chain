@@ -1,5 +1,5 @@
 //! Local storage helpers for the IntexFactory module (settlement bookkeeping
-//! + the unqualified-series bin index). Orchestration lives in `runtime.rs`.
+//! + the call-price bin index). Orchestration lives in `runtime.rs`.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::SeriesId;
@@ -34,7 +34,7 @@ impl IntexFactoryContract<'_> {
         self.mine_seq.write(&key, value)
     }
 
-    // --- unqualified-series bin index (by floor_price_minor) ---
+    // --- bin keys ---
 
     /// Map a six-decimal COEN/ISO price to its LB-style bin id (bounded by the codec).
     pub fn price_to_bin(price: U256) -> Result<u32> {
@@ -62,59 +62,19 @@ impl IntexFactoryContract<'_> {
         Self::bin_index_key(reference_currency, worldwide_day.value(), index)
     }
 
-    pub(crate) fn insert_unqualified(
+    /// Enroll a series in its call-price bin; its day's group is created with the first member.
+    pub(crate) fn insert_call_bin(
         &mut self,
         series_id: SeriesId,
         reference_currency: u16,
-        floor_price: U256,
+        call_price: U256,
     ) -> Result<()> {
-        let bin_id = Self::price_to_bin(floor_price)?;
-        self.unqualified_index(reference_currency).insert(
-            &UnqualifiedBinTree(&*self, reference_currency),
+        let bin_id = Self::price_to_bin(call_price)?;
+        self.call_bin_index(reference_currency).insert(
+            &CallBins(&*self, reference_currency),
             series_id,
             bin_id,
         )
-    }
-
-    pub(crate) fn remove_unqualified_group(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<()> {
-        self.unqualified_index(reference_currency).remove_group(
-            &UnqualifiedBinTree(&*self, reference_currency),
-            worldwide_day,
-        )
-    }
-
-    pub(crate) fn unqualified_groups_in_bin(
-        &self,
-        reference_currency: u16,
-        bin_id: u32,
-    ) -> Result<Vec<WorldwideDay>> {
-        self.unqualified_index(reference_currency)
-            .groups_in_bin(bin_id)
-    }
-
-    pub(crate) fn unqualified_group_members(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Vec<SeriesId>> {
-        self.unqualified_index(reference_currency)
-            .members(worldwide_day)
-    }
-
-    pub(crate) fn unqualified_group(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Group> {
-        Ok(Group {
-            iso_code: reference_currency,
-            worldwide_day,
-            members: self.unqualified_group_members(reference_currency, worldwide_day)?,
-        })
     }
 
     /// Widen the currency's stored terms to cover a newly issued series.
@@ -162,52 +122,36 @@ impl IntexFactoryContract<'_> {
         Ok((days, threshold / secs_per_day))
     }
 
-    // --- qualified-series bin index (by call_price_minor) ---
+    // --- call-price bin index the Called scan walks ---
 
-    pub(crate) fn insert_qualified_group(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        trigger_price: U256,
-        members: &[SeriesId],
-    ) -> Result<()> {
-        let bin_id = Self::price_to_bin(trigger_price)?;
-        self.qualified_index(reference_currency).insert_group(
-            &QualifiedBinTree(&*self, reference_currency),
-            worldwide_day,
-            bin_id,
-            members,
-        )
-    }
-
-    pub(crate) fn remove_qualified_group(
+    pub(crate) fn remove_call_bin_group(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
     ) -> Result<()> {
-        self.qualified_index(reference_currency)
-            .remove_group(&QualifiedBinTree(&*self, reference_currency), worldwide_day)
+        self.call_bin_index(reference_currency)
+            .remove_group(&CallBins(&*self, reference_currency), worldwide_day)
     }
 
-    pub(crate) fn qualified_groups_in_bin(
+    pub(crate) fn call_bin_groups(
         &self,
         reference_currency: u16,
         bin_id: u32,
     ) -> Result<Vec<WorldwideDay>> {
-        self.qualified_index(reference_currency)
+        self.call_bin_index(reference_currency)
             .groups_in_bin(bin_id)
     }
 
-    pub(crate) fn qualified_group_members(
+    pub(crate) fn call_bin_group_members(
         &self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
     ) -> Result<Vec<SeriesId>> {
-        self.qualified_index(reference_currency)
+        self.call_bin_index(reference_currency)
             .members(worldwide_day)
     }
 
-    pub(crate) fn qualified_group(
+    pub(crate) fn call_bin_group(
         &self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
@@ -215,7 +159,7 @@ impl IntexFactoryContract<'_> {
         Ok(Group {
             iso_code: reference_currency,
             worldwide_day,
-            members: self.qualified_group_members(reference_currency, worldwide_day)?,
+            members: self.call_bin_group_members(reference_currency, worldwide_day)?,
         })
     }
 
@@ -444,18 +388,7 @@ impl IntexFactoryContract<'_> {
 }
 
 impl<'storage> IntexFactoryContract<'storage> {
-    fn unqualified_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
-        GroupIndex {
-            bin_count: self.unqualified_bin_count.clone(),
-            bin_groups: self.unqualified_bin_groups.clone(),
-            group_count: self.unqualified_group_count.clone(),
-            group_members: self.unqualified_group_members.clone(),
-            group_bin: self.unqualified_group_bin.clone(),
-            iso: reference_currency,
-        }
-    }
-
-    fn qualified_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
+    fn call_bin_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
         GroupIndex {
             bin_count: self.qualified_bin_count.clone(),
             bin_groups: self.qualified_bin_groups.clone(),
@@ -550,36 +483,6 @@ impl GroupIndex<'_> {
         Ok(())
     }
 
-    /// Index a whole group at once: its members and its place in `bin_id`.
-    fn insert_group(
-        &self,
-        tree: &impl BinTreeStorage,
-        worldwide_day: WorldwideDay,
-        bin_id: u32,
-        members: &[SeriesId],
-    ) -> Result<()> {
-        if members.is_empty() {
-            return Ok(());
-        }
-        let group_key = self.group_key(worldwide_day);
-        if self.group_count.read(&group_key)? != 0 {
-            return Err(IntexFactoryError::GroupAlreadyIndexed {
-                iso: self.iso,
-                worldwide_day,
-            }
-            .into());
-        }
-        self.attach(tree, worldwide_day, bin_id)?;
-        for (index, series_id) in members.iter().enumerate() {
-            self.group_members.write(
-                &self.member_key(worldwide_day, index as u32),
-                series_id.to_word(),
-            )?;
-        }
-        self.group_count.write(&group_key, members.len() as u32)?;
-        Ok(())
-    }
-
     /// Drop a whole group: its members and its place in the bin.
     fn remove_group(&self, tree: &impl BinTreeStorage, worldwide_day: WorldwideDay) -> Result<()> {
         let group_key = self.group_key(worldwide_day);
@@ -656,42 +559,6 @@ impl GroupIndex<'_> {
 // Adapters between one currency's slice of a bin-tree's columns and `BinTreeStorage`.
 // Construct inline at each `tree_math` call, so it never conflicts with a `&mut` borrow.
 
-/// The unqualified (floor-price) trie of one reference currency.
-pub(crate) struct UnqualifiedBinTree<'a, 'b>(
-    pub(crate) &'a IntexFactoryContract<'b>,
-    pub(crate) u16,
-);
-
-impl BinTreeStorage for UnqualifiedBinTree<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .bin_tree_mid
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bin_tree_mid
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .bin_tree_leaf
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .bin_tree_leaf
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-}
-
-/// The qualified (call-trigger) trie of one reference currency.
 /// Buckets holding a called group whose settlement window has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
 
@@ -716,9 +583,10 @@ impl BinTreeStorage for ExpiryDayTree<'_, '_> {
     }
 }
 
-pub(crate) struct QualifiedBinTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
+/// The call-price trie of one reference currency.
+pub(crate) struct CallBins<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
 
-impl BinTreeStorage for QualifiedBinTree<'_, '_> {
+impl BinTreeStorage for CallBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
         self.0.qualified_bin_tree_root.read(&self.1)
     }

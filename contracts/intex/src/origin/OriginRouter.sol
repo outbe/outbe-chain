@@ -36,7 +36,7 @@ contract OriginRouter is
 {
     /// @notice Gates the demand-side sends: auction stages, AUCTION_RESULT, REFUND_INSTRUCTIONS.
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
-    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_QUALIFIED, MARK_CALLED.
+    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED, DAILY_VWAP.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
 
     /// @custom:storage-location erc7201:outbe.intex.OriginRouter
@@ -53,7 +53,7 @@ contract OriginRouter is
         mapping(uint256 idx => ParkedProceeds) parkedProceeds;
         /// @dev Next index to assign in `parkedProceeds`.
         uint256 nextParkedProceedsIdx;
-        // --- Multi-target registry (tail-appended; upgrade-safe) ---
+        // --- Multi-target registry ---
         /// @dev Registered target chainIds; membership is via `targetIndexPlus1`.
         uint32[] targetChainIds;
         /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.
@@ -408,24 +408,6 @@ contract OriginRouter is
         }
     }
 
-    /// @inheritdoc IOriginRouter
-    function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
-        external
-        payable
-        onlyRole(INTEX_FACTORY_ROLE)
-    {
-        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
-        if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(worldwideDay, seriesIds);
-        uint256 gasLimit = IntexGas.markQualified(seriesIds.length);
-        for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, gasLimit);
-            for (uint256 s = 0; s < seriesIds.length; ++s) {
-                emit MarkQualifiedSent(sendId, seriesIds[s]);
-            }
-        }
-    }
-
     // --- Receive ---
     /// @inheritdoc ERC7786MessengerBase
     /// @dev Guards the authenticated inbound path against re-entry through the Desis recipient.
@@ -470,7 +452,6 @@ contract OriginRouter is
         (
             uint32 worldwideDay,
             uint32 bodySrcChainId,
-            uint32 relayGeneration,
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
@@ -480,21 +461,19 @@ contract OriginRouter is
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
 
         IDesis(_os().desis)
-            .processBidsBatch(
-                worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
-            );
+            .processBidsBatch(worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids);
 
         emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);
     }
 
     /// @dev Decode a BIDS_DONE marker and forward it to Desis; the body `srcChainId` is cross-checked as in BIDS_BATCH.
     function _handleBidsDone(uint32 srcChainId, bytes calldata payload) internal {
-        (uint32 worldwideDay, uint32 bodySrcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids) =
+        (uint32 worldwideDay, uint32 bodySrcChainId, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
 
         if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
 
-        IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
+        IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
     }

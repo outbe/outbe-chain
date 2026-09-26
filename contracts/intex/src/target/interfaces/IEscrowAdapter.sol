@@ -18,15 +18,12 @@ interface IEscrowAdapter {
     enum LockStatus {
         None,
         Locked,
-        // Settled by a finalization that paid out on the spot; nothing writes it now.
-        Finalized,
         Won
     }
 
     /// @notice Bid lock data stored per series per bidder.
     /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) + `bidRate` (4B) + `quantity` (2B)
-    ///      = 27B, one slot;
-    ///      `failedRefund` (16B) + `splitRecorded` (1B) = 17B, a second slot.
+    ///      = 27B, one slot.
     struct BidLock {
         /// @notice Amount of payment-token locked.
         uint128 lockedAmount;
@@ -38,11 +35,6 @@ interface IEscrowAdapter {
         uint32 bidRate;
         /// @notice Intex units the bid asked for.
         uint16 quantity;
-        /// @notice Refund portion of a split recorded when a finalization instruction failed.
-        /// @dev Only locks from before refunds became claims carry one; `claimRefund` still honours it.
-        uint128 failedRefund;
-        /// @notice Whether `failedRefund` was recorded.
-        bool splitRecorded;
     }
 
     /// @notice The clearing terms a day's winners paid at, taken from its first refund chunk.
@@ -119,13 +111,6 @@ interface IEscrowAdapter {
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
     event FundsRefunded(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
-
-    /// @notice Emitted when the winning remainder of a split recorded before refunds became claims is burned
-    ///         (sent to the canonical dead address); its proceeds were already routed on Outbe.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Bidder whose winning portion was burned.
-    /// @param amount Amount of payment-token burned.
-    event ProceedsBurned(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted for each refund chunk the escrow applies.
     /// @param receiveId Inbound bridge message that carried the chunk.

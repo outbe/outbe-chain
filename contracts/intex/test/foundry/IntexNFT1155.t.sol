@@ -91,7 +91,6 @@ contract IntexNFT1155Test is Test {
 
         IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
-        assertEq(uint8(data.status), uint8(IIntexNFT1155.IntexStatus.Issued));
         assertEq(data.issuedAt, block.timestamp);
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
@@ -217,44 +216,7 @@ contract IntexNFT1155Test is Test {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        // Re-calling on an already Called series surfaces the canonical "Qualified expected" hint.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Qualified),
-                uint8(IIntexNFT1155.IntexState.Called)
-            )
-        );
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        vm.stopPrank();
-    }
-
-    function test_MarkQualifiedTransitions() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.markQualified(SERIES_ID_1);
-
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
-        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Qualified));
-        assertEq(data.calledAt, 0);
-    }
-
-    function test_MarkCalledFromQualified() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.startPrank(bridger);
-        nft.markQualified(SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        vm.stopPrank();
-
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
-        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
-        assertEq(data.calledAt, uint32(block.timestamp));
-    }
-
-    function test_MarkQualifiedRevertsFromCalled() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.startPrank(bridger);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        // Re-calling on an already Called series names Issued as the only state it could be called from.
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexNFT1155.InvalidState.selector,
@@ -262,7 +224,7 @@ contract IntexNFT1155Test is Test {
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
-        nft.markQualified(SERIES_ID_1);
+        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
     }
 
@@ -287,12 +249,11 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    function test_CrosschainBurn_AllowedInQualifiedAndCalled_ForSystemRelayer() public {
+    function test_CrosschainBurn_AllowedInIssuedAndCalled_ForSystemRelayer() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
 
-        nft.markQualified(SERIES_ID_1);
         nft.crosschainBurn(user, user, TOKEN_ID_1, 3);
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
 
@@ -353,9 +314,6 @@ contract IntexNFT1155Test is Test {
         vm.prank(user2);
         nft.safeTransferFrom(user2, user, TOKEN_ID_1, 5, "");
 
-        // Still transferable in Qualified state.
-        vm.prank(bridger);
-        nft.markQualified(SERIES_ID_1);
         vm.prank(user);
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 2, "");
         assertEq(nft.balanceOf(user2, TOKEN_ID_1), 2);
@@ -477,7 +435,6 @@ contract IntexNFT1155Test is Test {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issue(user, quantity, SERIES_ID_1);
-        nft.markQualified(SERIES_ID_1);
         nft.crosschainBurn(user, user, TOKEN_ID_1, burnAmount);
         vm.stopPrank();
 
@@ -513,7 +470,6 @@ contract IntexNFT1155Test is Test {
 
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
-        nft.markQualified(SERIES_ID_1);
         nft.crosschainMint(user, TOKEN_ID_1, mintAmount);
         vm.stopPrank();
 
@@ -654,16 +610,6 @@ contract IntexNFT1155Test is Test {
         assertEq(bals.settled, 0);
     }
 
-    function test_Settle_RevertsInIssued() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _grantSettlementRole(address(this));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155.InvalidStateForSettle.selector, uint8(IIntexNFT1155.IntexState.Issued))
-        );
-        nft.settleIntex(SERIES_ID_1, user, user, 1);
-    }
-
     function test_Settle_OnlySettlementRole() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         // Bridger has RELAYER_ROLE only - settle must reject.
@@ -749,16 +695,15 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, settled), 4);
     }
 
-    function test_Settle_QualifiedNotDeadlineGated() public {
+    function test_Settle_IssuedNotDeadlineGated() public {
         uint32 callPeriod = uint32(14 days);
         _createSeries(SERIES_ID_1_DAY, callPeriod);
         vm.startPrank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
-        nft.markQualified(SERIES_ID_1);
         vm.stopPrank();
 
         _grantSettlementRole(address(this));
-        // Qualified series have no call deadline (`calledAt == 0`), so settle is time-independent.
+        // An uncalled series has no call deadline (`calledAt == 0`), so settle is time-independent.
         vm.warp(block.timestamp + 3650 days);
         nft.settleIntex(SERIES_ID_1, user, user, 4);
 
@@ -802,20 +747,6 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(TOKEN_ID_1), 6);
     }
 
-    function test_ParkIntex_AllowedInQualified() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.markQualified(SERIES_ID_1);
-        vm.stopPrank();
-        _grantGemRole(address(this));
-
-        nft.sendToGemFactory(user, SERIES_ID_1, 10);
-
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
-        assertEq(nft.totalSupply(TOKEN_ID_1), 0);
-    }
-
     function test_ParkIntex_OnlyGemRole() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
@@ -837,7 +768,7 @@ contract IntexNFT1155Test is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Qualified),
+                uint8(IIntexNFT1155.IntexState.Issued),
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
@@ -881,7 +812,6 @@ contract IntexNFT1155Test is Test {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
-        nft.markQualified(SERIES_ID_1);
         vm.stopPrank();
         _grantSettlementRole(address(this));
         nft.settleIntex(SERIES_ID_1, user, user, 4);
@@ -996,8 +926,6 @@ contract IntexNFT1155Test is Test {
 
     function test_CrosschainMint_TotalSupplyConsistentMidCallback() public {
         _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.markQualified(SERIES_ID_1);
 
         MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
 

@@ -60,7 +60,6 @@ contract IntexAuction is
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 worldwideDay => bool) cleared;
         /// @dev Registry gating who may commit bids. Zero address leaves the gate open.
-        /// @dev Appended last: never reorder or insert above, the proxy's layout depends on it.
         IWhitelist whitelist;
     }
 
@@ -102,24 +101,7 @@ contract IntexAuction is
         return _s().escrowContract;
     }
 
-    /// @notice Auction parameters and state, indexed by series id. Flattened to match the
-    ///         original public-mapping getter ABI (nested structs returned as tuples).
-    function auctions(uint32 worldwideDay)
-        external
-        view
-        returns (
-            IIntexAuction.WorldwideDayState worldwideDayState,
-            IIntexAuction.AuctionSchedule memory schedule,
-            IIntexAuction.AuctionParams memory params,
-            IIntexAuction.AuctionResult memory result
-        )
-    {
-        IIntexAuction.AuctionData storage a = _s().auctions[worldwideDay];
-        return (a.worldwideDayState, a.schedule, a.params, a.result);
-    }
-
-    /// @notice Live bid counters tracked while the auction runs. Flattened to match the
-    ///         original public-mapping getter ABI.
+    /// @notice Live bid counters tracked while the auction runs.
     function auctionRunningCounts(uint32 worldwideDay)
         external
         view
@@ -143,17 +125,6 @@ contract IntexAuction is
     /// @return True when the bid was revealed.
     function revealedBidsByBidder(uint32 worldwideDay, address bidder) external view returns (bool) {
         return _s().revealedBidsByBidder[worldwideDay][bidder];
-    }
-
-    /// @notice Revealed bid at an index within a series. Flattened to match the original
-    ///         public-mapping getter ABI.
-    function revealedBids(uint32 worldwideDay, uint256 index)
-        external
-        view
-        returns (address bidderAddress, uint32 intexBidRate, uint32 timestamp, uint16 intexQuantity)
-    {
-        IIntexAuction.SubmittedBidData storage b = _s().revealedBids[worldwideDay][index];
-        return (b.bidderAddress, b.intexBidRate, b.timestamp, b.intexQuantity);
     }
 
     // --- Admin ---

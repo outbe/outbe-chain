@@ -21,19 +21,6 @@
     },
     {
       "type": "function",
-      "name": "BURN_ADDRESS",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "COMMIT_BOND_ABANDON_DELAY",
       "inputs": [],
       "outputs": [
@@ -164,40 +151,6 @@
     },
     {
       "type": "function",
-      "name": "auctionEscrowState",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "totalLocked",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "lockCount",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "finalizedAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "finalized",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "authorizeClaim",
       "inputs": [
         {
@@ -244,50 +197,6 @@
         }
       ],
       "stateMutability": "pure"
-    },
-    {
-      "type": "function",
-      "name": "bidLocks",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "lockedAmount",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "lockedAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "status",
-          "type": "uint8",
-          "internalType": "enum IEscrowAdapter.LockStatus"
-        },
-        {
-          "name": "failedRefund",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "splitRecorded",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -515,16 +424,6 @@
               "name": "quantity",
               "type": "uint16",
               "internalType": "uint16"
-            },
-            {
-              "name": "failedRefund",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "splitRecorded",
-              "type": "bool",
-              "internalType": "bool"
             }
           ]
         }
@@ -1231,31 +1130,6 @@
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ProceedsBurned",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
         }
       ],
       "anonymous": false

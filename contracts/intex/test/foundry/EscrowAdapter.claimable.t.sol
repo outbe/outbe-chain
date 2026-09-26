@@ -10,8 +10,6 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev `getClaimableRefund` must report exactly what `claimRefund` then pays, from exactly when it pays it.
 contract EscrowAdapterClaimableTest is Test {
-    bytes32 internal constant STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
-
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockWCOEN internal token;
@@ -58,13 +56,6 @@ contract EscrowAdapterClaimableTest is Test {
     function _only(address who) internal pure returns (address[] memory winners) {
         winners = new address[](1);
         winners[0] = who;
-    }
-
-    /// @dev The split word of a lock written before refunds became claims.
-    function _recordLegacySplit(address who, uint128 refund) internal {
-        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
-        bytes32 splitWord = bytes32(uint256(keccak256(abi.encode(who, dayMap))) + 1);
-        vm.store(address(escrow), splitWord, bytes32(uint256(refund) | (uint256(1) << 128)));
     }
 
     /// @dev The view's amount is paid in full, not a wei earlier than its timestamp, and nothing is left after.
@@ -114,12 +105,6 @@ contract EscrowAdapterClaimableTest is Test {
     function test_AWinnerDoesNotWaitForTheRestOfItsDay() public {
         _finalize(_only(bidder), 400_000, false);
         _assertClaimMatchesView(LOCK - 400e18, 0);
-    }
-
-    function test_ARecordedSplitOwesTheRecordedRefund() public {
-        _recordLegacySplit(bidder, LOCK / 4);
-        _finalize(new address[](0), 0, true);
-        _assertClaimMatchesView(LOCK / 4, 0);
     }
 
     function test_ASettledLockHasNothingToClaim() public {

@@ -83,11 +83,6 @@
           "internalType": "bytes14"
         },
         {
-          "name": "msgType",
-          "type": "uint8",
-          "internalType": "uint8"
-        },
-        {
           "name": "calledAt",
           "type": "uint32",
           "internalType": "uint32"
@@ -436,9 +431,9 @@
       ],
       "outputs": [
         {
-          "name": "",
-          "type": "uint8",
-          "internalType": "uint8"
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"
@@ -1218,31 +1213,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "MarkQualifiedReceived",
-      "inputs": [
-        {
-          "name": "srcChainId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -1294,12 +1264,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
         }
       ],
       "anonymous": false

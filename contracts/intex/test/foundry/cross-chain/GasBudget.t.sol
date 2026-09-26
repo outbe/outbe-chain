@@ -117,7 +117,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
-        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
@@ -127,7 +127,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256 spent = _measure(batch);
 
         for (uint256 i = 0; i < batch.length; ++i) {
-            assertEq(router.parkedMark(batch[i]), BridgeMsgCodec.MSG_MARK_CALLED, "every series waits in its slot");
+            assertEq(router.parkedMark(batch[i]), uint32(block.timestamp), "every series waits in its slot");
         }
         emit log_named_uint("park_batch8", spent);
         assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
@@ -142,45 +142,6 @@ contract GasBudgetTest is CrossChainTest {
         emit log_named_uint("park_batch1", _measure(absent));
 
         assertLt(_measure(one), IntexGas.markCalled(1), "a single mark must fit the quote");
-    }
-
-    /// @dev A qualified batch whose series have not landed: every mark slots instead of applying, which is
-    ///      the dearer of the two paths and the one the budget has to cover.
-    function test_TheQuoteCoversAQualifiedBatchThatSlots() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, batch);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("qualified_slot_8", spent);
-        assertLt(spent, IntexGas.markQualified(batch.length), "a full slotting qualified batch must fit");
-    }
-
-    function test_TheQuoteCoversASingleQualifiedMark() public {
-        bytes14[] memory one = MarkBatchLib.sized(SERIES_PREFIX, 1);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, one);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("qualified_slot_1", spent);
-        assertLt(spent, IntexGas.markQualified(1), "a single slotting qualified mark must fit");
-    }
-
-    function test_TheQuoteCoversAMarkQualifiedBatch() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
-        _seed(batch);
-
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, batch);
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("mark_qualified_8", spent);
-        assertLt(spent, IntexGas.markQualified(batch.length), "a full qualified batch must fit the quote");
     }
 
     function test_TheQuoteCoversIssuanceAtItsWidest() public {
@@ -283,8 +244,6 @@ contract GasBudgetTest is CrossChainTest {
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);
         dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
-        intex.markQualified(SERIES_PREFIX);
-        dstToken.markQualified(SERIES_PREFIX);
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
@@ -329,8 +288,6 @@ contract GasBudgetTest is CrossChainTest {
 
         _seed(MarkBatchLib.one(SERIES_PREFIX));
         dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
-        intex.markQualified(SERIES_PREFIX);
-        dstToken.markQualified(SERIES_PREFIX);
 
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
@@ -379,7 +336,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
-        assertEq(mocked.parkedMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
         assertEq(mocked.parkedMark(SERIES_PREFIX), 0, "its batch mate has no slot");
         assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
     }
@@ -692,7 +649,7 @@ contract BidStub {
     }
 }
 
-/// @dev The Outbe-side receives: a target relays its bids as BIDS_BATCH chunks and closes the generation
+/// @dev The Outbe-side receives: a target relays its bids as BIDS_BATCH chunks and closes the relay
 ///      with a BIDS_DONE. Both land on OriginRouter and forward to Desis.
 contract OriginInboundGasTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
@@ -742,7 +699,7 @@ contract OriginInboundGasTest is CrossChainTest {
 
         uint256 spent = _deliver(
             BridgeMsgCodec.encodeBidsBatch(
-                WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps)
+                WORLDWIDE_DAY, BNB_CHAIN_ID, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps)
             )
         );
 
@@ -751,7 +708,7 @@ contract OriginInboundGasTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversBidsDone() public {
-        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsDone(WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 1, 0));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsDone(WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 0));
 
         emit log_named_uint("bids_done", spent);
         assertLt(spent, IntexGas.BIDS_DONE, "bids done must fit the quote");
@@ -774,10 +731,9 @@ contract DesisSink {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
-        external {}
+    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {}
 
-    function processBidsDone(uint32, uint32, uint32, uint16, uint32) external {}
+    function processBidsDone(uint32, uint32, uint16, uint32) external {}
 
     function getAuctionStage(uint32) external pure returns (uint8) {
         return 0;

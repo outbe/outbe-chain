@@ -107,7 +107,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedEncodeMarkCalled(20260212, empty);
     }
 
-    function test_MarkQualified_OverSizedBatch_Reverts() public {
+    function test_MarkCalled_OverSizedBatch_Reverts() public {
         uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_MARK + 1;
         bytes14[] memory batch = MarkBatchLib.sized("20260212-TRY-U", tooMany);
         vm.expectRevert(
@@ -115,7 +115,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MarkBatchTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_MARK
             )
         );
-        this.exposedEncodeMarkQualified(20260212, batch);
+        this.exposedEncodeMarkCalled(20260212, batch);
     }
 
     function test_MarkCalled_ShortBody_Reverts() public {
@@ -160,20 +160,13 @@ contract BridgeMsgCodecValidationTest is Test {
             bytes14("20260212-TRY-U"),
             "markCalled"
         );
-        assertEq(
-            this.exposedDecodeMarkQualified(
-                BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U"))
-            ),
-            bytes14("20260212-TRY-U"),
-            "markQualified"
-        );
     }
 
     // --- outbound encoders cap payload arrays at MAX_PAYLOAD_ARRAY_LEN ---
 
     function test_EncodeBidsBatch_AtCap_Encodes() public pure {
         uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN; // 64
-        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
+        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH);
     }
 
@@ -293,10 +286,6 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
     }
 
-    function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkQualified(day, ids);
-    }
-
     /// @dev The arrival set a receiver keeps for a day is one word wide, so a claimed count past
     ///      `MAX_CHUNKS` has no slot to land in. Refunds bound this on both sides of the wire; issuance
     ///      has to bound it the same way.
@@ -329,11 +318,6 @@ contract BridgeMsgCodecValidationTest is Test {
         return seriesIds[0];
     }
 
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(p);
-        return seriesIds[0];
-    }
-
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
@@ -343,7 +327,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeBidsBatch(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
+        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 0, 1, new address[](n), new uint256[](n));
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {

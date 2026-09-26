@@ -100,11 +100,6 @@
         "internalType": "uint32"
       },
       {
-        "name": "relayGeneration",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
         "name": "batchIndex",
         "type": "uint16",
         "internalType": "uint16"
@@ -139,11 +134,6 @@
       },
       {
         "name": "srcChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "relayGeneration",
         "type": "uint32",
         "internalType": "uint32"
       },

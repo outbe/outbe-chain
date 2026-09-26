@@ -21,7 +21,6 @@ contract MockDesis {
     function processBidsBatch(
         uint32, /* worldwideDay */
         uint32, /* srcChainId */
-        uint32, /* relayGeneration */
         uint16, /* batchIndex */
         uint16, /* totalBatches */
         address[] calldata, /* bidderAddresses */
@@ -32,7 +31,6 @@ contract MockDesis {
     function processBidsDone(
         uint32, /* worldwideDay */
         uint32, /* srcChainId */
-        uint32, /* relayGeneration */
         uint16, /* totalBatches */
         uint32 /* totalBids */
     ) external {}

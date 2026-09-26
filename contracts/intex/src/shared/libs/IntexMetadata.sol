@@ -27,11 +27,11 @@ library IntexMetadata {
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id, with its effective state - the
     ///        caller derives `Expired`, so this library never re-derives it.
+    /// @param settled Whether the token id is the series' Settled class.
     /// @return Token URI; the collection document when the record does not exist (`issuedAt == 0`).
-    function tokenURI(IIntexNFT1155.SeriesData memory data) external pure returns (string memory) {
+    function tokenURI(IIntexNFT1155.SeriesData memory data, bool settled) external pure returns (string memory) {
         if (data.issuedAt == 0) return _collectionURI();
 
-        bool settled = data.status == IIntexNFT1155.IntexStatus.Settled;
         bool expired = !settled && data.state == IIntexNFT1155.IntexState.Expired;
         string memory displayId = _displayId(data);
 

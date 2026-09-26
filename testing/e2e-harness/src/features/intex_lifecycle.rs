@@ -3,8 +3,9 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::U256;
+use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::sol;
+use base64::Engine as _;
 use outbe_tee::protocol::{Ledger, PromisOp};
 
 use crate::internal::{addresses, eth};
@@ -22,10 +23,20 @@ sol! {
     interface ILifecyclePaymentToken {
         function decimals() external view returns (uint8);
     }
+
+    interface IIntexCard {
+        function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function uri(uint256 tokenId) external view returns (string memory);
+        function vwapSource() external view returns (address);
+    }
+
+    interface IVwapSource {
+        function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
+    }
 }
 
-/// Every series carries the same entry price so their floors share a price bin and
-/// one sweep pass decides them together.
+/// Every series carries the same entry price, so their call prices share a bin and
+/// one sweep pass calls them together.
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
@@ -40,14 +51,12 @@ const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// USD (840) as the reference for every series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
-/// The DEV profile qualifies a series a day after issuance; overshoot so the
-/// sweep sees the period closed rather than exactly met.
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The daily trigger comes round every minute in e2e, then the mark waits on a drain.
-const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
-/// `IntexState::Qualified`.
-const QUALIFIED: u8 = 1;
+/// Qualification is read off the seeded day, so it waits only for that block.
+const QUALIFY_TIMEOUT_SECS: u64 = 180;
+/// The sender fires every minute in e2e, then the relay carries the day over.
+const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
 /// `IntexState::Called`.
 const CALLED: u8 = 2;
 /// Derived against the clock on both chains; never written by anything.
@@ -208,8 +217,7 @@ fn issue_two_series(world: &mut World) {
                 issuance_currency: 978,
             },
             // Only part of this one is settled, so it is still holding units when the
-            // notice runs out. It rides this call because a series that arrives after
-            // its group is indexed never qualifies.
+            // notice runs out.
             SeriesSpec {
                 issuance: *b"GBP",
                 issuance_currency: 826,
@@ -224,9 +232,8 @@ fn issue_two_series(world: &mut World) {
     )
     .expect("issue the lifecycle series");
 
-    // Outbound legs retain the issuing block's timestamp even when the test
-    // backdates the local series. The capacity committee runs ahead of wall
-    // time, so advance Anvil only after all legs have their timestamps fixed.
+    // The capacity committee runs ahead of wall time, so advance Anvil only
+    // after all legs have their timestamps fixed.
     let issued_through = world
         .rpc
         .latest_block_timestamp(port)
@@ -342,24 +349,89 @@ fn rate_above_floor(world: &mut World) {
     .expect("seed the closed day's VWAP");
 }
 
-#[then("every series qualifies in one group decision")]
+#[then("every series qualifies on the seeded day")]
 fn both_series_qualify(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let deadline = Instant::now() + Duration::from_secs(QUALIFY_SWEEP_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(QUALIFY_TIMEOUT_SECS);
 
     for series in world.state.lifecycle_series.clone() {
         loop {
-            if venue_probes::series_state(&url, nft, series) == Some(QUALIFIED) {
+            let qualified = eth::read_call(
+                &url,
+                addresses::INTEX_FACTORY_ADDR,
+                &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
+            );
+            if qualified == Some(true) {
                 break;
             }
             assert!(
                 Instant::now() < deadline,
-                "series {series} never left Issued; the qualify sweep did not promote its group"
+                "series {series} did not qualify on the seeded day"
             );
             sleep(Duration::from_secs(2));
         }
     }
+}
+
+/// The origin's collection reads the IntexFactory; the target's reads the registry the origin pushes to.
+#[then("every series card reads Qualified on both chains")]
+fn cards_read_qualified(world: &mut World) {
+    let chains = [
+        (
+            world.rpc.url(world.validators.primary_port()),
+            intex_nft(world),
+        ),
+        (target_rpc_url(world), target_intex_nft(world)),
+    ];
+    let deadline = Instant::now() + Duration::from_secs(VWAP_PUSH_TIMEOUT_SECS);
+
+    for (url, nft) in &chains {
+        let source = eth::read_call(url, *nft, &IIntexCard::vwapSourceCall {})
+            .expect("the collection names its VWAP source");
+        for series in world.state.lifecycle_series.clone() {
+            loop {
+                let state = card_state(url, *nft, series);
+                if state.as_deref() == Some("Qualified") {
+                    break;
+                }
+                let (iso_code, floor, from) = venue_probes::series_floor_terms(url, *nft, series)
+                    .expect("the chain knows the series");
+                let max = eth::read_call(
+                    url,
+                    source,
+                    &IVwapSource::maxUtcDayVwapSinceCall {
+                        isoCode: iso_code,
+                        fromUtcDay: from,
+                    },
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "the card of {series} on {url} reads {state:?}; its source {source} has {max:?} against floor {floor}"
+                );
+                sleep(Duration::from_secs(5));
+            }
+        }
+    }
+}
+
+/// The `Series State` trait of the issued class's card.
+fn card_state(url: &str, nft: alloy_primitives::Address, series: FixedBytes<14>) -> Option<String> {
+    let token = eth::read_call(
+        url,
+        nft,
+        &IIntexCard::issuedTokenIdCall { seriesId: series },
+    )?;
+    let uri = eth::read_call(url, nft, &IIntexCard::uriCall { tokenId: token })?;
+    let json = base64::engine::general_purpose::STANDARD
+        .decode(uri.strip_prefix("data:application/json;base64,")?)
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&json).ok()?;
+    json["attributes"]
+        .as_array()?
+        .iter()
+        .find(|attribute| attribute["trait_type"] == "Series State")?["value"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Wait for the chain to reach `target` in its own time; it closes the gap per block.
@@ -1182,7 +1254,7 @@ fn unsettled_series_expired(world: &mut World) {
             target_router,
             &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
         );
-        if parked.is_some_and(|mark| mark != 0) {
+        if parked.is_some_and(|called_at| called_at != 0) {
             eth::send_call(
                 &target_url,
                 target_router,
@@ -1204,7 +1276,7 @@ fn unsettled_series_expired(world: &mut World) {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "series {series} never read Expired on the {label}: {:?}; the mark parked \
+                    "series {series} never read Expired on the {label}: {:?}; the call time parked \
                      on the target router reads {:?}",
                     venue_probes::series_state(at, collection, series),
                     eth::read_call(

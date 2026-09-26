@@ -78,7 +78,7 @@ contract DeployTarget is BaseScript {
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
 
-        // Idempotent, so a re-run after an upgrade is what points a chain at its source.
+        // Idempotent: a re-run only sets what is not wired yet.
         address vwapSource = INTEX_FACTORY;
         if (local != originChainId) {
             vwapSource = deployProxy(

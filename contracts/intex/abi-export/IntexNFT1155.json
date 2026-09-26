@@ -448,6 +448,25 @@
     },
     {
       "type": "function",
+      "name": "isQualified",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "issue",
       "inputs": [
         {
@@ -501,19 +520,6 @@
           "name": "calledAt",
           "type": "uint32",
           "internalType": "uint32"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "markQualified",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
         }
       ],
       "outputs": [],
@@ -670,11 +676,6 @@
               "internalType": "uint32"
             },
             {
-              "name": "status",
-              "type": "uint8",
-              "internalType": "enum IIntexNFT1155.IntexStatus"
-            },
-            {
               "name": "state",
               "type": "uint8",
               "internalType": "enum IIntexNFT1155.IntexState"
@@ -827,102 +828,6 @@
     },
     {
       "type": "function",
-      "name": "seriesData",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "issuanceCurrency",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "referenceCurrency",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "issuedUnits",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "promisLoadMinor",
-          "type": "uint128",
-          "internalType": "uint128"
-        },
-        {
-          "name": "entryPriceMinor",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "floorPriceMinor",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "callPriceMinor",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "callTrigger",
-          "type": "tuple",
-          "internalType": "struct IIntexNFT1155.IntexCallTrigger",
-          "components": [
-            {
-              "name": "callWindow",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "callThreshold",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "callNoticePeriod",
-              "type": "uint32",
-              "internalType": "uint32"
-            }
-          ]
-        },
-        {
-          "name": "issuedAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "calledAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "totalSupply",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "status",
-          "type": "uint8",
-          "internalType": "enum IIntexNFT1155.IntexStatus"
-        },
-        {
-          "name": "state",
-          "type": "uint8",
-          "internalType": "enum IIntexNFT1155.IntexState"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "seriesExists",
       "inputs": [
         {
@@ -1054,7 +959,7 @@
           "internalType": "enum IIntexNFT1155.IntexStatus"
         }
       ],
-      "stateMutability": "view"
+      "stateMutability": "pure"
     },
     {
       "type": "function",
@@ -1643,22 +1548,6 @@
     },
     {
       "type": "error",
-      "name": "BridgeStateForbidden",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "state",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "CalledAtInvalid",
       "inputs": [
         {
@@ -1823,17 +1712,6 @@
         },
         {
           "name": "actual",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidStateForSettle",
-      "inputs": [
-        {
-          "name": "state",
           "type": "uint8",
           "internalType": "uint8"
         }

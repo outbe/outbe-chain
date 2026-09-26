@@ -84,7 +84,6 @@ contract LocalWcoenTokenBridge {
 ///         `--isolate`.
 abstract contract RefundGasBase is CrossChainTest {
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
-    bytes32 internal constant ESCROW_STORAGE_SLOT = 0x9dc6707131c30ec20e38ebcfbc4641faad640e3439439d400ea9dd2fe8f83a00;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20260501;
     uint128 internal constant BASIS = 1000e6;
@@ -196,19 +195,14 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @dev Bidders 0 and 1 won, bidder 1 already holding the token; bidder 2 lost; bidder 3 carries a split recorded
-///      before refunds became claims.
+/// @dev Bidders 0 and 1 won, bidder 1 already holding the token; bidder 2 lost.
 contract RefundClaimFinalizedGasTest is RefundGasBase {
     function setUp() public {
         _setUpEscrow();
         _lock(0, 1, BID_RATE, 0);
         _lock(1, 1, BID_RATE, 1e18);
-        _lock(2, 2, BID_RATE, 0);
+        _lock(2, 1, BID_RATE, 0);
         _elapseCompactResetPeriod();
-
-        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(ESCROW_STORAGE_SLOT) + 5));
-        bytes32 splitWord = bytes32(uint256(keccak256(abi.encode(_bidder(3), dayMap))) + 1);
-        vm.store(address(escrow), splitWord, bytes32(uint256(1000e18) | (uint256(1) << 128)));
 
         escrow.finalizeAuction(DAY, bytes32(uint256(1)), _winners(2), 0, 0, CLEARING_RATE, BASIS, true);
     }
@@ -229,12 +223,6 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
         uint256 before = gasleft();
         escrow.claimRefund(DAY, _bidder(2));
         emit log_named_uint("claim_finalized_loser", before - gasleft());
-    }
-
-    function test_ClaimARecordedSplit() public {
-        uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(3));
-        emit log_named_uint("claim_finalized_split", before - gasleft());
     }
 }
 

@@ -134,6 +134,11 @@ pub fn dispatch(
             }
             day = previous_date_key(day);
         }
+        // The VWAP pusher sends the rewritten days again.
+        let factory = crate::schema::IntexFactoryContract::new(storage.clone());
+        if factory.vwap_sent_day.read()? > day {
+            factory.vwap_sent_day.write(day)?;
+        }
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]
@@ -169,8 +174,8 @@ pub fn dispatch(
             )?);
         }
         // The Called sweep counts breach days from `issued_at`, so a scenario that
-        // seeds those days has to place issuance behind them. Zero keeps the stamp
-        // the engine wrote.
+        // seeds those days places issuance behind them, on every chain alike. Zero
+        // keeps the stamp the engine wrote.
         if call.issuedAt != 0 {
             for series_id in ids {
                 outbe_intex::api::set_issued_at(
@@ -178,6 +183,9 @@ pub fn dispatch(
                     SeriesId::from(series_id),
                     call.issuedAt,
                 )?;
+            }
+            for leg in &mut legs {
+                leg.payload.issuedAt = call.issuedAt;
             }
         }
         crate::api::send_issuance(&storage, legs)?;
@@ -235,6 +243,9 @@ pub fn dispatch(
                         settlementCurrency: settlement_currency,
                         payableUnits: amount,
                     })
+                }),
+                isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {
+                    runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
                 }),
                 maxUtcDayVwapSince(c) => view(c, |c| {
                     outbe_oracle::api::max_utc_day_vwap_since(
