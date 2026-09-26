@@ -29,6 +29,7 @@ import {
   NETWORKS,
   NFT_ABI,
   NFT_BRIDGE_ABI,
+  OUTBE,
   INTEX_ABI,
   ORIGIN_ROUTER_ABI,
   VAULT_ROUTER_ABI,
@@ -462,7 +463,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             const deadlineSec =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
             // Only outbe has the factory that derives it.
-            const qualified = n.name === "outbe-testnet" ? await seriesQualified(n, seriesHex) : undefined;
+            const qualified = n.name === OUTBE ? await seriesQualified(n, seriesHex) : undefined;
             return {
               ...base,
               series: fromSeriesId(seriesHex),

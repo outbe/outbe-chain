@@ -59,7 +59,7 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
-const OUTBE = "outbe-testnet";
+export const OUTBE = "outbe-testnet";
 
 // The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v5.0.0"), so
 // each one shares a single address on every chain; only the wCOEN payment token
