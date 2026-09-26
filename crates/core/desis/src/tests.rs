@@ -1576,6 +1576,32 @@ fn marker_total_mismatch_keeps_chain_not_done() {
 }
 
 #[test]
+fn a_redelivered_batch_counts_once() {
+    with_storage(|s| {
+        open_revealing(&s);
+        for _ in 0..2 {
+            runtime::process_bids_batch(
+                s.clone(),
+                ORIGIN_ROUTER_ADDRESS,
+                WORLDWIDE_DAY,
+                SRC_CHAIN,
+                0,
+                2,
+                bids(3, 200),
+            )
+            .unwrap();
+        }
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 3);
+        assert_eq!(
+            contract.chain_arrived_mask.read(&key).unwrap(),
+            U256::from(1u8)
+        );
+    });
+}
+
+#[test]
 fn a_batch_declaring_another_total_is_refused() {
     with_storage(|s| {
         open_revealing(&s);
