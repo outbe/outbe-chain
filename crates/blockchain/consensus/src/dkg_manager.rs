@@ -6,7 +6,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, B256};
-use commonware_codec::Read as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
     self,
@@ -40,11 +39,14 @@ pub use admission::{ArtifactAdmissionError, ArtifactPlan, ProposalForfeit};
 /// Parent-ancestry DKG boundary resolution and its boundary-status cache.
 mod boundary;
 
+/// The ODKO boundary-outcome record codec.
+mod odko;
 use boundary::BoundaryStatusCacheEntry;
 pub use boundary::{
     AncestryReader, BlockLookupFuture, BoundaryRequirement, BoundaryRequirementError,
     BoundaryStatus, CommittedDkgBoundary, BOUNDARY_STATUS_CACHE_SIZE,
 };
+pub use odko::{OdkoDecodeError, OdkoOutcome};
 
 #[derive(Clone, Debug)]
 pub struct Mailbox {
@@ -685,17 +687,12 @@ pub(crate) fn encode_outcome(
     output: &Output<MinSig, bls12381::PublicKey>,
     is_full_dkg: bool,
 ) -> Bytes {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"ODKO");
-    buf.push(0x02);
-    buf.extend_from_slice(&epoch.get().to_be_bytes());
-    buf.push(u8::from(is_full_dkg));
-
-    let output_bytes = commonware_codec::Encode::encode(output);
-    buf.extend_from_slice(&(output_bytes.len() as u32).to_be_bytes());
-    buf.extend_from_slice(output_bytes.as_ref());
-
-    Bytes::from(buf)
+    OdkoOutcome {
+        epoch,
+        is_full_dkg,
+        output: output.clone(),
+    }
+    .encode()
 }
 
 pub fn dkg_output_hash(output: &Output<MinSig, bls12381::PublicKey>) -> B256 {
@@ -758,28 +755,9 @@ pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
 /// (`output.public()`) from a finalized boundary block, without ever having run
 /// the DKG ceremony. Deterministic and panic-free.
 pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
-    use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
-    // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
-    const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
-    if outcome.len() < HEADER_LEN
-        || &outcome[0..4] != b"ODKO"
-        || outcome[4] != 0x02
-        || outcome[13] > 1
-    {
-        return None;
-    }
-    let len_bytes = <[u8; 4]>::try_from(&outcome[14..18]).ok()?;
-    let len = u32::from_be_bytes(len_bytes) as usize;
-    let end = HEADER_LEN.checked_add(len)?;
-    if end != outcome.len() {
-        return None;
-    }
-    let body = outcome.get(HEADER_LEN..end)?;
-    let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)?;
-    let cfg = (max, ModeVersion::v0());
-    let mut reader = body;
-    let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg).ok()?;
-    reader.is_empty().then_some(output)
+    OdkoOutcome::decode(outcome)
+        .ok()
+        .map(|decoded| decoded.output)
 }
 
 #[cfg(test)]

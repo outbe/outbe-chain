@@ -19,7 +19,7 @@
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
 use alloy_primitives::{Address as EthAddress, Bytes, B256};
-use commonware_codec::{Encode as _, Read as _};
+use commonware_codec::Encode as _;
 use commonware_consensus::{
     simplex,
     types::{Epoch, Height, Round, ViewDelta},
@@ -29,11 +29,7 @@ use commonware_cryptography::{
     bls12381::{
         self,
         dkg::feldman_desmedt::Output,
-        primitives::{
-            group::Share,
-            sharing::{ModeVersion, Sharing},
-            variant::MinSig,
-        },
+        primitives::{group::Share, sharing::Sharing, variant::MinSig},
     },
     Signer as _,
 };

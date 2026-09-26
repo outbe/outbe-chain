@@ -82,8 +82,6 @@ const DKG_PENDING_BOUNDARY_MAGIC: &[u8; 8] = b"ODKGPB02";
 
 const DKG_PENDING_BOUNDARY_LEGACY_MAGIC: &[u8; 8] = b"ODKGPB01";
 
-const DKG_OUTPUT_MAX_PARTICIPANTS: u32 = 256;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::stack) struct PendingDkgBoundarySnapshot {
     pub(in crate::stack) artifact: DkgBoundaryArtifact,
@@ -93,55 +91,14 @@ pub(in crate::stack) struct PendingDkgBoundarySnapshot {
 pub(in crate::stack) fn decode_boundary_output(
     artifact: &DkgBoundaryArtifact,
 ) -> Result<Output<MinSig, bls12381::PublicKey>> {
-    let bytes = artifact.outcome.as_ref();
-    let header_len = 4 + 1 + std::mem::size_of::<u64>() + 1 + std::mem::size_of::<u32>();
+    let decoded = dkg_manager::OdkoOutcome::decode(artifact.outcome.as_ref())?;
     ensure!(
-        bytes.len() >= header_len,
-        "DKG boundary outcome too short: {} < {header_len}",
-        bytes.len()
-    );
-    ensure!(
-        &bytes[..4] == b"ODKO",
-        "DKG boundary outcome has invalid magic"
-    );
-    ensure!(
-        bytes[4] == 0x02,
-        "DKG boundary outcome version {} is unsupported",
-        bytes[4]
-    );
-    let epoch = u64::from_be_bytes(bytes[5..13].try_into()?);
-    ensure!(
-        epoch == artifact.epoch,
-        "DKG boundary outcome epoch {epoch} does not match artifact epoch {}",
+        decoded.epoch.get() == artifact.epoch,
+        "DKG boundary outcome epoch {} does not match artifact epoch {}",
+        decoded.epoch.get(),
         artifact.epoch
     );
-    let output_len_offset = 14;
-    let output_len = u32::from_be_bytes(
-        bytes[output_len_offset..output_len_offset + 4]
-            .try_into()
-            .map_err(|_| eyre::eyre!("invalid DKG output length bytes"))?,
-    ) as usize;
-    let output_start = output_len_offset + 4;
-    let output_end = output_start.saturating_add(output_len);
-    ensure!(
-        output_end == bytes.len(),
-        "DKG boundary outcome length mismatch: output_end={output_end}, total={}",
-        bytes.len()
-    );
-
-    let mut output_bytes = &bytes[output_start..output_end];
-    let cfg = (
-        NonZeroU32::new(DKG_OUTPUT_MAX_PARTICIPANTS)
-            .ok_or_else(|| eyre::eyre!("DKG output max participants must be non-zero"))?,
-        ModeVersion::v0(),
-    );
-    let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut output_bytes, &cfg)
-        .map_err(|error| eyre::eyre!("invalid DKG output in boundary artifact: {error}"))?;
-    ensure!(
-        output_bytes.is_empty(),
-        "trailing bytes after DKG output in boundary artifact"
-    );
-    Ok(output)
+    Ok(decoded.output)
 }
 
 pub(in crate::stack) fn encode_pending_dkg_boundary_snapshot(
