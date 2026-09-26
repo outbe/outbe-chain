@@ -347,6 +347,63 @@ fn an_unfinished_round_keeps_the_outstanding_shares() {
 }
 
 #[test]
+fn the_round_waits_for_every_winning_chain_and_pays_the_sum() {
+    with_factory(|s| {
+        install_generation(&s, &population(300));
+        outbe_intex::api::arm_proceeds(
+            &s,
+            WorldwideDay::new(WWD),
+            &[CHAIN, CHAIN + 1],
+            DEADLINE_FUTURE,
+        )
+        .unwrap();
+        for (chain, amount) in [(CHAIN, 300u64), (CHAIN + 1, 500)] {
+            assert!(outbe_intex::api::certified_payout_round(&s, WWD)
+                .unwrap()
+                .is_none());
+            let amount = U256::from(amount);
+            s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
+            runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, WWD.into(), chain, amount).unwrap();
+        }
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .expect("the last winning chain opens the round");
+        assert_eq!(round.amount, U256::from(800u64));
+    });
+}
+
+#[test]
+fn past_the_deadline_the_round_pays_what_arrived_and_burns_the_straggler() {
+    with_factory(|s| {
+        install_generation(&s, &population(300));
+        outbe_intex::api::arm_proceeds(
+            &s,
+            WorldwideDay::new(WWD),
+            &[CHAIN, CHAIN + 1],
+            DEADLINE_FUTURE,
+        )
+        .unwrap();
+        let arrived = U256::from(200u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, arrived).unwrap();
+        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN, arrived).unwrap();
+        assert!(outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .is_none());
+
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE).unwrap();
+        let late = U256::from(400u64);
+        s.increase_balance(INTEX_FACTORY_ADDRESS, late).unwrap();
+        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, WWD.into(), CHAIN + 1, late).unwrap();
+
+        let round = outbe_intex::api::certified_payout_round(&s, WWD)
+            .unwrap()
+            .expect("the deadline opens the round");
+        assert_eq!(round.amount, arrived);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), arrived);
+    });
+}
+
+#[test]
 fn proceeds_arriving_after_the_round_opened_are_burned() {
     with_factory(|s| {
         let leaves = population(300);
