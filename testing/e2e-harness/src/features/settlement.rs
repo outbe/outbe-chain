@@ -409,27 +409,30 @@ fn validator_redeems_reward_gem(world: &mut World) {
                 .expect("qualifying day VWAP"),
         )
         .expect("seed the closed day's VWAP above the reward Gem floor");
-        // The daily trigger that opens the qualify sweep comes round every minute in e2e.
+        // Qualification is derived on read once the seeded day is closed.
         let deadline = Instant::now() + Duration::from_secs(240);
-        loop {
-            gem = eth::read_call(
-                &url,
-                addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
-            )
-            .expect("read the same reward Gem during qualification");
-            if gem.state == 1 {
-                break;
-            }
-            assert_eq!(gem.state, 0, "unexpected reward Gem lifecycle transition");
+        while !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
             assert!(
                 Instant::now() < deadline,
                 "reward Gem qualification timed out"
             );
             sleep(Duration::from_millis(250));
         }
+        gem = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: gem_id },
+        )
+        .expect("read the same reward Gem after qualification");
     }
-    assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
+    assert_eq!(
+        gem.state, 0,
+        "reward Gem must still be Issued for settlement"
+    );
+    assert!(
+        crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
+        "reward Gem must be qualified for settlement"
+    );
     // The cost is derived, so what to fund is the factory's own quote — already in
     // the settlement asset's units, which the reference amount never was.
     let payable = eth::read_call(
