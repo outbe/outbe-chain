@@ -113,7 +113,13 @@ fn nod_pow_binds_owner_and_zero_sequence() {
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
     assert_ne!(
         bound,
-        outbe_common::pow::compute_mining_pow_hash(nod_id.to_u256(), owner, 1, nonce)
+        outbe_common::pow::compute_mining_pow_hash(
+            outbe_common::pow::MiningDomain::Nod,
+            nod_id.to_u256(),
+            owner,
+            1,
+            nonce,
+        )
     );
     let solved = find_valid_nonce(nod_id, owner);
     assert!(runtime::validate_pow(nod_id, owner, solved).is_ok());

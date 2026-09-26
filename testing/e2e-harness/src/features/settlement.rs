@@ -531,7 +531,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         promis_nonce,
         chain_id,
     );
-    let pow = find_mining_pow_nonce(gem_id, owner);
+    let pow = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, owner);
     let mine_promis = eth::send_sponsored_call(
         &url,
         &key,
@@ -775,7 +775,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &key,
             &eth::IGemFactory::minePromisCall {
                 gemId: gem_id,
-                nonce: find_mining_pow_nonce(gem_id, owner),
+                nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, owner),
                 mac: B256::from(mac),
                 opNonce: nonce,
             },
@@ -1100,7 +1100,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_mining_pow_nonce(U256::from_be_slice(&nod_id), owner);
+    let pow = find_mining_pow_nonce(
+        outbe_common::pow::MiningDomain::Nod,
+        U256::from_be_slice(&nod_id),
+        owner,
+    );
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -1574,11 +1578,16 @@ pub(crate) fn chain_id_b256(world: &World) -> B256 {
     ))
 }
 
-/// The shared mining preimage: Nod and Gem both bind the right and its owner.
-pub(crate) fn find_mining_pow_nonce(id: U256, owner: Address) -> u64 {
+/// The shared mining preimage: Nod and Gem bind the right, its owner and their own domain.
+pub(crate) fn find_mining_pow_nonce(
+    domain: outbe_common::pow::MiningDomain,
+    id: U256,
+    owner: Address,
+) -> u64 {
     (0_u64..100_000)
         .find(|nonce| {
             outbe_common::pow::validate_mining_pow(
+                domain,
                 id,
                 owner,
                 outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,

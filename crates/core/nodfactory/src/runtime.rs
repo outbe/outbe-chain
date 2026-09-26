@@ -523,9 +523,10 @@ pub fn quote_settlement(
 }
 
 /// PoW gate for `mine_gratis`. The preimage is
-/// `nodId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_NOD_MINING_V1 || nodId || owner || miningSequence=0 || nonce`; the caller is not in it.
 pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_mining_pow(
+        pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
         pow::SINGLE_EXERCISE_SEQUENCE,
@@ -534,10 +535,11 @@ pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<(
     .map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// SHA256 over `nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8`
-/// with `miningSequence = 0`.
+/// SHA256 over `OUTBE_NOD_MINING_V1 || nodId_be32 || owner_20 || miningSequence_be8 ||
+/// nonce_be8` with `miningSequence = 0`.
 pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8; 32] {
     pow::compute_mining_pow_hash(
+        pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
         pow::SINGLE_EXERCISE_SEQUENCE,

@@ -30,8 +30,8 @@ interface IGemFactory {
     ///         where `opNonce` MUST equal the owner's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
-    /// @dev    `nonce` solves SHA256(`gemId` || owner || uint64(0) || `nonce`) to the
-    ///         protocol difficulty; the owner is the gem's, not the caller's.
+    /// @dev    `nonce` solves SHA256("OUTBE_GEM_MINING_V1" || `gemId` || owner || uint64(0) ||
+    ///         `nonce`) to the protocol difficulty; the owner is the gem's, not the caller's.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalGemFactoryUnits` counts every
     ///         Promis unit ever sent there; it is not reduced when a position drains
