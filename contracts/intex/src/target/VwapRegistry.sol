@@ -7,7 +7,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {IOriginRouter} from "../origin/interfaces/IOriginRouter.sol";
 import {IVwapRegistry} from "./interfaces/IVwapRegistry.sol";
 import {IVwapSource} from "../shared/interfaces/IVwapSource.sol";
-import {DateKey} from "../shared/libs/DateKey.sol";
 
 /// @title VwapRegistry
 /// @author Outbe
@@ -18,6 +17,8 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         address router;
         mapping(uint32 utcDay => mapping(uint16 isoCode => uint64 vwapMinor)) vwap;
         mapping(uint16 isoCode => uint32 utcDay) lastUtcDay;
+        mapping(uint32 month => mapping(uint16 isoCode => uint64 vwapMinor)) monthMax;
+        mapping(uint16 isoCode => uint32 utcDay) firstUtcDay;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.VwapRegistry")) - 1)) & ~bytes32(uint256(0xff))
@@ -62,8 +63,17 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         if (msg.sender != $.router) revert NotRouter(msg.sender);
         for (uint256 i = 0; i < rows.length; ++i) {
             uint16 isoCode = rows[i].isoCode;
-            $.vwap[utcDay][isoCode] = rows[i].vwapMinor;
+            uint64 vwapMinor = rows[i].vwapMinor;
+            uint64 stored = $.vwap[utcDay][isoCode];
+            if (stored != vwapMinor) {
+                // A finalized day never changes, so a second price for it is a fault, not an update.
+                if (stored != 0) revert DayAlreadyRecorded(utcDay, isoCode);
+                $.vwap[utcDay][isoCode] = vwapMinor;
+                if (vwapMinor > $.monthMax[utcDay / 100][isoCode]) $.monthMax[utcDay / 100][isoCode] = vwapMinor;
+            }
             if (utcDay > $.lastUtcDay[isoCode]) $.lastUtcDay[isoCode] = utcDay;
+            uint32 first = $.firstUtcDay[isoCode];
+            if (first == 0 || utcDay < first) $.firstUtcDay[isoCode] = utcDay;
         }
         emit DailyVwapRecorded(utcDay, rows.length);
     }
@@ -84,13 +94,36 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
     }
 
     /// @inheritdoc IVwapSource
+    /// @dev Reads the first month day by day and every later month once, from no earlier than the
+    ///      first recorded day, so the cost follows the history's length in months.
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256 max) {
         if (fromUtcDay == 0) return 0;
         VwapRegistryStorage storage $ = _vs();
-        for (uint32 day = $.lastUtcDay[isoCode]; day >= fromUtcDay; day = DateKey.previousDateKey(day)) {
-            uint64 vwap = $.vwap[day][isoCode];
+        uint32 last = $.lastUtcDay[isoCode];
+        uint32 from = fromUtcDay > $.firstUtcDay[isoCode] ? fromUtcDay : $.firstUtcDay[isoCode];
+        if (last < from) return 0;
+        uint32 firstMonth = from / 100;
+        uint32 lastMonth = last / 100;
+        max = _dayMax($, isoCode, firstMonth, from % 100, firstMonth == lastMonth ? last % 100 : 31);
+        for (uint32 month = _nextMonth(firstMonth); month <= lastMonth; month = _nextMonth(month)) {
+            uint64 monthMax = $.monthMax[month][isoCode];
+            if (monthMax > max) max = monthMax;
+        }
+    }
+
+    function _dayMax(VwapRegistryStorage storage $, uint16 isoCode, uint32 month, uint32 firstDd, uint32 lastDd)
+        private
+        view
+        returns (uint256 max)
+    {
+        for (uint32 dd = firstDd; dd <= lastDd && dd <= 31; ++dd) {
+            uint64 vwap = $.vwap[month * 100 + dd][isoCode];
             if (vwap > max) max = vwap;
         }
+    }
+
+    function _nextMonth(uint32 month) private pure returns (uint32) {
+        return month % 100 == 12 ? (month / 100 + 1) * 100 + 1 : month + 1;
     }
 
     function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
