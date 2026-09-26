@@ -23,7 +23,7 @@ import {IVwapSource} from "./interfaces/IVwapSource.sol";
  *      Expiry is not an on-chain state: it is derived from `calledAt + callNoticePeriod`
  *      against the clock (settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint112(seriesId)`,
- *      settled = `keccak256("SETTLED", seriesId)`.
+ *      settled = the same with bit 112 set.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
     /// @notice Bridge relayer role; gates series lifecycle, issue, and

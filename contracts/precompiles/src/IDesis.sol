@@ -51,7 +51,7 @@ interface IDesis {
     /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared InboundReason
-    /// codes: 2 = obsolete (post-clearing delivery), 3 = conflicting BIDS_DONE marker, 4 = day not found
+    /// codes: 2 = obsolete (the day already cleared or was cancelled), 3 = conflicting BIDS_DONE marker, 4 = day not found
     /// (never briefed here).
     event InboundIgnored(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint8 reason);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);

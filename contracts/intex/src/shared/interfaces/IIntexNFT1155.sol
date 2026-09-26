@@ -8,8 +8,8 @@ import {IERC1155Bridgeable} from "./IERC1155Bridgeable.sol";
  * @title IntexNFT1155 Contract Interface
  * @author Outbe
  * @notice Public API, events, errors, and data types for `IntexNFT1155`.
- * @dev Series are keyed by `seriesId` (uint32). Each series has two ERC1155 token ids:
- * issued = `uint256(seriesId)`, settled = `keccak256("SETTLED", seriesId)`.
+ * @dev Series are keyed by `seriesId` (bytes14). Each series has two ERC1155 token ids:
+ * issued = `uint112(seriesId)`, settled = the same with bit 112 set.
  * Also implements `IERC1155Bridgeable` for ERC-7786 cross-chain compatibility.
  * @dev Keep continuation lines flush against the leading `*`. The Rust
  * precompiles bind this interface with `sol!`, which re-emits this block as a

@@ -452,8 +452,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             args: [tokenId],
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
-          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id is
-          // hashed and carries no deadline - that position is already settled.
+          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id
+          // carries no deadline - that position is already settled.
           if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
           try {
