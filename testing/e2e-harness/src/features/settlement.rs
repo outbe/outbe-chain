@@ -628,15 +628,35 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("all validators finalize the reward Gem delivery");
     let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
     if !qualified() {
-        // A Genesis floor is zero: quote at the entry price rather than one minor unit.
-        crate::features::price_oracle::publish_controlled_quote(
-            world,
+        // A reward Gem qualifies on a closed day it held in full, and this one was delivered
+        // minutes ago: stamp it behind the day that is then seeded above its floor.
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp");
+        eth::send_call(
+            &url,
+            addresses::GEM_ADDR,
+            DEPLOYER_KEY,
+            &crate::features::gem_lifecycle::IGemTestArming::backdateGemForTestCall {
+                gemId: gem_id,
+                issuedAt: now.saturating_sub(3 * 86_400),
+            },
+            None,
+        )
+        .expect("backdate the reward Gem's issuance stamp");
+        test_issuance::seed_day_vwaps(
+            &url,
+            DEPLOYER_KEY,
+            USD_ISO,
+            1,
             gem.floorPrice
-                .checked_add(U256::ONE)
-                .expect("qualifying quote")
+                .checked_mul(U256::from(2u64))
+                .expect("qualifying day VWAP")
                 .max(gem.entryPrice),
-        );
-        let deadline = Instant::now() + Duration::from_secs(120);
+        )
+        .expect("seed the closed day's VWAP above the reward Gem floor");
+        let deadline = Instant::now() + Duration::from_secs(240);
         while !qualified() {
             assert!(
                 Instant::now() < deadline,
