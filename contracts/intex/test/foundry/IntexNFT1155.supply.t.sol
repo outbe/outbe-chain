@@ -105,7 +105,7 @@ contract IntexNFT1155SupplyTest is Test {
         vm.stopPrank();
     }
 
-    // --- burnSettled state gate (state in {Qualified, Called}) ---
+    // --- burnSettled: open in every state once a settle minted the balance ---
 
     function _issueAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
         _createSeries(cap);
@@ -114,40 +114,14 @@ contract IntexNFT1155SupplyTest is Test {
         if (callBeforeSettle) {
             vm.prank(bridger);
             nft.markCalled(SERIES_ID, uint32(block.timestamp));
-        } else {
-            vm.prank(bridger);
-            nft.markQualified(SERIES_ID);
         }
         vm.prank(settler);
         nft.settleIntex(SERIES_ID, ownerA, ownerA, settleAmount);
     }
 
-    function test_BurnSettled_OnIssuedState_Reverts() public {
-        // Stage a Settled balance that exists despite the series sitting in Issued state. The
-        // production flow can't reach this configuration today, but the gate is the precondition
-        // we want to test - a future change (e.g. airdropping Settled) must not silently unlock
-        // burnSettled while the series is still in Issued.
-        _createSeries(10);
-        // Use the storage slot directly to forge a Settled balance under an Issued series.
-        uint256 sTok = nft.settledTokenId(SERIES_ID);
-        // Pre-state: Issued, no Settled balances. Calling burnSettled here must hit the typed
-        // state gate, not the ERC1155 zero-balance revert.
-        vm.prank(promis);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Qualified),
-                uint8(IIntexNFT1155.IntexState.Issued)
-            )
-        );
-        nft.burnSettled(ownerA, SERIES_ID, 1);
-        // Silence unused-var linter on the helper.
-        sTok;
-    }
-
-    function test_BurnSettled_OnQualifiedState_Succeeds() public {
+    function test_BurnSettled_OnIssuedState_Succeeds() public {
         _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
-        // Series is in Qualified, owner has 4 Settled.
+        // Series is in Issued, owner has 4 Settled.
         vm.prank(promis);
         nft.burnSettled(ownerA, SERIES_ID, 3);
         assertEq(nft.balanceOf(ownerA, nft.settledTokenId(SERIES_ID)), 1);
@@ -190,7 +164,6 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issue(ownerA, cap, SERIES_ID);
-        nft.markQualified(SERIES_ID);
         vm.stopPrank();
 
         vm.prank(settler);
@@ -216,7 +189,6 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issue(ownerA, cap, SERIES_ID);
-        nft.markQualified(SERIES_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
         nft.crosschainMint(ownerB, TOKEN_ID, 1);
@@ -231,7 +203,6 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issue(ownerA, cap, SERIES_ID);
-        nft.markQualified(SERIES_ID);
         nft.crosschainBurn(ownerA, ownerA, TOKEN_ID, 4);
         nft.crosschainMint(ownerB, TOKEN_ID, 4);
         vm.stopPrank();
@@ -254,7 +225,6 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issue(ownerB, 4, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, 7);
 
-        nft.markQualified(SERIES_ID);
         // settle burns Issued from ownerA - live totalSupply decreases, freeing cap room.
         vm.stopPrank();
         vm.prank(settler);
@@ -283,7 +253,6 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issue(ownerB, 1, SERIES_ID);
 
         // crosschainMint overshoot - typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
-        nft.markQualified(SERIES_ID);
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))
         );

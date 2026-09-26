@@ -255,7 +255,6 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         bucket_key: B256::repeat_byte(22),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
-        is_qualified: false,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
@@ -284,7 +283,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         .unwrap()
         .unwrap();
         item.gratis_load_minor = U256::from(99);
-        bucket.is_qualified = true;
+        bucket.settled_nods = 1;
         update(storage.clone(), &scope, old_item, BodyInput::NodItem(&item)).unwrap();
         update(
             storage.clone(),
@@ -352,12 +351,11 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
-        is_qualified: false,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
-    bucket_updated.is_qualified = true;
+    bucket_updated.settled_nods = 1;
 
     let fixtures = [
         (

@@ -145,7 +145,6 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
             Some(U256::from(14))
         );
         assert!(api::is_qualified(&storage, &bucket()).unwrap());
-        assert!(!bucket().is_qualified, "nothing is stored");
     });
     // Only issuance logged: qualifying writes nothing.
     let signatures: Vec<_> = provider

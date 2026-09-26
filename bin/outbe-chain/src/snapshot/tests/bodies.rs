@@ -159,7 +159,6 @@ impl Fixture {
                 bucket_key: item.bucket_key,
                 worldwide_day: day,
                 floor_price_minor: U256::from(2),
-                is_qualified: true,
                 entry_price_minor: U256::from(3),
                 reference_currency: 978,
             };

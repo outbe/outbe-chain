@@ -82,7 +82,7 @@ interface INod {
         uint32 callWindow; // seconds
         uint32 callThreshold; // seconds
         uint32 callNoticePeriod; // seconds
-        /// Inclusive deadline: 0 when uncalled, uint64.max for zero notice.
+        /// Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
     }
 

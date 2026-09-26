@@ -1442,7 +1442,7 @@ fn settlement_failure_rolls_back_payment_change_and_body_updates() {
 }
 
 #[test]
-fn unpaid_mining_and_retired_payment_selector_are_rejected() {
+fn unpaid_mining_is_rejected() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x84));
     let nod_id = world.issue(&input);
@@ -1465,18 +1465,6 @@ fn unpaid_mining_and_retired_payment_selector_are_rejected() {
     assert!(
         matches!(error, PrecompileError::Revert(reason) if reason == NodFactoryError::NodNotSettled.to_string())
     );
-    let old_selector =
-        alloy_primitives::keccak256("mineGratis(uint256,uint64,bytes32,uint64,bytes)");
-    assert!(world
-        .enter(|storage, scope, parent| crate::precompile::dispatch(
-            storage,
-            scope,
-            parent,
-            &old_selector[..4],
-            input.owner,
-            U256::ZERO
-        ))
-        .is_err());
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
         outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS

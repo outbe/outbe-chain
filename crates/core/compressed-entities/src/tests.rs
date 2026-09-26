@@ -230,7 +230,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),
-        is_qualified: true,
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };
@@ -239,7 +238,6 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "3333333333333333333333333333333333333333333333333333333333333333",
         "1001",
         "1a200000000000000000000000000000000000000000000000000000000000000001",
-        "2001",
         "32200000000000000000000000000000000000000000000000000000000000000003",
         "38c806"
     ))
@@ -459,7 +457,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),
-        is_qualified: true,
         entry_price_minor: U256::from(3),
         reference_currency: 840,
     };

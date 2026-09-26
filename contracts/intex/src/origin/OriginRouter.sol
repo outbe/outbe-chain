@@ -36,7 +36,7 @@ contract OriginRouter is
 {
     /// @notice Gates the demand-side sends: auction stages, AUCTION_RESULT, REFUND_INSTRUCTIONS.
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
-    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_QUALIFIED, MARK_CALLED.
+    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED, DAILY_VWAP.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
 
     /// @custom:storage-location erc7201:outbe.intex.OriginRouter
@@ -405,24 +405,6 @@ contract OriginRouter is
             bytes32 sendId = _sendOrPark(chains[i], payload, gasLimit);
             emit DailyVwapSent(sendId, chains[i], utcDay);
             ++legs;
-        }
-    }
-
-    /// @inheritdoc IOriginRouter
-    function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
-        external
-        payable
-        onlyRole(INTEX_FACTORY_ROLE)
-    {
-        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
-        if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(worldwideDay, seriesIds);
-        uint256 gasLimit = IntexGas.markQualified(seriesIds.length);
-        for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, gasLimit);
-            for (uint256 s = 0; s < seriesIds.length; ++s) {
-                emit MarkQualifiedSent(sendId, seriesIds[s]);
-            }
         }
     }
 

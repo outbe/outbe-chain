@@ -13,7 +13,7 @@ pub const BIN_STEP_BP: u16 = 25;
 /// next block.
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of the Called sweep; 0 belonged to the retired qualify sweep.
+/// `SweepDaySkipped.sweep` of the Called sweep.
 pub const CALL_SWEEP: u8 = 1;
 
 /// Slots one block's expiry sweep may step through. Low because a forfeit compacts

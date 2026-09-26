@@ -12,7 +12,7 @@ use crate::config::{self, IntexParams};
 use crate::runtime;
 use crate::schema::IssuanceParams;
 
-/// Create a series and enroll it for autonomous qualification, returning what each
+/// Create a series and enroll it in the call-price index, returning what each
 /// target chain must be told. Called by the clearing engine after a cleared auction,
 /// which packs the day's legs into messages and sends them.
 pub fn issue(

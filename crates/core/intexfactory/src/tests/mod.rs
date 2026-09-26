@@ -9,9 +9,7 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::{
-    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
-};
+use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
 use crate::constants::{
@@ -19,7 +17,6 @@ use crate::constants::{
     MAX_SERIES_PER_MESSAGE,
 };
 use crate::precompile::{self, IIntexFactory};
-use crate::qualified;
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::state::Group;
@@ -109,19 +106,6 @@ fn call_group(
     called::try_call_group(s, f, oracle, &mut vwaps, group, &window, now_ts).unwrap()
 }
 
-/// Qualify one day's group in the reference currency; returns how many series moved.
-fn qualify_day(
-    s: &StorageHandle<'_>,
-    f: &mut IntexFactoryContract,
-    worldwide_day: u32,
-    rate: U256,
-) -> u32 {
-    let group = f
-        .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
-        .unwrap();
-    qualified::try_qualify_group(s, f, &group, rate, first_full_day(ISSUED_AT as u64)).unwrap()
-}
-
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
@@ -171,6 +155,17 @@ fn write_day_vwap(oracle: &OracleContract, iso_code: u16, pair_id: u32, ts: u64,
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
     }
+}
+
+/// Close a day above the fixtures' floor after their issuance, which qualifies them.
+fn seed_qualifying_day(s: &StorageHandle<'_>) {
+    write_day_vwap(
+        &OracleContract::new(s.clone()),
+        REFERENCE_ISO,
+        PAIR_ID,
+        ISSUED_AT as u64 + 2 * DAY,
+        U256::from(EXPECTED_FLOOR + 1),
+    );
 }
 
 /// Publish `rate` as the finalized COEN/`iso_code` VWAP of the UTC day before
