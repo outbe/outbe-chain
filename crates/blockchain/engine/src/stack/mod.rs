@@ -153,6 +153,11 @@ use dkg::persistence::{
     PendingDkgBoundarySnapshot, DKG_OUTPUT_FILE, DKG_POLYNOMIAL_FILE, DKG_SHARE_FILE,
 };
 
+use dkg::promotion::{
+    adopt_finalized_boundary_carrier, promote_committed_boundary, ActiveDkgMaterial,
+    BoundaryPromotion, RetireScope,
+};
+
 use dkg::startup::{
     build_genesis_dkg_boundary_artifact, obtain_threshold_material,
     ordered_addresses_from_recovered_boundary, participants_from_validator_set,

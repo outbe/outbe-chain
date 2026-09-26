@@ -233,6 +233,44 @@ impl Mailbox {
         })
     }
 
+    /// The pending boundary that no finalized carrier has committed yet.
+    pub fn uncommitted_pending_boundary(&self) -> Option<DkgBoundaryArtifact> {
+        self.with_state(|state| {
+            state
+                .committed_boundary
+                .is_none()
+                .then(|| state.pending_boundary.clone())
+                .flatten()
+        })
+    }
+
+    /// Commit the pending boundary from its finalized carrier read off the
+    /// canonical chain, for when live finalization delivery never did. A no-op
+    /// unless `artifact` is the pending boundary and nothing is committed yet;
+    /// unlike live delivery it leaves the running ceremony's gossip untouched.
+    pub fn adopt_finalized_boundary(
+        &self,
+        block_number: u64,
+        block_hash: B256,
+        artifact: &DkgBoundaryArtifact,
+    ) -> Result<bool> {
+        let artifact_hash = Self::boundary_artifact_hash(artifact)?;
+        Ok(self.with_state(|state| {
+            if state.committed_boundary.is_some()
+                || state.pending_boundary.as_ref() != Some(artifact)
+            {
+                return false;
+            }
+            state.committed_boundary = Some(CommittedDkgBoundary {
+                artifact: artifact.clone(),
+                artifact_hash,
+                block_number,
+                block_hash,
+            });
+            true
+        }))
+    }
+
     pub async fn get_dealer_log(&self, epoch: Epoch) -> Option<Bytes> {
         self.with_state(|state| {
             let ceremony = state
