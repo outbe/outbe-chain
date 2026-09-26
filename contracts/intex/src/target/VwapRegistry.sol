@@ -12,13 +12,19 @@ import {IVwapSource} from "../shared/interfaces/IVwapSource.sol";
 /// @author Outbe
 /// @notice Target-chain record of the Oracle's finalized daily VWAPs.
 contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeable {
+    /// @dev One slot per currency, read and written once per recorded row. `last` keeps the low
+    ///      bytes, where the plain `lastUtcDay` value used to sit.
+    struct RecordedDays {
+        uint32 last;
+        uint32 first;
+    }
+
     /// @custom:storage-location erc7201:outbe.intex.VwapRegistry
     struct VwapRegistryStorage {
         address router;
         mapping(uint32 utcDay => mapping(uint16 isoCode => uint64 vwapMinor)) vwap;
-        mapping(uint16 isoCode => uint32 utcDay) lastUtcDay;
+        mapping(uint16 isoCode => RecordedDays) recorded;
         mapping(uint32 month => mapping(uint16 isoCode => uint64 vwapMinor)) monthMax;
-        mapping(uint16 isoCode => uint32 utcDay) firstUtcDay;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.VwapRegistry")) - 1)) & ~bytes32(uint256(0xff))
@@ -71,9 +77,12 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
                 $.vwap[utcDay][isoCode] = vwapMinor;
                 if (vwapMinor > $.monthMax[utcDay / 100][isoCode]) $.monthMax[utcDay / 100][isoCode] = vwapMinor;
             }
-            if (utcDay > $.lastUtcDay[isoCode]) $.lastUtcDay[isoCode] = utcDay;
-            uint32 first = $.firstUtcDay[isoCode];
-            if (first == 0 || utcDay < first) $.firstUtcDay[isoCode] = utcDay;
+            RecordedDays memory recorded = $.recorded[isoCode];
+            if (utcDay > recorded.last || recorded.first == 0 || utcDay < recorded.first) {
+                if (utcDay > recorded.last) recorded.last = utcDay;
+                if (recorded.first == 0 || utcDay < recorded.first) recorded.first = utcDay;
+                $.recorded[isoCode] = recorded;
+            }
         }
         emit DailyVwapRecorded(utcDay, rows.length);
     }
@@ -85,7 +94,7 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
 
     /// @inheritdoc IVwapRegistry
     function lastUtcDay(uint16 isoCode) external view returns (uint32) {
-        return _vs().lastUtcDay[isoCode];
+        return _vs().recorded[isoCode].last;
     }
 
     /// @inheritdoc IVwapRegistry
@@ -99,13 +108,14 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256 max) {
         if (fromUtcDay == 0) return 0;
         VwapRegistryStorage storage $ = _vs();
-        uint32 last = $.lastUtcDay[isoCode];
-        uint32 from = fromUtcDay > $.firstUtcDay[isoCode] ? fromUtcDay : $.firstUtcDay[isoCode];
+        RecordedDays memory recorded = $.recorded[isoCode];
+        uint32 last = recorded.last;
+        uint32 from = fromUtcDay > recorded.first ? fromUtcDay : recorded.first;
         if (last < from) return 0;
         uint32 firstMonth = from / 100;
         uint32 lastMonth = last / 100;
         max = _dayMax($, isoCode, firstMonth, from % 100, firstMonth == lastMonth ? last % 100 : 31);
-        for (uint32 month = _nextMonth(firstMonth); month <= lastMonth; month = _nextMonth(month)) {
+        for (uint32 month = _nextMonth(firstMonth); month < lastMonth + 1; month = _nextMonth(month)) {
             uint64 monthMax = $.monthMax[month][isoCode];
             if (monthMax > max) max = monthMax;
         }
@@ -116,7 +126,7 @@ contract VwapRegistry is IVwapRegistry, AccessControlUpgradeable, UUPSUpgradeabl
         view
         returns (uint256 max)
     {
-        for (uint32 dd = firstDd; dd <= lastDd && dd <= 31; ++dd) {
+        for (uint32 dd = firstDd; dd < lastDd + 1 && dd < 32; ++dd) {
             uint64 vwap = $.vwap[month * 100 + dd][isoCode];
             if (vwap > max) max = vwap;
         }

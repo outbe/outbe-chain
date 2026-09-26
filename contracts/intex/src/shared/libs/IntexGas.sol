@@ -46,9 +46,10 @@ library IntexGas {
     ///      leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
-    /// @dev Recording a day into the VWAP registry: 145k at one currency, 356k at six.
-    uint256 internal constant DAILY_VWAP_BASE = 155_000;
-    uint256 internal constant DAILY_VWAP_PER_ROW = 64_000;
+    /// @dev Recording a day into the VWAP registry: 168k at one currency, 476k at six, measured on the
+    ///      first day of a month, when every row opens a new month maximum.
+    uint256 internal constant DAILY_VWAP_BASE = 160_000;
+    uint256 internal constant DAILY_VWAP_PER_ROW = 92_000;
 
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
