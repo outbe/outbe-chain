@@ -10,7 +10,7 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use super::common::*;
 
 #[test]
-fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
+fn ocomp_pre_admission_reads_priced_currencies_and_bounded_counts() {
     let timestamp = 1_753_315_200_u64;
     with_storage_at(timestamp, |storage| {
         let mut oracle = OracleContract::new(storage.clone());

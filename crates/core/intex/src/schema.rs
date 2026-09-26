@@ -348,7 +348,7 @@ pub struct IntexContract {
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     // --- Creator-reward: multi-chain proceeds fan-in aggregation ---
-    /// worldwide_day -> proceeds accumulated but not yet handed to a distribution round.
+    /// worldwide_day -> proceeds accumulated but not yet handed to a payout round.
     #[attribute(order = 11)]
     pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 

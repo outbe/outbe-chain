@@ -193,8 +193,8 @@ pub struct NodContract {
     #[attribute(order = 18)]
     pub bucket_worldwide_day: Mapping<B256, WorldwideDay>,
 
-    /// Per-WWD certified Nod namespace generation. Legacy issuance does not
-    /// touch it; OCM-18 compare-and-sets it only through certified activation.
+    /// Per-WWD certified Nod namespace generation, compare-and-set only through
+    /// certified activation.
     #[attribute(order = 19)]
     pub ocomp_target_generation: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
