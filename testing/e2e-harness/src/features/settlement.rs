@@ -628,11 +628,13 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("all validators finalize the reward Gem delivery");
     let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
     if !qualified() {
+        // A Genesis floor is zero: quote at the entry price rather than one minor unit.
         crate::features::price_oracle::publish_controlled_quote(
             world,
             gem.floorPrice
                 .checked_add(U256::ONE)
-                .expect("qualifying quote"),
+                .expect("qualifying quote")
+                .max(gem.entryPrice),
         );
         let deadline = Instant::now() + Duration::from_secs(120);
         while !qualified() {
