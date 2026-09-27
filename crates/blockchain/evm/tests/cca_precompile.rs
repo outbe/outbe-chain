@@ -466,9 +466,7 @@ fn seed_vwap(storage: &StorageHandle<'_>, day: u32, price: U256) {
         .unwrap()
         .unwrap();
     outbe_oracle::schema::OracleContract::new(storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, price)
+        .record_utc_day_vwap(day, index, price)
         .unwrap();
 }
 
