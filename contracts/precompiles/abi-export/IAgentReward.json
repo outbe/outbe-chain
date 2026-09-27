@@ -67,27 +67,47 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "issueCcaReward",
+    "type": "event",
+    "name": "RewardAccrued",
     "inputs": [
       {
-        "name": "owner",
+        "name": "cca",
         "type": "address",
+        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "load",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
       {
-        "name": "gemId",
+        "name": "amount",
         "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardsClaimed",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   }
 ]

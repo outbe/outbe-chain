@@ -174,3 +174,160 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
         assert_eq!(claimable(&storage, ALICE), native(76));
     });
 }
+
+#[test]
+fn cca_pool_queries_and_claims_are_isolated() {
+    use crate::precompile::{dispatch, IAgentReward};
+    use alloy_sol_types::SolCall;
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, BOND_REQUIREMENT);
+        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        assert_eq!(reward(&storage, U256::from(1000)), U256::from(680));
+        let mut contract = AgentRewardContract::new(storage.clone());
+        for (pool, amount) in [(RewardPool::Waa, 100), (RewardPool::Sra, 200)] {
+            contract
+                .add_claimable_reward(pool, ALICE, native(amount))
+                .unwrap();
+            storage
+                .increase_balance(AGENT_REWARD_ADDRESS, native(amount))
+                .unwrap();
+        }
+        let query = IAgentReward::getClaimableBalanceCall { account: ALICE };
+        let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
+        assert_eq!(
+            IAgentReward::getClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
+            native(620)
+        );
+        for (pool, amount) in [(0, 100), (1, 200), (2, 320)] {
+            let query = IAgentReward::getPoolClaimableBalanceCall {
+                account: ALICE,
+                pool,
+            };
+            let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
+            assert_eq!(
+                IAgentReward::getPoolClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
+                native(amount)
+            );
+        }
+        assert_eq!(contract.get_claimable_reward(BOB).unwrap(), U256::ZERO);
+        let claim = IAgentReward::claimRewardCall {
+            pool: 2,
+            amount: U256::ZERO,
+        }
+        .abi_encode();
+        // A registered caller cannot spend another account's rewards; unregistered calls also fail.
+        for caller in [BOB, Address::repeat_byte(3)] {
+            assert!(dispatch(storage.clone(), &claim, caller, U256::ZERO).is_err());
+        }
+        assert!(dispatch(storage.clone(), &claim, ALICE, U256::ONE).is_err());
+        assert_eq!(claimable(&storage, ALICE), native(320));
+        for pool in [3, 255] {
+            assert!(dispatch(
+                storage.clone(),
+                &IAgentReward::claimRewardCall {
+                    pool,
+                    amount: U256::ZERO
+                }
+                .abi_encode(),
+                ALICE,
+                U256::ZERO
+            )
+            .is_err());
+            assert!(dispatch(
+                storage.clone(),
+                &IAgentReward::getPoolClaimableBalanceCall {
+                    account: ALICE,
+                    pool
+                }
+                .abi_encode(),
+                ALICE,
+                U256::ZERO
+            )
+            .is_err());
+        }
+        for pool in [0, 1] {
+            let output = dispatch(
+                storage.clone(),
+                &IAgentReward::claimRewardCall {
+                    pool,
+                    amount: U256::ZERO,
+                }
+                .abi_encode(),
+                BOB,
+                U256::ZERO,
+            )
+            .unwrap();
+            assert_eq!(
+                IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap(),
+                U256::ZERO
+            );
+        }
+        let output = dispatch(storage.clone(), &claim, ALICE, U256::ZERO).unwrap();
+        let id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
+        assert_eq!(
+            outbe_gem::api::get_gem(&storage, id)
+                .unwrap()
+                .unwrap()
+                .gem_type,
+            GemTypes::Cca as u8
+        );
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Cca, ALICE)
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Waa, ALICE)
+                .unwrap(),
+            native(100)
+        );
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Sra, ALICE)
+                .unwrap(),
+            native(200)
+        );
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(300));
+        contract
+            .add_claimable_reward(RewardPool::Cca, ALICE, U256::MAX)
+            .unwrap();
+        assert!(contract.get_claimable_reward(ALICE).is_err());
+    });
+}
+
+#[test]
+fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        reward(&storage, U256::from(1000));
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        let now = NOW + UNBOND_COOLDOWN_SECONDS;
+        storage.set_block_timestamp(U256::from(now)).unwrap();
+        runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
+        assert_eq!(
+            api::cca_state(&storage, ALICE).unwrap(),
+            ICcaRegistry::State::Deregistered
+        );
+        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(320));
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+            .unwrap()
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .utc_day_vwap_value
+            .get_nested(&previous_date_key(timestamp_to_date_key(now)))
+            .write(&index, ONE_COEN)
+            .unwrap();
+        AgentRewardContract::new(storage.clone())
+            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .unwrap();
+        assert_eq!(claimable(&storage, ALICE), U256::ZERO);
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(ALICE).unwrap(), BOND_REQUIREMENT);
+        assert_eq!(gem_of(&storage, ALICE).promis_load_minor, U256::from(320));
+    });
+}

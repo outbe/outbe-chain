@@ -1362,23 +1362,20 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         let cca_after_first = ctx
             .storage
-            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+            .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
-        assert!(
-            cca_after_first > outbe_ccaregistry::constants::BOND_REQUIREMENT,
-            "first fire credited CCA"
-        );
+        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early - no double-mint.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             cca_after_first,
             "CCA pool must not be minted twice for the same prev_day"

@@ -14,25 +14,6 @@
   },
   {
     "type": "function",
-    "name": "claimRewards",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "claimUnbonded",
     "inputs": [],
     "outputs": [],
@@ -78,11 +59,6 @@
             "name": "unbondUnlocksAfter",
             "type": "uint64",
             "internalType": "uint64"
-          },
-          {
-            "name": "rewardAmount",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }
@@ -155,50 +131,6 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "enum ICcaRegistry.State"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardAccrued",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "utcDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardsClaimed",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
