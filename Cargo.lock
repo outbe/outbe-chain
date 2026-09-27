@@ -8349,7 +8349,6 @@ dependencies = [
  "base64 0.22.1",
  "ring",
  "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
