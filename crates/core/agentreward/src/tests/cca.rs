@@ -318,9 +318,11 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             .unwrap()
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
-            .utc_day_vwap_value
-            .get_nested(&previous_date_key(timestamp_to_date_key(now)))
-            .write(&index, ONE_COEN)
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(now)),
+                index,
+                ONE_COEN,
+            )
             .unwrap();
         AgentRewardContract::new(storage.clone())
             .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
