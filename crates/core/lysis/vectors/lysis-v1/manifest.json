@@ -5,9 +5,9 @@
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
   "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "ce213038ef726d3b948393f8ea8786c5c1f1c3a0292f4bc0a89f3c3ee18f10f6",
+  "reference_sha256": "60dee8cbca012bdf6429469d22a9f45920ec8a985391b0faa37e7a05a5707fe1",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "e29180e56a8d286377ab29a47bf791f6c973c37a2354e61823496e401f1498d1",
+  "case_file_sha256": "76b6a72eccae55b13d02c7e14dcc23d87f449e1c3e903ec35ade300407fdc61c",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",
@@ -27,5 +27,13 @@
   },
   "protocol_codec_vectors": {
     "status": "owned-by-OCM-02"
-  }
+  },
+  "policy_amendments": [
+    {
+      "name": "positive-input-minimum-monetary-cost",
+      "description": "Positive entry price and Gratis load produce at least one reference-currency minor unit; the independent reference includes this policy.",
+      "case_id": "positive-price-and-load-minimum-cost",
+      "expected_source": "Exact integer arithmetic: floor(1 * 1 / 1000000) is clamped to 1; Gratis load remains 1."
+    }
+  ]
 }
