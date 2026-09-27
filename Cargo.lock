@@ -8214,12 +8214,12 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
- "outbe-common",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
