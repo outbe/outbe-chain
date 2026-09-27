@@ -1,233 +1,214 @@
 # Outbe Divergence Register
 
-- **Verified against:** `main` at `296e8375`
-- **Date:** 2026-09-04
-- **Scope:** `crates/core`, `crates/system`, `contracts/precompiles`
+- **Verified against:** `main` at `d84ebef1`
+- **Date:** 2026-09-27
+- **Scope:** `crates/core`, `crates/system`, `contracts/precompiles`, `contracts/intex`
 - **Companion:** `inc-01-settle-nod-missing-call-gates-2026-08-31.md` (INC-01 in full)
 
-Twenty-five findings between stated design intent, the documentation, and the
-Rust implementation, found while mapping the protocol onto a farming model, then
-checked against `main` at `296e8375` in two passes: the original list
-re-verified, and the forty-two commits since read side by side for what they
-changed.
+Thirty-seven findings between stated design intent, the documentation, and the
+Rust implementation, found while mapping the protocol onto a farming model, and
+verified against `main` at `d84ebef1`.
 
-Method: every claim is read from source under `crates/` and `contracts/`.
-Identifiers are stable; a finding keeps its number after it closes. The
-forty-two commits closed most of the original list, restructured settlement,
-replaced the emission curve, and deleted the ADR corpus that four findings were
-about. With the ADRs gone the code's only reference is itself, so the second
-pass compares the four call instruments, the daily pipeline, Fidelity and the
-payment rails against each other.
+Method: every claim is read from source under `crates/` and `contracts/`, and
+every status names the pull request that set it. Identifiers are stable; a
+finding keeps its number after it closes. The 125 commits since `296e8375`
+closed most of the open list, split the Nod's payment back out of mining behind
+gates that keep it payable only while mineable, moved the auction onto the
+pool, and added a CCA registry. The four call instruments, the daily pipeline,
+Fidelity and the payment rails were read side by side against each other.
 
 | Open | Need a decision | Latent or documentation | Resolved on main | Superseded or moot |
 |---|---|---|---|---|
-| 9 | 2 | 3 | 5 | 6 |
+| 9 | 3 | 4 | 16 | 5 |
 
 ---
 
 ## A · Still open
 
-Nine. Two move value today; the rest are rules that differ between instruments
-with no stated reason.
+Nine. One blocks a product outright and one can abort block building; the rest
+are rules that differ between instruments, or between the code and what it
+documents.
 
-### INC-17 · Nod qualification reads a rate of any age; Gem and Intex require one under six hours old
+### INC-26 · Credis cannot be opened: its pledge is priced by an oracle stub that always returns nothing
+
+| Pledge | Oracle |
+|---|---|
+| `previous_half_open_8hours_vwap(…)` → `.ok_or(PledgePriceUnavailable)?` | "The period implementation is pending; currently returns `None`." Body: `Ok(None)` |
+
+Every `pledgeGratis` reverts, and `issueCredis` can only consume a ticket that
+`pledgeGratis` produced, so no Credis position can open. Nod, Gem and Intex all
+take their entry price from a finalized previous-day VWAP.
+
+Knock-on: CCA reward weights are written only when a position opens, so the
+CCA emission share finds no weight and returns to Metadosis every day. The
+stub's doc also gives an 18-decimal scale, where every other COEN/currency VWAP
+the oracle serves is six-decimal. Worth settling when it is implemented.
+
+- `crates/core/gratisfactory/src/runtime.rs:92–98` · `crates/system/oracle/src/api.rs:155–171`
+- `crates/core/ccaregistry/src/emission_sink.rs:31–33` · #475 (stub) · #477 (wired into the pledge)
+
+### INC-27 · The pool is promised when a day is requested but drawn when it activates, and a short draw aborts block building
+
+| Request | Activation |
+|---|---|
+| caps the auction at `min(nominal − Lysis limit, pool + today's credit)`, reading the pool without reserving it | draws exactly that amount; any shortfall is `OcompLimitReceiptMismatch` → storage corruption → `PrecompileError::Fatal` |
+
+Metadosis sets no cap on OCOMP jobs in flight, so a later day's request can
+count pool balance an earlier day was promised and has not yet drawn, and
+whichever day activates second finds the pool short. The doc on the draw
+anticipates the case and says it "fails the activation … and the day's whole
+emission returns to the accumulator". The code raises a fatal error on the
+result-vote path, which passes fatal errors through, and a fatal error there
+aborts the payload build. Reached only when an OCOMP job outlives the next
+day's request.
+
+- `crates/core/metadosis/src/ocomp_limits.rs:54–66, 111, 136–157` · `metadosis/src/errors.rs:75–86, 94–95`
+- `metadosis/src/ocomp/activation.rs:389` · `metadosis/src/ocomp/vote.rs:165` · `metadosis/src/constants.rs:64–67` · #362
+
+### INC-23 · Three terminal outcomes close a day without retiring its tributes, two of them without the failure receipt the terminal path requires
+
+`EmptyTributeDay` retires the sealed tribute partition. `ZeroDayLimit`,
+`UnknownDayType` and `ZeroGratisAllocation` commit the day's transition and
+return the limit to the pool without touching it, and the first two land the
+day in `Failed` while the terminal module treats a failed day with no failure
+receipt as storage corruption.
+
+Reachable after a halt of more than a day: the cycle forfeits the missed UTC
+days rather than settling them, so a Worldwide Day whose emission day fell
+inside the halt is never given a limit, takes the `ZeroDayLimit` path when it
+reaches READY, and its tributes are never retired.
+
+- `crates/core/metadosis/src/settlement.rs:206–262` · `metadosis/src/reducer.rs:209–210` · `metadosis/src/terminal.rs:163–170`
+- `crates/system/cycle/src/handler.rs:336–346`
+
+### INC-28 · An auction's schedule is fixed when its day is requested, but the auction is briefed when the day activates
+
+The request freezes `logical_anchor` at its own block time. Activation replays
+it when it writes the brief, and the brief anchors the auction to that
+timestamp's midnight if at least 18 hours of commit window remain. Every hour
+between request and activation comes out of the commit window, and a START at
+or after the window's end cancels the auction as overdue and returns its limit
+to the pool.
+
+- `crates/core/metadosis/src/ocomp/request.rs:269` · `metadosis/src/ocomp_limits.rs:164`
+- `crates/core/desis/src/runtime.rs:54–66, 516–523` · `desis/src/constants.rs:46–49` · #362
+
+### INC-29 · Gem charges base gas for the PayNote proof that Nod and Intex charge 300 000 for
+
+| Nod · Intex | Gem |
+|---|---|
+| the PayNote settle call adds `ZK_VERIFY_GAS` = 300 000 | `PRECOMPILE_BASE_GAS` for every call: "still verifies its PayNote proof but does not add a separate `ZK_VERIFY_GAS` tariff" |
+
+All three run the same verifier. The gas schedule is a consensus rule, and this
+one prices a full proof verification at base cost on one of the three paths.
+
+- `crates/core/gemfactory/src/precompile.rs:27–31` · `nodfactory/src/precompile.rs:24–30` · `intexfactory/src/precompile.rs:33–37`
+- `crates/blockchain/primitives/src/storage/gas.rs:30` · #408
+
+### INC-30 · A Nod's PayNote must belong to the Nod's owner; its ABI says the caller, and Gem and Intex bind it to the caller
 
 | Nod | Gem · Intex |
 |---|---|
-| `coen_rate_for_opt`: the stored rate, no timestamp check | `fresh_coen_rate_for_opt`: rejected unless published within `FX_RATE_MAX_AGE_SECONDS`, six hours |
+| `claim.owner != terms.owner_reference`: the Nod's owner; the submitter is ignored | `claim.owner != caller` · `claim.owner != settler` |
 
-The freshness constant's own doc names "economic transaction paths and
-qualification hooks" as its users. Nod's hook is the one that does not use it.
-Qualification there is a one-way latch: once a bucket qualifies it stays
-qualified, its call price is snapshotted and its call clock is armed. A rate
-that went stale above the floor qualifies buckets a live rate would leave
-waiting, permanently.
+`INodFactory.sol` says the proof "must name the caller as its owner". On Nod
+anyone may relay the owner's note, and a broadcast proof can be spent on
+another of the same owner's Nods with the same cost and asset; nobody can pay
+someone else's Nod with their own note, which Gem and Intex allow. The ERC-20
+rail accepts any payer on all three.
 
-- `crates/core/nod/src/hooks.rs:103` · `nod/src/hooks.rs:9–10` (the latch)
-- `gem/src/hooks.rs:63` · `intexfactory/src/qualified.rs:74`
-- `crates/system/oracle/src/api.rs:135` vs `:156–192` · `oracle/src/constants.rs:13–14`
+- `crates/core/nodfactory/src/runtime.rs:341–350` · `nodfactory/src/precompile.rs:63` · `contracts/precompiles/src/INodFactory.sol:63`
+- `gemfactory/src/runtime.rs:305–314` · `intexfactory/src/runtime.rs:926–935` · #433
 
-### INC-19 · A PayNote that over-covers its Nod keeps the difference in the vault
-
-`mineGratis` checks one thing about the amount: a spend below the cost is
-rejected. Anything at or above it is consumed whole. The tokens behind the note
-went into the reserve vault when the note was created; the spend records a
-nullifier and whatever change the proof itself carved out, and nothing returns
-the gap between spend and cost to the spender. The ABI invites exactly that gap:
-"covering at least `costAmountMinor`".
-
-| Nod | Gem · Credis |
-|---|---|
-| any spend ≥ cost accepted · the surplus stays in the vault, unclaimed | Gem pulls exactly the cost · Credis consumes only what the position needs and never over-pulls |
-
-Avoidable by a spender who sets the spend to the exact cost, which the ABI does
-not tell them to do.
-
-- `crates/core/nodfactory/src/runtime.rs:281–293` · `paynote/src/runtime.rs:159` (deposit) · `:283–291` (spend)
-- `contracts/precompiles/src/INodFactory.sol:72` · `credis/src/runtime.rs:224` · `gemfactory/src/runtime.rs:335–346`
-
-### INC-15 · Credis settlement has no deadline gate; the other three close at the deadline
-
-`settle` accepts a position in `Open` or `Called` without looking at the clock.
-The only thing that ends a called position is the daily void sweep, budgeted at
-64 positions per run. The constants doc says the window "lapses"; the settle
-path never checks that it has. Nod, Gem and Intex all revert once the notice
-has passed, on the sweep and on the user-facing call alike.
+### INC-31 · Credis counts the partial issuance day toward its breach count; the other three start at the first full day
 
 | Credis | Nod · Gem · Intex |
 |---|---|
-| settleable on unchanged terms until the sweep reaches it · 64 voids per day | `CallDeadlineExpired` / `DeadlineExpired` the moment `now > deadline` |
+| `timestamp_to_date_key(position.issued_at)` | `first_full_day(issued_at)` |
 
-The mirror image of INC-01. There, a dead instrument still took payment; here,
-the instrument stays alive past its deadline. Value moves the other way:
-collateral that would have gone to the pool is reclaimed by whoever settles
-late, and a large call event makes "late" weeks long (INC-21).
+A Credis position opened mid-day counts that day toward its 21, so it can be
+called a day sooner than a Nod, Gem or Intex issued at the same moment. The
+Credis scan's own doc says it mirrors Gem's.
 
-- `crates/core/credis/src/runtime.rs:209–217` · `credis/src/constants.rs:26–28` · `credisfactory/src/called.rs:53–55`
-- `nodfactory/src/runtime.rs:201–203` · `gemfactory/src/runtime.rs:287–289` · `intexfactory/src/runtime.rs:773–775`
+- `crates/core/credisfactory/src/called.rs:255–266` · `gem/src/runtime.rs:35` · `nod/src/called.rs:338` · `intexfactory/src/called.rs:406`
+- `crates/blockchain/primitives/src/time.rs:91–98` · #394 and #433 moved the other three
 
-### INC-14 · Credis counts a breach at or above the call price; Nod, Gem and Intex count strictly above
-
-| Credis | Nod · Gem · Intex |
-|---|---|
-| `value >= position.call_price` | `value > call_price` |
-
-Each side documents its own rule, and the Credis constants say the pair
-"mirrors gem's". A day that closes exactly on the call price is a breach day
-for Credis and not for the other three. Rare, but a consensus rule, and the
-only place the four breach scans differ.
-
-- `crates/core/credisfactory/src/called.rs:258` · `credis/src/constants.rs:22–23`
-- `nod/src/called.rs:187` · `gem/src/runtime.rs:70` · `intexfactory/src/called.rs:318`
-
-### INC-16 · Call terms are read live for Nod and Credis, and snapshotted for Gem and Intex
+### INC-32 · Off mainnet, Gem and Intex run test call terms while Nod and Credis run production terms
 
 | Gem · Intex | Nod · Credis |
 |---|---|
-| window, threshold and notice written into the record at issuance: "a later change cannot re-term a live gem" | nothing stored per bucket or position: `CALL_LOOKBACK_DAYS`, `CALL_BREACH_DAYS`, `CALL_NOTICE_PERIOD`, `CALL_WINDOW_SECS` read at check time |
+| profile unset → DEV on every chain but mainnet: 10% markup, 5% floor, 3-day notice, 2 breach days of 3 | constants on every chain: 256% / 64% markup, 7-day notice, 21 of 28 |
 
-Any retune re-terms every live Nod bucket and Credis position, called ones
-included, and leaves every live Gem and Intex series on the terms it was issued
-with. This is the trap under INC-12: shortening the Credis window binds
-positions already in their notice period the moment it activates. Gem states
-the snapshot as an invariant; Nod's constants make no claim either way, and the
-code could not honour one.
+A testnet therefore runs Gem and Intex on different economics from Nod and
+Credis, and from mainnet. The storage docs read "(0 = prod, 1 = dev)" while
+the constants are `AUTO = 0`, `DEV = 1`, `PROD = 2`.
 
-- `crates/core/gem/src/api.rs:44` · `gem/src/runtime.rs:43–45` · `intexfactory/src/runtime.rs:66–70`
-- `nod/src/called.rs:145, 183, 191` · `nodfactory/src/runtime.rs:201` · `credis/src/runtime.rs:92`
+- `crates/core/gem/src/config.rs:14–19, 44–70` · `intexfactory/src/config.rs:17, 48–66` · `gem/src/schema.rs:185` · `intexfactory/src/schema.rs:65`
+- `nod/src/state.rs:28–49` · `credis/src/runtime.rs:186–195` · #334
 
-### INC-12 · The Credis notice period is 14 days where the other three are 7
+### INC-21 · Credis sweeps once a day; the other three carry an unfinished sweep into every block
 
-| Nod · Gem · Intex | Credis |
-|---|---|
-| `CALL_NOTICE_PERIOD = 7 * 24 * 3600` | `CALL_WINDOW_SECS = 14 * 24 * 60 * 60` |
-
-Intent is a uniform seven-day notice. The 21-of-28-day breach rule and the
-markup semantics match across all four instruments; the notice length is the
-one parameter that differs without a stated reason.
-
-- `crates/core/credis/src/constants.rs:28`
-
-**Ship it carefully.** Credis reads the constant live (INC-16):
-`settlement_deadline(position) = called_at + CALL_WINDOW_SECS`. Halving the
-value applies retroactively to every open position, including ones already
-called, and could put a live position past its deadline the moment it
-activates. Snapshot the window per position first, or gate the new value to
-positions opened after activation.
-
-### INC-20 · Nod and Gem settle against different asset allow-lists, from different sources of truth
-
-| Nod | Gem |
-|---|---|
-| the assets the VaultRouter registers under the Nod's reference currency, and only those | any asset with a registered vault whose own `isoCode()` equals the reference *or* the issuance currency |
-
-Two differences. Gem accepts payment in the issuance currency, Nod does not.
-And Nod trusts the router's currency index while Gem trusts the asset's
-self-reported code, so an asset whose code disagrees with the currency its
-vault was registered under passes one gate and fails the other.
-
-- `crates/core/nodfactory/src/runtime.rs:303–311` · `gemfactory/src/runtime.rs:385–405`
-
-### INC-18 · Nod's breach window starts on the worldwide-day key; the window itself is in UTC days
-
-The scan builds its window from plain UTC date keys and cuts it off at
-`start_day`, which it reads from `bucket_worldwide_day`, a UTC+14 key. For
-fourteen hours of every day the two keys differ by one. The comment above the
-window builder says the call counts plain UTC days and "NOT the UTC+14
-`WorldwideDay` key"; the cutoff fifty lines below uses that key. Gem, Intex and
-Credis all cut off at the UTC day of issuance.
-
-Effect: whether day one of the twenty-eight counts, for a Nod, depends on the
-clock at bucket formation. One day, one instrument, deterministic, and a
-consensus rule.
-
-- `crates/core/nod/src/called.rs:72–74, 126, 184` · `crates/blockchain/primitives/src/time.rs:23, 61–63`
-- `gem/src/runtime.rs:63` · `intexfactory/src/called.rs:354` · `credisfactory/src/called.rs:252`
-
-### INC-21 · The same call event clears in hours for Intex, days for Gem, and weeks for Nod and Credis
-
-| Instrument | Call sweep | Forfeit / void budget | Resume across currencies |
+| Instrument | Call sweep | Forfeit / void / expiry | Cursors |
 |---|---|---|---|
-| Nod | once a day · 4 096 buckets visited | 256 per day | none: every block starts again at the first currency |
-| Gem | daily; an unfinished slice continues every block | 256 per run | cursor |
-| Intex | daily; an unfinished slice continues every block | 256 per block (expiry) | cursor |
-| Credis | once a day · 4 096 positions visited | 64 per day | single cursor |
+| Nod | daily, continued every block · 4 096 buckets visited per block | 256 forfeits per block | currency, bin, forfeit |
+| Gem | daily, continued every block · 256 calls per block | 16 expiry steps per block | currency |
+| Intex | daily, continued every block · 256 group decisions per block | 256 series actions per block | currency |
+| Credis | once a day, backlog not coalesced · 4 096 positions visited | 64 voids per day | one |
 
-Same job, four throughputs. Nod's module doc says each currency "resumes from
-its own per-bin cursor"; the bin cursors exist, the currency cursor that Gem
-and Intex keep does not, so a heavy first currency is served first every block.
-The Credis void budget is what stretches INC-15 from a day into weeks.
+A lapsed Credis position can no longer be settled (INC-15), so the backlog no
+longer moves value between parties. What it delays is the burned collateral's
+credit to PromisLimit, which is the auction's cap (INC-04).
 
-- `crates/core/nod/src/called.rs:49` · `nod/src/hooks.rs:28–31, 77–79, 99–108` · `nod/src/constants.rs:39, 45`
-- `gem/src/hooks.rs:29–31` · `gem/src/schema.rs:163, 176` · `gem/src/constants.rs:17`
-- `intexfactory/src/qualified.rs:36–44` · `intexfactory/src/schema.rs:79, 81` · `intexfactory/src/constants.rs:55`
-- `credisfactory/src/called.rs:39, 55, 102–105`
+- `crates/system/cycle/src/lifecycle.rs:64–70` · `nod/src/hooks.rs:18–27` · `nod/src/constants.rs:55, 61`
+- `gem/src/constants.rs:14, 21` · `intexfactory/src/constants.rs:31–32` · `credisfactory/src/called.rs:40, 55` · `cycle/src/triggers.rs:243–252`
 
 ---
 
 ## B · Needs a decision
 
-Neither is a defect. Each is a fork the code has already taken one branch of.
+Three. Each is a fork the code has taken on purpose, with a consequence worth
+recording.
 
-### INC-13 · Nod pays through PayNote at mining; Gem and Intex still pay through a separate settle step
+### INC-33 · Credis marks up a reference price, not its own entry price
 
-The PayNote change (#314) folded the Nod's payment into `mineGratis`: the
-caller passes a spend proof, `discharge_cost` consumes it after the owner, PoW,
-qualification and deadline checks, and paying and mining are one transaction.
-Gem and Intex were not moved. Both keep `settleGem` / `settle` as an ERC-20
-pull into the vault, followed by a separate `minePromis`.
-
-| Nod | Gem · Intex |
+| Nod · Gem · Intex | Credis |
 |---|---|
-| one call · shielded bearer note · spender bound to caller · no paid-but-unmined state | two calls · public ERC-20 transfer · a settled-but-unmined state exists and can be forfeited |
+| call = entry × (100 + markup) / 100, the same price the cost is struck at | call = anchor × 164 / 100; anchor = previous closed UTC-day COEN/reference VWAP; entry = the pledge quote in the issuance currency |
 
-Two payment rails for the same economic act. The Nod rail is strictly better on
-every axis the register has cared about: it cannot pay for a dead instrument,
-it cannot strand a paid one, and the payer is private. Whether Gem and Intex
-are meant to follow is a decision worth recording either way.
+Deliberate: `ICredisFactory.sol` says the anchor "is independent of spot and
+the pledge entry price, even when the reference and issuance currencies
+match". Credis is therefore the only instrument whose call level is not a fixed
+multiple of its own entry, and `credis/src/constants.rs` still describes the
+call as "entry + 64%". Worth recording whether 64% is growth on the loan's own
+price or on the reference market.
 
-- `crates/core/nodfactory/src/runtime.rs:262` (`discharge_cost`)
-- `crates/core/gemfactory/src/runtime.rs:270` · `intexfactory/src/runtime.rs:748` (settle steps retained)
+- `crates/core/credis/src/runtime.rs:94–99, 186` · `credis/src/schema.rs:144–146` · `credis/src/constants.rs:15`
+- `credisfactory/src/runtime.rs:136–140, 193–212` · `contracts/precompiles/src/ICredisFactory.sol:30–39` · #452
 
-### INC-22 · The CCA's matching COEN survives #348 as a pass-through to the borrower
+### INC-34 · A CCA now needs a one-billion-COEN bond to originate
 
-`requestCredis` is still payable and still requires `msg.value` to equal the
-pledged collateral exactly, in native COEN. What #348 removed is the escrow,
-the release and the burn. The COEN now goes straight to the borrower's smart
-account as unrestricted balance, in the same transaction that withdraws the
-stablecoin principal from the vault to that account, and it never comes back.
-The ABI says so, and three tests pin it.
-
-| Borrower receives | Borrower repays |
+| To originate | On a void |
 |---|---|
-| the principal in stablecoin from the vault, plus COEN equal to the collateral from the CCA | the principal plus interest, in stablecoin; the COEN is theirs to keep, settled or voided |
+| Active standing at the CCA registry: bonded ≥ 10⁹ COEN, unbonding over 128 days. Required by `issueCredis` and `reserveStables`. | nothing is slashed; the burned collateral comes off the CCA's reward weight for that day, and any excess carries as a deficit |
 
-If the intent behind removing the stake was the payment itself, this is open.
-If the CCA is meant to fund the borrower's COEN and be paid for it from the CCA
-emission sink, this is closed and only the names are residue (INC-25).
+#348 removed the per-position stake escrow and its burn; #410 puts a standing
+bond in its place. Worth confirming that is the intent.
 
-- `crates/core/credisfactory/src/runtime.rs:101–105, 143–147` · `credisfactory/src/errors.rs:20`
-- `contracts/precompiles/src/ICredisFactory.sol:24–27` · `credisfactory/src/tests/e2e.rs:539, 556, 587`
+- `crates/core/ccaregistry/src/constants.rs:5–8` · `ccaregistry/src/runtime.rs:44–54, 160–186`
+- `credisfactory/src/runtime.rs:62–63` · `vaultrouter/src/runtime.rs:408–415` · #410, #441
+
+### INC-35 · A Nod and an Intex from the same day can be priced off different UTC days
+
+| Nod | Intex |
+|---|---|
+| the finalized VWAP of the UTC day before the day's scheduled processing, frozen at PrepareOcomp | the VWAP of the UTC day before the auction's START |
+
+The two coincide when the auction starts on the processing day. A late brief
+moves START to a later midnight (INC-28), and the two instruments of one day
+then enter at different prices. Desis states the choice: "The day before this
+start, not before the brief".
+
+- `crates/core/lysis/src/runtime.rs:224–237` · `crates/core/desis/src/runtime.rs:54–66, 458–465` · #455, #467
 
 ---
 
@@ -236,143 +217,258 @@ emission sink, this is closed and only the names are residue (INC-25).
 Nothing here moves a balance today. Each costs something the first time someone
 edits the code around it.
 
-### INC-23 · Three terminal dispositions close a day without retiring its tribute partition; two of them without the failure receipt the terminal path requires
+### INC-24 · A PayNote deposit and a Credis settlement trust the requested amount; the Nod, Gem and Intex rails measure it
 
-`EmptyTributeDay` retires the sealed partition. `ZeroDayLimit`,
-`UnknownDayType` and `ZeroGratisAllocation` commit the day's transition and
-return the limit to the pool without touching it, and the first two land the
-day in `Failed` while the terminal module treats a failed day with no failure
-receipt as storage corruption.
+Nod, Gem and Intex settlement check the token calls' return data and require
+their balance to move by exactly the cost. The PayNote pool derives the note's
+commitment from the requested amount and ignores `transferFrom`'s return data;
+Credis settlement pulls and approves with unchecked calls. VaultRouter's own
+pull from those contracts is checked, so the gap matters only for a token that
+misreports a transfer. The PayNote comment "the asset and amount this call
+actually moves" says more than the code does.
 
-Latent rather than live: the emission floor is 2^26, so a zero day limit cannot
-occur; the day type resolves to RED on missing data, so `Unknown` does not
-reach settlement in the normal flow; and a zero allocation needs a day whose
-whole nominal is a few minor units. But three modules hold three views of what
-a failed day looks like.
+- `crates/core/paynote/src/runtime.rs:126–160` · `credisfactory/src/runtime.rs:272–292`
+- `nodfactory/src/runtime.rs:126–150` · `gemfactory/src/runtime.rs:397–409` · `intexfactory/src/runtime.rs:875–887` · `vaultrouter/src/runtime.rs:854`
 
-- `crates/core/metadosis/src/settlement.rs:202–271` · `metadosis/src/reducer.rs:222–224` · `metadosis/src/terminal.rs:163–170`
-- `crates/system/emissionlimit/src/day_emission.rs:18` · `metadosis/src/lifecycle.rs:431–439`
+### INC-36 · A failing Gem forfeit drops the gem from the queue and strands its load
 
-### INC-24 · A PayNote deposit trusts the requested amount; a Gem settlement measures what arrived
+On an error the expiry sweep removes the gem from the called queue. The gem
+stays Called past its deadline, so it can neither be settled nor swept again,
+and its load never reaches PromisLimit. Nod retries the bucket on its next
+pass, Intex defers and retries an hour later, and Credis fails the block. Error
+path only.
 
-The note pool transfers `amount`, approves `amount`, deposits `amount`, and
-derives the commitment from `amount`. Gem reads its balance before and after
-the pull and deposits the difference. For any asset that takes a fee on
-transfer, the pool mints a note for value it never received. Nothing registered
-today does that; the two rails still disagree on whom to trust.
+- `crates/core/gem/src/hooks.rs:285–296` · `nod/src/called.rs:388–391` · `intexfactory/src/expired.rs:100, 113–129` · `credisfactory/src/called.rs:153–171` · #366
 
-- `crates/core/paynote/src/runtime.rs:120, 134–159` · `gemfactory/src/runtime.rs:335–346`
+### INC-37 · Qualification reads month maxima that nothing builds for VWAPs recorded before #488
+
+Qualification walks the two edge months day by day and reads every month
+between them from a month-maximum map. Its only writer is
+`record_utc_day_vwap`, added in #488, and nothing rebuilds the map for days
+recorded earlier. On a chain upgraded in place with earlier history, an
+above-floor day in an interior month is missed and a Nod, Gem or Intex can read
+as unqualified. Fresh chains are unaffected.
+
+- `crates/system/oracle/src/state.rs:847–866, 872–899` · `oracle/src/api.rs:484` · #488
 
 ### INC-25 · Names and comments that describe code that is no longer there
 
 None of these change a balance. Each will mislead the next reader.
 
-- **Stake.** `CcaStakeMismatch`, a parameter still called `stake`, "credis
-  escrow" in the Gratis API doc, and a `Void::unpaid_share` field documented as
-  scaling "the originating CCA's penalty" that nothing reads.
-  `credisfactory/src/errors.rs:20` · `credisfactory/src/runtime.rs:54` ·
+- **Stake.** `CcaStakeMismatch` and a parameter named `stake` for what is now
+  COEN the CCA sells to the borrower (INC-22); "credis escrow" in the Gratis
+  API doc; and `Void::unpaid_share`, documented as scaling "the originating
+  CCA's penalty" and read by nothing; the void penalty uses `gratis_burned`.
+  `credisfactory/src/errors.rs:18` · `credisfactory/src/runtime.rs:56` ·
   `gratis/src/api.rs:36` · `gratisfactory/src/runtime.rs:4–5` ·
-  `credis/src/runtime.rs:76–78, 324, 350`
-- **Call constants.** `CALL_RATE_PCT` is 256 in Nod and 64 in Credis;
-  `CALL_RATE` is 128 in Gem and Intex; `CALL_WINDOW` is the 28-day lookback in
-  Gem and Intex while `CALL_WINDOW_SECS` is the 14-day settlement window in
-  Credis; `PRICE_RATE_DEN` is a named constant in Credis and Intex and a bare
-  `100` in Nod and Gem. The tail of INC-10.
-- **Load sizing.** `F_FP_DEFAULT` (32%) and `F_MAX_FP` (64%) are read only by
-  tests. Production derives the fraction as the day's allocation over the
-  day's nominal, which is 32% only when demand binds on a GREEN day and 4% on
-  a RED one; the test prose calls the same constants 8% and 16%.
-  `lysis/src/constants.rs:11–13` · `lysis/src/program_v1/execute.rs:423–425` ·
-  `lysis/src/tests.rs:506–518`
-- **Credis scales and rounding.** `policy_rate` is documented at 1e18 and
-  computed at 1e6; interest days are documented as "rounded up" and are
-  floored, with the amount ceiled instead. `credis/src/runtime.rs:35, 101–121`
-- **Gem ABI.** `IGem.sol` declares `transferFrom`, `safeTransferFrom`,
-  `approve` and `setApprovalForAll`; every one reverts `NonTransferable`. Its
-  `GemData` carries no call price, call time or notice, where the Nod, Intex
-  and Credis structs do. `contracts/precompiles/src/IGem.sol:5–24` ·
-  `gem/src/precompile.rs:47–49`
-- **Credis ABI.** `hasCalledPosition` reads as a standing check; the
-  implementation calls it "informational only". `ICredis.sol:92–93` ·
-  `credis/src/runtime.rs:364–365`
-- **PayNote ABI.** `IPayNote.sol` declares five custom errors; the
-  implementation reverts with strings and never emits any of them.
-  `IPayNote.sol:18–26` · `paynote/src/errors.rs:53`
-- **Metadosis and emission docs.** `ReferenceCurrencyUnpriced` describes a
-  worldwide-day price fallback the oracle marks "no longer produced"; the
-  emission dispatcher's module doc counts six sinks over a table of five and
-  promises `Fatal` where the code returns `Revert`; `metadosis/src/constants.rs`
-  carries a second `UTC_PLUS_14_OFFSET` that nothing reads.
-  `IMetadosis.sol:35–38` · `oracle/src/api.rs:28–29` ·
-  `emissionlimit/src/block.rs:9–11, 32, 44–46` ·
-  `emissionlimit/src/allocation.rs:51` · `metadosis/src/constants.rs:85`
-- **Intex.** The Intex test module defines `CALL_NOTICE_PERIOD` as 21 days;
-  `mark_called` accepts `Issued` or `Qualified` and names `Qualified` as the
-  only expectation when it rejects. `intex/src/tests.rs:15` ·
-  `intex/src/api.rs:97–101`
+  `credis/src/runtime.rs:86–88`
+- **Credis.** "14 days later they all lapse together" over a 7-day notice; a
+  `positionId` "derived from `pledgeNote` and `smartAccount`" where the code
+  hashes CCA, smart account, asset and block; "Call price: entry + 64%" over an
+  anchor-based price (INC-33); `requestCredis` names left after the rename to
+  `issueCredis`; the error text "call window has lapsed" for the notice
+  period; and `hasCalledPosition`, which reads as a standing check and gates
+  nothing. `credisfactory/src/called.rs:48–49` · `ICredisFactory.sol:41` ·
+  `credis/src/schema.rs:227` · `credis/src/constants.rs:15` ·
+  `gratis/src/api.rs:91, 132` · `credis/src/errors.rs:28` · `ICredis.sol:115`
+- **CCA registry.** `ICcaRegistry.sol` declares `CcaNotActive(address, State)`;
+  the code reverts with a string. `ICcaRegistry.sol:23` ·
+  `ccaregistry/src/errors.rs:34`
+- **Nod.** `INodFactory.sol` says "Pay a qualified Nod", though a called Nod
+  pays too, inside its notice; `tokenURI` shows Called where `nodData` shows
+  Forfeited; and the on-chain description says "its owner pays the settlement
+  cost" where any payer may. `INodFactory.sol:55` · `nod/src/metadata.rs:19–23` ·
+  `nod/src/api.rs:26–27` · `nod/src/constants.rs:5`
+- **Gem.** `IGem.sol` says Genesis gems are "Born Qualified", where
+  qualification is derived from finalized VWAPs; the call-price doc says entry
+  is "the issuance-time coen rate", where it is the previous day's VWAP;
+  `gem/src/api.rs` says forfeit runs "from the daily scan", where it runs every
+  block; and the same owner-pays description. `IGem.sol:49` ·
+  `gem/src/api.rs:51, 66–67` · `gemfactory/src/runtime.rs:702` ·
+  `gem/src/constants.rs:4`
+- **Intex.** `IIntexFactory.sol` says issuance-currency settlement "needs fresh
+  rates", where it uses the last closed day, and still mentions the
+  authorised-settler setter #393 removed; "their load belongs to the settler",
+  where it goes to the owner; the mining doc says "`owner` is the caller",
+  where it is an argument; the Solidity `markCalled` error still names only
+  `Qualified`; and the settled-token id is documented as a keccak hash, where
+  it is a tagged series id. `IIntexFactory.sol:6, 20` · `IIntex.sol:40` ·
+  `intexfactory/src/runtime.rs:830, 1090–1091` ·
+  `IntexNFT1155.sol:26, 247, 410, 457`
+- **PayNote.** `IPayNote.sol` declares five custom errors the implementation
+  never emits, and names proof version 1.1.0 where the Rust says 1.2.0.
+  `IPayNote.sol:13, 17–26` · `paynote/src/errors.rs:53` · `paynote/src/lib.rs:11`
+- **Call constants.** `CALL_RATE_PCT` (Nod 256, Credis 64) against `CALL_RATE`
+  (Gem and Intex 128); `PRICE_RATE_DEN` named in Credis and Intex and a bare
+  `100` in Nod and Gem; and the ABIs expose different subsets of the sealed
+  call terms: all of them on `INod.sol`, none on `ICredis.sol`.
+  `nod/src/constants.rs:25` · `credis/src/constants.rs:13–16` ·
+  `gem/src/constants.rs:45` · `nod/src/state.rs:40` · `INod.sol:80–86` ·
+  `ICredis.sol:53–90`
+- **Pipeline.** The local, non-OCOMP path still computes the auction as
+  `min(nominal, day limit) − Lysis` under "headroom" comments; three
+  `split_total ≤ day_limit` checks are always true; the late-residue docs say
+  the next day's formation consumes the pool, which formation no longer draws;
+  `OcompDayLimitFormed.carryOverTaken` is always zero; the emission
+  dispatcher's doc counts six sinks over a table of five and promises `Fatal`
+  where the code returns `Revert`; and Lysis test prose names `LYSIS_LIMIT_MIN`
+  and `LYSIS_LIMIT_MAX`, which do not exist. `metadosis/src/settlement.rs:66–70` ·
+  `ocomp-protocol/src/intent.rs:319` · `result.rs:508` · `receipts.rs:429` ·
+  `metadosis/src/emission_sink.rs:39–40` · `metadosis/src/commit.rs:289` ·
+  `emissionlimit/src/block.rs:9, 32, 44, 55–56` · `lysis/src/tests.rs:641, 922`
+- **Tribute and naming.** `ITributeFactory.sol` describes a caller and L1
+  binding that now also covers the L2 chain; the `amount_atto` →
+  `amount_micro` rename left an `atto` field in the enclave and an unused
+  "invalid atto amount format" error; AgentReward calls all three reward pools
+  its own, though the CCA pool belongs to the registry; and `IDesis.sol` names
+  `supply` what Rust calls `desis_limit_minor`. `ITributeFactory.sol:10` ·
+  `bin/outbe-tee-enclave/src/zk_claim.rs:40, 69, 78` ·
+  `tributefactory/src/errors.rs:105–106` ·
+  `agentreward/src/distribution.rs:158, 177` · `IDesis.sol:91`
 - **Gratis.** The factory's module doc describes a `mine` function; the
   function is `mint`. The Fidelity eligibility gate tests for league
-  `u16::MAX`, a value the league formula cannot produce, under a `todo`.
-  `gratisfactory/src/runtime.rs:5–7, 106–108, 129`
+  `u16::MAX`, which the league formula cannot produce.
+  `gratisfactory/src/runtime.rs:5–7, 133, 155` · `fidelity-math/src/lib.rs:36`
 
 ---
 
 ## D · Resolved on main
 
-Each names the commit that closed it.
+Sixteen. Each names the pull request that closed it and was re-read at
+`d84ebef1`.
 
 ### INC-01 · `settle_nod` accepted payment for a Nod that could never be mined
 
-**Closed by restructuring, not by a gate.** `settle_nod` no longer exists.
-Payment moved inside `mineGratis` as a PayNote spend, consumed *after* the
-`CallDeadlineExpired` check, so there is no longer any state in which a cost
-can be paid against a Nod that cannot be mined. The residual hazard raised
-later, settled in good time and then forfeited unmined, is closed by the same
-change, since no paid-but-unmined state exists.
+**Holds, with the pay step back.** #314 folded payment into mining; #417 split
+it out again as `settleNod` and `settleNodWithPayNote`. Both accept payment
+only while the Nod can still be mined: an uncalled Nod must be qualified, a
+called one must be inside its notice, and the check runs again inside the
+state change. Mining then needs only the paid flag, with no deadline, and the
+forfeit sweep walks unpaid Nods only, treating a paid one as corruption. No
+paid-but-unmineable state exists.
 
-- #314 feat: paynote: "replace settlement logic with Paynote-based payment model and remove is_settled field"
+- `crates/core/nodfactory/src/runtime.rs:182–216, 255–272` · `nod/src/state.rs:386–390, 415–421` · `nod/src/called.rs:379–382, 538`
+- #314, #417, #423, #431
 
 ### INC-02 · Nod call price was a multiple where the others were markups
 
-`nod::CALL_RATE_PCT` is now applied as `entry × (100 + 256) / 100` =
-**3.56×**. The ladder reads 64 / 128 / 256 growth as intended, and the
-constant's doc comment now says "markup".
+Applied as `entry × (100 + 256) / 100` = **3.56×**, now sealed on each bucket
+at issuance.
 
-- `crates/core/nod/src/constants.rs:18` · `nod/src/runtime.rs:52`
+- `crates/core/nod/src/state.rs:28–40` · `nod/src/constants.rs:25`
 
 ### INC-03 · Forfeited Nod and Gem load was not routed to carry-over
 
-All three instruments now credit `PromisLimit` on forfeit. Intex and Gem expiry
-return their load as well.
+All four credit PromisLimit 1:1: Nod, Gem and Intex on forfeit or expiry, Gem
+positions on expiry, and Credis on void.
 
-- #337 Nod: `nod/src/called.rs:270`
-- #319 Gem: `gem/src/runtime.rs:102` · `gemfactory/src/expired.rs:79`
-- #317 Intex: `intexfactory/src/expired.rs:96`
+- `crates/core/nod/src/called.rs:559–568` · `gem/src/runtime.rs:71–75` · `gemfactory/src/expired.rs:79–80`
+- `intexfactory/src/expired.rs:176–207` · `credisfactory/src/runtime.rs:351–352`
 
 ### INC-04 · The auction had no consumption ceiling
 
 ```
-auction_base = min(nominal_total, day_limit) − lysis_budget
+GREEN: auction = min(nominal − Lysis limit, pool + (day limit − Lysis limit))
+RED:   auction = 0
 ```
 
-`RequestBudgetSplit::derive` now takes `nominal_total`, so a day can never
-auction more than its own claims less what the farmers took as seed, and the
-empty-day case no longer briefs the whole limit.
+**Closed on the pool reading (#362).** Day formation takes only the day's own
+emission. The request credits what Lysis leaves of it to PromisLimit, and the
+auction draws from PromisLimit, capped by the nominal beyond the symbolic
+share. With an empty pool it reduces to the day-limit result. Two details: the
+cap subtracts the Lysis limit rather than what Lysis actually allocated, and
+the unused part reaches the pool at activation without enlarging that day's
+auction. The draw's timing is INC-27.
 
-**One thing to confirm.** This is the *day-limit* reading of the ceiling. The
-reading chosen in discussion was the *pool* reading:
-`min(nominal − lysis, PromisLimit.total_unallocated)`. The pool is still
-drained into `day_limit` at formation, so the two only coincide when the day
-limit binds. If the pool reading is still the intent, this is closed on the
-wrong branch.
+- `crates/core/metadosis/src/ocomp_limits.rs:40–66, 104–130, 144–157` · `metadosis/src/emission_sink.rs:82–96` · #362
 
-- #321 fix(metadosis): issue the day's nominal instead of the whole day limit: `metadosis/src/ocomp_budget.rs:37`
+### INC-05 · The pool-backed auction ceiling collided with the pool drain
+
+Day formation no longer drains the pool (`carry_over_taken` is zero), and the
+only draw is the auction's, at activation.
+
+- `crates/core/metadosis/src/emission_sink.rs:82–96` · `promislimit/src/ocomp_limits.rs:36` · #362
 
 ### INC-10 · Two constants named `CALL_RATE_PCT` used different formulas
 
-Both are markups now, so the semantic collision is gone. The names still differ
-across modules (`CALL_RATE` in Gem and Intex, `CALL_RATE_PCT` in Nod and
-Credis) but every one of the four means the same thing.
+All four markups apply as `base × (100 + X) / 100`. Credis's base differs
+(INC-33), and the names still differ (INC-25).
+
+### INC-12 · The Credis notice period was 14 days where the other three were 7
+
+Seven days, sealed on each position at opening.
+
+- `crates/core/credis/src/constants.rs:46` · `credis/src/runtime.rs:191` · #358, #379
+
+### INC-13 · Nod paid through PayNote at mining; Gem and Intex through a separate settle step
+
+One shape for all three: a settle call on either rail, ERC-20 into the reserve
+vault or a PayNote spend, followed by a separate mine. Credis settles by
+ERC-20 only.
+
+- `contracts/precompiles/src/INodFactory.sol:60, 65` · `IGemFactory.sol:18, 26` · `IIntexFactory.sol:21, 30` · #417, #423, #363, #435
+
+### INC-14 · Credis counted a breach at or above the call price
+
+Strictly above, as in the other three.
+
+- `crates/core/credisfactory/src/called.rs:272` · #360
+
+### INC-15 · Credis settlement had no deadline gate
+
+A called position past its deadline is rejected with `CallWindowClosed`, as
+the other three reject theirs.
+
+- `crates/core/credis/src/runtime.rs:272–274` · #480
+
+### INC-16 · Call terms were read live for Nod and Credis and snapshotted for Gem and Intex
+
+All four seal window, threshold and notice on each record: Nod on each bucket
+at issuance, Credis on each position.
+
+- `crates/core/nod/src/state.rs:28–49, 632–660` · `credis/src/runtime.rs:186–195` · `gem/src/api.rs:35–42` · `intexfactory/src/runtime.rs:70–74` · #379, #433, #470
+
+### INC-17 · Nod qualification read a rate of any age; Gem and Intex required one under six hours old
+
+All three derive qualification when it is read: the highest finalized daily
+VWAP since the first full day must exceed the floor. No live rate and no
+stored latch.
+
+- `crates/core/nod/src/api.rs:38–52` · `gem/src/api.rs:68–75` · `intexfactory/src/runtime.rs:962–972` · `oracle/src/api.rs:484` · #400, #470, #402, #469, #471
+
+### INC-18 · Nod's breach window started on the worldwide-day key
+
+Nod cuts off at the first full UTC day of its sealed issuance time; no UTC+14
+key remains in any breach path. Credis differs in the other direction
+(INC-31).
+
+- `crates/core/nod/src/called.rs:333–338` · #433
+
+### INC-19 · A PayNote that over-covered its Nod kept the difference in the vault
+
+A PayNote spend must equal the cost exactly on all three instruments; any
+surplus stays with the payer as a change note. The ERC-20 rails pull exactly
+the cost, and Credis clamps to what the position owes.
+
+- `crates/core/nodfactory/src/runtime.rs:355–362` · `gemfactory/src/runtime.rs:317–321` · `intexfactory/src/runtime.rs:938–942` · `paynote/src/runtime.rs:272` · #359, #466
+
+### INC-20 · Nod and Gem settled against different asset allow-lists
+
+One rule for Nod, Gem and Intex: any asset with a reserve vault whose
+self-reported ISO code is the reference or the issuance currency, the issuance
+leg converting at the previous closed day's VWAP. Credis settles in the one
+asset sealed at pledge.
+
+- `crates/core/nodfactory/src/runtime.rs:396–411` · `gemfactory/src/runtime.rs:469–480` · `intexfactory/src/runtime.rs:1061–1072` · #433
+
+### INC-22 · The CCA's matching COEN passed through to the borrower unpaid
+
+Paid for. At issuance the CCA sends COEN equal to the collateral to the
+borrower's account, and the vault pays the stablecoin principal to the CCA;
+the borrower repays in stablecoins. The "stake" naming is left (INC-25); the
+CCA's new bond is INC-34.
+
+- `crates/core/credisfactory/src/runtime.rs:108–118, 159–172` · `contracts/precompiles/src/IVaultRouter.sol:205–211` · `ICredisFactory.sol:22–33` · #441
 
 ---
 
@@ -381,21 +477,13 @@ Credis) but every one of the four means the same thing.
 Closed by a decision that went another way, or by the thing they were about
 ceasing to exist.
 
-### INC-05 · The pool-backed auction ceiling collided with the pool drain
-
-The ceiling was implemented against the day limit rather than the pool (see
-INC-04), so the drain conflict never arises. `checked_take_carry_over` still
-zeroes the pool into `day_limit` at formation, unchanged. This item reopens
-only if INC-04 is reworked to the pool reading.
-
 ### INC-06 · Two ADRs said Promis→Gratis preserved age; the code created a fresh cohort
 
-The ADR corpus was deleted (#322). The behaviour stands: `PromisFactory.mineGratis`
-mints a fresh cohort, and the ABI now documents it: "records a fresh Fidelity
-acquisition cohort, exactly as any other gratis acquisition does." The
-conversion also moved from GratisFactory to PromisFactory and was renamed.
+The ADR corpus was deleted (#322). `PromisFactory.mineGratis` mints a fresh
+cohort, and its ABI says so: "records a fresh Fidelity acquisition cohort,
+exactly as any other gratis acquisition does."
 
-- `contracts/precompiles/src/IPromisFactory.sol:26` · `crates/core/promisfactory/src/runtime.rs:69`
+- `contracts/precompiles/src/IPromisFactory.sol:24–25` · `crates/core/promisfactory/src/runtime.rs:78–80`
 
 ### INC-07 · Nod and Gem call lifecycle undocumented in the ADRs
 
@@ -403,45 +491,42 @@ ADR corpus deleted (#322). No documentation remains to be stale.
 
 ### INC-08 · Merchant gems documented as rejected, shipped in full
 
-ADR corpus deleted (#322). The model itself was renamed in passing:
-`mintGemPosition` / `mintMerchantGem` are now `issueGemPosition` / `issueGem`
+ADR corpus deleted (#322). The calls are `issueGemPosition` and `issueGem`
 (#329).
 
 ### INC-09 · Emission sink table: six in the ADR, five in the code
 
-ADR corpus deleted (#322); the five-sink table is unchanged. Separately, the
-curve those sinks divide was replaced (#347): it now rises from 2^28 COEN to a
-peak near 8.7 × 2^26 around day 1024, then falls to a 2^26 floor at day 3072,
-on two logistic phases. The earlier exponential decay from 2^30 no longer
-describes anything.
+ADR corpus deleted (#322). The five-sink table and the curve are unchanged:
+2^28 COEN rising to a peak near 8.7 × 2^26 around day 1024, then falling to a
+2^26 floor at day 3072. Since #410 the CCA share is paid to CCAs by reward
+weight, and whatever finds no weight returns to Metadosis.
 
-- `crates/system/emissionlimit/src/day_emission.rs`
+- `crates/system/emissionlimit/src/day_emission.rs` · `emissionlimit/src/allocation.rs:10–13` · `crates/core/ccaregistry/src/emission_sink.rs:31–33`
 
 ### INC-11 · Settlement authority differed across all four instruments
 
-The Nod row of that table no longer exists: there is no Nod settle call.
-Payment is a bearer note whose proof names its spender, and `mineGratis`
-requires spender = caller = owner. Anyone may fund the note; only the owner
-may spend it. Gem and Intex are unchanged. What remains of the asymmetry is
-INC-13.
+On the ERC-20 rail any payer can settle any of the four. The one asymmetry
+left is the PayNote binding, INC-30.
 
 ---
 
 ## What is left
 
-Nine open items. Two move value today: a Nod bucket can qualify on a stale rate
-and stay qualified (INC-17), and a PayNote that over-covers its Nod leaves the
-surplus in the vault (INC-19). Five are rules that differ between instruments
-with no stated reason (INC-12, 14, 15, 16, 20); two are calendar and cadence
-(INC-18, 21). Two decisions: whether Gem and Intex follow Nod onto PayNote
-(INC-13), and whether the CCA's matching COEN is meant to reach the borrower
-(INC-22). INC-04 closed on the day-limit reading and still wants a one-word
-confirmation. The latent and documentation items (INC-23 to 25) cost nothing
-until someone touches the code around them.
+Nine open items. Two come first: Credis cannot be opened until its pledge
+price is implemented (INC-26), and an OCOMP job that outlives the next day's
+request can abort block building at activation (INC-27). After a multi-day
+halt, the skipped days close without retiring their tributes (INC-23). The
+other six are rules that differ between instruments, or between code and its
+ABI: the auction anchor (INC-28), Gem's PayNote gas (INC-29), the Nod PayNote
+owner (INC-30), Credis's partial issuance day (INC-31), the test profile off
+mainnet (INC-32), and Credis's once-a-day sweep (INC-21). Three decisions:
+Credis's call anchor (INC-33), the CCA bond (INC-34), and the entry day of a
+Nod against an Intex (INC-35).
 
 First pass surfaced eleven. The re-check against `main` at `296e8375` closed
-nine and added INC-13. The sweep of the forty-two commits at the same head added
-INC-14 to INC-25; the daily split, the emission curve and sinks, the pool
-accounting, Fidelity's mutation sites, the Promis-to-Gratis conversion, the
-StableFactory bridge, agent rewards and contributor payouts all checked out
-against each other.
+nine and added INC-13 to INC-25. The pass at `d84ebef1` closed ten more,
+INC-12 to INC-20 and INC-22, moved INC-04 onto the pool reading chosen in
+discussion and closed INC-05 with it, and added INC-26 to INC-37. The daily
+split, GREEN/RED, the emission curve and sinks, every PromisLimit credit,
+Fidelity's mutation sites, the Promis-to-Gratis conversion, agent rewards and
+contributor payouts checked out against each other.
