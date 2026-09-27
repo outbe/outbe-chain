@@ -828,7 +828,7 @@ fn called_repayment_and_void_have_complementary_deadline_boundaries() {
     for offset in [-1i64, 0, 1] {
         with_credis(|storage| {
             let mut credis = CredisContract::new(storage.clone());
-            let id = open_pos(&mut credis, 1);
+            let id = open_pos(&mut credis);
             credis.mark_called(id, at(10)).unwrap();
             let before = credis.get_position(id).unwrap();
             let now = settlement_deadline(&before)
@@ -1372,17 +1372,10 @@ fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_void() {
         );
         credis.mark_called(id, ORIGINATED_AT).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        let void_day = timestamp_to_date_key(deadline + 1);
-        storage
-            .set_block_timestamp(U256::from(deadline + 1))
-            .unwrap();
-        let mut next = params(handle(2), alice());
-        next.issued_at = deadline;
-        credis.open_position(next).unwrap();
         (id, deadline)
     });
-    let void_day = timestamp_to_date_key(deadline);
-    provider.set_timestamp(U256::from(deadline));
+    let void_day = timestamp_to_date_key(deadline + 1);
+    provider.set_timestamp(U256::from(deadline + 1));
     let mut next = params(alice());
     next.issued_at = deadline;
     open_at_block(&mut provider, 1, next);
@@ -1458,21 +1451,13 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
         );
 
         credis.mark_called(id, midnight).unwrap();
-        let deadline = settlement_deadline(&credis.get_position(id).unwrap());
-        storage
-            .set_block_timestamp(U256::from(deadline + 1))
-            .unwrap();
-        let void_day = timestamp_to_date_key(deadline + 1);
-        credis.void_position(id, deadline + 1).unwrap();
-        // The burn offsets a later opening only in the current UTC day.
-        open_pos(&mut credis, 4);
         settlement_deadline(&credis.get_position(id).unwrap())
     });
-    provider.set_timestamp(U256::from(deadline));
-    let void_day = timestamp_to_date_key(deadline);
+    provider.set_timestamp(U256::from(deadline + 1));
+    let void_day = timestamp_to_date_key(deadline + 1);
     StorageHandle::enter(&mut provider, |storage| {
         CredisContract::new(storage)
-            .void_position(id, deadline)
+            .void_position(id, deadline + 1)
             .unwrap();
     });
     // The burn offsets a later opening only in the current UTC day.

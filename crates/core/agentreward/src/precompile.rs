@@ -5,6 +5,11 @@ use outbe_primitives::error::Result;
 
 use crate::schema::{AgentRewardContract, RewardPool};
 
+alloy_sol_types::sol!(
+    #[sol(all_derives)]
+    "../../../contracts/precompiles/src/IAgentReward.sol"
+);
+
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
@@ -35,7 +40,10 @@ impl AgentRewardContract<'_> {
         // amount = 0 means claim the whole pool balance, and nothing to claim is
         // then a no-op rather than a failure - the pre-Gem claim behaved the same
         // way.
-        if amount.is_zero() && self.get_pool_claimable_reward(pool, sender)?.is_zero() {
+        if pool != RewardPool::Cca
+            && amount.is_zero()
+            && self.get_pool_claimable_reward(pool, sender)?.is_zero()
+        {
             return Ok(U256::ZERO);
         }
         self.claim_reward(pool, sender, amount)

@@ -54,9 +54,7 @@ fn a_late_processing_block_prices_the_day_from_its_schedule() {
             outbe_primitives::time::timestamp_to_date_key(late),
         );
         oracle
-            .utc_day_vwap_value
-            .get_nested(&late_previous_day)
-            .write(&index, U256::from(900_000))
+            .record_utc_day_vwap(late_previous_day, index, U256::from(900_000))
             .unwrap();
     });
 
