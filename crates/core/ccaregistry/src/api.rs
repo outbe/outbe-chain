@@ -45,6 +45,24 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
         state: record.state,
         bondedAmount: record.bonded_amount,
         unbondUnlocksAfter: record.unbond_unlocks_after,
-        rewardAmount: contract.reward_amounts.read(&cca)?,
     })
+}
+
+/// Positive net Gratis weights for CCAs active at the time of settlement.
+/// Historical day buckets are read without mutation.
+pub fn active_reward_weights(
+    storage: &StorageHandle<'_>,
+    day: u32,
+) -> Result<Vec<(Address, U256)>> {
+    let contract = CcaContract::new(storage.clone());
+    let mut weights = Vec::new();
+    for cca in contract.active.read_all()? {
+        let weight = contract
+            .gratis_sum_per_utc_day
+            .read(&address_day_key(cca, day))?;
+        if !weight.is_zero() {
+            weights.push((cca, weight));
+        }
+    }
+    Ok(weights)
 }

@@ -42,17 +42,17 @@ fn program_error(error: ProgramErrorV1) -> PrecompileError {
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-/// Freeze the previous UTC day's finalized VWAPs during preparation, once per
-/// WorldwideDay. Oracle COEN/ISO prices already use six-decimal Gratis units.
+/// Freeze, once per WorldwideDay, the finalized VWAPs of the UTC day before its scheduled
+/// processing `process_time`. Oracle COEN/ISO prices already use six-decimal Gratis units.
 pub fn freeze_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,
-    now: u64,
+    process_time: u64,
 ) -> Result<BTreeMap<u16, U256>> {
     if let Some(prices) = outbe_nod::api::entry_price_snapshot(storage.clone(), day)? {
         return Ok(prices);
     }
-    let previous_day = previous_date_key(timestamp_to_date_key(now));
+    let previous_day = previous_date_key(timestamp_to_date_key(process_time));
     let mut prices = BTreeMap::new();
     for iso in outbe_oracle::api::reference_currencies(storage.clone())? {
         if let Some(vwap) =
@@ -61,6 +61,6 @@ pub fn freeze_entry_price_snapshot(
             prices.insert(iso, vwap);
         }
     }
-    outbe_nod::api::store_entry_price_snapshot(storage, day, &prices)?;
+    outbe_nod::api::store_entry_price_snapshot(storage, day, previous_day, &prices)?;
     Ok(prices)
 }

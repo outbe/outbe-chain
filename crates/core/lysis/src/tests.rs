@@ -83,6 +83,33 @@ fn lysis_entry_price_is_previous_day_vwap_regardless_of_current_price() {
     }
 }
 
+/// The priced day follows the WorldwideDay's scheduled processing, not the block clock.
+#[test]
+fn entry_price_day_follows_the_scheduled_processing_time() {
+    const PROCESS_TIME: u64 = 1_700_000_000;
+    let late_block = PROCESS_TIME + 2 * SECONDS_PER_DAY;
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(late_block));
+    StorageHandle::enter(&mut provider, |storage| {
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(840);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        seed_entry_prices(&storage, PROCESS_TIME, 840, coen(150), U256::ZERO);
+        seed_entry_prices(&storage, late_block, 840, coen(900), U256::ZERO);
+
+        let prices = crate::api::freeze_entry_price_snapshot(
+            storage,
+            WorldwideDay::new(20260715),
+            PROCESS_TIME,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::runtime::resolve_entry_price_minor_for_test(&prices, 840).unwrap(),
+            coen(150),
+            "a block running late must not reprice the day"
+        );
+    });
+}
+
 #[test]
 fn entry_price_map_is_frozen_once_for_all_available_currencies() {
     const NOW: u64 = 1_700_000_000;
@@ -172,9 +199,11 @@ fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
                 .unwrap();
             if explicitly_write_zero {
                 oracle
-                    .utc_day_vwap_value
-                    .get_nested(&previous_date_key(timestamp_to_date_key(T_NOW)))
-                    .write(&eur_index, U256::ZERO)
+                    .record_utc_day_vwap(
+                        previous_date_key(timestamp_to_date_key(T_NOW)),
+                        eur_index,
+                        U256::ZERO,
+                    )
                     .unwrap();
             }
             outbe_oracle::scurve::store_scurve_entry(
@@ -632,6 +661,54 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 
     println!("100-tribute / 15-FI fraction map: {:?}", map);
     println!("weighted sum(f*y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
+}
+
+// ---------------------------------------------------------------------
+// One entry price across the direct path, the certified opening and the snapshot
+// ---------------------------------------------------------------------
+
+/// The frozen snapshot and the storage proof the certified path opens must be the same value.
+#[test]
+fn the_snapshot_and_the_certified_opening_agree_on_one_price() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let entry_price = U256::from(500_000u64);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+
+    StorageHandle::enter(&mut storage, |storage| {
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+
+        assert_eq!(
+            crate::api::freeze_entry_price_snapshot(storage.clone(), wwd, T_NOW).unwrap(),
+            std::collections::BTreeMap::from([(840, entry_price)])
+        );
+        assert_eq!(
+            outbe_nod::api::entry_price_source_day(storage.clone(), wwd).unwrap(),
+            Some(previous_date_key(timestamp_to_date_key(T_NOW)))
+        );
+
+        // The certified path opens the very same slots by storage proof.
+        let isos = [840];
+        let slots = outbe_nod::openings::entry_price_slots(wwd, &isos).unwrap();
+        let opened: Vec<_> = slots
+            .iter()
+            .map(|slot| {
+                (
+                    *slot,
+                    storage
+                        .sload(NOD_ADDRESS, U256::from_be_bytes(slot.0))
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            outbe_nod::openings::evaluate_entry_prices(wwd, &isos, &opened).unwrap(),
+            std::collections::BTreeMap::from([(840, entry_price)])
+        );
+    });
 }
 
 // ---------------------------------------------------------------------

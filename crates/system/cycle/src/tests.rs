@@ -143,9 +143,7 @@ fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
     );
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, U256::from(2_000_000u64))
+        .record_utc_day_vwap(day, index, U256::from(2_000_000u64))
         .unwrap();
 }
 
@@ -1135,6 +1133,12 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             outbe_ccaregistry::constants::BOND_REQUIREMENT,
             "CCA reward credit must roll back, preserving the bond"
         );
+        assert_eq!(
+            fire.storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -1180,6 +1184,8 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         let expected_promis_load = validator_amount / U256::from(voters.len());
         let distributed = expected_promis_load * U256::from(voters.len());
         let validator_residue = validator_amount.checked_sub(distributed).unwrap();
+        let cca_pool = amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Cca);
+        let cca_credit = cca_pool * U256::from(32) / U256::from(100);
         let expected_terminal =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
                 .checked_add(amount_for(
@@ -1191,6 +1197,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                     ))
                 })
                 .and_then(|amount| amount.checked_add(validator_residue))
+                .and_then(|amount| amount.checked_add(cca_pool - cca_credit))
                 .unwrap();
         let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
         assert_eq!(formed.base_limit, expected_terminal);
@@ -1199,12 +1206,16 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
                 .unwrap(),
-            outbe_ccaregistry::constants::BOND_REQUIREMENT
-                + outbe_primitives::units::checked_protocol_to_native(amount_for(
-                    outbe_emissionlimit::allocation::EmissionSinkId::Cca,
-                ))
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "CCA custody holds only the bond"
+        );
+        assert_eq!(
+            retry
+                .storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
-            "retry must credit CCA exactly once"
+            outbe_primitives::units::checked_protocol_to_native(cca_credit).unwrap(),
+            "retry must credit CCA backing to AgentReward exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
         for voter in voters {
@@ -1351,23 +1362,20 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         let cca_after_first = ctx
             .storage
-            .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+            .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
             .unwrap();
-        assert!(
-            cca_after_first > outbe_ccaregistry::constants::BOND_REQUIREMENT,
-            "first fire credited CCA"
-        );
+        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early - no double-mint.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             cca_after_first,
             "CCA pool must not be minted twice for the same prev_day"
@@ -1736,10 +1744,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let mut day = previous_date_key(timestamp_to_date_key(midnight));
             oracle.utc_day_vwap_last_finalized.write(day)?;
             for _ in 0..28 {
-                oracle
-                    .utc_day_vwap_value
-                    .get_nested(&day)
-                    .write(&index, U256::from(100))?;
+                oracle.record_utc_day_vwap(day, index, U256::from(100))?;
                 day = previous_date_key(day);
             }
             let issue = |owner, floor| {
@@ -1785,10 +1790,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // rather than replaying the same latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
-            oracle
-                .utc_day_vwap_value
-                .get_nested(&previous)
-                .write(&index, U256::from(100))?;
+            oracle.record_utc_day_vwap(previous, index, U256::from(100))?;
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;

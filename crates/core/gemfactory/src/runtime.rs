@@ -648,7 +648,7 @@ fn compute_floor(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let floor_price = match gem_type {
-        // A zero floor qualifies the gem from birth: every price clears it.
+        // A zero floor clears at any price on the gem's first full day.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
             U256::ZERO
@@ -712,8 +712,14 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// PoW gate for `mine_promis`. The preimage is
-/// `gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
 pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
-    pow::validate_mining_pow(gem_id, owner, pow::SINGLE_EXERCISE_SEQUENCE, nonce)
-        .map_err(|e| GemFactoryError::from(e).into())
+    pow::validate_mining_pow(
+        pow::MiningDomain::Gem,
+        gem_id,
+        owner,
+        pow::SINGLE_EXERCISE_SEQUENCE,
+        nonce,
+    )
+    .map_err(|e| GemFactoryError::from(e).into())
 }

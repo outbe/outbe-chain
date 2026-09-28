@@ -2,8 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
 
-/// The one type issued without a floor, and so qualified from birth. Pinned to
-/// `GemTypes::Genesis` by a test in the factory, which owns that enum.
+/// The one type issued without a floor. Pinned to `GemTypes::Genesis` by a test in the
+/// factory, which owns that enum.
 pub const GENESIS_GEM_TYPE: u8 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

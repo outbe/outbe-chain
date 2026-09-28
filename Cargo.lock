@@ -8219,6 +8219,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

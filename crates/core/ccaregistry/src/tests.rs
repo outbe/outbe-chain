@@ -1,7 +1,6 @@
 use crate::{
     api,
     constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
-    emission_sink,
     precompile::{dispatch, ICcaRegistry},
     runtime,
     schema::{address_day_key, CcaContract, CcaRecordEntryExt},
@@ -10,9 +9,7 @@ use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     addresses::CCA_REGISTRY_ADDRESS,
-    block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    units::checked_protocol_to_native,
 };
 
 const ALICE: Address = address!("00000000000000000000000000000000000000a1");
@@ -40,14 +37,6 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     )
     .unwrap();
 }
-fn reward(storage: &StorageHandle<'_>, amount: U256) -> U256 {
-    let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, 1), storage.clone());
-    emission_sink::distribute_daily(&ctx, DAY, amount).unwrap()
-}
-fn native(amount: u64) -> U256 {
-    checked_protocol_to_native(U256::from(amount)).unwrap()
-}
-
 #[test]
 fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration() {
     run(|storage| {
@@ -94,7 +83,6 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
         assert_eq!(record.name, "B");
         assert_eq!(record.state, ICcaRegistry::State::Deregistered);
         assert_eq!(record.bondedAmount, U256::ZERO);
-        assert_eq!(record.rewardAmount, U256::ZERO);
     });
 }
 
@@ -119,7 +107,6 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         bond(&storage, ALICE, U256::from(7));
         runtime::position_opened(&storage, ALICE, DAY, U256::from(100)).unwrap();
-        assert_eq!(reward(&storage, U256::from(20)), U256::ZERO);
         runtime::unbond(storage.clone(), ALICE).unwrap();
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.cca, ALICE);
@@ -150,13 +137,11 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
             api::get_cca(&storage, ALICE).unwrap().bondedAmount,
             U256::ZERO
         );
-        runtime::claim_rewards(storage.clone(), ALICE).unwrap();
         assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(
             storage.balance(ALICE).unwrap(),
-            BOND_REQUIREMENT + U256::from(7) + native(20)
+            BOND_REQUIREMENT + U256::from(7)
         );
-        assert!(runtime::claim_rewards(storage.clone(), ALICE).is_err());
         bond(&storage, ALICE, BOND_REQUIREMENT);
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
@@ -192,36 +177,6 @@ fn partial_registration_can_exit_and_rejected_calls_do_not_mutate() {
 }
 
 #[test]
-fn proportional_rewards_exclude_inactive_weights_and_recycle_dust() {
-    run(|storage| {
-        assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        bond(&storage, BOB, BOND_REQUIREMENT);
-        assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(1)).unwrap();
-        runtime::position_opened(&storage, BOB, DAY, U256::from(3)).unwrap();
-        assert_eq!(reward(&storage, U256::from(11)), U256::ONE);
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(2)
-        );
-        assert_eq!(api::get_cca(&storage, BOB).unwrap().rewardAmount, native(8));
-        runtime::unbond(storage.clone(), BOB).unwrap();
-        assert_eq!(reward(&storage, U256::from(11)), U256::ZERO);
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(13)
-        );
-        runtime::claim_rewards(storage.clone(), BOB).unwrap();
-        assert_eq!(storage.balance(BOB).unwrap(), native(8));
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT * U256::from(2) + native(13)
-        );
-    });
-}
-
-#[test]
 fn void_subtracts_only_burned_gratis_even_after_exit() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
@@ -247,65 +202,14 @@ fn void_subtracts_only_burned_gratis_even_after_exit() {
 }
 
 #[test]
-fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
-    run(|storage| {
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        let before = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
-        assert!(emission_sink::distribute_daily(&ctx, 20231115, U256::MAX).is_err());
-        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), before);
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(100)
-        );
-        assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
-        assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::MAX);
-    });
-}
-
-#[test]
-fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
-    run(|storage| {
-        for cca in [ALICE, BOB] {
-            bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
-        }
-        let contract = CcaContract::new(storage.clone());
-        let active = contract.active.read_all().unwrap();
-        // Fail on the second recipient, after the first credit and mint.
-        contract
-            .reward_amounts
-            .write(&active[1], U256::MAX)
-            .unwrap();
-        let balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        assert!(emission_sink::distribute_daily(&ctx, DAY, U256::from(2)).is_err());
-        assert_eq!(
-            contract.reward_amounts.read(&active[0]).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(contract.reward_amounts.read(&active[1]).unwrap(), U256::MAX);
-        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), balance);
-    });
-}
-
-#[test]
-fn failed_claim_preserves_record_and_balance() {
+fn failed_unbond_claim_preserves_record_and_balance() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
-        reward(&storage, U256::from(9));
         let balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
         storage
             .decrease_balance(CCA_REGISTRY_ADDRESS, balance)
             .unwrap();
-        assert!(runtime::claim_rewards(storage.clone(), ALICE).is_err());
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(9)
-        );
         runtime::unbond(storage.clone(), ALICE).unwrap();
         storage
             .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
@@ -362,13 +266,19 @@ fn abi_reads_and_nonpayable_selectors() {
             ICcaRegistry::getCcaStateCall { cca: ALICE }.abi_encode(),
             ICcaRegistry::unbondCall {}.abi_encode(),
             ICcaRegistry::claimUnbondedCall {}.abi_encode(),
-            ICcaRegistry::claimRewardsCall {}.abi_encode(),
             ICcaRegistry::supportsInterfaceCall {
                 interfaceId: [0x01, 0xff, 0xc9, 0xa7].into(),
             }
             .abi_encode(),
         ] {
             assert!(dispatch(storage.clone(), &data, ALICE, U256::ONE).is_err());
+        }
+        for signature in ["claimRewards()", "claimRewards(uint256)"] {
+            let mut data = alloy_primitives::keccak256(signature)[..4].to_vec();
+            if signature.contains("uint256") {
+                data.extend_from_slice(&[0; 32]);
+            }
+            assert!(dispatch(storage.clone(), &data, ALICE, U256::ZERO).is_err());
         }
         assert!(dispatch(storage.clone(), &[], ALICE, U256::ONE).is_err());
         assert!(dispatch(storage, &[0, 1, 2, 3], ALICE, U256::ZERO).is_err());
@@ -393,88 +303,6 @@ fn static_registration_is_rejected_without_state_or_events() {
         assert!(api::cca_state(&storage, ALICE).is_err());
     });
     assert!(provider.get_ordered_events().is_empty());
-}
-
-#[test]
-fn daily_distribution_fits_a_representative_active_population() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        for id in 1..=128u64 {
-            let cca = Address::from_word(U256::from(id).into());
-            bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
-        }
-    });
-    provider.set_gas_limit(30_000_000);
-    provider.enable_production_storage_gas_metering();
-    StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(reward(&storage, U256::from(128)), U256::ZERO);
-        assert!(storage.gas_used().unwrap() < 30_000_000);
-    });
-}
-
-#[test]
-fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
-    run(|storage| {
-        let next = 20231116;
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(60)).unwrap();
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(40)).unwrap();
-        runtime::position_opened(&storage, BOB, DAY, U256::from(100)).unwrap();
-        storage
-            .set_block_timestamp(U256::from(
-                outbe_primitives::time::date_key_to_utc_timestamp(next),
-            ))
-            .unwrap();
-        runtime::position_opened(&storage, ALICE, next, U256::from(100)).unwrap();
-        runtime::position_opened(&storage, BOB, next, U256::from(150)).unwrap();
-        runtime::position_voided(&storage, ALICE, next, U256::from(50)).unwrap();
-        assert_eq!(
-            api::reward_weight(&storage, ALICE, DAY).unwrap(),
-            U256::from(100)
-        );
-        assert_eq!(
-            api::reward_weight(&storage, ALICE, next).unwrap(),
-            U256::from(50)
-        );
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        assert_eq!(
-            emission_sink::distribute_daily(&ctx, DAY, U256::from(120)).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(60)
-        );
-        assert_eq!(
-            api::get_cca(&storage, BOB).unwrap().rewardAmount,
-            native(60)
-        );
-        assert_eq!(
-            emission_sink::distribute_daily(&ctx, next, U256::from(120)).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(90)
-        );
-        assert_eq!(
-            api::get_cca(&storage, BOB).unwrap().rewardAmount,
-            native(150)
-        );
-        // Historical GRATIS does not carry into an empty day.
-        assert_eq!(
-            emission_sink::distribute_daily(&ctx, 20231117, U256::from(120)).unwrap(),
-            U256::from(120)
-        );
-        // A later void cannot claw back already accrued rewards.
-        runtime::position_voided(&storage, ALICE, next, U256::from(50)).unwrap();
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(90)
-        );
-    });
 }
 
 #[test]
@@ -503,15 +331,6 @@ fn deficits_offset_later_openings_only_in_the_same_cca_day() {
         assert_eq!(
             api::reward_weight(&storage, BOB, DAY).unwrap(),
             U256::from(15)
-        );
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().rewardAmount,
-            native(50)
-        );
-        assert_eq!(
-            api::get_cca(&storage, BOB).unwrap().rewardAmount,
-            native(50)
         );
         runtime::position_voided(&storage, ALICE, DAY, U256::from(25)).unwrap();
         runtime::position_opened(&storage, ALICE, next, U256::from(7)).unwrap();
