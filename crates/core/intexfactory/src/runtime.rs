@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_oracle::api::{current_vwap_snapshot, get_finalized_window_vwap, VwapSnapshotId};
+use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -758,18 +758,27 @@ pub fn settle_intex(
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    settle(storage, series_id, intex_owner, settler, amount, |series| {
+    let quote = |series: &outbe_intex::SeriesRecord| {
         let currency = accept_payment_token(storage, asset, series)?;
         let (cost, snapshot) = cost_in_token(storage, series, asset, currency, amount)?;
         require_snapshot(snapshot, snapshot_id)?;
-        deposit_payment(storage, settler, asset, cost)
-    })
+        Ok(cost)
+    };
+    settle(
+        storage,
+        series_id,
+        intex_owner,
+        settler,
+        amount,
+        quote,
+        |_, cost| deposit_payment(storage, settler, asset, cost),
+    )
 }
 
 /// Rejects an issuance-rail payment authorized for any snapshot but the required one.
 fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
     match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(IntexFactoryError::StaleVwapSnapshot {
+        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
             authorized,
             required,
         }
@@ -787,19 +796,28 @@ pub fn settle_intex_with_paynote(
     amount: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    settle(storage, series_id, intex_owner, settler, amount, |series| {
-        discharge_cost(storage, series, amount, settler, paynote_proof)
-    })
+    settle(
+        storage,
+        series_id,
+        intex_owner,
+        settler,
+        amount,
+        |_| Ok(()),
+        |series, ()| discharge_cost(storage, series, amount, settler, paynote_proof),
+    )
 }
 
-/// `settler` is the caller; the settled units stay with `intex_owner`.
-fn settle(
+/// `settler` is the caller; the settled units stay with `intex_owner`. `quote`
+/// prices and authorizes the payment before any state changes; `pay` then moves
+/// it after the units, inside the same checkpoint.
+fn settle<Q>(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     intex_owner: Address,
     settler: Address,
     amount: U256,
-    pay: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<()>,
+    quote: impl FnOnce(&outbe_intex::SeriesRecord) -> Result<Q>,
+    pay: impl FnOnce(&outbe_intex::SeriesRecord, Q) -> Result<()>,
 ) -> Result<()> {
     if intex_owner.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
@@ -831,6 +849,7 @@ fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
+    let quoted = quote(&series)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice; a failed payment rolls the move back.
@@ -851,7 +870,7 @@ fn settle(
             .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
-        pay(&series)?;
+        pay(&series, quoted)?;
 
         emit_event(
             storage,
@@ -1019,16 +1038,6 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
-fn window_coen_rate(
-    storage: &StorageHandle<'_>,
-    iso_code: u16,
-    snapshot: VwapSnapshotId,
-) -> Result<U256> {
-    get_finalized_window_vwap(storage.clone(), iso_code, snapshot)?
-        .ok_or_else(|| IntexFactoryError::OracleUnavailable.into())
-}
-
 /// Cost of `amount` units in `token`'s minor units and, on the issuance rail, the
 /// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
 /// reference currency; an issuance-currency token is charged at the snapshot's
@@ -1052,10 +1061,13 @@ fn cost_in_token(
     let (rate, snapshot) = if target_iso == series.reference_currency {
         (None, None)
     } else {
-        let snapshot = current_vwap_snapshot(storage.clone())?;
-        let from = window_coen_rate(storage, series.reference_currency, snapshot)?;
-        let to = window_coen_rate(storage, target_iso, snapshot)?;
-        (Some((to, from)), Some(snapshot))
+        let fx = settlement_fx_rates(storage.clone(), target_iso, series.reference_currency)?
+            .ok_or(IntexFactoryError::OracleUnavailable)?;
+        let rate = (
+            fx.issuance_currency_vwap_minor,
+            fx.reference_currency_vwap_minor,
+        );
+        (Some(rate), Some(fx.snapshot))
     };
     Ok((
         settlement_units(product, amount, rate, payment_decimals)?,

@@ -67,6 +67,27 @@ fn the_fx_leg_is_floored_together_with_the_units() {
 }
 
 #[test]
+fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
+    // 100 USD = entry 2.00 x load 50; R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
+    let product = U256::from(2_000_000u64) * U256::from(50_000_000u64);
+    let rate = Some((U256::from(1_800_000u64), U256::from(2_000_000u64)));
+    for (decimals, expected) in [
+        (6, U256::from(90_000_000u64)),
+        (8, U256::from(9_000_000_000u64)),
+        (
+            18,
+            U256::from(90u64) * U256::from(10u64).pow(U256::from(18u64)),
+        ),
+    ] {
+        assert_eq!(
+            runtime::settlement_units(product, U256::ONE, rate, decimals).unwrap(),
+            expected,
+            "{decimals} decimals"
+        );
+    }
+}
+
+#[test]
 fn three_units_convert_as_one_operation_before_the_floor() {
     // One dollar a unit at I/R = 1/3: 1,000,000 for all three, not 3 x 333,333.
     let rate = Some((U256::from(1_000_000u64), U256::from(3_000_000u64)));

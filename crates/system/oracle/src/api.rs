@@ -177,6 +177,39 @@ pub fn get_finalized_window_vwap(
     oracle.finalized_window_vwap(pair, snapshot)
 }
 
+/// Both COEN legs of a cross-currency settlement, read from the one trailing
+/// snapshot required at the current block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SettlementFxRates {
+    pub snapshot: VwapSnapshotId,
+    pub issuance_currency_vwap_minor: U256,
+    pub reference_currency_vwap_minor: U256,
+}
+
+/// `None` while either leg lacks a finalized positive price in that window.
+pub fn settlement_fx_rates(
+    storage: StorageHandle,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> Result<Option<SettlementFxRates>> {
+    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let Some(issuance_currency_vwap_minor) =
+        get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
+    else {
+        return Ok(None);
+    };
+    let Some(reference_currency_vwap_minor) =
+        get_finalized_window_vwap(storage, reference_currency, snapshot)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(SettlementFxRates {
+        snapshot,
+        issuance_currency_vwap_minor,
+        reference_currency_vwap_minor,
+    }))
+}
+
 /// Previous half-open eight-hour VWAP, scaled by `SCALE_1E18` (1.0 = 10^18).
 ///
 /// The period implementation is pending; currently returns `None`.

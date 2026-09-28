@@ -30,8 +30,8 @@ pub enum IntexFactoryError {
     Rounding(RoundingError),
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
-    #[error("VWAP snapshot {authorized:#x} is stale; settlement requires {required:#x}")]
-    StaleVwapSnapshot {
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    VwapSnapshotMismatch {
         authorized: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },

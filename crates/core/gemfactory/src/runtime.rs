@@ -2,9 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{
-    current_vwap_snapshot, get_finalized_window_vwap, get_utc_day_vwap_for_iso, VwapSnapshotId,
-};
+use outbe_oracle::api::{get_utc_day_vwap_for_iso, settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -290,13 +288,21 @@ pub fn settle_gem(
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    settle(storage, gem_id, |item| {
+    let quote = |item: &outbe_gem::GemData| {
         let currency = accept_payment_asset(storage, asset, item)?;
         let (amount_paid, snapshot) = cost_in_token(storage, item, asset, currency)?;
         require_snapshot(snapshot, snapshot_id)?;
-        deposit_payment(storage, caller, asset, amount_paid)?;
         Ok((settlement_currency(item, currency), amount_paid))
-    })
+    };
+    settle(
+        storage,
+        gem_id,
+        quote,
+        |_, (settlement_currency, amount_paid)| {
+            deposit_payment(storage, caller, asset, amount_paid)?;
+            Ok((settlement_currency, amount_paid))
+        },
+    )
 }
 
 /// Settles a gem by spending a PayNote owned by `caller`, so no tokens move here.
@@ -306,37 +312,45 @@ pub fn settle_gem_with_paynote(
     gem_id: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    settle(storage, gem_id, |item| {
-        let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+    settle(
+        storage,
+        gem_id,
+        |_| Ok(()),
+        |item, ()| {
+            let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-        // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
-        if claim.owner != caller {
-            return Err(GemFactoryError::PayNoteOwnerMismatch {
-                expected: caller,
-                actual: claim.owner,
+            // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
+            if claim.owner != caller {
+                return Err(GemFactoryError::PayNoteOwnerMismatch {
+                    expected: caller,
+                    actual: claim.owner,
+                }
+                .into());
             }
-            .into());
-        }
 
-        let currency = accept_payment_asset(storage, claim.asset, item)?;
-        let (amount_paid, _) = cost_in_token(storage, item, claim.asset, currency)?;
-        // Exact: the surplus of an over-spend is already in the reserve vault.
-        if claim.spend_amount != amount_paid {
-            return Err(GemFactoryError::PayNoteCostMismatch {
-                covered: claim.spend_amount,
-                required: amount_paid,
+            let currency = accept_payment_asset(storage, claim.asset, item)?;
+            let (amount_paid, _) = cost_in_token(storage, item, claim.asset, currency)?;
+            // Exact: the surplus of an over-spend is already in the reserve vault.
+            if claim.spend_amount != amount_paid {
+                return Err(GemFactoryError::PayNoteCostMismatch {
+                    covered: claim.spend_amount,
+                    required: amount_paid,
+                }
+                .into());
             }
-            .into());
-        }
-        Ok((settlement_currency(item, currency), amount_paid))
-    })
+            Ok((settlement_currency(item, currency), amount_paid))
+        },
+    )
 }
 
-/// `pay` returns the settlement currency and the amount it charged.
-fn settle(
+/// `quote` prices and authorizes the payment before any state changes; `pay`
+/// then moves it after the transition and returns the settlement currency and
+/// the amount it charged.
+fn settle<Q>(
     storage: &StorageHandle<'_>,
     gem_id: U256,
-    pay: impl FnOnce(&outbe_gem::GemData) -> Result<(u16, U256)>,
+    quote: impl FnOnce(&outbe_gem::GemData) -> Result<Q>,
+    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(u16, U256)>,
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may pay for a gem; the payment is bound to the caller, the gem is not.
@@ -353,11 +367,12 @@ fn settle(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
+    let quoted = quote(&item)?;
     storage.clone().with_checkpoint(|| {
         // Settled before payment so a token callback cannot settle the gem twice;
         // a failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
-        let (settlement_currency, amount_paid) = pay(&item)?;
+        let (settlement_currency, amount_paid) = pay(&item, quoted)?;
         emit_event(
             storage,
             GemSettled {
@@ -497,12 +512,17 @@ fn cost_in_token(
     let (rate, snapshot) = match currency {
         PaymentCurrency::Reference => (None, None),
         PaymentCurrency::Issuance => {
-            let snapshot = current_vwap_snapshot(storage.clone())?;
+            let fx = settlement_fx_rates(
+                storage.clone(),
+                item.issuance_currency,
+                item.reference_currency,
+            )?
+            .ok_or(GemFactoryError::OracleUnavailable)?;
             let rate = (
-                window_coen_rate(storage, item.issuance_currency, snapshot)?,
-                window_coen_rate(storage, item.reference_currency, snapshot)?,
+                fx.issuance_currency_vwap_minor,
+                fx.reference_currency_vwap_minor,
             );
-            (Some(rate), Some(snapshot))
+            (Some(rate), Some(fx.snapshot))
         }
     };
     Ok((settlement_units(item, rate, asset_decimals)?, snapshot))
@@ -511,23 +531,13 @@ fn cost_in_token(
 /// Rejects an issuance-rail payment authorized for any snapshot but the required one.
 fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
     match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(GemFactoryError::StaleVwapSnapshot {
+        Some(required) if required != authorized => Err(GemFactoryError::VwapSnapshotMismatch {
             authorized,
             required,
         }
         .into()),
         _ => Ok(()),
     }
-}
-
-/// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
-fn window_coen_rate(
-    storage: &StorageHandle<'_>,
-    iso_code: u16,
-    snapshot: VwapSnapshotId,
-) -> Result<U256> {
-    get_finalized_window_vwap(storage.clone(), iso_code, snapshot)?
-        .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 /// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,

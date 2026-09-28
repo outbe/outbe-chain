@@ -1960,7 +1960,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
     assert_eq!(
         stale.unwrap_err().to_string(),
-        PrecompileError::from(NodFactoryError::StaleVwapSnapshot {
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
             authorized: quoted,
             required: next,
         })
@@ -2006,7 +2006,7 @@ fn a_policy_change_between_quote_and_payment_rejects_the_old_snapshot() {
         other_policy.to_u256(),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("is stale"), "{error}");
+    assert!(error.to_string().contains("does not match"), "{error}");
     assert!(!is_settled(&mut world, nod_id));
 }
 

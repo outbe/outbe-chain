@@ -979,7 +979,7 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    let (gem_id, quoted) = StorageHandle::enter(&mut provider, |storage| {
+    let (gem_id, amount, quoted) = StorageHandle::enter(&mut provider, |storage| {
         register_currency(&storage, 978, six_decimal_unit());
         seed_day_vwap(&storage, 840, usd_rate);
         let gem_id = issue_at_live_rate(
@@ -992,8 +992,8 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         )
         .unwrap();
         seed_qualifying_day(&storage, gem_id);
-        let (_, _, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
-        (gem_id, quoted)
+        let (_, amount, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        (gem_id, amount, quoted)
     });
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
@@ -1007,26 +1007,65 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 
     provider.set_timestamp(U256::from(cutoff + 3_600));
     StorageHandle::enter(&mut provider, |storage| {
-        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, next_amount, required) =
+            runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        assert_eq!(next_amount, amount, "the next window holds the same price");
         let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, quoted);
         assert_eq!(
             err_msg(res),
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::StaleVwapSnapshot {
+                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
                         authorized: quoted,
                         required,
                     }
                 )
             )
         );
+        let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
+            cutoff + 3_600,
+            &outbe_oracle::api::VwapPolicy {
+                policy_version: 2,
+                ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+            },
+        )
+        .unwrap();
+        let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, other_policy.to_u256());
+        assert!(err_msg(res).contains("does not match"));
         let reference = runtime::settle_gem(&storage, ALICE, gem_id, STABLE, quoted);
         assert!(err_msg(reference).contains("unexpected amount"));
         assert_eq!(
             gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
             GemState::Issued as u8
         );
+    });
+}
+
+#[test]
+fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
+    let eur_8 = address!("0x00000000000000000000000000000000000000E8");
+    let eur_18 = address!("0x00000000000000000000000000000000000000E9");
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    stub_stablecoin(&mut provider, eur_8, 978, 8);
+    stub_stablecoin(&mut provider, eur_18, 978, 18);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, U256::from(1_800_000u64));
+        seed_day_vwap(&storage, 840, usd_rate);
+        let load = U256::from(50u64) * six_decimal_unit();
+        let gem_id = issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, load, 978, 840).unwrap();
+        for (asset, expected) in [
+            (STABLE_EUR, U256::from(90_000_000u64)),
+            (eur_8, U256::from(9_000_000_000u64)),
+            (
+                eur_18,
+                U256::from(90u64) * U256::from(10u64).pow(U256::from(18)),
+            ),
+        ] {
+            let (_, cost, _) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
+            assert_eq!(cost, expected, "{asset}");
+        }
     });
 }
 

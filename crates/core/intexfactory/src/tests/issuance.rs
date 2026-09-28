@@ -302,6 +302,12 @@ fn a_single_message_day_is_chunk_zero_of_one() {
 /// Issue a series whose issuance currency differs from its reference, with a
 /// payment token reporting `iso` and 18 decimals and a registered vault.
 fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
+    let mut storage = dual_currency_series(iso);
+    StorageHandle::enter(&mut storage, f)
+}
+
+/// The storage behind [`with_dual_currency_series`], for tests that move the clock.
+fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
 
@@ -332,8 +338,8 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
             ..sample(7)
         };
         runtime::issue(&s, params).unwrap();
-        f(s)
-    })
+    });
+    storage
 }
 
 /// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
@@ -468,19 +474,14 @@ fn the_reference_currency_settles_without_reading_any_rate() {
 
 #[test]
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
-    with_dual_currency_series(EUR_ISO as u64, |s| {
-        let oracle = OracleContract::new(s.clone());
-        write_day_rate(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            U256::from(2u64) * COEN_ISO_RATE_SCALE,
-        );
-        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        seed_qualifying_day(&s);
-        let (_, _, quoted) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
-        let settle = |snapshot: U256| {
+    let mut storage = dual_currency_series(EUR_ISO as u64);
+    let quote = |storage: &mut HashMapStorageProvider| {
+        StorageHandle::enter(storage, |s| {
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
+        })
+    };
+    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
+        StorageHandle::enter(storage, |s| {
             runtime::settle_intex(
                 &s,
                 sid(7),
@@ -492,27 +493,70 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             )
             .unwrap_err()
             .to_string()
-        };
+        })
+    };
+    StorageHandle::enter(&mut storage, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        seed_qualifying_day(&s);
+    });
+    let (_, amount, quoted) = quote(&mut storage);
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    // The fixture token stubs no transfer, so reaching the payment ends here.
+    let token_error = "sub-call not available";
 
-        let current = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
-        let previous = outbe_oracle::api::get_vwap_snapshot_id(
-            current.cutoff() - 1,
-            &outbe_oracle::api::DEFAULT_VWAP_POLICY,
-        )
-        .unwrap();
-        let stale = settle(previous.to_u256());
-        assert!(stale.contains("is stale"), "{stale}");
-        assert!(!settle(quoted).contains("is stale"));
+    storage.set_timestamp(U256::from(cutoff + 3_599));
+    assert!(settle(&mut storage, quoted).contains(token_error));
 
-        let next_version = outbe_oracle::api::get_vwap_snapshot_id(
-            current.cutoff(),
-            &outbe_oracle::api::VwapPolicy {
-                policy_version: 2,
-                ..outbe_oracle::api::DEFAULT_VWAP_POLICY
-            },
+    storage.set_timestamp(U256::from(cutoff + 3_600));
+    let (_, next_amount, required) = quote(&mut storage);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    assert_eq!(
+        settle(&mut storage, quoted),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: quoted,
+                required,
+            }
         )
-        .unwrap();
-        assert!(settle(next_version.to_u256()).contains("is stale"));
+        .to_string()
+    );
+    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
+        cutoff + 3_600,
+        &outbe_oracle::api::VwapPolicy {
+            policy_version: 2,
+            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+        },
+    )
+    .unwrap();
+    assert!(settle(&mut storage, other_policy.to_u256()).contains("does not match"));
+    StorageHandle::enter(&mut storage, |s| {
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_reference_payment_ignores_the_snapshot_it_names() {
+    with_dual_currency_series(REFERENCE_ISO as u64, |s| {
+        seed_qualifying_day(&s);
+        let err = runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::ONE,
+            payment_token(),
+            U256::from(7u64),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("sub-call not available"), "{err}");
     });
 }
