@@ -177,7 +177,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     entry_price: price,
                     issuance_currency: 840,
                     asset_decimals: 6,
-                    valuation_price: U256::from(2) * outbe_primitives::units::SCALE_1E18,
+                    valuation_price: price,
                 },
                 auth(GratisOp::Pledge, price, 1),
             )
