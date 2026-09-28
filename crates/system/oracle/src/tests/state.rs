@@ -858,6 +858,86 @@ fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
     });
 }
 
+#[test]
+fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let coen = AddressPair::new_coen_to(840);
+        let eth = AddressPair::from_addresses(ETH, USDT);
+        oracle.register_pair(coen).unwrap();
+        oracle.register_pair(eth).unwrap();
+
+        let day = ATOMIC_DAY_START;
+        let hour = 3_600;
+        let mut samples: Vec<(AddressPair, u64, U256, U256)> = Vec::new();
+        for i in 0..60u64 {
+            let ts = day + i * 1_111;
+            let coen_volume = if i % 4 == 0 {
+                U256::ZERO
+            } else {
+                coen_iso(i % 7)
+            };
+            let mut entries = vec![(coen, coen_iso(100 + i % 9), coen_volume)];
+            if (ts - day) / hour % 3 != 1 {
+                entries.push((eth, fixed18(2_000 + i), fixed18(i % 3)));
+            }
+            oracle.write_snapshot(ts, &entries).unwrap();
+            samples.extend(entries.into_iter().map(|(p, r, v)| (p, ts, r, v)));
+        }
+
+        for pair in [coen, eth] {
+            for (start, end) in [
+                (day + hour, day + 15 * hour),
+                (day + 1_234, day + 17 * hour + 99),
+                (day + 4 * hour, day + 5 * hour),
+            ] {
+                let (pv, volume) = samples
+                    .iter()
+                    .filter(|(p, ts, _, _)| *p == pair && (start..end).contains(ts))
+                    .fold(
+                        (U256::ZERO, U256::ZERO),
+                        |(pv, total), (_, _, rate, vol)| {
+                            let weight = if vol.is_zero() {
+                                crate::constants::zero_volume_weight(pair)
+                            } else {
+                                *vol
+                            };
+                            (pv + rate * weight, total + weight)
+                        },
+                    );
+                let expected = (!volume.is_zero()).then(|| pv / volume);
+                assert_eq!(
+                    oracle.try_calculate_vwap(pair, start, end).unwrap(),
+                    expected,
+                    "{pair:?} [{start}, {end})"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn an_hourly_cell_serves_a_whole_hour_whose_raw_snapshots_were_evicted() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let start = ATOMIC_DAY_START + 11 * 3_600;
+        oracle
+            .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])
+            .unwrap();
+        oracle
+            .write_snapshot(start + 60, &[(pair, coen_iso(20), coen_iso(1))])
+            .unwrap();
+        oracle.snapshot_oldest_idx.write(1).unwrap();
+
+        assert_eq!(
+            oracle.calculate_vwap(pair, start, start + 3_600).unwrap(),
+            coen_iso(15)
+        );
+    });
+}
+
 /// The bulk calculators skip pairs that hold no samples, but a rejected argument
 /// is not "no data" - it has to reach the caller instead of being absorbed into
 /// the empty-result path.
@@ -1693,6 +1773,54 @@ fn finalized_window_vwap_rejects_an_open_window_and_reports_an_empty_one() {
         assert_eq!(oracle.finalized_window_vwap(pair, closed).unwrap(), None);
         assert_eq!(
             crate::api::get_finalized_window_vwap(storage.clone(), 978, closed).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn finalized_window_vwap_never_falls_back_to_an_earlier_window() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 11 * hour, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(day + 2 * hour + 1_800, &[(pair, coen_iso(7), coen_iso(1))])
+            .unwrap();
+
+        assert_eq!(
+            oracle
+                .finalized_window_vwap(pair, default_snapshot_at(day + 10 * hour))
+                .unwrap(),
+            Some(coen_iso(7))
+        );
+        assert_eq!(
+            oracle
+                .finalized_window_vwap(pair, default_snapshot_at(day + 11 * hour))
+                .unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn finalized_window_vwap_treats_a_zero_price_as_missing() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(day + 5 * hour, &[(pair, U256::ZERO, coen_iso(1))])
+            .unwrap();
+
+        assert_eq!(
+            oracle
+                .finalized_window_vwap(pair, default_snapshot_at(day + 10 * hour))
+                .unwrap(),
             None
         );
     });

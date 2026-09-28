@@ -17,6 +17,7 @@ const INTERVAL_SHIFT: usize = CUTOFF_BITS;
 const LOOKBACK_SHIFT: usize = INTERVAL_SHIFT + 32;
 const VERSION_SHIFT: usize = LOOKBACK_SHIFT + 32;
 const PACKED_BITS: usize = VERSION_SHIFT + 32;
+const _: () = assert!(MAX_SNAPSHOT_RETENTION_SECONDS < 1 << 32);
 
 /// Snapshots cover `[cutoff - lookback_seconds, cutoff)`; cutoffs fall every
 /// `update_interval_seconds` from the UTC epoch.

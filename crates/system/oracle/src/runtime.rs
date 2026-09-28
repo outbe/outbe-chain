@@ -323,7 +323,7 @@ impl OracleContract<'_> {
     }
 
     /// Whole hours come from the hourly cells; partial hours and hours whose cell
-    /// was already reused are read from raw snapshots.
+    /// was already reused for a later hour are read from raw snapshots.
     fn add_sub_day_span(
         &self,
         pair: AddressPair,
@@ -350,6 +350,9 @@ impl OracleContract<'_> {
         self.add_raw_snapshots(pair, last_hour, end_time, total)
     }
 
+    /// Whether the hour's cell accounts for it. Snapshots are written in time
+    /// order, so a cell still labelled with an earlier hour proves the pair had no
+    /// entry in this one; only a cell reused for a later hour does not.
     fn add_hourly_aggregate(
         &self,
         pair: AddressPair,
@@ -357,8 +360,9 @@ impl OracleContract<'_> {
         total: &mut VwapAccumulator,
     ) -> Result<bool> {
         let cell = hourly_vwap_cell(hour_start);
-        if self.hourly_vwap_hour.get_nested(&pair).read(&cell)? != hour_start {
-            return Ok(false);
+        let held = self.hourly_vwap_hour.get_nested(&pair).read(&cell)?;
+        if held != hour_start {
+            return Ok(held < hour_start);
         }
         let volume = self.hourly_vol_sum.get_nested(&pair).read(&cell)?;
         if !volume.is_zero() {
@@ -375,7 +379,7 @@ impl OracleContract<'_> {
     }
 
     /// VWAP over the snapshot's window once its cutoff has passed; `None` when the
-    /// window holds no observation.
+    /// window holds no observation or no positive price.
     pub fn finalized_window_vwap(
         &self,
         pair: AddressPair,
@@ -384,7 +388,9 @@ impl OracleContract<'_> {
         if snapshot.cutoff() > self.storage.timestamp()?.to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
-        self.try_calculate_vwap(pair, snapshot.start(), snapshot.cutoff())
+        Ok(self
+            .try_calculate_vwap(pair, snapshot.start(), snapshot.cutoff())?
+            .filter(|vwap| !vwap.is_zero()))
     }
 
     fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {
