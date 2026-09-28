@@ -43,6 +43,8 @@ pub struct Claim {
 #[derive(Clone, Debug)]
 struct PairTallyOutcome {
     median: U256,
+    /// Median volume of the reward-band winners.
+    volume: U256,
     winning_validators: Vec<Address>,
 }
 
@@ -86,17 +88,21 @@ fn isqrt_u1024(n: U1024) -> U1024 {
 /// The ballot must be sorted by exchange rate. Every validator has equal
 /// weight. An even ballot uses the floored midpoint of the two central rates.
 pub fn median(ballot: &[VoteForTally]) -> U256 {
-    if ballot.is_empty() {
+    sorted_median(ballot.len(), |index| ballot[index].exchange_rate)
+}
+
+fn sorted_median(len: usize, value_at: impl Fn(usize) -> U256) -> U256 {
+    if len == 0 {
         return U256::ZERO;
     }
 
-    let upper_index = ballot.len() / 2;
-    if ballot.len() % 2 == 1 {
-        return ballot[upper_index].exchange_rate;
+    let upper_index = len / 2;
+    if len % 2 == 1 {
+        return value_at(upper_index);
     }
 
-    let lower = ballot[upper_index - 1].exchange_rate;
-    let upper = ballot[upper_index].exchange_rate;
+    let lower = value_at(upper_index - 1);
+    let upper = value_at(upper_index);
     lower + (upper - lower) / U256::from(2u64)
 }
 
@@ -169,6 +175,7 @@ fn evaluate_pair(ballot: &[VoteForTally], reward_band: U256) -> Result<PairTally
     if ballot.is_empty() {
         return Ok(PairTallyOutcome {
             median: U256::ZERO,
+            volume: U256::ZERO,
             winning_validators: Vec::new(),
         });
     }
@@ -181,6 +188,7 @@ fn evaluate_pair(ballot: &[VoteForTally], reward_band: U256) -> Result<PairTally
     if eligible.is_empty() {
         return Ok(PairTallyOutcome {
             median: U256::ZERO,
+            volume: U256::ZERO,
             winning_validators: Vec::new(),
         });
     }
@@ -208,15 +216,17 @@ fn evaluate_pair(ballot: &[VoteForTally], reward_band: U256) -> Result<PairTally
     let lower = median.saturating_sub(reward_spread);
     let upper = median.saturating_add(reward_spread);
 
-    let winning_validators = eligible
+    let winners: Vec<&VoteForTally> = eligible
         .iter()
         .filter(|vote| vote.exchange_rate >= lower && vote.exchange_rate <= upper)
-        .map(|vote| vote.voter)
         .collect();
+    let mut volumes: Vec<U256> = winners.iter().map(|vote| vote.volume).collect();
+    volumes.sort_unstable();
 
     Ok(PairTallyOutcome {
         median,
-        winning_validators,
+        volume: sorted_median(volumes.len(), |index| volumes[index]),
+        winning_validators: winners.iter().map(|vote| vote.voter).collect(),
     })
 }
 
@@ -310,78 +320,6 @@ fn vote_has_price(vote: &VoteForTally) -> bool {
 
 fn observation_count(ballot: &[VoteForTally]) -> usize {
     ballot.iter().filter(|vote| vote_has_price(vote)).count()
-}
-
-fn volume_sum(ballot: &[VoteForTally]) -> U512 {
-    ballot
-        .iter()
-        .filter(|vote| vote_has_price(vote))
-        .fold(U512::ZERO, |sum, vote| sum + U512::from(vote.volume))
-}
-
-fn narrow_volume_sum(ballot: &[VoteForTally]) -> Option<U256> {
-    let sum = volume_sum(ballot);
-    (sum <= U512::from(U256::MAX)).then(|| sum.wrapping_to::<U256>())
-}
-
-/// Removes one whole validator tuple when the aggregate volume cannot be
-/// represented together with `rate`. The largest volume is rejected first; an
-/// equal-volume tie rejects the validator later in active-registry order.
-fn remove_one_volume_over_capacity(
-    ballot: &mut Vec<VoteForTally>,
-    capacity: U256,
-    validator_order: &[Address],
-) -> bool {
-    if volume_sum(ballot) <= U512::from(capacity) {
-        return false;
-    }
-
-    let rejected = ballot
-        .iter()
-        .enumerate()
-        .filter(|(_, vote)| vote_has_price(vote) && !vote.volume.is_zero())
-        .max_by(|(_, left), (_, right)| {
-            left.volume.cmp(&right.volume).then_with(|| {
-                let left_order = validator_order
-                    .iter()
-                    .position(|address| *address == left.voter)
-                    .unwrap_or(usize::MAX);
-                let right_order = validator_order
-                    .iter()
-                    .position(|address| *address == right.voter)
-                    .unwrap_or(usize::MAX);
-                left_order.cmp(&right_order)
-            })
-        })
-        .map(|(index, _)| index);
-
-    if let Some(index) = rejected {
-        ballot.remove(index);
-        true
-    } else {
-        false
-    }
-}
-
-fn remove_one_unrepresentable_volume(
-    ballot: &mut Vec<VoteForTally>,
-    rate: U256,
-    validator_order: &[Address],
-) -> bool {
-    !rate.is_zero() && remove_one_volume_over_capacity(ballot, U256::MAX / rate, validator_order)
-}
-
-fn stabilize_direct_volume(
-    ballot: &mut Vec<VoteForTally>,
-    reward_band: U256,
-    validator_order: &[Address],
-) -> Result<()> {
-    loop {
-        let rate = evaluate_pair(ballot, reward_band)?.median;
-        if rate.is_zero() || !remove_one_unrepresentable_volume(ballot, rate, validator_order) {
-            return Ok(());
-        }
-    }
 }
 
 /// Number of independent validator observations required for one raw pair.
@@ -504,40 +442,17 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
         }
     }
 
-    let validator_order: Vec<Address> = all_validators
-        .iter()
-        .map(|validator| validator.validator_address)
-        .collect();
-    // Each pair needs a direct candidate so reference selection considers only
-    // tuples that would be representable if that pair became the reference.
-    // Keep target ballots untouched: their capacity depends on the eventual
-    // cross-derived rate, not on their raw median.
-    let mut direct_ballots: Vec<Vec<VoteForTally>> = ballot_map
-        .iter()
-        .map(|(_, _, ballot)| ballot.clone())
-        .collect();
-    for ballot in &mut direct_ballots {
-        stabilize_direct_volume(ballot, reward_band, &validator_order)?;
-    }
-
-    // Raw pair quorum is independent per pair. Direct candidates additionally
-    // decide whether a pair is eligible to serve as the reference.
+    // Raw pair quorum is independent per pair.
     let quorum = pair_quorum(all_validators.len());
-    let mut raw_qualified = vec![false; ballot_map.len()];
-    let mut reference_qualified = vec![false; ballot_map.len()];
+    let mut qualified = vec![false; ballot_map.len()];
     for (index, (_, _, ballot)) in ballot_map.iter().enumerate() {
         if observation_count(ballot) >= quorum {
-            raw_qualified[index] = true;
-            reference_qualified[index] = observation_count(&direct_ballots[index]) >= quorum;
+            qualified[index] = true;
         } else {
             // Cosmos-style participation credit: a valid observation on a pair
             // that lacks quorum is not punished as an outlier. Missing and
-            // zero-rate or unrepresentable-volume observations receive no
-            // credit for that pair.
-            for vote in direct_ballots[index]
-                .iter()
-                .filter(|vote| vote_has_price(vote))
-            {
+            // zero-rate observations receive no credit for that pair.
+            for vote in ballot.iter().filter(|vote| vote_has_price(vote)) {
                 if let Some((_, claim)) = claims
                     .iter_mut()
                     .find(|(address, _)| *address == vote.voter)
@@ -550,14 +465,12 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
 
     // Pick the qualified reference pair with the most validator observations.
     // Iteration follows registry order, so equal counts keep the first pair.
-    let mut ref_pair_idx = reference_qualified
-        .iter()
-        .position(|is_qualified| *is_qualified);
+    let mut ref_pair_idx = qualified.iter().position(|is_qualified| *is_qualified);
     if let Some(mut current) = ref_pair_idx {
         for index in (current + 1)..ballot_map.len() {
-            if reference_qualified[index]
-                && observation_count(&direct_ballots[index])
-                    > observation_count(&direct_ballots[current])
+            if qualified[index]
+                && observation_count(&ballot_map[index].2)
+                    > observation_count(&ballot_map[current].2)
             {
                 current = index;
             }
@@ -565,32 +478,13 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
         ref_pair_idx = Some(current);
     }
 
-    if ref_pair_idx.is_none() {
-        // Every otherwise-quorate pair lost reference eligibility only because
-        // invalid volume tuples were removed. Preserve the established
-        // below-quorum credit for the remaining valid observations.
-        for (index, ballot) in direct_ballots.iter().enumerate() {
-            if !raw_qualified[index] {
-                continue;
-            }
-            for vote in ballot.iter().filter(|vote| vote_has_price(vote)) {
-                if let Some((_, claim)) = claims
-                    .iter_mut()
-                    .find(|(address, _)| *address == vote.voter)
-                {
-                    claim.win_count += 1;
-                }
-            }
-        }
-    }
-
     // Snapshot entries to collect.
     let mut snapshot_entries: Vec<(AddressPair, U256, U256)> = Vec::new();
     let mut pairs_updated = 0u32;
     if let Some(ref_pair_idx) = ref_pair_idx {
         // Tally reference pair directly.
-        let (ref_index, ref_pair) = (ballot_map[ref_pair_idx].0, ballot_map[ref_pair_idx].1);
-        let reference_ballot = &direct_ballots[ref_pair_idx];
+        let (ref_index, ref_pair, reference_ballot) = &ballot_map[ref_pair_idx];
+        let (ref_index, ref_pair) = (*ref_index, *ref_pair);
         let ref_median = evaluate_pair(reference_ballot, reward_band)?;
 
         let reference_votes: Vec<(Address, U256)> = reference_ballot
@@ -613,76 +507,50 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
                 .storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data());
 
-            let total_volume = narrow_volume_sum(reference_ballot)
-                .expect("volume stabilization guarantees a U256 sum");
-            if oracle.snapshot_can_accept(timestamp, ref_pair, ref_median.median, total_volume)? {
-                snapshot_entries.push((ref_pair, ref_median.median, total_volume));
+            if oracle.snapshot_can_accept(
+                timestamp,
+                ref_pair,
+                ref_median.median,
+                ref_median.volume,
+            )? {
+                snapshot_entries.push((ref_pair, ref_median.median, ref_median.volume));
             }
         }
 
         // Tally every other quorum-qualified pair via the reference overlap.
         // There is intentionally no second quorum over that intersection.
-        for i in 0..ballot_map.len() {
-            if i == ref_pair_idx || !raw_qualified[i] {
+        for (i, (index, pair, ballot)) in ballot_map.iter().enumerate() {
+            if i == ref_pair_idx || !qualified[i] {
                 continue;
             }
 
-            let (index, pair) = (ballot_map[i].0, ballot_map[i].1);
-            let final_tally = loop {
-                if observation_count(&ballot_map[i].2) < quorum {
-                    for vote in ballot_map[i].2.iter().filter(|vote| vote_has_price(vote)) {
-                        if let Some((_, claim)) = claims
-                            .iter_mut()
-                            .find(|(address, _)| *address == vote.voter)
-                        {
-                            claim.win_count += 1;
-                        }
-                    }
-                    break None;
-                }
-
-                let cross_ballot =
-                    to_cross_rate(&ballot_map[i].2, &reference_votes, ref_pair, pair)?;
-                let cross_outcome = evaluate_pair(&cross_ballot, reward_band)?;
-                if cross_outcome.median.is_zero() {
-                    break None;
-                }
-                let Some(actual_rate) =
-                    from_cross_rate(ref_median.median, cross_outcome.median, ref_pair, pair)
-                else {
-                    break None;
-                };
-                if remove_one_unrepresentable_volume(
-                    &mut ballot_map[i].2,
-                    actual_rate,
-                    &validator_order,
-                ) {
-                    continue;
-                }
-                break Some((actual_rate, cross_outcome));
+            let (index, pair) = (*index, *pair);
+            let cross_ballot = to_cross_rate(ballot, &reference_votes, ref_pair, pair)?;
+            let cross_outcome = evaluate_pair(&cross_ballot, reward_band)?;
+            if cross_outcome.median.is_zero() {
+                continue;
+            }
+            let Some(actual_rate) =
+                from_cross_rate(ref_median.median, cross_outcome.median, ref_pair, pair)
+            else {
+                continue;
             };
 
-            if let Some((actual_rate, cross_outcome)) = final_tally {
-                apply_winners(&mut claims, &cross_outcome.winning_validators);
-                oracle.update_exchange_rate(index, actual_rate, block_number, timestamp)?;
-                pairs_updated += 1;
-                let event = IOracle::ExchangeRateUpdated {
-                    base: pair.address1(),
-                    quote: pair.address2(),
-                    rate: actual_rate,
-                    blockNumber: block_number,
-                };
-                let _ = oracle
-                    .storage
-                    .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            apply_winners(&mut claims, &cross_outcome.winning_validators);
+            oracle.update_exchange_rate(index, actual_rate, block_number, timestamp)?;
+            pairs_updated += 1;
+            let event = IOracle::ExchangeRateUpdated {
+                base: pair.address1(),
+                quote: pair.address2(),
+                rate: actual_rate,
+                blockNumber: block_number,
+            };
+            let _ = oracle
+                .storage
+                .emit_event(ORACLE_ADDRESS, event.encode_log_data());
 
-                // Volume belongs to the target pair's full eligible raw ballot,
-                // not merely validators in the cross intersection.
-                let total_volume = narrow_volume_sum(&ballot_map[i].2)
-                    .expect("volume stabilization guarantees a U256 sum");
-                if oracle.snapshot_can_accept(timestamp, pair, actual_rate, total_volume)? {
-                    snapshot_entries.push((pair, actual_rate, total_volume));
-                }
+            if oracle.snapshot_can_accept(timestamp, pair, actual_rate, cross_outcome.volume)? {
+                snapshot_entries.push((pair, actual_rate, cross_outcome.volume));
             }
         }
     }
@@ -821,125 +689,47 @@ mod tests {
         }
     }
 
-    #[test]
-    fn volume_capacity_accepts_the_exact_boundary_and_rejects_one_unit_over() {
-        let voter = Address::new([1u8; 20]);
-        let validator_order = [voter];
-        let capacity = U256::MAX / U256::from(2u64);
-        let mut exact = vec![VoteForTally {
-            exchange_rate: U256::from(2u64),
-            volume: capacity,
-            voter,
-        }];
-        assert!(!remove_one_unrepresentable_volume(
-            &mut exact,
-            U256::from(2u64),
-            &validator_order,
-        ));
-
-        let mut over = vec![VoteForTally {
-            exchange_rate: U256::from(2u64),
-            volume: capacity + U256::ONE,
-            voter,
-        }];
-        assert!(remove_one_unrepresentable_volume(
-            &mut over,
-            U256::from(2u64),
-            &validator_order,
-        ));
-        assert!(over.is_empty());
-    }
-
-    #[test]
-    fn combined_volume_overflow_removes_the_largest_tuple() {
-        let voters = [
-            Address::new([1u8; 20]),
-            Address::new([2u8; 20]),
-            Address::new([3u8; 20]),
-        ];
-        let half = U256::MAX / U256::from(2u64);
-        let mut ballot = vec![
-            VoteForTally {
-                exchange_rate: U256::ONE,
-                volume: half + U256::from(2u64),
-                voter: voters[0],
-            },
-            VoteForTally {
-                exchange_rate: U256::ONE,
-                volume: half + U256::ONE,
-                voter: voters[1],
-            },
-            VoteForTally {
-                exchange_rate: U256::ONE,
-                volume: U256::ONE,
-                voter: voters[2],
-            },
-        ];
-
-        assert!(remove_one_unrepresentable_volume(
-            &mut ballot,
-            U256::ONE,
-            &voters,
-        ));
-        assert_eq!(ballot.len(), 2);
-        assert!(!ballot.iter().any(|vote| vote.voter == voters[0]));
-        assert!(narrow_volume_sum(&ballot).is_some());
-    }
-
-    #[test]
-    fn equal_largest_volumes_keep_the_earlier_registered_validator() {
-        let voters = [
-            Address::new([1u8; 20]),
-            Address::new([2u8; 20]),
-            Address::new([3u8; 20]),
-        ];
-        let large = U256::MAX / U256::from(2u64) + U256::ONE;
-        for reverse_input in [false, true] {
-            let mut ballot = vec![
-                VoteForTally {
-                    exchange_rate: U256::ONE,
-                    volume: large,
-                    voter: voters[0],
-                },
-                VoteForTally {
-                    exchange_rate: U256::ONE,
-                    volume: large,
-                    voter: voters[1],
-                },
-                VoteForTally {
-                    exchange_rate: U256::ONE,
-                    volume: U256::ZERO,
-                    voter: voters[2],
-                },
-            ];
-            if reverse_input {
-                ballot.reverse();
-            }
-
-            assert!(remove_one_unrepresentable_volume(
-                &mut ballot,
-                U256::ONE,
-                &voters,
-            ));
-            assert!(ballot.iter().any(|vote| vote.voter == voters[0]));
-            assert!(!ballot.iter().any(|vote| vote.voter == voters[1]));
+    fn vote(voter: u8, rate: u64, volume: U256) -> VoteForTally {
+        VoteForTally {
+            exchange_rate: fixed18(rate),
+            volume,
+            voter: Address::new([voter; 20]),
         }
     }
 
+    fn outcome_volume(ballot: &[VoteForTally]) -> U256 {
+        let reward_band = U256::from(20_000_000_000_000_000u128);
+        evaluate_pair(ballot, reward_band).unwrap().volume
+    }
+
     #[test]
-    fn zero_volume_is_a_valid_tuple_for_volume_stabilization() {
-        let voter = Address::new([1u8; 20]);
-        let mut ballot = vec![VoteForTally {
-            exchange_rate: U256::MAX,
-            volume: U256::ZERO,
-            voter,
-        }];
-        assert!(!remove_one_unrepresentable_volume(
-            &mut ballot,
-            U256::MAX,
-            &[voter],
-        ));
-        assert_eq!(ballot.len(), 1);
+    fn volume_is_the_winners_median_and_ignores_a_rate_outlier() {
+        let ballot = [
+            vote(1, 100, U256::from(10u64)),
+            vote(2, 101, U256::from(21u64)),
+            vote(3, 200, U256::MAX),
+        ];
+        assert_eq!(outcome_volume(&ballot), U256::from(15u64));
+    }
+
+    #[test]
+    fn volume_median_of_an_odd_winner_set_is_the_central_volume() {
+        let ballot = [
+            vote(1, 100, U256::from(5u64)),
+            vote(2, 100, U256::MAX),
+            vote(3, 100, U256::ONE),
+        ];
+        assert_eq!(outcome_volume(&ballot), U256::from(5u64));
+    }
+
+    #[test]
+    fn zero_volume_counts_as_an_observation() {
+        let ballot = [
+            vote(1, 100, U256::ZERO),
+            vote(2, 100, U256::ZERO),
+            vote(3, 100, U256::from(7u64)),
+        ];
+        assert_eq!(outcome_volume(&ballot), U256::ZERO);
     }
 
     #[test]
