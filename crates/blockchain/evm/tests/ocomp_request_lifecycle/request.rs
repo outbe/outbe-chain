@@ -2,6 +2,19 @@
 use super::*;
 
 pub(super) fn open_voting() -> VotingOpenScenario {
+    open_voting_with_pre_open_state().0
+}
+
+/// Committed states in which the job is finalized but its window is not open.
+pub(super) struct PreOpenStates {
+    /// After block `open_height - 2`: the next block cannot open the window.
+    pub(super) two_blocks_before: HashMap<(Address, U256), U256>,
+    /// After block `open_height - 1`: the next block's begin zone opens it.
+    pub(super) one_block_before: HashMap<(Address, U256), U256>,
+}
+
+/// Also returns the committed pre-open states of the same job.
+pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenStates) {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -425,6 +438,7 @@ pub(super) fn open_voting() -> VotingOpenScenario {
         successor.block().hash(),
     ));
     let mut canonical_storage = finalized_state.storage;
+    let mut two_blocks_before = None;
     for height in (REQUEST_HEIGHT + 2)..open_height {
         let built = build_canonical_ocomp_successor(
             &chain_spec,
@@ -450,8 +464,16 @@ pub(super) fn open_voting() -> VotingOpenScenario {
         assert!(built.requested_intents.is_empty());
         canonical_parent = built.header;
         canonical_storage = built.storage;
+        if height + 2 == open_height {
+            two_blocks_before = Some(canonical_storage.clone());
+        }
     }
 
+    let pre_open_states = PreOpenStates {
+        two_blocks_before: two_blocks_before
+            .expect("the lifecycle builds the block two heights before its window opens"),
+        one_block_before: canonical_storage.clone(),
+    };
     let voting_open = build_canonical_ocomp_successor(
         &chain_spec,
         &prepared.tree_service,
@@ -487,18 +509,21 @@ pub(super) fn open_voting() -> VotingOpenScenario {
         .iter()
         .all(|log| log.address != TRIBUTE_FACTORY_ADDRESS));
 
-    VotingOpenScenario {
-        chain_spec,
-        prepared,
-        signer,
-        runtime_body_readers,
-        fork_install,
-        dkg,
-        snapshot,
-        proposer,
-        open_height,
-        intent_id: requested.data.intentId,
-        finalized_record,
-        voting_open,
-    }
+    (
+        VotingOpenScenario {
+            chain_spec,
+            prepared,
+            signer,
+            runtime_body_readers,
+            fork_install,
+            dkg,
+            snapshot,
+            proposer,
+            open_height,
+            intent_id: requested.data.intentId,
+            finalized_record,
+            voting_open,
+        },
+        pre_open_states,
+    )
 }

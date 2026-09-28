@@ -19,6 +19,7 @@ mod terminal_index;
 mod transitions;
 pub mod views;
 pub mod vote;
+pub(crate) mod vote_admission;
 
 pub(crate) use index::ResponseDeadlineKey;
 pub(crate) use profile::poc_schema_limits;
