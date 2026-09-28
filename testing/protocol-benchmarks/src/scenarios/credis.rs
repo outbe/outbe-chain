@@ -12,7 +12,7 @@ use outbe_primitives::{
     math::scaled_math::checked_quote,
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
-    units::{checked_protocol_to_native, SCALE_1E18, SCALE_1E6_U256},
+    units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -176,9 +176,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
             expires_at: CREATED_AT + 15 * 60,
         })
         .map_err(|error| error.to_string())?;
-    // NB: Seal a known quote for the issuance benchmark while the Oracle's
-    // previous eight-hour VWAP helper is unimplemented, as in the Credis tests.
-    let valuation_price = U256::from(2) * SCALE_1E18;
+    // Seal a known Minor6 quote while the Oracle period helper is unimplemented.
+    let valuation_price = oracle_rate();
     let (gratis_cost, entry_price) =
         checked_quote(pledge_stables(), 6, valuation_price).map_err(|error| error.to_string())?;
     let pledge_note = outbe_gratis::api::pledge(
