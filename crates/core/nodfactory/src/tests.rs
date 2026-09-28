@@ -704,6 +704,32 @@ const EUR_ASSET: Address = Address::new([0x72; 20]);
 const SIX_DECIMALS: u64 = 1_000_000;
 
 #[test]
+fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
+    // 100 USD = entry 2.00 x load 50; R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
+    let rate = Some((U256::from(1_800_000), U256::from(2_000_000)));
+    for (decimals, expected) in [
+        (6, U256::from(90_000_000u64)),
+        (8, U256::from(9_000_000_000u64)),
+        (
+            18,
+            U256::from(90u64) * U256::from(10u64).pow(U256::from(18)),
+        ),
+    ] {
+        assert_eq!(
+            crate::runtime::settlement_units(
+                U256::from(2_000_000),
+                U256::from(50_000_000),
+                rate,
+                decimals
+            )
+            .unwrap(),
+            expected,
+            "{decimals} decimals"
+        );
+    }
+}
+
+#[test]
 fn settlement_minimum_precedes_asset_and_currency_conversion() {
     let price = U256::from(19);
     let load = U256::from(25_629);

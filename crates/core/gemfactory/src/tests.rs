@@ -1044,6 +1044,31 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
+fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
+    // 100 USD standard basis (entry 2.00 x load 50) at R = 2.00, I = 1.80.
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(usd_rate), |storage| {
+        register_currency(storage, 978, U256::from(1_800_000u64));
+        seed_day_vwap(storage, 840, usd_rate);
+        let load = U256::from(50u64) * six_decimal_unit();
+        let sra = issue_at_live_rate(storage, ALICE, GemTypes::Sra, load, 978, 840).unwrap();
+        let wallet = issue_at_live_rate(storage, BOB, GemTypes::Wallet, load, 978, 840).unwrap();
+        let quote = |gem_id| {
+            runtime::quote_settlement(storage, gem_id, STABLE_EUR)
+                .unwrap()
+                .1
+        };
+        assert_eq!(quote(wallet), U256::from(90_000_000u64));
+        assert_eq!(quote(sra), U256::from(57_600_000u64));
+        let item = gem_api::get_gem(storage, sra).unwrap().unwrap();
+        assert_eq!(
+            (item.entry_price_minor, item.promis_load_minor),
+            (usd_rate, load)
+        );
+    });
+}
+
+#[test]
 fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(usd_rate), |storage| {

@@ -67,6 +67,17 @@ fn the_fx_leg_is_floored_together_with_the_units() {
 }
 
 #[test]
+fn three_units_convert_as_one_operation_before_the_floor() {
+    // One dollar a unit at I/R = 1/3: 1,000,000 for all three, not 3 x 333,333.
+    let rate = Some((U256::from(1_000_000u64), U256::from(3_000_000u64)));
+    assert_eq!(
+        runtime::settlement_units(U256::from(1_000_000_000_000u64), U256::from(3u64), rate, 6)
+            .unwrap(),
+        U256::from(1_000_000u64)
+    );
+}
+
+#[test]
 fn cost_amount_rejects_unsupported_payment_decimals() {
     let err = runtime::settlement_units(product(), U256::ONE, None, 19).unwrap_err();
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
