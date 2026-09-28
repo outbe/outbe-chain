@@ -494,6 +494,59 @@ fn compute_pow_hash_matches_manual_sha256() {
     assert_eq!(got.as_slice(), expected.as_ref());
 }
 
+/// The vectors the MCP miner is tested against, computed outside both implementations.
+#[test]
+fn compute_pow_hash_matches_the_shared_client_vectors() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../mcp/src/intex/pow.vectors.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        fixture["difficulty_bytes"].as_u64(),
+        Some(outbe_common::pow::POW_DIFFICULTY as u64)
+    );
+    let vectors = fixture["vectors"].as_array().unwrap();
+    assert!(!vectors.is_empty());
+    for vector in vectors {
+        let field = |name: &str| vector[name].as_str().unwrap();
+        let owner: Address = field("owner").parse().unwrap();
+        let promis_amount: U256 = field("promis_amount").parse().unwrap();
+        let series_id = SeriesId::from(
+            field("series_id")
+                .parse::<alloy_primitives::FixedBytes<14>>()
+                .unwrap(),
+        );
+        let seq = u32::try_from(vector["seq"].as_u64().unwrap()).unwrap();
+        let hash = |nonce: u64| {
+            B256::from(runtime::compute_pow_hash(
+                owner,
+                promis_amount,
+                series_id,
+                seq,
+                nonce,
+            ))
+        };
+
+        let nonce: u64 = field("nonce").parse().unwrap();
+        assert_eq!(hash(nonce), field("hash").parse::<B256>().unwrap());
+
+        let first_valid: u64 = field("first_valid_nonce").parse().unwrap();
+        assert_eq!(
+            hash(first_valid),
+            field("first_valid_hash").parse::<B256>().unwrap()
+        );
+        assert!(runtime::validate_pow(owner, promis_amount, series_id, seq, first_valid).is_ok());
+        assert!((0..first_valid).all(|nonce| runtime::validate_pow(
+            owner,
+            promis_amount,
+            series_id,
+            seq,
+            nonce
+        )
+        .is_err()));
+    }
+}
+
 #[test]
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
