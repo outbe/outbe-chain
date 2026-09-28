@@ -1612,54 +1612,11 @@ fn genesis_seeds_the_usd_policy_rate() {
 }
 
 #[test]
-fn genesis_writes_the_trailing_vwap_policy_to_slots_81_through_83() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
-
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        crate::genesis::init_from_genesis(
-            &mut oracle,
-            &crate::genesis::OracleGenesisConfig::default_config(),
-        )
-        .unwrap();
-        for (slot, value) in [(81u64, 28_800u64), (82, 3_600), (83, 1)] {
-            assert_eq!(
-                storage.sload(ORACLE_ADDRESS, U256::from(slot)).unwrap(),
-                U256::from(value)
-            );
-        }
-        assert_eq!(
-            oracle.active_vwap_policy().unwrap(),
-            crate::window::DEFAULT_VWAP_POLICY
-        );
-    });
-}
-
-#[test]
-fn genesis_rejects_an_unsupported_trailing_vwap_policy_without_writes() {
-    use crate::window::{VwapPolicy, DEFAULT_VWAP_POLICY};
-
-    for vwap_policy in [
-        VwapPolicy {
-            lookback_seconds: 0,
-            ..DEFAULT_VWAP_POLICY
-        },
-        VwapPolicy {
-            update_interval_seconds: 7_000,
-            ..DEFAULT_VWAP_POLICY
-        },
-    ] {
-        with_storage(|storage| {
-            let mut oracle = OracleContract::new(storage.clone());
-            let config = crate::genesis::OracleGenesisConfig {
-                vwap_policy,
-                ..crate::genesis::OracleGenesisConfig::default_config()
-            };
-            assert!(crate::genesis::init_from_genesis(&mut oracle, &config).is_err());
-            assert!(!oracle.config_is_initialized.read().unwrap());
-            assert_eq!(oracle.config_vwap_lookback_seconds.read().unwrap(), 0);
-        });
-    }
+fn the_active_policy_is_the_production_protocol_constant() {
+    assert_eq!(
+        crate::window::active_vwap_policy(),
+        crate::window::DEFAULT_VWAP_POLICY
+    );
 }
 
 fn default_snapshot_at(timestamp: u64) -> crate::window::VwapSnapshotId {
@@ -1747,27 +1704,23 @@ fn a_policy_change_leaves_an_old_snapshot_readable_and_unchanged() {
     let hour = 3_600;
     with_storage_at(day + 10 * hour + 30 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        crate::genesis::init_from_genesis(
-            &mut oracle,
-            &crate::genesis::OracleGenesisConfig::default_config(),
-        )
-        .unwrap();
         let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
         for (ts, price) in [(day + 3 * hour, 10), (day + 5 * hour, 40)] {
             oracle
                 .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
                 .unwrap();
         }
         let now = day + 10 * hour + 30 * 60;
-        let before =
-            crate::window::get_vwap_snapshot_id(now, &oracle.active_vwap_policy().unwrap())
-                .unwrap();
+        let before = default_snapshot_at(now);
         let price_before = oracle.finalized_window_vwap(pair, before).unwrap();
 
-        oracle.config_vwap_lookback_seconds.write(21_600).unwrap();
-        oracle.config_vwap_policy_version.write(2).unwrap();
-        let after = crate::window::get_vwap_snapshot_id(now, &oracle.active_vwap_policy().unwrap())
-            .unwrap();
+        let next_policy = crate::window::VwapPolicy {
+            policy_version: 2,
+            vwap_lookback_seconds: 21_600,
+            ..crate::window::DEFAULT_VWAP_POLICY
+        };
+        let after = crate::window::get_vwap_snapshot_id(now, &next_policy).unwrap();
 
         assert_ne!(after, before);
         assert_eq!(after.start(), day + 4 * hour);

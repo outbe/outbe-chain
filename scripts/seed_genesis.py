@@ -1397,8 +1397,6 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 55: reference_currencies (StorageVec<u16>)
       slot 60: retired policy-rate mapping
       slots 74-75: policy_rate_currencies / policy_rate
-      slots 81-83: trailing VWAP lookback seconds / update interval seconds /
-        policy version
     """
     pair_keys: dict[tuple[str, str], bytes] = {}
     pairs = config.get("pairs", [])
@@ -1446,20 +1444,6 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     storage.set_slot(3, parse_int(min_valid_per_window))
     storage.set_slot(4, parse_int(slash_fraction))
     storage.set_slot(5, parse_int(cfg.get("lookback_duration", 86400)))
-    vwap_lookback = parse_int(cfg.get("vwap_lookback_seconds", 28800))
-    vwap_interval = parse_int(cfg.get("vwap_update_interval_seconds", 3600))
-    if (
-        vwap_lookback <= 0
-        or vwap_interval <= 0
-        or 86400 % vwap_interval != 0
-        or vwap_lookback % vwap_interval != 0
-    ):
-        raise ValueError(
-            f"unsupported trailing VWAP policy: lookback={vwap_lookback} interval={vwap_interval}"
-        )
-    storage.set_slot(81, vwap_lookback)
-    storage.set_slot(82, vwap_interval)
-    storage.set_slot(83, parse_int(cfg.get("vwap_policy_version", 1)))
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
     storage.set_slot(8, len(pairs))

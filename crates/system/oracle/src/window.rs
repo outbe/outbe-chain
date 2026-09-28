@@ -2,6 +2,10 @@
 //! selects for a block timestamp.
 
 use alloy_primitives::U256;
+use outbe_chain_constants::{
+    DEFAULT_VWAP_LOOKBACK_SECONDS, DEFAULT_VWAP_POLICY_VERSION,
+    DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
@@ -18,22 +22,31 @@ const PACKED_BITS: usize = VERSION_SHIFT + 32;
 /// `update_interval_seconds` from the UTC epoch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VwapPolicy {
-    pub version: u32,
-    pub lookback_seconds: u64,
-    pub update_interval_seconds: u64,
+    pub policy_version: u32,
+    pub vwap_lookback_seconds: u64,
+    pub vwap_update_interval_seconds: u64,
 }
 
-/// Eight-hour lookback refreshed at every whole UTC hour.
+/// Production policy: an eight-hour lookback refreshed at every whole UTC hour.
 pub const DEFAULT_VWAP_POLICY: VwapPolicy = VwapPolicy {
-    version: 1,
-    lookback_seconds: 8 * 60 * 60,
-    update_interval_seconds: 60 * 60,
+    policy_version: DEFAULT_VWAP_POLICY_VERSION,
+    vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
+    vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
 };
+
+/// The policy the protocol constants pin for this network.
+pub fn active_vwap_policy() -> VwapPolicy {
+    VwapPolicy {
+        policy_version: outbe_chain_constants::get_vwap_policy_version(),
+        vwap_lookback_seconds: outbe_chain_constants::get_vwap_lookback_seconds(),
+        vwap_update_interval_seconds: outbe_chain_constants::get_vwap_update_interval_seconds(),
+    }
+}
 
 impl VwapPolicy {
     pub fn validate(&self) -> Result<()> {
-        let interval = self.update_interval_seconds;
-        let lookback = self.lookback_seconds;
+        let interval = self.vwap_update_interval_seconds;
+        let lookback = self.vwap_lookback_seconds;
         let supported = interval > 0
             && lookback > 0
             && SECONDS_PER_DAY.is_multiple_of(interval)
@@ -58,8 +71,8 @@ pub struct VwapSnapshotId {
 impl VwapSnapshotId {
     fn new(policy: VwapPolicy, cutoff: u64) -> Result<Self> {
         policy.validate()?;
-        if !cutoff.is_multiple_of(policy.update_interval_seconds)
-            || cutoff < policy.lookback_seconds
+        if !cutoff.is_multiple_of(policy.vwap_update_interval_seconds)
+            || cutoff < policy.vwap_lookback_seconds
         {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
@@ -74,18 +87,18 @@ impl VwapSnapshotId {
             ((word >> shift) & ((U256::ONE << bits) - U256::ONE)).to::<u64>()
         };
         let policy = VwapPolicy {
-            version: field(VERSION_SHIFT, 32) as u32,
-            lookback_seconds: field(LOOKBACK_SHIFT, 32),
-            update_interval_seconds: field(INTERVAL_SHIFT, 32),
+            policy_version: field(VERSION_SHIFT, 32) as u32,
+            vwap_lookback_seconds: field(LOOKBACK_SHIFT, 32),
+            vwap_update_interval_seconds: field(INTERVAL_SHIFT, 32),
         };
         Self::new(policy, field(0, CUTOFF_BITS))
             .map_err(|_| OracleError::InvalidVwapSnapshot.into())
     }
 
     pub fn to_u256(self) -> U256 {
-        (U256::from(self.policy.version) << VERSION_SHIFT)
-            | (U256::from(self.policy.lookback_seconds) << LOOKBACK_SHIFT)
-            | (U256::from(self.policy.update_interval_seconds) << INTERVAL_SHIFT)
+        (U256::from(self.policy.policy_version) << VERSION_SHIFT)
+            | (U256::from(self.policy.vwap_lookback_seconds) << LOOKBACK_SHIFT)
+            | (U256::from(self.policy.vwap_update_interval_seconds) << INTERVAL_SHIFT)
             | U256::from(self.cutoff)
     }
 
@@ -98,7 +111,7 @@ impl VwapSnapshotId {
     }
 
     pub fn start(self) -> u64 {
-        self.cutoff - self.policy.lookback_seconds
+        self.cutoff - self.policy.vwap_lookback_seconds
     }
 }
 
@@ -106,7 +119,7 @@ impl VwapSnapshotId {
 /// cutoff at or before that time.
 pub fn get_vwap_snapshot_id(block_timestamp: u64, policy: &VwapPolicy) -> Result<VwapSnapshotId> {
     policy.validate()?;
-    let cutoff = block_timestamp - block_timestamp % policy.update_interval_seconds;
+    let cutoff = block_timestamp - block_timestamp % policy.vwap_update_interval_seconds;
     VwapSnapshotId::new(*policy, cutoff)
 }
 
@@ -117,11 +130,11 @@ mod tests {
     const DAY: u64 = 1_753_228_800;
     const HOUR: u64 = 3_600;
 
-    fn policy(lookback_seconds: u64, update_interval_seconds: u64) -> VwapPolicy {
+    fn policy(vwap_lookback_seconds: u64, vwap_update_interval_seconds: u64) -> VwapPolicy {
         VwapPolicy {
-            version: 1,
-            lookback_seconds,
-            update_interval_seconds,
+            policy_version: 1,
+            vwap_lookback_seconds,
+            vwap_update_interval_seconds,
         }
     }
 
@@ -176,7 +189,7 @@ mod tests {
         assert_eq!(snapshot.policy(), DEFAULT_VWAP_POLICY);
 
         let next_version = VwapPolicy {
-            version: 2,
+            policy_version: 2,
             ..DEFAULT_VWAP_POLICY
         };
         let other = get_vwap_snapshot_id(DAY + 10 * HOUR, &next_version).unwrap();

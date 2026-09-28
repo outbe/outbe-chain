@@ -129,23 +129,6 @@ fn nod_pow_binds_owner_and_zero_sequence() {
     );
 }
 
-fn seed_vwap_policy(storage: &StorageHandle<'_>) {
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let policy = outbe_oracle::api::DEFAULT_VWAP_POLICY;
-    oracle
-        .config_vwap_lookback_seconds
-        .write(policy.lookback_seconds)
-        .unwrap();
-    oracle
-        .config_vwap_update_interval_seconds
-        .write(policy.update_interval_seconds)
-        .unwrap();
-    oracle
-        .config_vwap_policy_version
-        .write(policy.version)
-        .unwrap();
-}
-
 /// One observation at `rate` in the last second of the current trailing window.
 fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
     let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
@@ -187,7 +170,6 @@ impl World {
         );
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage);
-            seed_vwap_policy(&storage);
             begin_block(storage, &scope).unwrap();
         });
         Self {
@@ -2004,14 +1986,26 @@ fn a_policy_change_between_quote_and_payment_rejects_the_old_snapshot() {
             api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
         })
         .unwrap();
-    world.enter(|storage, _, _| {
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .config_vwap_policy_version
-            .write(2)
-            .unwrap();
-    });
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
+        cutoff,
+        &outbe_oracle::api::VwapPolicy {
+            policy_version: 2,
+            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+        },
+    )
+    .unwrap();
 
-    let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted).unwrap_err();
+    let error = settle_erc20(
+        &mut world,
+        nod_id,
+        input.owner,
+        EUR_ASSET,
+        other_policy.to_u256(),
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("is stale"), "{error}");
     assert!(!is_settled(&mut world, nod_id));
 }

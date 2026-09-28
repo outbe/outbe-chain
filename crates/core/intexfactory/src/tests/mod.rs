@@ -172,19 +172,6 @@ fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U2
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
-    let policy = outbe_oracle::api::DEFAULT_VWAP_POLICY;
-    oracle
-        .config_vwap_lookback_seconds
-        .write(policy.lookback_seconds)
-        .unwrap();
-    oracle
-        .config_vwap_update_interval_seconds
-        .write(policy.update_interval_seconds)
-        .unwrap();
-    oracle
-        .config_vwap_policy_version
-        .write(policy.version)
-        .unwrap();
     let snapshot = outbe_oracle::api::current_vwap_snapshot(oracle.storage.clone()).unwrap();
     OracleContract::new(oracle.storage.clone())
         .write_snapshot(

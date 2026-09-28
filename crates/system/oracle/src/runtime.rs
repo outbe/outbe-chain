@@ -6,7 +6,7 @@ use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 use crate::state::hourly_vwap_cell;
-use crate::window::{VwapPolicy, VwapSnapshotId};
+use crate::window::VwapSnapshotId;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
@@ -372,14 +372,6 @@ impl OracleContract<'_> {
             )?;
         }
         Ok(true)
-    }
-
-    pub fn active_vwap_policy(&self) -> Result<VwapPolicy> {
-        Ok(VwapPolicy {
-            version: self.config_vwap_policy_version.read()?,
-            lookback_seconds: self.config_vwap_lookback_seconds.read()?,
-            update_interval_seconds: self.config_vwap_update_interval_seconds.read()?,
-        })
     }
 
     /// VWAP over the snapshot's window once its cutoff has passed; `None` when the

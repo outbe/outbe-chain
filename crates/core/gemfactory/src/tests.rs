@@ -122,19 +122,6 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         let oracle = OracleContract::new(handle.clone());
         oracle.reference_currencies.push(840u16).unwrap();
         oracle.config_lookback_duration.write(86_400).unwrap();
-        let policy = outbe_oracle::api::DEFAULT_VWAP_POLICY;
-        oracle
-            .config_vwap_lookback_seconds
-            .write(policy.lookback_seconds)
-            .unwrap();
-        oracle
-            .config_vwap_update_interval_seconds
-            .write(policy.update_interval_seconds)
-            .unwrap();
-        oracle
-            .config_vwap_policy_version
-            .write(policy.version)
-            .unwrap();
         if let Some(rate) = rate {
             outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();

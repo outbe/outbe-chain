@@ -1,6 +1,6 @@
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
-use crate::window::{get_vwap_snapshot_id, VwapSnapshotId};
+use crate::window::{active_vwap_policy, get_vwap_snapshot_id, VwapSnapshotId};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent, SolInterface};
 use outbe_primitives::address_pair::AddressPair;
@@ -236,16 +236,16 @@ pub fn dispatch(
                     .ok_or_else(|| OracleError::NoVwapData.into())
             }),
             getVwapPolicy(c) => view(c, |_| {
-                let policy = oracle.active_vwap_policy()?;
+                let policy = active_vwap_policy();
                 Ok(IOracle::getVwapPolicyReturn {
-                    version: policy.version,
-                    lookbackSeconds: policy.lookback_seconds,
-                    updateIntervalSeconds: policy.update_interval_seconds,
+                    version: policy.policy_version,
+                    lookbackSeconds: policy.vwap_lookback_seconds,
+                    updateIntervalSeconds: policy.vwap_update_interval_seconds,
                 })
             }),
             getVwapSnapshotId(c) => view(c, |_| {
                 let now = oracle.storage.timestamp()?.to::<u64>();
-                Ok(get_vwap_snapshot_id(now, &oracle.active_vwap_policy()?)?.to_u256())
+                Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
             }),
             getFinalizedWindowVwap(c) => view(c, |c| {
                 let pair = oracle.require_pair_from(c.base, c.quote)?;

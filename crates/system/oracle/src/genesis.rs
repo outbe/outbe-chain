@@ -6,7 +6,6 @@
 use crate::constants::{DAY_TYPE_ISO, DEFAULT_USD_CURRENCY_RATE, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::schema::OracleContract;
 use crate::types::AssetType;
-use crate::window::{VwapPolicy, DEFAULT_VWAP_POLICY};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::asset_type::COEN_ASSET;
@@ -75,8 +74,6 @@ pub struct OracleGenesisConfig {
     pub slash_fraction: U256,
     /// Lookback duration in seconds for VWAP (default: 86400).
     pub lookback_duration: u64,
-    /// Trailing VWAP policy for settlement and pledge pricing.
-    pub vwap_policy: VwapPolicy,
     /// Trading pairs to register at genesis as `(base, quote)` asset addresses.
     /// The direction given here is the direction reads must be quoted in.
     pub pairs: Vec<(Address, Address)>,
@@ -110,7 +107,6 @@ impl OracleGenesisConfig {
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,
             lookback_duration: 86400,
-            vwap_policy: DEFAULT_VWAP_POLICY,
             pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
@@ -149,7 +145,6 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     if config.lookback_duration > MAX_SNAPSHOT_RETENTION_SECONDS {
         return Err(OracleError::LookbackExceedsRetention.into());
     }
-    config.vwap_policy.validate()?;
     validate_reference_currencies(&config.reference_currencies)?;
     validate_policy_rates(&config.policy_rates)?;
 
@@ -163,15 +158,6 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     oracle
         .config_lookback_duration
         .write(config.lookback_duration)?;
-    oracle
-        .config_vwap_lookback_seconds
-        .write(config.vwap_policy.lookback_seconds)?;
-    oracle
-        .config_vwap_update_interval_seconds
-        .write(config.vwap_policy.update_interval_seconds)?;
-    oracle
-        .config_vwap_policy_version
-        .write(config.vwap_policy.version)?;
 
     // Register trading pairs.
     for (base, quote) in &config.pairs {
@@ -269,7 +255,6 @@ pub fn export_genesis(
     let min_valid_per_window = oracle.config_min_valid_per_window.read()?;
     let slash_fraction = oracle.config_slash_fraction.read()?;
     let lookback_duration = oracle.config_lookback_duration.read()?;
-    let vwap_policy = oracle.active_vwap_policy()?;
 
     // Export pairs and non-zero initial rates.
     let pair_count = oracle.pair_count.read()?;
@@ -379,7 +364,6 @@ pub fn export_genesis(
         min_valid_per_window,
         slash_fraction,
         lookback_duration,
-        vwap_policy,
         pairs,
         initial_rates,
         feeder_delegations,

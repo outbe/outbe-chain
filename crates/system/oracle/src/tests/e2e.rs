@@ -154,7 +154,6 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
             lookback_duration: 172_800,                                    // 2 days
-            vwap_policy: crate::window::DEFAULT_VWAP_POLICY,
             pairs: vec![(COEN, usd()), (usd(), ETH), (BTC, USDT)],
             initial_rates: vec![(COEN, usd(), coen_iso(1)), (usd(), ETH, fixed18(2000))],
             feeder_delegations: vec![
@@ -805,7 +804,6 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         min_valid_per_window: U256::from(50_000_000_000_000_000u128),
         slash_fraction: U256::ZERO,
         lookback_duration: 86400,
-        vwap_policy: crate::window::DEFAULT_VWAP_POLICY,
     };
 
     let exported = {

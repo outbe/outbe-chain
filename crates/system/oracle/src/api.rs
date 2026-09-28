@@ -10,7 +10,9 @@ use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
-pub use crate::window::{get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY};
+pub use crate::window::{
+    active_vwap_policy, get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY,
+};
 
 use alloy_primitives::{Address, U256};
 
@@ -153,15 +155,10 @@ pub fn four_hour_vwap(
     oracle.four_hour_vwap(pair, end_date)
 }
 
-/// The trusted trailing VWAP policy written at genesis.
-pub fn active_vwap_policy(storage: StorageHandle) -> Result<VwapPolicy> {
-    OracleContract::new(storage).active_vwap_policy()
-}
-
 /// Snapshot required at the current block under the active policy.
 pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
     let now = storage.timestamp()?.to::<u64>();
-    get_vwap_snapshot_id(now, &active_vwap_policy(storage)?)
+    get_vwap_snapshot_id(now, &active_vwap_policy())
 }
 
 /// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's

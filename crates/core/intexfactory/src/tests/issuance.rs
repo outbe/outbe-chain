@@ -504,8 +504,15 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         assert!(stale.contains("is stale"), "{stale}");
         assert!(!settle(quoted).contains("is stale"));
 
-        oracle.config_vwap_policy_version.write(2).unwrap();
-        assert!(settle(quoted).contains("is stale"));
+        let next_version = outbe_oracle::api::get_vwap_snapshot_id(
+            current.cutoff(),
+            &outbe_oracle::api::VwapPolicy {
+                policy_version: 2,
+                ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+            },
+        )
+        .unwrap();
+        assert!(settle(next_version.to_u256()).contains("is stale"));
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }
