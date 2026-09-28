@@ -53,17 +53,14 @@ impl RequestLimitSplit {
         let carry_over_credit = base_limit
             .checked_sub(lysis_limit_minor)
             .ok_or_else(invalid)?;
-        let available = carry_over_before
-            .checked_add(carry_over_credit)
-            .ok_or_else(invalid)?;
-        let desis_limit_minor = if green {
-            nominal_total
-                .checked_sub(lysis_limit_minor)
-                .ok_or_else(invalid)?
-                .min(available)
-        } else {
-            U256::ZERO
-        };
+        let desis_limit_minor = crate::settlement::desis_limit(
+            nominal_total,
+            lysis_limit_minor,
+            base_limit,
+            carry_over_before,
+            green,
+        )
+        .ok_or_else(invalid)?;
         Self::assemble(
             base_limit,
             lysis_limit_minor,
