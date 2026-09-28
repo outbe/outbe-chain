@@ -235,20 +235,20 @@ pub fn dispatch(
                     .four_hour_vwap(pair, now)?
                     .ok_or_else(|| OracleError::NoVwapData.into())
             }),
-            getVwapPolicy(c) => view(c, |_| {
+            getVwapPolicy(_) => metadata::<IOracle::getVwapPolicyCall>(|| {
                 let policy = active_vwap_policy();
                 Ok(IOracle::getVwapPolicyReturn {
-                    version: policy.policy_version,
-                    lookbackSeconds: policy.vwap_lookback_seconds,
-                    updateIntervalSeconds: policy.vwap_update_interval_seconds,
+                    policyVersion: policy.policy_version,
+                    vwapLookbackSeconds: policy.vwap_lookback_seconds,
+                    vwapUpdateIntervalSeconds: policy.vwap_update_interval_seconds,
                 })
             }),
-            getVwapSnapshotId(c) => view(c, |_| {
+            getVwapSnapshotId(_) => metadata::<IOracle::getVwapSnapshotIdCall>(|| {
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
             }),
             getFinalizedWindowVwap(c) => view(c, |c| {
-                let pair = oracle.require_pair_from(c.base, c.quote)?;
+                let pair = oracle.require_pair(AddressPair::new_coen_to(c.currency))?;
                 let snapshot = VwapSnapshotId::from_u256(c.snapshotId)?;
                 oracle
                     .finalized_window_vwap(pair, snapshot)?

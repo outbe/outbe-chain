@@ -29,8 +29,8 @@ interface IIntexFactory {
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and spend exactly the settlement cost. The
-    ///        issuance currency converts through COEN at the trailing VWAP snapshot
-    ///        required at this block.
+    ///        proof names no VWAP snapshot: an issuance-currency note must spend what
+    ///        `quoteSettlement` returns at the executing block.
     function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
         external;
 

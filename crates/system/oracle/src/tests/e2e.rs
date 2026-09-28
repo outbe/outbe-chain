@@ -1446,9 +1446,9 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
         .unwrap();
         assert_eq!(
             (
-                policy.version,
-                policy.lookbackSeconds,
-                policy.updateIntervalSeconds
+                policy.policyVersion,
+                policy.vwapLookbackSeconds,
+                policy.vwapUpdateIntervalSeconds
             ),
             (1, 28_800, 3_600)
         );
@@ -1463,8 +1463,7 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
         let read = |snapshot_id: U256| {
             call(
                 IOracle::getFinalizedWindowVwapCall {
-                    base: COEN,
-                    quote: usd(),
+                    currency: 840,
                     snapshotId: snapshot_id,
                 }
                 .abi_encode(),
@@ -1480,6 +1479,14 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
                 .unwrap();
         assert!(read(next.to_u256()).is_err());
         assert!(read(snapshot_id + U256::ONE).is_err());
+        let unregistered = call(
+            IOracle::getFinalizedWindowVwapCall {
+                currency: 978,
+                snapshotId: snapshot_id,
+            }
+            .abi_encode(),
+        );
+        assert!(unregistered.is_err());
     });
 }
 

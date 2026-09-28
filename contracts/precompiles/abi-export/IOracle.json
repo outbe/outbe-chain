@@ -342,14 +342,9 @@
     "name": "getFinalizedWindowVwap",
     "inputs": [
       {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
       },
       {
         "name": "snapshotId",
@@ -986,17 +981,17 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "version",
+        "name": "policyVersion",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "lookbackSeconds",
+        "name": "vwapLookbackSeconds",
         "type": "uint64",
         "internalType": "uint64"
       },
       {
-        "name": "updateIntervalSeconds",
+        "name": "vwapUpdateIntervalSeconds",
         "type": "uint64",
         "internalType": "uint64"
       }

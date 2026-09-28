@@ -143,7 +143,9 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gem_settle_quote",
     "What settling a gem with a given asset costs, and which of the gem's two currencies " +
-      "that asset settles on. `payableUnits` is in the asset's own minor units.",
+      "that asset settles on. `payableUnits` is in the asset's own minor units; `snapshotId` " +
+      "is the trailing VWAP snapshot a direct issuance-currency settlement must name (zero on " +
+      "the reference rail).",
     {
       id: z.string().describe("Gem token id (decimal or 0x hex)"),
       asset: addr.describe("Settlement stablecoin the holder intends to pay with"),

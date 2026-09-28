@@ -260,8 +260,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
   /**
    * Payment tokens a series accepts: the vault router's assets for either of its
-   * currencies. An issuance-currency token only settles while both COEN rates are
-   * published and fresh, which `quoteSettlement` is the one to answer.
+   * currencies. An issuance-currency token only settles while the trailing VWAP
+   * window prices both COEN legs, which `quoteSettlement` is the one to answer.
    */
   async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
@@ -292,21 +292,23 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
    * What settling `units` Intex of `series` with `token` costs, in that token's
    * minor units, and the ISO 4217 code the payment is denominated in. The chain
    * prices the whole operation and floors once, so a quote for many units can be
-   * a shade under the per-unit quote times that many.
+   * a shade under the per-unit quote times that many. `snapshotId` is the
+   * trailing VWAP snapshot an issuance-currency payment must name (zero on the
+   * reference rail); it goes stale at the next hourly cutoff.
    */
   async function quoteSettlement(
     n: Network,
     series: Hex,
     token: `0x${string}`,
     units: bigint,
-  ): Promise<{ settlementCurrency: number; payableUnits: bigint }> {
-    const [settlementCurrency, payableUnits] = (await n.client.readContract({
+  ): Promise<{ settlementCurrency: number; payableUnits: bigint; snapshotId: bigint }> {
+    const [settlementCurrency, payableUnits, snapshotId] = (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
       functionName: "quoteSettlement",
       args: [series, token, units],
     })) as [number, bigint, bigint];
-    return { settlementCurrency: Number(settlementCurrency), payableUnits };
+    return { settlementCurrency: Number(settlementCurrency), payableUnits, snapshotId };
   }
 
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
@@ -1189,10 +1191,16 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const base = { token, symbol: symbol as string, decimals: Number(decimals) };
           // A refused issuance-currency quote is this token's answer, not the list's.
           try {
-            const { settlementCurrency, payableUnits } = await quoteSettlement(n, series, token, quoted);
+            const { settlementCurrency, payableUnits, snapshotId } = await quoteSettlement(
+              n,
+              series,
+              token,
+              quoted,
+            );
             return {
               ...base,
               settlementCurrency,
+              snapshotId: snapshotId.toString(),
               cost: { raw: payableUnits.toString(), value: formatUnits(payableUnits, Number(decimals)) },
             };
           } catch (error) {

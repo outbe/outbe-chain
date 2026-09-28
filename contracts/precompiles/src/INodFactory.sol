@@ -64,7 +64,9 @@ interface INodFactory {
 
     /// @notice Pay a qualified Nod at or before its settlement deadline.
     /// The PayNote proof must name the caller as its owner, carry an asset the
-    /// Nod accepts on either currency rail, and spend exactly the cost.
+    /// Nod accepts on either currency rail, and spend exactly the cost. The proof
+    /// names no VWAP snapshot: an issuance-currency note must spend what
+    /// `quoteSettlement` returns at the executing block.
     function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's

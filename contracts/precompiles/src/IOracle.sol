@@ -196,23 +196,27 @@ interface IOracle {
     /// @dev Like getDayVwap, the lookback is capped by the configured lookback duration.
     function getFourHourVwap(address base, address quote) external view returns (uint256 vwap);
 
-    /// @notice Returns the trailing VWAP policy used for settlement and pledge pricing.
+    /// @notice Returns the trailing VWAP policy pinned by the protocol constants:
+    ///         snapshots cover `[cutoff - vwapLookbackSeconds, cutoff)` with a
+    ///         cutoff every `vwapUpdateIntervalSeconds` from the UTC epoch.
     function getVwapPolicy()
         external
         view
-        returns (uint32 version, uint64 lookbackSeconds, uint64 updateIntervalSeconds);
+        returns (uint32 policyVersion, uint64 vwapLookbackSeconds, uint64 vwapUpdateIntervalSeconds);
 
     /// @notice Returns the trailing VWAP snapshot required at the current block.
-    /// @dev Packs the policy version, lookback, update interval and window cutoff.
+    /// @dev Layout: `policyVersion << 128 | vwapLookbackSeconds << 96 |
+    ///      vwapUpdateIntervalSeconds << 64 | cutoff`. The window starts at
+    ///      `cutoff - vwapLookbackSeconds`.
     function getVwapSnapshotId() external view returns (uint256 snapshotId);
 
-    /// @notice Returns the finalized VWAP over a trailing snapshot window.
-    /// @dev Reverts for a malformed or not yet closed snapshot and for a window
-    ///      without observations.
-    function getFinalizedWindowVwap(address base, address quote, uint256 snapshotId)
-        external
-        view
-        returns (uint256 vwap);
+    /// @notice Returns the finalized COEN/`currency` VWAP over a trailing snapshot
+    ///         window, at six decimals.
+    /// @dev Any well-formed closed snapshot is readable; compare `snapshotId` with
+    ///      `getVwapSnapshotId()` to price against the current one. Reverts for an
+    ///      unregistered currency, a malformed or open snapshot and a window without
+    ///      a positive price.
+    function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for a full UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
