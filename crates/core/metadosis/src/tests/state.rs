@@ -139,10 +139,16 @@ fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() 
                 .unwrap();
             let expected = (as_big(total) * 32_u8) / 100_u8;
             assert_eq!(as_big(calculation.gratis_demand), expected);
+            let desis = crate::settlement::desis_limit(
+                total,
+                calculation.lysis_limit_minor,
+                U256::MAX,
+                U256::ZERO,
+                true,
+            )
+            .unwrap();
             assert_eq!(
-                calculation
-                    .lysis_limit_minor
-                    .checked_add(calculation.desis_limit_minor),
+                calculation.lysis_limit_minor.checked_add(desis),
                 Some(total)
             );
             assert!(calculation.lysis_limit_minor <= calculation.day_gratis_limit_minor);
@@ -331,7 +337,16 @@ fn test_calculate_metadosis_green_day() {
         //   lysis      = min(demand, limit) = 3_200
         //   desis      = min(total, limit) - lysis = 1_800
         assert_eq!(calc.lysis_limit_minor, U256::from(3_200u64));
-        assert_eq!(calc.desis_limit_minor, U256::from(1_800u64));
+        assert_eq!(
+            crate::settlement::desis_limit(
+                tribute_total,
+                calc.lysis_limit_minor,
+                day_limit,
+                U256::ZERO,
+                true
+            ),
+            Some(U256::from(1_800u64))
+        );
     });
 }
 
@@ -354,7 +369,16 @@ fn test_calculate_metadosis_green_day_below_the_limit() {
         //   desis      = min(1_000, 10_000) - 320          = 680
         //   unissued   = 10_000 - 320 - 680                = 9_000
         assert_eq!(calc.lysis_limit_minor, U256::from(320u64));
-        assert_eq!(calc.desis_limit_minor, U256::from(680u64));
+        assert_eq!(
+            crate::settlement::desis_limit(
+                tribute_total,
+                calc.lysis_limit_minor,
+                day_limit,
+                U256::ZERO,
+                true
+            ),
+            Some(U256::from(680u64))
+        );
     });
 }
 
@@ -371,17 +395,62 @@ fn test_calculate_metadosis_red_day() {
         let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
-        let (lysis_limit_minor, desis_limit_minor) =
-            (calc.lysis_limit_minor, calc.desis_limit_minor);
 
         // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
         //   demand     = 10_000 * 32 / 100 / 8 = 400
         //   limit      = day_limit / 8         = 625
         //   lysis      = min(demand, limit)     = 400
-        //   desis      = min(total, day_limit) - lysis = 4_600
-        assert_eq!(lysis_limit_minor, U256::from(400u64));
-        assert_eq!(desis_limit_minor, U256::from(4_600u64));
+        //   desis      = 0, a red day sells nothing
+        assert_eq!(calc.lysis_limit_minor, U256::from(400u64));
+        assert_eq!(
+            crate::settlement::desis_limit(
+                tribute_total,
+                calc.lysis_limit_minor,
+                day_limit,
+                U256::ZERO,
+                false
+            ),
+            Some(U256::ZERO)
+        );
     });
+}
+
+/// The local path is the OCOMP rule with nothing drawn from the carry-over, and a draw only ever
+/// widens what the auction may take.
+#[test]
+fn the_desis_limit_is_one_rule_for_both_paths() {
+    let values = [0u64, 1, 3, 320, 1_000, 3_200, 5_000, 10_000];
+    for nominal in values {
+        for day_limit in values {
+            for draw in [0u64, 1, 7_777] {
+                let nominal = U256::from(nominal);
+                let day_limit = U256::from(day_limit);
+                let draw = U256::from(draw);
+                let lysis = (nominal * U256::from(32u64) / U256::from(100u64)).min(day_limit);
+                let local =
+                    crate::settlement::desis_limit(nominal, lysis, day_limit, U256::ZERO, true);
+                assert_eq!(local, Some(nominal.min(day_limit) - lysis));
+                let ocomp = crate::settlement::desis_limit(nominal, lysis, day_limit, draw, true);
+                assert_eq!(ocomp, Some((nominal - lysis).min(draw + day_limit - lysis)));
+                assert!(ocomp >= local);
+                assert_eq!(
+                    crate::settlement::desis_limit(nominal, lysis, day_limit, draw, false),
+                    Some(U256::ZERO)
+                );
+            }
+        }
+    }
+    assert_eq!(
+        crate::settlement::desis_limit(
+            U256::from(10u64),
+            U256::from(11u64),
+            U256::from(20u64),
+            U256::ZERO,
+            true
+        ),
+        None,
+        "Lysis above the nominal is a fault"
+    );
 }
 
 #[test]
