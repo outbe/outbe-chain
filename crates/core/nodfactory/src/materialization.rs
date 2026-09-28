@@ -173,12 +173,16 @@ pub(crate) fn materialize_after_attempt(
         let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
         let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
             .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
+        let derived_floor = NodContract::floor_price_minor(action.entry_price_minor);
         let derived_bucket_key = NodContract::bucket_key(
             worldwide_day,
             action.floor_price_minor,
             action.reference_currency,
         );
-        if supplied_nod_id != derived_nod_id || action.bucket_key != derived_bucket_key {
+        if supplied_nod_id != derived_nod_id
+            || derived_floor != Some(action.floor_price_minor)
+            || action.bucket_key != derived_bucket_key
+        {
             return Err(NodFactoryError::InvalidMaterializationProof.into());
         }
     }
@@ -188,7 +192,6 @@ pub(crate) fn materialize_after_attempt(
             owner: action.owner,
             worldwide_day,
             league_id: action.league_id,
-            floor_price_minor: action.floor_price_minor,
             gratis_load_minor: action.gratis_load_minor,
             entry_price_minor: action.entry_price_minor,
             issuance_currency: action.issuance_currency,

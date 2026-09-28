@@ -76,7 +76,6 @@ fn issue_params(index: usize) -> NodIssueParams {
         gratis_load_minor: U256::from(1_000),
         worldwide_day: TARGET_WWD,
         league_id: 1,
-        floor_price_minor: U256::from(540),
         entry_price_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
@@ -86,7 +85,9 @@ fn issue_params(index: usize) -> NodIssueParams {
 fn certified_action(index: usize) -> NodActionV1 {
     let ordinal = u32::try_from(index).expect("benchmark cardinality fits u32");
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
-    let floor_price_minor = U256::from(500);
+    let entry_price_minor = U256::from(510);
+    let floor_price_minor =
+        NodContract::floor_price_minor(entry_price_minor).expect("benchmark floor fits U256");
     let tribute_id =
         WwdEntityId::from_day_and_digest(TARGET_WWD, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, TARGET_WWD)
@@ -100,7 +101,7 @@ fn certified_action(index: usize) -> NodActionV1 {
         league_id: 1,
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
-        entry_price_minor: U256::from(510),
+        entry_price_minor,
         settlement_cost_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,

@@ -21,7 +21,7 @@ use crate::precompile::IGratisFactory;
 use crate::sol_ext::{IReferenceCurrency, IVaultRouter, IERC20};
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
-use outbe_oracle::api::{previous_half_open_8hours_vwap, AddressPair};
+use outbe_oracle::api::{current_vwap_snapshot, get_finalized_window_vwap};
 use outbe_primitives::addresses::{GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::scaled_math::checked_quote;
@@ -88,14 +88,9 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
     let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
-    let block_timestamp = storage.timestamp()?.to::<u64>();
-    let valuation_price = previous_half_open_8hours_vwap(
-        storage.clone(),
-        AddressPair::new_coen_to(issuance_currency),
-        block_timestamp,
-    )?
-    .filter(|price| !price.is_zero())
-    .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
+    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let valuation_price = get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
+        .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
     let (gratis_amount, entry_price) =
         checked_quote(stables_amount, asset_decimals, valuation_price)?;
     let terms = PledgeTerms {

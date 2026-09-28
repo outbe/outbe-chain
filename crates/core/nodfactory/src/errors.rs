@@ -16,6 +16,9 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
+    #[error("nod floor price overflows")]
+    FloorPriceOverflow,
+
     #[error("nod is not qualified")]
     NodNotQualified,
 
@@ -51,6 +54,9 @@ pub enum NodFactoryError {
 
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
+
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    VwapSnapshotMismatch { authorized: U256, required: U256 },
 
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,

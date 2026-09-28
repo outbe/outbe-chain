@@ -67,7 +67,7 @@ sol! {
 
     interface IIntexSettlement {
         function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes payNoteProof) external;
-        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits);
+        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
     }
 
     struct ReferenceCurrencyPrice {

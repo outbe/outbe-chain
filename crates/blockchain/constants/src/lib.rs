@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use thiserror::Error;
 
 pub const GENESIS_CONFIG_KEY: &str = "outbeProtocol";
+const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 pub const PROTOCOL_CONSTANTS_SCHEMA_VERSION: u16 = 1;
 
 pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
@@ -18,6 +19,9 @@ pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 pub const DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT: u8 = 3;
 pub const DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS: u64 = 30;
 pub const DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK: u16 = 1;
+pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
+pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
+pub const DEFAULT_VWAP_POLICY_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GenesisProtocolParametersV1 {
@@ -31,6 +35,9 @@ pub struct GenesisProtocolParametersV1 {
     pub nod_materialization_batch_subtree_height: u8,
     pub nod_materialization_retry_interval_blocks: u64,
     pub nod_materialization_max_attempts_per_block: u16,
+    pub vwap_lookback_seconds: u64,
+    pub vwap_update_interval_seconds: u64,
+    pub vwap_policy_version: u32,
 }
 
 const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
@@ -44,6 +51,9 @@ const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     nod_materialization_batch_subtree_height: DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
     nod_materialization_retry_interval_blocks: DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS,
     nod_materialization_max_attempts_per_block: DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
+    vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
+    vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
+    vwap_policy_version: DEFAULT_VWAP_POLICY_VERSION,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -121,6 +131,16 @@ struct GenesisProtocolOverridesV1 {
     ocomp: OcompOverridesV1,
     #[serde(default)]
     nod_materialization: NodMaterializationOverridesV1,
+    #[serde(default)]
+    oracle: OracleOverridesV1,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OracleOverridesV1 {
+    vwap_lookback_seconds: Option<u64>,
+    vwap_update_interval_seconds: Option<u64>,
+    vwap_policy_version: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -225,6 +245,18 @@ impl GenesisProtocolParametersV1 {
                 .nod_materialization
                 .max_attempts_per_block
                 .unwrap_or(defaults.nod_materialization_max_attempts_per_block),
+            vwap_lookback_seconds: overrides
+                .oracle
+                .vwap_lookback_seconds
+                .unwrap_or(defaults.vwap_lookback_seconds),
+            vwap_update_interval_seconds: overrides
+                .oracle
+                .vwap_update_interval_seconds
+                .unwrap_or(defaults.vwap_update_interval_seconds),
+            vwap_policy_version: overrides
+                .oracle
+                .vwap_policy_version
+                .unwrap_or(defaults.vwap_policy_version),
         };
         resolved.validate()?;
         Ok(resolved)
@@ -272,6 +304,40 @@ impl GenesisProtocolParametersV1 {
             self.ocomp_compute_vote_window_blocks,
             DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         )?;
+        validate_nonzero_at_most(
+            "oracle.vwapLookbackSeconds",
+            self.vwap_lookback_seconds,
+            DEFAULT_VWAP_LOOKBACK_SECONDS,
+        )?;
+        validate_nonzero_at_most(
+            "oracle.vwapUpdateIntervalSeconds",
+            self.vwap_update_interval_seconds,
+            DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
+        )?;
+        if !SECONDS_PER_DAY.is_multiple_of(self.vwap_update_interval_seconds) {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "oracle.vwapUpdateIntervalSeconds",
+                requirement: "divide a UTC day",
+                actual: self.vwap_update_interval_seconds,
+            });
+        }
+        if !self
+            .vwap_lookback_seconds
+            .is_multiple_of(self.vwap_update_interval_seconds)
+        {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "oracle.vwapLookbackSeconds",
+                requirement: "be a whole number of update intervals",
+                actual: self.vwap_lookback_seconds,
+            });
+        }
+        if self.vwap_policy_version == 0 {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "oracle.vwapPolicyVersion",
+                requirement: "be non-zero",
+                actual: 0,
+            });
+        }
 
         self.metadosis_forming_period_seconds
             .checked_add(self.metadosis_lookback_delay_seconds)
@@ -401,6 +467,18 @@ pub fn get_nod_materialization_retry_interval_blocks() -> u64 {
 
 pub fn get_nod_materialization_max_attempts_per_block() -> u16 {
     parameters().nod_materialization_max_attempts_per_block
+}
+
+pub fn get_vwap_lookback_seconds() -> u64 {
+    parameters().vwap_lookback_seconds
+}
+
+pub fn get_vwap_update_interval_seconds() -> u64 {
+    parameters().vwap_update_interval_seconds
+}
+
+pub fn get_vwap_policy_version() -> u32 {
+    parameters().vwap_policy_version
 }
 
 fn validate_nonzero_at_most(

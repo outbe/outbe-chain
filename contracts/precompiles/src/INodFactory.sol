@@ -55,13 +55,18 @@ interface INodFactory {
     /// @notice Pay a qualified Nod in ERC20 base units of `asset`.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
-    /// reference-currency entry cost at the COEN cross rate of the last closed
-    /// UTC day.
-    function settleNod(uint256 nodId, address asset) external;
+    /// reference-currency entry cost at the COEN cross rate of the trailing VWAP
+    /// snapshot required at this block.
+    /// @param snapshotId The snapshot `quoteSettlement` returned; an
+    /// issuance-currency payment naming any other snapshot reverts. Ignored on
+    /// the reference rail.
+    function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
 
     /// @notice Pay a qualified Nod at or before its settlement deadline.
     /// The PayNote proof must name the caller as its owner, carry an asset the
-    /// Nod accepts on either currency rail, and spend exactly the cost.
+    /// Nod accepts on either currency rail, and spend exactly the cost. The proof
+    /// names no VWAP snapshot: an issuance-currency note must spend what
+    /// `quoteSettlement` returns at the executing block.
     function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
@@ -69,10 +74,12 @@ interface INodFactory {
     /// does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `asset`'s own minor units.
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
+    /// the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 nodId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits);
+        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
 
     /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over

@@ -717,7 +717,7 @@ fn partial_pair_votes_use_independent_quorum_and_no_cross_intersection_quorum() 
             .zip(&quotes)
             .position(|(base, quote)| (*base, *quote) == (target.address1(), target.address2()))
             .unwrap();
-        assert_eq!(volumes[target_row], fixed18(90));
+        assert_eq!(volumes[target_row], fixed18(25));
 
         assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
@@ -861,7 +861,7 @@ fn run_tally_skips_only_a_target_with_unrepresentable_final_cross_rate() {
 }
 
 #[test]
-fn unrepresentable_volume_removes_the_whole_tuple_before_quorum_and_tally() {
+fn unrepresentable_volume_keeps_the_vote_and_stays_out_of_the_median() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -890,24 +890,20 @@ fn unrepresentable_volume_removes_the_whole_tuple_before_quorum_and_tally() {
 
         assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(2));
         let (_, _, _, _, _, volumes) = oracle.get_all_price_snapshot_history(1).unwrap();
-        assert_eq!(volumes, vec![coen_iso(3)]);
-        assert_eq!(oracle.penalty_miss_count.read(&voters[0]).unwrap(), 1);
-        for voter in &voters[1..] {
+        assert_eq!(volumes, vec![coen_iso(1)]);
+        for voter in &voters {
             assert_eq!(oracle.penalty_success_count.read(voter).unwrap(), 1);
         }
     });
 }
 
 #[test]
-fn unrepresentable_volume_can_drop_a_pair_below_quorum() {
+fn unrepresentable_median_volume_omits_snapshot_without_penalizing_any_validator() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        oracle
-            .set_exchange_rate(Address::ZERO, pair, coen_iso(7), 1, 12)
-            .unwrap();
 
         let voters = [
             Address::new([0x11; 20]),
@@ -918,27 +914,22 @@ fn unrepresentable_volume_can_drop_a_pair_below_quorum() {
         for voter in voters {
             register_validator(storage.clone(), voter, native_coen(100));
         }
-        oracle
-            .submit_vote(voters[0], &[(COEN, usd(), coen_iso(2), U256::MAX)])
-            .unwrap();
-        for voter in &voters[1..3] {
+        for voter in &voters[..3] {
             oracle
-                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), U256::MAX)])
                 .unwrap();
         }
+        oracle
+            .submit_vote(voters[3], &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+            .unwrap();
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
-        assert_eq!(
-            oracle.get_exchange_rate_data(COEN, usd()).unwrap(),
-            (coen_iso(7), 1, 12)
-        );
+        assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(2));
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
-        assert_eq!(oracle.penalty_miss_count.read(&voters[0]).unwrap(), 1);
-        for voter in &voters[1..3] {
+        for voter in &voters {
             assert_eq!(oracle.penalty_success_count.read(voter).unwrap(), 1);
         }
-        assert_eq!(oracle.penalty_abstain_count.read(&voters[3]).unwrap(), 1);
     });
 }
 
@@ -1000,7 +991,7 @@ fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
         oracle
             .wwd_prefix_pv_sum
             .get_nested(&pair)
-            .write(&day, U256::MAX - rate * (unit_volume * U256::from(3u64)))
+            .write(&day, U256::MAX - rate * unit_volume + U256::ONE)
             .unwrap();
 
         let voters = [
@@ -1027,7 +1018,7 @@ fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
 }
 
 #[test]
-fn cross_target_volume_is_validated_against_the_derived_rate_not_raw_median() {
+fn cross_target_volume_is_the_median_of_the_cross_winners() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -1049,10 +1040,10 @@ fn cross_target_volume_is_validated_against_the_derived_rate_not_raw_median() {
         }
 
         let high_rate = fixed18(100);
-        let large_but_derived_rate_safe_volume = U256::MAX / high_rate + U256::ONE;
+        let large_volume = U256::MAX / high_rate + U256::ONE;
         let reference_rates = [fixed18(1), high_rate, fixed18(1), fixed18(1)];
         let target_rates = [fixed18(1), high_rate, high_rate];
-        let target_volumes = [U256::ZERO, large_but_derived_rate_safe_volume, U256::ZERO];
+        let target_volumes = [U256::ZERO, large_volume, U256::ZERO];
 
         for (index, voter) in voters.into_iter().enumerate() {
             let mut votes = vec![(
@@ -1086,7 +1077,7 @@ fn cross_target_volume_is_validated_against_the_derived_rate_not_raw_median() {
             .zip(&quotes)
             .position(|(base, quote)| (*base, *quote) == (target.address1(), target.address2()))
             .unwrap();
-        assert_eq!(volumes[target_row], large_but_derived_rate_safe_volume);
+        assert_eq!(volumes[target_row], large_volume / U256::from(2u64));
         assert_eq!(oracle.penalty_success_count.read(&voters[0]).unwrap(), 1);
         assert_eq!(oracle.penalty_miss_count.read(&voters[1]).unwrap(), 1);
         assert_eq!(oracle.penalty_miss_count.read(&voters[2]).unwrap(), 1);

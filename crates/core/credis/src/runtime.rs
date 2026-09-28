@@ -74,13 +74,12 @@ pub struct Settlement {
     pub closed: bool,
 }
 
-/// What a void writes off. `gratis_burned` is the unpaid share of the collateral;
-/// the two written-off amounts are never collected from anyone.
+/// What a void writes off. `gratis_burned` is the unpaid share of the collateral.
+/// Principal written off is never collected. Unpaid interest is not booked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Void {
     pub gratis_burned: U256,
     pub principal_written_off: U256,
-    pub interest_written_off: U256,
     pub smart_account: Address,
     pub cca: Address,
     /// Unpaid share of the original principal, scale `1e6`. Scales the
@@ -193,6 +192,7 @@ impl CredisContract<'_> {
                 call_window: CALL_WINDOW,
                 call_threshold: CALL_THRESHOLD,
                 call_anchor_price: params.call_anchor_price,
+                interest_paid: U256::ZERO,
             };
             outbe_ccaregistry::api::position_opened(
                 &self.storage,
@@ -309,6 +309,11 @@ impl CredisContract<'_> {
         position.last_settled_at = position
             .last_settled_at
             .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
+        // Sum of successful interest deltas. Every revert path returns above this write.
+        position.interest_paid = position
+            .interest_paid
+            .checked_add(interest)
+            .ok_or(CredisError::ArithmeticOverflow)?;
 
         let closed = position.outstanding.is_zero();
         if closed {
@@ -379,7 +384,6 @@ impl CredisContract<'_> {
 
             let gratis_burned = position.collateral_locked;
             let principal_written_off = position.outstanding;
-            let interest_written_off = Self::accrued_interest(&position, now)?;
             // A dimensionless fraction of the original principal, carried at the
             // protocol's 1e6 fixed-point scale.
             let unpaid_share = principal_written_off
@@ -405,7 +409,6 @@ impl CredisContract<'_> {
                 cca: position.cca,
                 gratisBurned: gratis_burned,
                 principalWrittenOff: principal_written_off,
-                interestWrittenOff: interest_written_off,
             })?;
             self.emit(ICredis::MetadataUpdate {
                 _tokenId: position_id,
@@ -414,7 +417,6 @@ impl CredisContract<'_> {
             Ok(Void {
                 gratis_burned,
                 principal_written_off,
-                interest_written_off,
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,

@@ -1,10 +1,12 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
 //! and UTC-day finalization, and the OCOMP projection profile.
 
-use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
+use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR, VWAP_HOUR_SECONDS};
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
+use crate::state::hourly_vwap_cell;
+use crate::window::VwapSnapshotId;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
@@ -54,8 +56,6 @@ impl VwapAccumulator {
         (!self.volume.is_zero()).then(|| self.price_volume / self.volume)
     }
 }
-
-const FOUR_HOURS: u64 = 4 * 60 * 60;
 
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
@@ -283,11 +283,6 @@ impl OracleContract<'_> {
             .ok_or_else(|| OracleError::NoVwapData.into())
     }
 
-    pub(crate) fn four_hour_vwap(&self, pair: AddressPair, end_date: u64) -> Result<Option<U256>> {
-        let lookback = self.config_lookback_duration.read()?.min(FOUR_HOURS);
-        self.try_calculate_vwap(pair, end_date.saturating_sub(lookback), end_date)
-    }
-
     /// [`Self::calculate_vwap`] with "the window held no samples" as `Ok(None)`.
     ///
     /// Callers that skip empty pairs rather than reverting route through this,
@@ -311,13 +306,85 @@ impl OracleContract<'_> {
         let complete_days_end = end_time - end_time % SECONDS_PER_DAY;
         let mut total = VwapAccumulator::default();
         if first_full_day < complete_days_end {
-            self.add_raw_snapshots(pair, start_time, first_full_day, &mut total)?;
+            self.add_sub_day_span(pair, start_time, first_full_day, &mut total)?;
             self.add_daily_aggregates(pair, first_full_day, complete_days_end, &mut total)?;
-            self.add_raw_snapshots(pair, complete_days_end, end_time, &mut total)?;
+            self.add_sub_day_span(pair, complete_days_end, end_time, &mut total)?;
         } else {
-            self.add_raw_snapshots(pair, start_time, end_time, &mut total)?;
+            self.add_sub_day_span(pair, start_time, end_time, &mut total)?;
         }
         Ok(total.finish())
+    }
+
+    /// Whole hours come from the hourly cells; partial hours and hours whose cell
+    /// was already reused for a later hour are read from raw snapshots.
+    fn add_sub_day_span(
+        &self,
+        pair: AddressPair,
+        start_time: u64,
+        end_time: u64,
+        total: &mut VwapAccumulator,
+    ) -> Result<()> {
+        let first_hour = start_time
+            .checked_next_multiple_of(VWAP_HOUR_SECONDS)
+            .ok_or(OracleError::InvalidVwapRange)?;
+        let last_hour = end_time - end_time % VWAP_HOUR_SECONDS;
+        if first_hour >= last_hour {
+            return self.add_raw_snapshots(pair, start_time, end_time, total);
+        }
+        // Consecutive hours without a usable cell share one raw scan.
+        let mut raw_from = start_time;
+        let mut hour = first_hour;
+        while hour < last_hour {
+            if self.add_hourly_aggregate(pair, hour, total)? {
+                self.add_raw_snapshots(pair, raw_from, hour, total)?;
+                raw_from = hour + VWAP_HOUR_SECONDS;
+            }
+            hour += VWAP_HOUR_SECONDS;
+        }
+        self.add_raw_snapshots(pair, raw_from, end_time, total)
+    }
+
+    /// Whether the hour's cell accounts for it. Snapshots are written in time
+    /// order, so a cell still labelled with an earlier hour proves the pair had no
+    /// entry in this one; only a cell reused for a later hour does not.
+    fn add_hourly_aggregate(
+        &self,
+        pair: AddressPair,
+        hour_start: u64,
+        total: &mut VwapAccumulator,
+    ) -> Result<bool> {
+        let cell = hourly_vwap_cell(hour_start);
+        let held = self.hourly_vwap_hour.get_nested(&pair).read(&cell)?;
+        if held != hour_start {
+            return Ok(held < hour_start);
+        }
+        let volume = self.hourly_vol_sum.get_nested(&pair).read(&cell)?;
+        if !volume.is_zero() {
+            let pv = self.hourly_pv_sum.get_nested(&pair).read(&cell)?;
+            total.add(
+                pair,
+                pv,
+                volume,
+                "hourly sum accumulation",
+                "hourly volume sum",
+            )?;
+        }
+        Ok(true)
+    }
+
+    /// VWAP over the snapshot's window once its cutoff has passed; `None` when the
+    /// window holds no observation or no positive price.
+    pub fn finalized_window_vwap(
+        &self,
+        pair: AddressPair,
+        snapshot: VwapSnapshotId,
+    ) -> Result<Option<U256>> {
+        if snapshot.cutoff() > self.storage.timestamp()?.to::<u64>() {
+            return Err(OracleError::InvalidVwapSnapshot.into());
+        }
+        Ok(self
+            .try_calculate_vwap(pair, snapshot.start(), snapshot.cutoff())?
+            .filter(|vwap| !vwap.is_zero()))
     }
 
     fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {

@@ -99,12 +99,12 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
         true,
     );
 
-    let expected_volume = U256::from(60u64) * outbe_primitives::units::SCALE_1E18;
+    let expected_volume = U256::from(15u64) * outbe_primitives::units::SCALE_1E18;
     for port in world.validators.committee_ports() {
         assert_eq!(
             world.rpc.oracle_latest_volume(port, BTC_TOKEN, usd),
             Some(expected_volume),
-            "target volume must use the full raw 3-validator ballot"
+            "target volume must be the median of the cross winners"
         );
     }
 

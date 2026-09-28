@@ -729,7 +729,7 @@ mod tests {
             entry_price: stables.checked_mul(SCALE_1E6_U256).unwrap() / gratis,
             issuance_currency: 840,
             asset_decimals: 6,
-            valuation_price: stables * outbe_primitives::units::SCALE_1E18 / gratis,
+            valuation_price: stables.checked_mul(SCALE_1E6_U256).unwrap() / gratis,
         }
     }
 
@@ -958,7 +958,7 @@ mod tests {
             entry_price: U256::from(500u64) * SCALE_1E6_U256 / U256::from(1000u64),
             issuance_currency: 840,
             asset_decimals: 6,
-            valuation_price: outbe_primitives::units::SCALE_1E18 / U256::from(2),
+            valuation_price: U256::from(500_000u64),
             created_at: 28_799,
             valid_until: 29_699,
         };
@@ -1100,7 +1100,7 @@ mod tests {
         p.current_balance = minted.new_balance;
         p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
         let mut accepted = terms(p.amount, U256::ONE);
-        accepted.valuation_price = U256::from(2) * outbe_primitives::units::SCALE_1E18;
+        accepted.valuation_price = U256::from(2_000_000u64);
         p.pledge_terms = Some(accepted);
         let result = apply_op(&sk, &p);
         assert_eq!(result.status, GratisOpStatus::Applied);
@@ -1114,7 +1114,7 @@ mod tests {
         for field in 0..4 {
             let mut altered = accepted;
             match field {
-                0 => altered.valuation_price = outbe_primitives::units::SCALE_1E18,
+                0 => altered.valuation_price = U256::from(1_000_000u64),
                 1 => altered.asset_decimals = 19,
                 2 => altered.gratis_amount += U256::ONE,
                 _ => altered.entry_price = U256::from(2_000_000),

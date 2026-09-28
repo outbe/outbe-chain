@@ -30,6 +30,11 @@ pub enum IntexFactoryError {
     Rounding(RoundingError),
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    VwapSnapshotMismatch {
+        authorized: alloy_primitives::U256,
+        required: alloy_primitives::U256,
+    },
     #[error("payment token {0} has no registered vault")]
     PaymentTokenNotRegistered(alloy_primitives::Address),
     #[error("payment token currency {0} does not match the series")]

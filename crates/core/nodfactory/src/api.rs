@@ -65,15 +65,16 @@ pub fn settle_nod_with_paynote(
     runtime::settle_nod_with_paynote(storage, scope, parent, nod_id, paynote_proof)
 }
 
-/// What settling `nod_id` with `asset` costs, and which of the Nod's two
-/// currencies that asset settles on.
+/// What settling `nod_id` with `asset` costs, which of the Nod's two currencies
+/// that asset settles on, and the VWAP snapshot an issuance-currency payment
+/// must name.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     nod_id: WwdEntityId,
     asset: Address,
-) -> Result<(u16, U256)> {
+) -> Result<(u16, U256, U256)> {
     runtime::quote_settlement(storage, scope, parent, nod_id, asset)
 }
 
@@ -85,6 +86,7 @@ pub fn settle_nod(
     caller: Address,
     nod_id: WwdEntityId,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
-    runtime::settle_nod(storage, scope, parent, caller, nod_id, asset)
+    runtime::settle_nod(storage, scope, parent, caller, nod_id, asset, snapshot_id)
 }

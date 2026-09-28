@@ -23,7 +23,6 @@ pub(crate) struct MetadosisCalculation {
     pub(crate) gratis_demand: U256,
     pub(crate) day_gratis_limit_minor: U256,
     pub(crate) lysis_limit_minor: U256,
-    pub(crate) desis_limit_minor: U256,
 }
 
 impl MetadosisContract<'_> {
@@ -63,31 +62,30 @@ impl MetadosisContract<'_> {
             }
         }
         let lysis_limit_minor = demand.min(day_gratis_limit_minor);
-        // The day sells what it earned beyond the symbolic share, and the limit
-        // only caps it: the headroom a weak day leaves is not issued at all.
-        let desis_limit_minor = tribute_nominal_total
-            .min(wwd_metadosis_limit)
-            .checked_sub(lysis_limit_minor)
-            .ok_or_else(|| {
-                crate::errors::storage_corruption(
-                    "Metadosis Lysis Limit exceeds the day's nominal".into(),
-                )
-            })?;
-        let split_total = lysis_limit_minor
-            .checked_add(desis_limit_minor)
-            .ok_or_else(|| crate::errors::storage_corruption("Metadosis split overflow".into()))?;
-        if split_total > wwd_metadosis_limit {
-            return Err(crate::errors::storage_corruption(
-                "Metadosis split exceeds the day limit".into(),
-            ));
-        }
         Ok(MetadosisCalculation {
             gratis_demand: demand,
             day_gratis_limit_minor,
             lysis_limit_minor,
-            desis_limit_minor,
         })
     }
+}
+
+/// The Desis Limit of a day: what it earned beyond the Lysis share, capped by what Lysis left of the
+/// day's own limit plus what the path draws from the carry-over. A day that is not green sells nothing.
+pub(crate) fn desis_limit(
+    nominal_total: U256,
+    lysis_limit_minor: U256,
+    day_limit: U256,
+    carry_over_draw: U256,
+    green: bool,
+) -> Option<U256> {
+    let available = day_limit
+        .checked_sub(lysis_limit_minor)?
+        .checked_add(carry_over_draw)?;
+    if !green {
+        return Some(U256::ZERO);
+    }
+    Some(nominal_total.checked_sub(lysis_limit_minor)?.min(available))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,7 +242,19 @@ fn process_local_terminal_outcome(
             tribute_nominal_total,
             calculation,
         } => {
-            let desis_limit_minor = calculation.desis_limit_minor;
+            // The local path never draws from the carry-over: its auction sells from the day alone.
+            let desis_limit_minor = desis_limit(
+                tribute_nominal_total,
+                calculation.lysis_limit_minor,
+                current.metadosis_limit_amount,
+                U256::ZERO,
+                day_type == WwdDayType::Green,
+            )
+            .ok_or_else(|| {
+                crate::errors::storage_corruption(
+                    "Metadosis Lysis Limit exceeds the day's nominal".into(),
+                )
+            })?;
             let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
             // The limit headroom above the day's own nominal is issued by nobody, so it stays on
             // the warehouse together with whatever the brief did not take.

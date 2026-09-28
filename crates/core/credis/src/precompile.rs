@@ -72,10 +72,13 @@ pub fn dispatch(
                 Ok(abi_position(&position))
             }),
             hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
-            accruedInterest(c) => view(c, |c| {
+            interestAccruedMinor(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
                 CredisContract::accrued_interest(&position, timestamp)
+            }),
+            interestPaidMinor(c) => view(c, |c| {
+                Ok(contract.get_position(c.positionId)?.interest_paid)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
                 let (principal, outstanding) =
@@ -113,5 +116,6 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         calledAt: p.called_at,
         state: p.state,
         callAnchorPrice: p.call_anchor_price,
+        interestPaidMinor: p.interest_paid,
     }
 }

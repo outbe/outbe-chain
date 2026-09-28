@@ -230,7 +230,7 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
             .write(outbe_intexfactory::config::PROFILE_PROD)
             .unwrap();
         // A day is priced when its auction starts, so every day a start can land on
-        // needs a price here - a deferred anchor reads the next one, not this one.
+        // needs a price here - a day briefed later reads a later one.
         for day in 0..5 {
             seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
         }
@@ -879,17 +879,12 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
         )
         .is_err());
 
-        let midnight = u64::MAX - u64::MAX % outbe_primitives::time::SECONDS_PER_DAY;
-        let late = midnight
-            + (crate::constants::COMMIT_WINDOW_SECONDS
-                - crate::constants::MIN_COMMIT_WINDOW_SECONDS)
-            + 1;
         assert!(crate::api::dispatch_auction_brief(
             storage,
             NEXT_WORLDWIDE_DAY,
             U256::MAX,
             true,
-            late,
+            u64::MAX,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
         .is_err());
@@ -959,7 +954,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
     });
 }
 
-// --- Late-brief deferral ---
+// --- Late start ---
 
 fn brief_anchor_at(now: u64) -> u64 {
     with_storage(|s| {
@@ -985,96 +980,154 @@ fn brief_anchor_at(now: u64) -> u64 {
 }
 
 #[test]
-fn brief_anchors_to_this_midnight_within_grace() {
+fn brief_anchors_to_its_own_midnight() {
     assert_eq!(brief_anchor_at(ANCHOR + 4 * 3600), ANCHOR);
-    assert_eq!(brief_anchor_at(ANCHOR + 6 * 3600), ANCHOR);
+    assert_eq!(brief_anchor_at(ANCHOR + 8 * 3600), ANCHOR);
+    assert_eq!(brief_anchor_at(ANCHOR + 12 * 3600), ANCHOR);
 }
 
-#[test]
-fn brief_defers_past_grace_to_next_midnight() {
-    assert_eq!(brief_anchor_at(ANCHOR + 6 * 3600 + 1), ANCHOR + 86_400);
-    assert_eq!(brief_anchor_at(ANCHOR + 12 * 3600), ANCHOR + 86_400);
-}
+/// The last moment a day may start: exactly the minimum commit window left.
+#[cfg(not(feature = "e2e-test"))]
+const LAST_START: u64 =
+    ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS - crate::constants::MIN_COMMIT_WINDOW_SECONDS;
 
 #[test]
-fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
+#[cfg(not(feature = "e2e-test"))]
+fn a_start_with_the_minimum_commit_window_opens() {
     with_storage(|s| {
-        let noon = ANCHOR + 12 * 3600;
-        assert_eq!(
-            crate::api::dispatch_auction_brief(
-                s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(10 * LOAD_MINOR),
-                true,
-                noon,
-                crate::api::BriefOverflowPolicy::CarryOver,
-            )
-            .unwrap(),
-            AuctionBriefReceipt::Accepted
+        brief_at_rate_from(
+            &s,
+            WORLDWIDE_DAY,
+            10 * LOAD_MINOR,
+            ENTRY_PRICE,
+            true,
+            LAST_START,
         );
-        assert_eq!(
-            u64::from(
-                s.contract::<DesisContract>()
-                    .auction_at
-                    .read(&WORLDWIDE_DAY)
-                    .unwrap()
-            ),
-            ANCHOR + 86_400
-        );
-        runtime::schedule_tick(&s, noon).unwrap();
+        runtime::schedule_tick(&s, LAST_START).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
-            AuctionStage::Briefed
-        );
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Started
         );
     });
+}
+
+/// Brief with `brief`, tick at `start`, and report the day's stage, the unallocated
+/// pool and whether the late-start cancellation was emitted. Without `router` every
+/// message the start sends fails.
+#[cfg(not(feature = "e2e-test"))]
+fn start_at(
+    start: u64,
+    router: bool,
+    brief: impl FnOnce(&StorageHandle),
+) -> (AuctionStage, U256, bool) {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(start));
+    if router {
+        storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    }
+    let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
+        brief(&s);
+        seed_rate(&s, start, ENTRY_PRICE);
+        runtime::schedule_tick(&s, start).unwrap();
+        (
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+        )
+    });
+    let late_sig = IDesis::AuctionCancelledLateStart::SIGNATURE_HASH;
+    let cancelled_late = storage
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .iter()
+        .any(|log| log.topics().first() == Some(&late_sig));
+    (stage, pool, cancelled_late)
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit() {
+    let start = LAST_START + 1;
+    let outcome = start_at(start, true, |s| {
+        brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
+    });
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
+    );
+}
+
+/// A late day goes out as a red START, so a router that cannot take it keeps the
+/// day briefed for the next tick instead of cancelling it unannounced.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
+    let start = LAST_START + 1;
+    let outcome = start_at(start, false, |s| {
+        brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
+    });
+    assert_eq!(outcome, (AuctionStage::Briefed, U256::ZERO, false));
+}
+
+#[cfg(not(feature = "e2e-test"))]
+fn ocomp_brief_at_now(s: &StorageHandle) {
+    crate::ocomp_limits::apply_request_desis_limit(
+        s.clone(),
+        B256::repeat_byte(0x41),
+        WORLDWIDE_DAY,
+        U256::from(10 * LOAD_MINOR),
+        NOW,
+        true,
+    )
+    .expect("strict request brief");
+}
+
+/// An OCOMP brief carries its request time, so a quorum that lands hours into the day
+/// still anchors to its midnight, and the start measures what is left of the window.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_late_ocomp_brief_cancels_its_day() {
+    let outcome = start_at(ANCHOR + 9 * 3600, true, ocomp_brief_at_now);
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
+    );
+}
+
+/// A day that never started is still a late start past its whole issuance window, so
+/// its targets hear of it; only a started day is retired as overdue.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_brief_past_the_issuance_window_is_still_a_late_start() {
+    let outcome = start_at(ANCHOR + 3 * 86_400, true, ocomp_brief_at_now);
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
+    );
+}
+
+/// Past its issuance window a day whose START the router still refuses is retired as
+/// overdue, so its limit does not wait on the router forever.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
+    let outcome = start_at(ANCHOR + 3 * 86_400, false, ocomp_brief_at_now);
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), false)
+    );
 }
 
 // --- Schedule tick ---
 
 // --- The day is priced when its auction starts ---
-
-/// A brief past the six-hour grace anchors to the next midnight, so its auction
-/// opens a day later and must run on the day that closed before that start.
-#[test]
-#[cfg(not(feature = "e2e-test"))]
-fn a_deferred_start_prices_the_day_that_closed_before_it() {
-    with_storage(|s| {
-        let late = ANCHOR + 7 * 3_600;
-        let start = ANCHOR + 86_400;
-        brief_at_rate_from(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, late);
-        seed_rate(&s, start, 3 * ENTRY_PRICE);
-
-        runtime::schedule_tick(&s, late).unwrap();
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Briefed,
-            "a deferred day waits for its anchor"
-        );
-
-        runtime::schedule_tick(&s, start).unwrap();
-        assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Started
-        );
-        assert_eq!(
-            contract
-                .read_auction_config(WORLDWIDE_DAY)
-                .unwrap()
-                .entry_price_for(REFERENCE_ISO),
-            Some(U256::from(3 * ENTRY_PRICE)),
-            "the entry price is the VWAP of the day before the start, not before the brief"
-        );
-    });
-}
 
 /// The opposite direction: a price the brief could see is gone by the start.
 #[test]
@@ -1097,28 +1150,6 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
                 .unwrap(),
             U256::from(10 * LOAD_MINOR),
             "the briefed limit goes back"
-        );
-    });
-}
-
-/// A day nothing could price at its brief still opens when its start can price it:
-/// the start is the moment that decides, so an oracle gap before it does not carry.
-#[test]
-#[cfg(not(feature = "e2e-test"))]
-fn a_day_unpriced_at_its_brief_opens_when_its_start_can_price_it() {
-    with_storage(|s| {
-        let late = ANCHOR + 7 * 3_600;
-        let start = ANCHOR + 86_400;
-        brief_at_rate_from(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, late);
-        unprice_day(&s, late);
-        seed_rate(&s, start, ENTRY_PRICE);
-
-        runtime::schedule_tick(&s, start).unwrap();
-        assert_eq!(
-            s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
-                .unwrap(),
-            AuctionStage::Started
         );
     });
 }

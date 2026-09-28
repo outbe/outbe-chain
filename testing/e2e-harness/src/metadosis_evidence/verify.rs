@@ -754,7 +754,7 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
                 && publication.base == expected_base
                 && publication.quote == expected_quote
                 && publication.rate == expected_rate.to_string()
-                && publication.volume == "3000000000"
+                && publication.volume == "1000000000"
                 && publication.oracle_block > previous_oracle_block,
             "fresh-devnet Oracle evidence has a divergent canonical publication"
         );
@@ -1495,7 +1495,7 @@ mod tests {
                 base: oracle_base.clone(),
                 quote: oracle_quote.clone(),
                 rate: rate.to_owned(),
-                volume: "3000000000".to_owned(),
+                volume: "1000000000".to_owned(),
                 oracle_block: block,
                 oracle_timestamp: timestamp,
                 finalized_height: block,

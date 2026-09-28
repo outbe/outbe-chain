@@ -276,7 +276,7 @@ pub struct PledgeTerms {
     pub issuance_currency: u16,
     /// Asset atomic-unit scale, restricted to 0–18 decimals.
     pub asset_decimals: u8,
-    /// Previous half-open eight-hour currency-per-COEN VWAP, scaled by 1e18.
+    /// Canonical COEN/issuance-currency VWAP sealed at pledge, scale 1e6.
     pub valuation_price: U256,
 }
 
