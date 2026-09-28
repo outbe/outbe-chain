@@ -151,11 +151,7 @@ fn set_vwap_for(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, value: U256
         .unwrap()
         .expect("the pair must be registered before its series is seeded");
     let oracle = OracleContract::new(storage.clone());
-    oracle
-        .utc_day_vwap_value
-        .get_nested(&utc_day)
-        .write(&index, value)
-        .unwrap();
+    oracle.record_utc_day_vwap(utc_day, index, value).unwrap();
     bump_watermark(storage, utc_day);
 }
 

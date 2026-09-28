@@ -26,7 +26,11 @@ interface IVwapRegistry is IVwapSource {
     /// @notice A required address argument was zero.
     error ZeroAddress(string field);
 
-    /// @notice Record one finalized day's prices. Router only, idempotent; days may arrive in any order.
+    /// @notice A recorded day arrived again with a different price.
+    error DayAlreadyRecorded(uint32 utcDay, uint16 isoCode);
+
+    /// @notice Record one finalized day's prices. Router only, idempotent for the same prices; days
+    ///         may arrive in any order.
     /// @param utcDay UTC day (yyyymmdd).
     /// @param rows One price per reference currency.
     function record(uint32 utcDay, IOriginRouter.DailyVwap[] calldata rows) external;

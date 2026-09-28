@@ -171,9 +171,7 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         outbe_primitives::time::timestamp_to_date_key(timestamp),
     );
     oracle
-        .utc_day_vwap_value
-        .get_nested(&last_closed)
-        .write(&index, U256::from(100u64))
+        .record_utc_day_vwap(last_closed, index, U256::from(100u64))
         .unwrap();
 }
 

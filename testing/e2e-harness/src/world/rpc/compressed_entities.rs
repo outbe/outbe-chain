@@ -21,6 +21,8 @@ impl CompressedEntityAtHeader {
     }
 }
 
+pub const COMPRESSED_ENTITY_TIMEOUT_SECS: u64 = 120;
+
 impl Rpc {
     /// Fetch one latest-finalized compressed-entity package and its exact header.
     pub fn compressed_entity(
@@ -28,6 +30,36 @@ impl Rpc {
         port: u16,
         request: PointReadRequestV1,
     ) -> Result<CompressedEntityAtHeader> {
+        self.point_read(port, request)?
+            .ok_or_else(|| eyre!("compressed-entity package is unavailable on port {port}"))
+    }
+
+    /// The CE marker, block finality and the off-chain bodies advance independently, so a
+    /// point read answers `Unavailable` for a moment even once its height is finalized.
+    pub fn compressed_entity_ready(
+        &self,
+        port: u16,
+        request: PointReadRequestV1,
+    ) -> Result<CompressedEntityAtHeader> {
+        let deadline = Instant::now() + Duration::from_secs(COMPRESSED_ENTITY_TIMEOUT_SECS);
+        loop {
+            if let Some(package) = self.point_read(port, request)? {
+                return Ok(package);
+            }
+            if Instant::now() >= deadline {
+                return Err(eyre!(
+                    "compressed-entity package stayed unavailable on port {port} for {COMPRESSED_ENTITY_TIMEOUT_SECS}s"
+                ));
+            }
+            sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn point_read(
+        &self,
+        port: u16,
+        request: PointReadRequestV1,
+    ) -> Result<Option<CompressedEntityAtHeader>> {
         let result = eth::raw_json_with_params(
             &self.url(port),
             "outbe_getCompressedEntity",
@@ -39,11 +71,7 @@ impl Rpc {
         let common = match &result {
             PointReadResultV1::Present { common, .. }
             | PointReadResultV1::Absent { common, .. } => common,
-            PointReadResultV1::Unavailable => {
-                return Err(eyre!(
-                    "compressed-entity package is unavailable on port {port}"
-                ));
-            }
+            PointReadResultV1::Unavailable => return Ok(None),
         };
         let block = eth::raw_json_with_params(
             &self.url(port),
@@ -73,13 +101,13 @@ impl Rpc {
                 .ok_or_else(|| eyre!("selected block has no extraData"))?,
         )
         .wrap_err("decode selected block extraData")?;
-        Ok(CompressedEntityAtHeader {
+        Ok(Some(CompressedEntityAtHeader {
             header: SelectedHeaderV1 {
                 block_number: common.block_number,
                 block_hash: common.block_hash,
                 extra_data: extra_data.to_vec(),
             },
             result,
-        })
+        }))
     }
 }

@@ -493,9 +493,7 @@ fn publish_day_vwap(storage: &StorageHandle<'_>, index: u32, rate: U256) {
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let previous_day = previous_date_key(timestamp_to_date_key(NOW));
     oracle
-        .utc_day_vwap_value
-        .get_nested(&previous_day)
-        .write(&index, rate)
+        .record_utc_day_vwap(previous_day, index, rate)
         .unwrap();
     oracle
         .utc_day_vwap_last_finalized
@@ -613,21 +611,13 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
             // A day before issuance, an unfinalized day and another currency must
             // not substitute for the bucket's own closes, even above the floor.
             for day in [previous_date_key(previous_day), current_day] {
-                oracle
-                    .utc_day_vwap_value
-                    .get_nested(&day)
-                    .write(&1, U256::from(14))
-                    .unwrap();
+                oracle.record_utc_day_vwap(day, 1, U256::from(14)).unwrap();
             }
             oracle
-                .utc_day_vwap_value
-                .get_nested(&previous_day)
-                .write(&2, U256::from(14))
+                .record_utc_day_vwap(previous_day, 2, U256::from(14))
                 .unwrap();
             oracle
-                .utc_day_vwap_value
-                .get_nested(&previous_day)
-                .write(&1, U256::from(daily_rate))
+                .record_utc_day_vwap(previous_day, 1, U256::from(daily_rate))
                 .unwrap();
             oracle
                 .utc_day_vwap_last_finalized
@@ -646,9 +636,7 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
             // The next day closes below the floor: a crossing already made
             // stays, and a day finalized late still counts.
             oracle
-                .utc_day_vwap_value
-                .get_nested(&current_day)
-                .write(&1, U256::from(1))
+                .record_utc_day_vwap(current_day, 1, U256::from(1))
                 .unwrap();
             oracle
                 .utc_day_vwap_last_finalized
@@ -881,10 +869,6 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
 
 fn publish_vwap_on(storage: &StorageHandle<'_>, index: u32, day: u32, rate: U256) {
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, rate)
-        .unwrap();
+    oracle.record_utc_day_vwap(day, index, rate).unwrap();
     oracle.utc_day_vwap_last_finalized.write(day).unwrap();
 }

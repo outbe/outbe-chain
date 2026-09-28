@@ -49,15 +49,20 @@ pub struct AgentRewardContract {
     // slot 7: claimable SRA reward per address
     #[attribute(order = 7)]
     pub sra_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    // slot 8: claimable CCA reward per address, in native COEN atomic units.
+    #[attribute(order = 8)]
+    pub cca_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim issues, so WAA and SRA balances are kept apart.
+/// claim issues, so WAA, SRA and CCA balances are kept apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {
     Waa = 0,
     Sra = 1,
+    Cca = 2,
 }
 
 impl RewardPool {
@@ -65,6 +70,7 @@ impl RewardPool {
         match value {
             0 => Ok(Self::Waa),
             1 => Ok(Self::Sra),
+            2 => Ok(Self::Cca),
             _ => Err(PrecompileError::Revert(format!(
                 "agentreward unknown reward pool {value}"
             ))),

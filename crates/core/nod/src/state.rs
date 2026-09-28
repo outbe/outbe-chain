@@ -86,13 +86,22 @@ impl NodContract<'_> {
         Ok(Some(prices))
     }
 
+    pub fn entry_price_source_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
+        if !self.entry_prices_frozen.read(&day)? {
+            return Ok(None);
+        }
+        Ok(Some(self.entry_price_source_day.read(&day)?))
+    }
+
     pub fn store_entry_price_snapshot(
         &self,
         day: WorldwideDay,
+        source_day: u32,
         prices: &BTreeMap<u16, U256>,
     ) -> Result<()> {
         let count = u32::try_from(prices.len()).map_err(|_| NodError::InvalidEntryPriceSnapshot)?;
         if !day.is_valid()
+            || source_day == 0
             || count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES
             || prices
                 .iter()
@@ -111,6 +120,7 @@ impl NodContract<'_> {
                 values.write(iso, *price)?;
             }
             self.entry_price_currency_count.write(&day, count)?;
+            self.entry_price_source_day.write(&day, source_day)?;
             self.entry_prices_frozen.write(&day, true)
         })
     }

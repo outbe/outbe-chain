@@ -26,6 +26,7 @@ import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
+import { registerViewTools } from "./tools/view.js";
 import { wcoenLockAmount } from "./tools/intex.js";
 import { view as readHumanizedView } from "./tools/util.js";
 
@@ -298,9 +299,11 @@ test("MCP Oracle aggregate views format each market row independently", async ()
 test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", async () => {
   type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
   const handlers = new Map<string, ToolHandler>();
+  const schemas = new Map<string, Record<string, { parse(value: unknown): unknown }>>();
   const server = {
     tool(name: string, ...args: unknown[]) {
       handlers.set(name, args.at(-1) as ToolHandler);
+      schemas.set(name, args[1] as Record<string, { parse(value: unknown): unknown }>);
     },
   } as unknown as McpServer;
   const account = privateKeyToAccount(
@@ -320,6 +323,13 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     } as WalletClient,
   } satisfies Ctx;
   registerSignTools(server, ctx);
+  registerViewTools(server, ctx);
+  for (const tool of ["agentreward_claim", "agentreward_pool_claimable"]) {
+    const schema = schemas.get(tool);
+    assert(schema);
+    assert.equal(schema.pool.parse(2), 2);
+    assert.throws(() => schema.pool.parse(3));
+  }
 
   const cases = [
     {
@@ -343,6 +353,13 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
       amountIndex: 1,
       value: 0n,
     },
+    {
+      tool: "agentreward_claim",
+      contract: "agentreward",
+      args: { pool: 2, amount: "1.5", wait: false },
+      amountIndex: 1,
+      value: 0n,
+    },
   ] as const;
 
   for (const item of cases) {
@@ -355,6 +372,7 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
     assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
     assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
+    if ("pool" in item.args) assert.equal(decoded.args?.[0], item.args.pool);
   }
 });
 

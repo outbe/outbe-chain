@@ -1382,9 +1382,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                 );
                 let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 oracle
-                    .utc_day_vwap_value
-                    .get_nested(&previous_day)
-                    .write(&pair_index, U256::from(1_000_000u64))
+                    .record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))
                     .unwrap();
                 oracle
                     .utc_day_vwap_last_finalized

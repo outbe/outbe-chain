@@ -34,9 +34,6 @@ pub fn dispatch(
             claimUnbonded(c) => mutate_void(c, caller, |sender, _| {
                 runtime::claim_unbonded(storage.clone(), sender)
             }),
-            claimRewards(c) => mutate_void(c, caller, |sender, _| {
-                runtime::claim_rewards(storage.clone(), sender)
-            }),
             getCca(c) => view(c, |c| api::get_cca(&storage, c.cca)),
             getCcaState(c) => view(c, |c| api::cca_state(&storage, c.cca)),
             supportsInterface(c) => view(c, |c| Ok(c.interfaceId.0 == ERC165_INTERFACE_ID)),

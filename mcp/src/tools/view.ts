@@ -220,7 +220,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_claimable",
-    "Claimable AgentReward balance for an account (in COEN), both pools summed.",
+    "Claimable AgentReward balance for an account (in COEN), all three pools summed.",
     { account: addr },
     handler(async ({ account }) =>
       ok(await view(ctx, "agentreward", "getClaimableBalance", [account])),
@@ -229,8 +229,8 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_pool_claimable",
-    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA), in COEN.",
-    { account: addr, pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA") },
+    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA, 2 = CCA), in COEN.",
+    { account: addr, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
     handler(async ({ account, pool }) =>
       ok(await view(ctx, "agentreward", "getPoolClaimableBalance", [account, pool])),
     ),

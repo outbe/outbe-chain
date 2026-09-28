@@ -30,11 +30,7 @@ const QUALIFY_TS: u64 = T_NOW + 2 * 86_400;
 fn close_day(storage: &StorageHandle, index: u32, vwap: U256) {
     let oracle = OracleContract::new(storage.clone());
     let day = previous_date_key(timestamp_to_date_key(QUALIFY_TS));
-    oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, vwap)
-        .unwrap();
+    oracle.record_utc_day_vwap(day, index, vwap).unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
     }
@@ -297,14 +293,16 @@ fn removing_a_gem_its_bin_does_not_hold_is_a_no_op() {
     });
 }
 
-/// A Genesis gem carries no floor: it qualifies with no closed day and waits for a call too.
+/// A zero floor still needs one finalized day; any positive price then clears it.
 #[test]
-fn a_gem_without_a_floor_needs_no_closed_day() {
+fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
     with_storage(|storage| {
         let mut p = sample_params(ALICE);
         p.gem_type = 0;
         p.floor_price_minor = U256::ZERO;
         let gem_id = api::add_gem(storage, p.clone()).unwrap();
+        assert!(!is_qualified(storage, gem_id), "no finalized day yet");
+        seed_day_price(storage, 840, Some(U256::from(1u64)));
         assert!(is_qualified(storage, gem_id));
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.call_price_minor).unwrap();
@@ -411,9 +409,7 @@ fn a_day_without_a_price_qualifies_nothing_and_the_next_one_still_can() {
         let next_day = previous_date_key(timestamp_to_date_key(QUALIFY_TS + 86_400));
         let oracle = OracleContract::new(storage.clone());
         oracle
-            .utc_day_vwap_value
-            .get_nested(&next_day)
-            .write(&index, floor + U256::from(1u64))
+            .record_utc_day_vwap(next_day, index, floor + U256::from(1u64))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(next_day).unwrap();
         assert!(is_qualified(storage, gem_id));
@@ -445,11 +441,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
         for _ in 0..(crate::constants::CALL_THRESHOLD / 86_400) {
-            oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&eur_pair, breach)
-                .unwrap();
+            oracle.record_utc_day_vwap(day, eur_pair, breach).unwrap();
             day = previous_date_key(day);
         }
         oracle
@@ -599,9 +591,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
         let mut day = last_closed_day;
         for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair, U256::from(300_000u64))
+                .record_utc_day_vwap(day, pair, U256::from(300_000u64))
                 .unwrap();
             day = previous_date_key(day);
         }
@@ -672,9 +662,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
         let mut day = last_closed_day;
         for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair, U256::from(300_000u64))
+                .record_utc_day_vwap(day, pair, U256::from(300_000u64))
                 .unwrap();
             day = previous_date_key(day);
         }
@@ -724,9 +712,7 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
         let mut day = last_closed_day;
         for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair, U256::from(300_000u64))
+                .record_utc_day_vwap(day, pair, U256::from(300_000u64))
                 .unwrap();
             day = previous_date_key(day);
         }
@@ -868,9 +854,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
         let mut day = last_closed_day;
         for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair, call_price - U256::from(1u64))
+                .record_utc_day_vwap(day, pair, call_price - U256::from(1u64))
                 .unwrap();
             day = previous_date_key(day);
         }
@@ -930,9 +914,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         oracle
-            .utc_day_vwap_value
-            .get_nested(&last_closed_day)
-            .write(&pair, U256::MAX)
+            .record_utc_day_vwap(last_closed_day, pair, U256::MAX)
             .unwrap();
         oracle
             .utc_day_vwap_last_finalized
@@ -1227,11 +1209,7 @@ fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwap: U256) {
     let oracle = OracleContract::new(storage.clone());
     let mut day = latest;
     for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&pair, vwap)
-            .unwrap();
+        oracle.record_utc_day_vwap(day, pair, vwap).unwrap();
         day = previous_date_key(day);
     }
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < latest {
