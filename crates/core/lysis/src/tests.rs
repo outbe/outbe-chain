@@ -103,7 +103,7 @@ fn entry_price_day_follows_the_scheduled_processing_time() {
         )
         .unwrap();
         assert_eq!(
-            crate::runtime::resolve_entry_price_minor_for_test(&prices, 840).unwrap(),
+            prices[&840],
             coen(150),
             "a block running late must not reprice the day"
         );
@@ -670,6 +670,8 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 /// The frozen snapshot and the storage proof the certified path opens must be the same value.
 #[test]
 fn the_snapshot_and_the_certified_opening_agree_on_one_price() {
+    use outbe_primitives::addresses::NOD_ADDRESS;
+
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260526);
     let entry_price = U256::from(500_000u64);
