@@ -333,6 +333,7 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.forfeit_cursor.slot(), U256::from(45));
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(47));
+        assert_eq!(nod.entry_price_source_day.base_slot(), U256::from(48));
     });
 }
 

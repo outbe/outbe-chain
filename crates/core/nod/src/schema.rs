@@ -179,7 +179,7 @@ impl NodCertifiedGenerationProjection {
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=47 in declaration order, with the genesis-seeded materialization FIFO
+/// 0..=48 in declaration order, with the genesis-seeded materialization FIFO
 /// counters at slots 13 and 14.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
