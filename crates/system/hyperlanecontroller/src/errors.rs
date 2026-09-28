@@ -50,6 +50,9 @@ pub enum HyperlaneControllerError {
         recovered: Address,
     },
 
+    #[error("signer {signer} is already registered by validator {validator}")]
+    SignerTaken { signer: Address, validator: Address },
+
     #[error("checkpoint index {index} is not newer than the submitted {submitted}")]
     StaleIndex { index: u32, submitted: u32 },
 

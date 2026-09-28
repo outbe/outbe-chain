@@ -120,15 +120,11 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// Mirrors the active Outbe validator set into every ISM (validators =
-    /// active validators, threshold = [`consensus_threshold`]). Returns `false`
-    /// when the local ISM already matches, so a keeper can call it every epoch.
+    /// the Hyperlane signer of every active validator, threshold =
+    /// [`consensus_threshold`]). Returns `false` when the local ISM already
+    /// matches, so a keeper can call it every epoch.
     pub fn sync(&mut self) -> Result<bool> {
-        let validator_set = ValidatorSet::new(self.storage.clone());
-        let active: Vec<Address> = validator_set
-            .get_active_validators()?
-            .into_iter()
-            .map(|record| record.validator_address)
-            .collect();
+        let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;
         let (current, current_threshold) = self.current_validators()?;
         if current_threshold == threshold && same_set(&current, &active) {
@@ -251,6 +247,25 @@ impl HyperlaneControllerContract<'_> {
     /// with. Zero resets to the validator address.
     pub fn set_hyperlane_signer(&mut self, caller: Address, signer: Address) -> Result<()> {
         let validator = self.validator_of_sender(caller)?;
+        let effective = if signer == Address::ZERO {
+            validator
+        } else {
+            signer
+        };
+        let validator_set = ValidatorSet::new(self.storage.clone());
+        for record in validator_set.get_active_validators()? {
+            let other = record.validator_address;
+            if other == validator {
+                continue;
+            }
+            if other == effective || self.hyperlane_signer(other)? == effective {
+                return Err(HyperlaneControllerError::SignerTaken {
+                    signer: effective,
+                    validator: other,
+                }
+                .into());
+            }
+        }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.signer_of.write(&validator, signer)?;
@@ -401,6 +416,16 @@ impl HyperlaneControllerContract<'_> {
             Ok(())
         })?;
         Ok(jailed)
+    }
+
+    /// Hyperlane signers of the active validators, in validator-set order.
+    fn active_signers(&self) -> Result<Vec<Address>> {
+        let validator_set = ValidatorSet::new(self.storage.clone());
+        validator_set
+            .get_active_validators()?
+            .into_iter()
+            .map(|record| self.hyperlane_signer(record.validator_address))
+            .collect()
     }
 
     /// Hyperlane signer of `validator`: the registered key, else the

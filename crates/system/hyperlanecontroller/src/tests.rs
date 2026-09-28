@@ -441,6 +441,11 @@ mod sync {
                 activate(storage.clone(), addr, i as u8 + 1);
             }
         });
+        // v4 signs Hyperlane checkpoints with a dedicated key.
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            c.set_hyperlane_signer(v(4), v(9)).unwrap();
+        });
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
             let call: Bytes = IHyperlaneController::syncCall {}.abi_encode().into();
@@ -460,13 +465,20 @@ mod sync {
         assert_eq!(applied.validatorCount, U256::from(4));
 
         // ISM now reports the mirrored set (any order): nothing to do.
-        stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
+        stub_router_and_ism(&mut p, U256::ZERO, &[v(9), v(3), v(2), v(1)], 3);
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
             let mut c = HyperlaneControllerContract::new(storage);
             assert!(!c.sync().unwrap());
         });
         assert!(topics(&p).is_empty());
+
+        // The validator address of v4 is not its signer: that set is stale.
+        stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            assert!(c.sync().unwrap());
+        });
     }
 }
 
@@ -664,6 +676,22 @@ mod liveness {
             .filter(|h| **h == IHyperlaneController::CheckpointSubmitted::SIGNATURE_HASH)
             .count();
         assert_eq!(submitted, 1);
+    }
+
+    #[test]
+    fn a_signer_cannot_be_shared_between_active_validators() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            activate(storage.clone(), v(2), 2);
+            let mut c = HyperlaneControllerContract::new(storage);
+            c.set_hyperlane_signer(v(2), v(9)).unwrap();
+            let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap_err();
+            assert!(revert_reason(err).contains("already registered"));
+            let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(2)).unwrap_err();
+            assert!(revert_reason(err).contains("already registered"));
+            c.set_hyperlane_signer(v(2), Address::ZERO).unwrap();
+            c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap();
+        });
     }
 
     #[test]

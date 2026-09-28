@@ -37,7 +37,8 @@ of truth, the controller only forwards owner calls to them.
   validators = active validators, threshold = `ceil(2n/3)` (the vote quorum rule).
   No-op when the local ISM already matches, so a keeper can call it every epoch;
   new validators become bridge signers as soon as someone calls it after their
-  boundary activation. Hyperlane validator keys are the validators' own addresses.
+  boundary activation. The ISM entry of a validator is its Hyperlane signer:
+  the key registered with `setHyperlaneSigner`, else the validator address.
   The `BoundaryOutcome` system tx sub-calls `sync()` right after every epoch
   boundary activation (`lifecycle::sync_validators`), best effort: a failure is
   logged, never blocks the boundary.
