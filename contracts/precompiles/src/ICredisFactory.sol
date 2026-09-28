@@ -54,7 +54,7 @@ interface ICredisFactory {
     ///         settlement deadline, inclusive. Payment is applied
     ///         interest first, principal second, so an `amount` below the interest accrued
     ///         since the last settlement is rejected - query
-    ///         `ICredis.accruedInterest` for that floor. Collateral is released in
+    ///         `ICredis.interestAccruedMinor` for that floor. Collateral is released in
     ///         proportion to the principal covered, and the settlement that clears
     ///         the last of the outstanding principal releases exactly the remainder,
     ///         leaving no dust.
@@ -66,7 +66,9 @@ interface ICredisFactory {
     /// @return principal Principal covered by this settlement. Drives the collateral
     ///         released and the reduction in the position's outstanding balance.
     /// @return interest Accrued interest collected by this settlement. Taken in full
-    ///         before any principal, and never carried between settlements.
+    ///         before any principal, and never carried between settlements. This is
+    ///         the payment delta; the position's `interestPaidMinor` is the sum of
+    ///         these deltas across successful settlements.
     function settle(uint256 positionId, uint256 amount) external returns (uint256 principal, uint256 interest);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

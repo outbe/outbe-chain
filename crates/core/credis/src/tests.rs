@@ -271,13 +271,13 @@ fn worked_example_ledger_closes_exactly() {
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding, U256::from(235_397_260u64));
         assert_eq!(p.collateral_locked, U256::from(470_794_520u64));
+        let collected = first.interest + second.interest;
+        assert_eq!(p.interest_paid, collected);
 
         // --- Day 472: the window lapses. ------------------------------------
         let void = credis.void_position(id, at(472)).unwrap();
         assert_eq!(void.gratis_burned, U256::from(470_794_520u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_260u64));
-        // 7 days of interest on the remainder - never collected.
-        assert_eq!(void.interest_written_off, U256::from(180_578u64));
         // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
         assert_eq!(void.cca, cca());
@@ -297,6 +297,7 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Void);
         assert!(p.outstanding.is_zero());
         assert!(p.collateral_locked.is_zero());
+        assert_eq!(p.interest_paid, collected, "void leaves collected interest");
     });
 }
 
@@ -324,6 +325,7 @@ fn settle_rejects_a_payment_below_the_accrued_interest() {
         let after = credis.get_position(id).unwrap();
         assert_eq!(after.outstanding, position.outstanding);
         assert_eq!(after.last_settled_at, position.last_settled_at);
+        assert_eq!(after.interest_paid, position.interest_paid);
     });
 }
 
@@ -536,6 +538,7 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
         assert_eq!(after.collateral_locked, before.collateral_locked);
         assert_eq!(after.last_settled_at, before.last_settled_at);
         assert_eq!(after.state, before.state);
+        assert_eq!(after.interest_paid, before.interest_paid);
 
         // Paying the coupon exactly is accepted, so the boundary is `< I`.
         credis
@@ -557,12 +560,106 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
             .unwrap_err()
             .to_string();
         assert!(err.contains("below the interest"), "got: {err}");
+        let rejected = credis.get_position(id).unwrap();
         assert_eq!(
-            credis.get_position(id).unwrap().outstanding,
+            rejected.outstanding,
             U256::from(500_000_000u64),
             "a rejected settlement leaves the balance untouched"
         );
+        assert_eq!(
+            rejected.interest_paid,
+            U256::from(8_000_000u64),
+            "a rejected settlement leaves lifetime interest untouched"
+        );
     });
+}
+
+#[test]
+fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = credis_provider();
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+
+        // Day 73 is 1/5 of ACT/365, so the coupon on $1,000 at 4% is $8.00.
+        let first = credis
+            .settle(id, U256::from(8_000_000u64), at(FIFTH_YEAR))
+            .unwrap();
+        assert_eq!(first.interest, U256::from(8_000_000u64));
+        assert!(first.principal_paid.is_zero());
+        assert_eq!(
+            credis.get_position(id).unwrap().interest_paid,
+            first.interest
+        );
+
+        let second = credis
+            .settle(
+                id,
+                U256::from(8_000_000u64 + 100_000_000u64),
+                at(2 * FIFTH_YEAR),
+            )
+            .unwrap();
+        assert_eq!(second.interest, U256::from(8_000_000u64));
+        assert_eq!(second.principal_paid, U256::from(100_000_000u64));
+        assert_eq!(
+            credis.get_position(id).unwrap().interest_paid,
+            first.interest + second.interest
+        );
+        id
+    });
+
+    let applied: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(applied.len(), 2);
+    assert_eq!(applied[0].positionId, id);
+    assert_eq!(applied[0].interestPaid, U256::from(8_000_000u64));
+    assert!(applied[0].principalPaid.is_zero());
+    assert_eq!(applied[1].interestPaid, U256::from(8_000_000u64));
+    assert_eq!(applied[1].principalPaid, U256::from(100_000_000u64));
+}
+
+#[test]
+fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = credis_provider();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+
+        let err = credis
+            .settle(id, U256::from(7_999_999u64), at(FIFTH_YEAR))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("below the interest"), "got: {err}");
+        assert!(credis.get_position(id).unwrap().interest_paid.is_zero());
+
+        credis
+            .settle(id, U256::from(8_000_000u64), at(FIFTH_YEAR))
+            .unwrap();
+        let paid = credis.get_position(id).unwrap().interest_paid;
+        assert_eq!(paid, U256::from(8_000_000u64));
+
+        let err = credis
+            .settle(id, U256::from(7_999_999u64), at(2 * FIFTH_YEAR))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("below the interest"), "got: {err}");
+        assert_eq!(credis.get_position(id).unwrap().interest_paid, paid);
+    });
+
+    let applied: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(applied.len(), 1);
+    assert_eq!(applied[0].interestPaid, U256::from(8_000_000u64));
 }
 
 #[test]
@@ -894,7 +991,10 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
 
 #[test]
 fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
-    with_credis(|storage| {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = credis_provider();
+    let id = StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis);
         credis.mark_called(id, at(10)).unwrap();
@@ -903,7 +1003,23 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         assert_eq!(void.gratis_burned, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
         assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
+        assert!(credis.get_position(id).unwrap().interest_paid.is_zero());
+        id
     });
+
+    assert_eq!(
+        ICredis::PositionVoided::SIGNATURE,
+        "PositionVoided(uint256,address,uint256,uint256)"
+    );
+    let voids: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::PositionVoided::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(voids.len(), 1);
+    assert_eq!(voids[0].positionId, id);
+    assert_eq!(voids[0].principalWrittenOff, U256::from(PRINCIPAL));
+    assert_eq!(voids[0].gratisBurned, collateral());
 }
 
 #[test]
@@ -1286,7 +1402,7 @@ fn precompile_reports_principal_and_outstanding_together() {
 }
 
 #[test]
-fn precompile_accrued_interest_uses_the_storage_timestamp() {
+fn precompile_interest_views_use_the_storage_timestamp() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut storage, |handle| {
@@ -1308,22 +1424,36 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
     });
 
     // At origination nothing has accrued.
-    let data = ICredis::accruedInterestCall { positionId: id }.abi_encode();
+    let accrued = ICredis::interestAccruedMinorCall { positionId: id }.abi_encode();
     let out = StorageHandle::enter(&mut storage, |handle| {
-        dispatch(handle, &data, alice(), U256::ZERO).unwrap()
+        dispatch(handle, &accrued, alice(), U256::ZERO).unwrap()
     });
     assert_eq!(
-        ICredis::accruedInterestCall::abi_decode_returns(&out).unwrap(),
+        ICredis::interestAccruedMinorCall::abi_decode_returns(&out).unwrap(),
         U256::ZERO
     );
 
     // 100 days later it matches the worked example.
     storage.set_timestamp(U256::from(at(100)));
     let out = StorageHandle::enter(&mut storage, |handle| {
-        dispatch(handle, &data, alice(), U256::ZERO).unwrap()
+        dispatch(handle, &accrued, alice(), U256::ZERO).unwrap()
     });
     assert_eq!(
-        ICredis::accruedInterestCall::abi_decode_returns(&out).unwrap(),
+        ICredis::interestAccruedMinorCall::abi_decode_returns(&out).unwrap(),
+        U256::from(10_958_904u64)
+    );
+
+    StorageHandle::enter(&mut storage, |handle| {
+        CredisContract::new(handle)
+            .settle(id, U256::from(10_958_904u64), at(100))
+            .unwrap();
+    });
+    let paid = ICredis::interestPaidMinorCall { positionId: id }.abi_encode();
+    let out = StorageHandle::enter(&mut storage, |handle| {
+        dispatch(handle, &paid, alice(), U256::ZERO).unwrap()
+    });
+    assert_eq!(
+        ICredis::interestPaidMinorCall::abi_decode_returns(&out).unwrap(),
         U256::from(10_958_904u64)
     );
 }

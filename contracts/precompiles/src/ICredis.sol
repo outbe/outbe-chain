@@ -22,6 +22,10 @@ interface ICredis {
 
     event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
 
+    /// @notice One successful settlement. `interestPaid` is this payment's interest
+    ///         delta. The position's `interestPaidMinor` is the sum of these deltas
+    ///         across successful settlements. A reverted settlement emits nothing
+    ///         and leaves that total unchanged.
     event SettlementApplied(
         uint256 indexed positionId,
         uint256 interestPaid,
@@ -32,12 +36,10 @@ interface ICredis {
 
     event PositionSettled(uint256 indexed positionId);
 
+    /// @notice Forfeiture of a called position. Records the principal written off.
+    ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
     event PositionVoided(
-        uint256 indexed positionId,
-        address indexed cca,
-        uint256 gratisBurned,
-        uint256 principalWrittenOff,
-        uint256 interestWrittenOff
+        uint256 indexed positionId, address indexed cca, uint256 gratisBurned, uint256 principalWrittenOff
     );
 
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
@@ -87,6 +89,10 @@ interface ICredis {
         uint64 calledAt;
         /// See {State}.
         uint8 state;
+        /// Lifetime interest collected, in asset minor units. The sum of successful
+        /// `SettlementApplied.interestPaid` deltas. Current-period accrual is
+        /// {interestAccruedMinor}.
+        uint256 interestPaidMinor;
     }
 
     function name() external view returns (string memory);
@@ -117,9 +123,15 @@ interface ICredis {
 
     /// @notice Interest accrued on the outstanding principal since the last
     ///         settlement (simple, ACT/365), evaluated at the current block
-    ///         timestamp. A settlement below this amount is rejected, so this is
-    ///         also the minimum acceptable payment.
-    function accruedInterest(uint256 positionId) external view returns (uint256);
+    ///         timestamp. This is the next payment's interest delta and the
+    ///         minimum acceptable payment. Lifetime interest collected is
+    ///         {interestPaidMinor}.
+    function interestAccruedMinor(uint256 positionId) external view returns (uint256);
+
+    /// @notice Lifetime interest collected on this position, in asset minor units.
+    ///         Equals the sum of `SettlementApplied.interestPaid` over successful
+    ///         settlements. Forfeiture does not add unpaid interest.
+    function interestPaidMinor(uint256 positionId) external view returns (uint256);
 
     /// @notice Sum of `principal` and `outstanding` across the account's positions.
     function credisPrincipalAndOutstandingOf(address smartAccount) external view returns (uint256, uint256);

@@ -312,9 +312,9 @@ pub fn settle(
 /// burns the unpaid share of the pledged collateral, drops the pledger's fidelity
 /// cohort by that amount, and deposits the equivalent value into the Promis Reserve.
 ///
-/// Nothing is market-sold and nothing is collected - the written-off principal and its
-/// accrued interest simply cease to exist, and the burned collateral becomes invest-side
-/// capacity instead.
+/// Nothing is market-sold and nothing is collected. The written-off principal ceases
+/// to exist. Unpaid interest is left unrecorded. The burned collateral becomes
+/// invest-side capacity instead.
 pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
     let now = storage.timestamp()?.to::<u64>();
     let void = CredisContract::new(storage.clone()).void_position(position_id, now)?;
