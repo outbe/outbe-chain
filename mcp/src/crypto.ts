@@ -2,7 +2,8 @@ import { chacha20poly1305 } from "@noble/ciphers/chacha";
 import { x25519 } from "@noble/curves/ed25519";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
-import { randomBytes } from "node:crypto";
+import { hmac } from "@noble/hashes/hmac";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { bytesToBigInt } from "viem";
 
 /**
@@ -97,4 +98,53 @@ export function buildPayload(p: OfferPayload): Uint8Array {
     sra_addresses: [] as string[],
   };
   return new TextEncoder().encode(JSON.stringify(obj));
+}
+
+/** Encrypt a fresh issuance credential. The source note stays inside this box. */
+export function encryptPledgeCredential(
+  offerPublic: Uint8Array, chainId: Uint8Array, note: Uint8Array,
+  smartAccount: Uint8Array, spendAuth: Uint8Array,
+): Uint8Array {
+  if (offerPublic.length !== 32 || chainId.length !== 32 || note.length !== 32 ||
+      smartAccount.length !== 20 || spendAuth.length !== 32) {
+    throw new Error("invalid pledge credential field length");
+  }
+  const secret = x25519.utils.randomPrivateKey();
+  const publicKey = x25519.getPublicKey(secret);
+  const key = hkdf(sha256, x25519.getSharedSecret(secret, offerPublic), offerPublic,
+    new TextEncoder().encode("outbe/tee/dkg-share/v1"), 32);
+  const nonce = new Uint8Array(randomBytes(12));
+  const domain = new Uint8Array(32);
+  domain.set(new TextEncoder().encode("outbe/credis/credential/v1"));
+  const plaintext = Buffer.concat([domain, chainId, note, smartAccount, spendAuth]);
+  return Buffer.concat([publicKey, nonce, chacha20poly1305(key, nonce).encrypt(plaintext)]);
+}
+
+/** Open the deterministic, fork-safe encryption used for confidential replies. */
+export function openConfidentialReply(key: Uint8Array, context: Uint8Array, blob: Uint8Array): Uint8Array {
+  if (key.length !== 32 || blob.length < 48) throw new Error("invalid confidential reply");
+  const iv = blob.subarray(0, 32);
+  const aeadKey = hmac(sha256, key, Buffer.concat([
+    Buffer.from("outbe/confidential/aead/v1"), iv,
+  ]));
+  const plaintext = chacha20poly1305(aeadKey, new Uint8Array(12), context).decrypt(blob.subarray(32));
+  const length = Buffer.alloc(8); length.writeBigUInt64BE(BigInt(context.length));
+  const expected = hmac(sha256, key, Buffer.concat([
+    Buffer.from("outbe/confidential/iv/v1"), length, context, plaintext,
+  ]));
+  if (!timingSafeEqual(iv, expected)) throw new Error("invalid confidential reply IV");
+  return plaintext;
+}
+
+/** Decode the owner-only return/event value from pledgeGratis. */
+export function decryptPledgeReply(viewKey: Uint8Array, reply: Uint8Array): Uint8Array {
+  if (reply.length !== 80) throw new Error("invalid pledge reply");
+  return openConfidentialReply(viewKey, Buffer.from("outbe/pledge-reply/v1"), reply);
+}
+
+/** Root-bound balance/pledged view; zero and absent accounts also return 112 bytes. */
+export function decryptGratisView(viewKey: Uint8Array, account: Uint8Array, field: 0 | 1, blob: Uint8Array): bigint {
+  if (account.length !== 20 || blob.length !== 112) throw new Error("invalid Gratis view");
+  const context = Buffer.concat([blob.subarray(0, 32), account, new Uint8Array([field])]);
+  return bytesToBigInt(openConfidentialReply(viewKey, context, blob.subarray(32)));
 }

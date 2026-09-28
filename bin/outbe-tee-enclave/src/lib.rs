@@ -51,6 +51,7 @@ pub mod zk_claim;
 /// or a folded mint would write a blob the snapshot cannot read. Both derive the
 /// fidelity key from this single `(group_sig, chain)` pair.
 pub mod dev {
+    pub const CREDENTIAL_SECRET: [u8; 32] = [0x45; 32];
     use alloy_primitives::{B256, U256};
 
     /// Shared dev group signature for the fidelity test-enclave key.
@@ -66,3 +67,5 @@ pub mod dev {
         B256::from(U256::from(FIDELITY_CHAIN_ID))
     }
 }
+
+pub mod confidential_ledger;

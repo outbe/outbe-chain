@@ -56,8 +56,7 @@ impl CredisScenario {
 
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
-    pledge_note: B256,
-    spend_auth: [u8; 32],
+    credential: Vec<u8>,
     reservation_id: U256,
 }
 
@@ -197,6 +196,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32], U256), Stri
         auth(GratisOp::Pledge, pledge_stables(), 1),
     )
     .map_err(|error| error.to_string())?;
+    let view = derive_view_key(&gratis_enclave::state_key(), ALICE).map_err(|e| e.to_string())?;
+    let pledge_note = outbe_tee::confidential::decrypt_pledge_reply(&view, &pledge_note)?;
     if gratis_cost != pledge_cost() {
         return Err("Credis benchmark pledge price drifted".to_owned());
     }
@@ -240,8 +241,15 @@ impl BenchmarkScenario for CredisScenario {
             StorageHandle::enter(&mut provider, seed_world)?;
         Ok(PreparedCredis {
             provider,
-            pledge_note,
-            spend_auth,
+            credential: outbe_tee::confidential::encrypt_pledge_credential(
+                &outbe_tee_enclave::crypto::x25519_public(
+                    &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                ),
+                chain_identity(),
+                pledge_note,
+                ALICE,
+                spend_auth,
+            )?,
             reservation_id,
         })
     }
@@ -254,8 +262,7 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             smartAccount: ALICE,
-            pledgeNote: prepared.pledge_note,
-            spendAuth: B256::from(prepared.spend_auth),
+            credential: prepared.credential.clone().into(),
             referenceCurrency: REFERENCE_ISO,
             reservationId: prepared.reservation_id,
         }
@@ -280,11 +287,9 @@ impl BenchmarkScenario for CredisScenario {
             "credis_factory",
         )?;
 
-        let (position, revealed_owner, pledged) = StorageHandle::enter(&mut provider, |storage| {
+        let (position, pledged) = StorageHandle::enter(&mut provider, |storage| {
             let position = CredisContract::new(storage.clone())
                 .get_position(decoded.positionId)
-                .map_err(|error| error.to_string())?;
-            let owner = outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)
                 .map_err(|error| error.to_string())?;
             let view_key = derive_view_key(&gratis_enclave::state_key(), ALICE)
                 .map_err(|error| error.to_string())?;
@@ -292,10 +297,9 @@ impl BenchmarkScenario for CredisScenario {
                 outbe_gratis::api::pledged_ct(storage, ALICE).map_err(|error| error.to_string())?;
             let pledged = decrypt_pledged(&view_key, ALICE, &pledged_blob)
                 .map_err(|error| error.to_string())?;
-            Ok::<_, String>((position, owner, pledged))
+            Ok::<_, String>((position, pledged))
         })?;
         if position.smart_account != ALICE
-            || revealed_owner != ALICE
             || pledged != pledge_cost()
             || decoded.amountStables != pledge_stables()
         {

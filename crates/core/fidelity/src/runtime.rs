@@ -1,13 +1,6 @@
-//! Fidelity runtime orchestration.
-//!
-//! RCFI/league are no longer computed on-chain: cohorts are encrypted and the
-//! enclave is the sole evaluator. This layer reads/writes the cohort ciphertext
-//! from committed storage and drives the enclave for the three flows -
-//! cohort mutations ([`FidelityContract::cohort_in`]/[`FidelityContract::cohort_out`]),
-//! the per-owner league snapshot ([`FidelityContract::snapshot_leagues`],
-//! [`FidelityContract::league_at`]), and owner-authorized index queries
-//! ([`FidelityContract::query_index_at`]). Only `max_rcfi_at` stays on-chain, as
-//! a pure function of the plaintext `first_qualified_start` anchor.
+//! Fidelity orchestration over its own global encrypted journal. Cohort lookup
+//! stays inside the enclave. Public league snapshots remain an intentional
+//! disclosure for OCOMP; see the confidential-state privacy boundary.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -30,11 +23,11 @@ impl FidelityContract<'_> {
         Ok(self.storage.timestamp()?.to::<u64>())
     }
 
-    /// Build the cohort op section from committed storage (current blob + the
-    /// plaintext global anchor), for folding into a co-located gratis op.
+    /// Build the cohort op section with the committed global anchor, for folding
+    /// into a co-located Gratis operation. Cohort lookup stays inside the enclave.
     pub fn cohort_section(
         &self,
-        account: Address,
+        _account: Address,
         op: FidelityCohortOp,
         timestamp: u64,
     ) -> Result<FidelityOpSection> {
@@ -42,18 +35,14 @@ impl FidelityContract<'_> {
             op,
             timestamp,
             first_qualified_start: self.first_qualified_start()?,
-            current_blob: self.cohorts_ct_of(account)?,
+            current_blob: Vec::new(),
         })
     }
 
-    /// Persist a cohort outcome (from a folded gratis op or the standalone
-    /// path): store the new ciphertext and, on the account's first acquisition,
-    /// anchor the global `first_qualified_start` (set-once). A probe outcome
-    /// (empty blob, no init) is a no-op.
-    pub fn apply_outcome(&self, account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
-        if !outcome.new_blob.is_empty() {
-            self.write_cohorts_ct(account, &outcome.new_blob)?;
-        }
+    /// Initialize the global qualification anchor from a completed cohort update.
+    /// Its encrypted journal record is already persisted by the enclave client.
+    /// A probe has no anchor update.
+    pub fn apply_outcome(&self, _account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
         if let Some(ts) = outcome.qualified_start_initialized {
             self.init_first_qualified_start(ts)?;
         }
@@ -67,20 +56,22 @@ impl FidelityContract<'_> {
         op: FidelityCohortOp,
         timestamp: u64,
     ) -> Result<()> {
-        // Zero-amount In/Out are no-ops (the enclave would also no-op); skip the
-        // round-trip entirely so a zero mint/burn never touches the enclave.
-        if amount.is_zero() {
-            return Ok(());
-        }
-        let section = self.cohort_section(account, op, timestamp)?;
-        let req = FidelityCohortRequest {
-            chain_id: chain_id_b256(&self.storage)?,
-            account,
-            amount,
-            section,
-        };
-        let result = enclave_client::apply_cohort_op(req)?;
-        self.apply_outcome(account, &result.outcome)
+        self.storage.with_checkpoint(|| {
+            // Zero-amount In/Out are no-ops (the enclave would also no-op); skip the
+            // round-trip entirely so a zero mint/burn never touches the enclave.
+            if amount.is_zero() {
+                return Ok(());
+            }
+            let section = self.cohort_section(account, op, timestamp)?;
+            let req = FidelityCohortRequest {
+                chain_id: chain_id_b256(&self.storage)?,
+                account,
+                amount,
+                section,
+            };
+            let result = enclave_client::apply_cohort_op(&self.storage, req)?;
+            self.apply_outcome(account, &result.outcome)
+        })
     }
 
     /// ACQUISITION hook: record a new active gratis cohort for `account` at block
@@ -95,8 +86,8 @@ impl FidelityContract<'_> {
         self.run_cohort_op(account, amount, FidelityCohortOp::Out, timestamp)
     }
 
-    /// Batch league snapshot: read each owner's cohort blob and ask the enclave
-    /// for one plaintext league per owner (in `owners` order).
+    /// Batch league snapshot: the enclave resolves cohorts internally and returns
+    /// one plaintext league per owner (in `owners` order).
     pub fn snapshot_leagues(
         &self,
         timestamp: u64,
@@ -109,7 +100,7 @@ impl FidelityContract<'_> {
         for owner in owners {
             entries.push(FidelitySnapshotEntry {
                 owner: *owner,
-                cohort_blob: self.cohorts_ct_of(*owner)?,
+                cohort_blob: Vec::new(),
             });
         }
         let req = FidelitySnapshotRequest {
@@ -117,7 +108,7 @@ impl FidelityContract<'_> {
             first_qualified_start: self.first_qualified_start()?,
             entries,
         };
-        Ok(enclave_client::snapshot_leagues(req)?
+        Ok(enclave_client::snapshot_leagues(&self.storage, req)?
             .into_iter()
             .map(|e| (e.owner, e.league))
             .collect())
@@ -162,14 +153,14 @@ impl FidelityContract<'_> {
         let req = FidelityQueryRequest {
             chain_id: chain_id_b256(&self.storage)?,
             account,
-            cohort_blob: self.cohorts_ct_of(account)?,
+            cohort_blob: Vec::new(),
             query_timestamp,
             block_timestamp: self.now()?,
             first_qualified_start: self.first_qualified_start()?,
             expiry,
             owner_sig,
         };
-        enclave_client::query_index(req)
+        enclave_client::query_index(&self.storage, req)
     }
 
     /// Owner-authorized RCFI/league query at the current block time.

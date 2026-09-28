@@ -9,6 +9,23 @@ use crate::error::{PrecompileError, Result};
 use crate::storage::gas::GasTracker;
 use crate::storage::PrecompileStorageProvider;
 
+/// Read the current journaled value without charging gas or warming the slot.
+/// Reverting this read-only checkpoint restores EIP-2929 access state even when
+/// the database read fails, while preserving all preceding transaction writes.
+pub fn read_cache_storage(
+    internals: &mut EvmInternals<'_>,
+    address: Address,
+    key: U256,
+) -> Result<U256> {
+    let checkpoint = internals.checkpoint();
+    let result = internals
+        .sload(address, key)
+        .map(|value| value.data)
+        .map_err(|e| PrecompileError::Storage(e.to_string()));
+    internals.checkpoint_revert(checkpoint);
+    result
+}
+
 /// Production EVM storage provider wrapping `EvmInternals` from alloy-evm.
 ///
 /// Provides journaled access to persistent storage (sload/sstore), transient
@@ -148,6 +165,10 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
         Ok(self.internals.tload(address, key))
+    }
+
+    fn sload_for_cache(&mut self, address: Address, key: U256) -> Result<U256> {
+        read_cache_storage(&mut self.internals, address, key)
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {

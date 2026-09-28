@@ -122,6 +122,25 @@ mod tests {
     }
 
     #[test]
+    fn maximum_confidential_recovery_page_fits_noise_frame() {
+        use crate::confidential::{Domain, Head, Page, PAGE_RECORDS, RECORD_BYTES};
+        let req = EnclaveRequest::LoadConfidential {
+            page: Page {
+                chain_id: alloy_primitives::B256::repeat_byte(0xff),
+                domain: Domain::Gratis,
+                after: Head {
+                    count: u64::MAX,
+                    hash: alloy_primitives::B256::repeat_byte(0xff),
+                },
+                records: vec![vec![0xff; RECORD_BYTES]; PAGE_RECORDS as usize],
+            },
+        };
+        let plaintext = encode_request(&req).unwrap();
+        assert!(plaintext.len() + 64 <= MAX_FRAME_LEN);
+        assert_eq!(decode_request(&plaintext).unwrap(), req);
+    }
+
+    #[test]
     fn maximum_onboarding_proof_chunk_round_trips_below_the_frame_cap() {
         let req = EnclaveRequest::DcapOnboardingArtifactChunkV1 {
             request_hash: alloy_primitives::B256::repeat_byte(0x61),

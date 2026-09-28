@@ -234,13 +234,6 @@ pub enum GratisOp {
     /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
-    /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
-    /// With `pledge_note = Some(handle)` the blob in `current_pledge_record` is a live
-    /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
-    /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
-    /// (used at settlement/void to recover the EOA that keys the pledged ledger).
-    /// No state mutation, no authorization.
-    RevealOwner,
 }
 
 /// Proof that the caller holds the account's modify key, without revealing it.
@@ -290,12 +283,8 @@ pub struct GratisOpRequest {
     /// Execution block timestamp in seconds for Pledge/ConsumePledge; zero for
     /// other operations. Supplied from chain execution, never caller calldata.
     pub block_timestamp: u64,
-    /// Balance/pledged-owning account (the EOA). For `ConsumePledge`/`ReleaseToEoa`/
-    /// `BurnPledged` the EOA never appears in calldata or stored plaintext: the host first
-    /// recovers it with a `RevealOwner` round-trip (decrypting the pledge ticket, or the
-    /// `eoa_ct` stored on the Credis position) and passes the revealed address here. For
-    /// `ConsumePledge` the enclave still cross-checks it against `ticket.owner`. Ignored for
-    /// `RevealOwner` itself.
+    /// Source account for owner operations. For collateral, this field is
+    /// populated only inside the enclave after resolving the allocation.
     pub account: Address,
     /// The MAC-bound amount: gratis for Mint/Burn/ReleaseToEoa/BurnPledged, but
     /// STABLECOIN minor units for `Pledge`/`Unpledge` (there the gratis figure travels
@@ -348,9 +337,9 @@ pub enum FidelityCohortOp {
     Probe,
 }
 
-/// Co-located Fidelity input riding in a [`GratisOpRequest`]. The host reads the
-/// account's current cohort blob from committed storage and forwards it
-/// verbatim; account + amount are the Gratis op's own fields.
+/// Co-located Fidelity input riding in a [`GratisOpRequest`]. Account + amount
+/// are the Gratis op's own fields; the confidential ledger resolves cohorts inside
+/// the enclave and supplies the blob to the internal economics engine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityOpSection {
     pub op: FidelityCohortOp,
@@ -360,8 +349,8 @@ pub struct FidelityOpSection {
     /// Plaintext global `first_qualified_start` scalar (league ceiling anchor);
     /// `0` before any account has qualified.
     pub first_qualified_start: u64,
-    /// Current cohort-ledger blob (`version(8 BE) || ciphertext`); empty when the
-    /// account has no cohort state yet.
+    /// Internal engine input (`version(8 BE) || ciphertext`). Confidential
+    /// requests leave this empty; only the enclave supplies materialized state.
     pub current_blob: Vec<u8>,
 }
 
@@ -414,21 +403,20 @@ pub enum GratisOpStatus {
     Rejected { reason: String },
 }
 
-/// Public result of an `ApplyGratisOp`: the new ciphertext blobs to store verbatim
-/// plus the plaintext receipt the host needs (aggregate deltas, event amount,
-/// pledge linkage). Per-account plaintext balances never appear here.
+/// Internal Gratis economics receipt. The confidential ledger seals the updated
+/// account state into its journal and clears the balance/pledged blobs and note
+/// before returning this receipt. Pledge replies are encrypted to the owner.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
-    /// New balance blob (`version || ct`) to store verbatim.
+    /// Internal new balance blob; cleared by the confidential wrapper.
     pub new_balance: Vec<u8>,
-    /// New pledged-ledger blob (`version || ct`) to store verbatim.
+    /// Internal new pledged-ledger blob; cleared by the confidential wrapper.
     pub new_pledged: Vec<u8>,
-    /// New pledge-lock-ticket blob (`version || ct`) for `Pledge`; empty on
-    /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
-    /// ticket slot). Empty and untouched for all other ops.
+    /// Internal pledge ticket for `Pledge`. The confidential wrapper replaces
+    /// it with the owner-encrypted pledge reply and clears it for other operations.
     pub new_pledge_record: Vec<u8>,
-    /// Deterministic pledge note for a `Pledge` (zero otherwise).
+    /// Internal pledge note; always cleared before returning to the host.
     pub pledge_note: B256,
     /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
@@ -436,16 +424,9 @@ pub struct GratisOpResult {
     /// otherwise. Lets credis size the position from the pledge-time quote.
     #[serde(default)]
     pub pledge_terms: Option<PledgeTerms>,
-    /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
-    /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
-    pub revealed_owner: Address,
-    /// Self-contained sealed EOA blob (`nonce(12) || ChaCha20Poly1305(owner 20B)` under the
-    /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
-    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_note = None`).
-    pub eoa_ct: Vec<u8>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
-    /// The account's next modify-auth nonce (for the host to persist).
+    /// The account's next modify-auth nonce, persisted inside the encrypted journal.
     pub next_op_nonce: u64,
     /// Receipt of the co-located Fidelity section; `Some` iff the request
     /// carried one and the op was applied.
@@ -615,7 +596,9 @@ pub struct FidelityQueryResult {
 pub enum EnclaveRequest {
     /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
-    GetQuote { nonce: [u8; 32] },
+    GetQuote {
+        nonce: [u8; 32],
+    },
     /// Production pre-handshake discovery for an uninitialized enclave. Returns
     /// one challenge plus the persistent enclave public keys to be signed by the
     /// node identity. Rejected once initialization is committed.
@@ -635,9 +618,13 @@ pub enum EnclaveRequest {
     /// Production pre-handshake marker for one previously authorized remote
     /// source NodeHost. The ticket is consumed before Noise message 1, which
     /// must prove the exact initiator static stored under this id.
-    OpenRemoteSessionV1 { ticket_id: B256 },
+    OpenRemoteSessionV1 {
+        ticket_id: B256,
+    },
     /// Noise-IK handshake message.
-    SessionHandshake { noise_msg: Vec<u8> },
+    SessionHandshake {
+        noise_msg: Vec<u8>,
+    },
     /// Return the enclave's public keys (recipient X25519, attestation, Noise
     /// static, tribute-BLS).
     GetPublicKeys,
@@ -655,13 +642,17 @@ pub enum EnclaveRequest {
     /// authenticated NodeHost session and only when the intent matches the
     /// sealed identity. A transition additionally returns a purpose-bound
     /// proof that this enclave has the permanent offer key resident.
-    GenerateDcapQuote { intent: Vec<u8> },
+    GenerateDcapQuote {
+        intent: Vec<u8>,
+    },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
     /// This command is accepted by the development transport, or by an
     /// authenticated production NodeHost session when the enclave itself
     /// detects SGX with remote attestation disabled. It never returns an SGX
     /// quote or hardware-attestation claim.
-    SignRegistrationIntentDevV1 { intent: Vec<u8> },
+    SignRegistrationIntentDevV1 {
+        intent: Vec<u8>,
+    },
 
     /// Start one bounded, request-committed DCAP verification upload. Evidence
     /// and policy bytes follow in strictly sequential chunks on this same
@@ -693,7 +684,9 @@ pub enum EnclaveRequest {
         bytes: Vec<u8>,
     },
     /// Finish the exact upload and run the full enclave-resident verifier.
-    FinishDcapVerificationV1 { request_hash: B256 },
+    FinishDcapVerificationV1 {
+        request_hash: B256,
+    },
 
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
@@ -709,7 +702,9 @@ pub enum EnclaveRequest {
     },
     /// Seam A: deal + seal per-player shares. Returns the public commitment and
     /// one opaque sealed share per participant.
-    DkgStartDealer { ceremony_id: B256 },
+    DkgStartDealer {
+        ceremony_id: B256,
+    },
     /// Seam B: open + verify an incoming sealed dealing inside the enclave. The
     /// host relays the opaque `sealed_share` without decrypting it.
     DkgPlayerIngest {
@@ -725,7 +720,9 @@ pub enum EnclaveRequest {
         ack: Vec<u8>,
     },
     /// Seam D: finalize this enclave's dealing into a signed dealer log.
-    DkgDealerFinalize { ceremony_id: B256 },
+    DkgDealerFinalize {
+        ceremony_id: B256,
+    },
     /// Seam E: verify the collected signed dealer logs and recover this enclave's
     /// local threshold share (committed inside the enclave). Returns the public
     /// group key and the share commitment.
@@ -739,7 +736,9 @@ pub enum EnclaveRequest {
     /// only the opaque ciphertexts - it never sees a plaintext partial, so it
     /// cannot recover the group signature (and hence the offer key) itself.
     /// Requires `DkgPlayerFinalize` first.
-    DkgTributeOfferPartial { ceremony_id: B256 },
+    DkgTributeOfferPartial {
+        ceremony_id: B256,
+    },
     /// Founding Seam F: finalize the initial group threshold signature from the
     /// sealed partials addressed to THIS enclave (decrypted in-SGX) and install
     /// the one permanent offer X25519 keypair. The capability matrix permits
@@ -761,7 +760,9 @@ pub enum EnclaveRequest {
     /// future-proofs multi-offer txs. This is the sole offer-processing
     /// entrypoint (the enclave decrypts, applies the price, computes economics +
     /// Poseidon `token_id`, and returns `TributeOfferResult`).
-    ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
+    ProcessTributeOfferBatch {
+        offers: Vec<EncryptedTributeOffer>,
+    },
 
     /// Start one streaming finalized-admission verification rooted in the
     /// measured genesis committee. The enclave retains only the current
@@ -790,7 +791,9 @@ pub enum EnclaveRequest {
     },
     /// After a verified admission record, decrypt,
     /// durably seal, and only finally activate the resident offer key.
-    FinishDcapOnboardingArtifactIngestV1 { request_hash: B256 },
+    FinishDcapOnboardingArtifactIngestV1 {
+        request_hash: B256,
+    },
 
     /// Apply a Gratis write op over encrypted per-account state. The enclave
     /// derives the resident `gratis_state_key` from the same group signature as
@@ -798,12 +801,16 @@ pub enum EnclaveRequest {
     /// modify-key authorization, and re-encrypts deterministically. This is a
     /// consensus path (called inside precompile `dispatch`, re-executed by every
     /// validator).
-    ApplyGratisOp { request: Box<GratisOpRequest> },
+    ApplyGratisOp {
+        request: Box<GratisOpRequest>,
+    },
 
     /// Like [`EnclaveRequest::ApplyGratisOp`] but for the confidential Promis
     /// ledger (mint/burn over an encrypted balance). Consensus path, re-executed
     /// by every validator.
-    ApplyPromisOp { request: Box<PromisOpRequest> },
+    ApplyPromisOp {
+        request: Box<PromisOpRequest>,
+    },
 
     /// Off-chain key delivery: derive `account`'s view + modify keys for `ledger`
     /// from the matching resident state key and seal them to the requester's
@@ -827,7 +834,9 @@ pub enum EnclaveRequest {
     /// Apply a standalone Fidelity cohort mutation (`In`/`Out`) over encrypted
     /// per-account state, on its own round-trip. Consensus path, re-executed by
     /// every validator. See [`FidelityCohortRequest`].
-    ApplyFidelityCohortOp { request: Box<FidelityCohortRequest> },
+    ApplyFidelityCohortOp {
+        request: Box<FidelityCohortRequest>,
+    },
 
     /// Batch-decrypt cohort blobs and return one plaintext league per owner -
     /// metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP prepare
@@ -839,7 +848,9 @@ pub enum EnclaveRequest {
     /// Owner-authorized read of one account's RCFI/league over its encrypted
     /// cohorts (signed, expiring authorization - see [`FidelityQueryRequest`]).
     /// NOT a consensus path - served via `eth_call`.
-    QueryFidelityIndex { request: Box<FidelityQueryRequest> },
+    QueryFidelityIndex {
+        request: Box<FidelityQueryRequest>,
+    },
 
     /// Read-only health/telemetry probe: uptime, request counters, offer-key
     /// readiness and self-observed heap usage. Never touches keys or sealed
@@ -877,6 +888,12 @@ pub enum EnclaveRequest {
         expected_tribute_offer_public: [u8; 32],
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
+    },
+    Confidential {
+        request: Box<crate::confidential::Request>,
+    },
+    LoadConfidential {
+        page: crate::confidential::Page,
     },
 }
 
@@ -921,6 +938,8 @@ impl EnclaveRequest {
             Self::FinishDcapOnboardingArtifactIngestV1 { .. } => {
                 "finish_dcap_onboarding_artifact_ingest_v1"
             }
+            Self::Confidential { .. } => "confidential",
+            Self::LoadConfidential { .. } => "load_confidential",
             Self::ApplyGratisOp { .. } => "apply_gratis_op",
             Self::ApplyPromisOp { .. } => "apply_promis_op",
             Self::DeriveAccountKeys { .. } => "derive_account_keys",
@@ -950,6 +969,8 @@ impl EnclaveRequest {
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
             | Self::ProcessTributeOfferBatch { .. }
+            | Self::Confidential { .. }
+            | Self::LoadConfidential { .. }
             | Self::ApplyGratisOp { .. }
             | Self::ApplyPromisOp { .. }
             | Self::DeriveAccountKeys { .. }
@@ -1350,6 +1371,9 @@ pub enum EnclaveResponse {
     },
     GramineDirectDevOnboardingArtifactIngestedV1 {
         tribute_offer_public: [u8; 32],
+    },
+    Confidential {
+        response: crate::confidential::Response,
     },
 }
 

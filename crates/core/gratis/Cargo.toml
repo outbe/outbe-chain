@@ -19,7 +19,7 @@ outbe-tee-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
-outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-primitives = { workspace = true, features = ["test-utils", "bench-utils"] }
 # Gratis' own unit tests run the confidential path against the in-process engine.
 outbe-tee-enclave.workspace = true
 

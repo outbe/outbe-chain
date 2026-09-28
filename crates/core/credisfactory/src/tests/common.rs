@@ -159,7 +159,9 @@ pub fn pledge_fixture(
         },
         auth,
     )?;
-    Ok((handle, gratis_amount))
+    let view = derive_view_key(&test_enclave::state_key(), who).unwrap();
+    let note = outbe_tee::confidential::decrypt_pledge_reply(&view, &handle).unwrap();
+    Ok((note, gratis_amount))
 }
 
 /// Pledge and open a position for alice, originated by [`cca`].
@@ -172,7 +174,7 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let (handle, reservation_id) = pledge(storage, who, nonce);
     let spend = credis_spend_auth(who, handle, who);
     fund_stake(storage, pledge_stake());
-    let (position_id, _) = runtime::issue_credis(
+    let (position_id, _) = issue_credis(
         storage.clone(),
         cca(),
         who,
@@ -464,6 +466,16 @@ pub fn env() -> HashMapStorageProvider {
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     storage.stub_sub_call_at_selector(
         asset(),
+        crate::sol_ext::IERC20::transferFromCall::SELECTOR,
+        iso_word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        asset(),
+        crate::sol_ext::IERC20::approveCall::SELECTOR,
+        iso_word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        asset(),
         crate::sol_ext::IERC20::decimalsCall::SELECTOR,
         iso_word(6),
     );
@@ -528,4 +540,36 @@ pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {
 pub fn teardown() {
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
+}
+
+pub fn credential(note: B256, account: Address, spend: [u8; 32]) -> Vec<u8> {
+    outbe_tee::confidential::encrypt_pledge_credential(
+        &outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::CREDENTIAL_SECRET),
+        B256::from(U256::from(CHAIN_ID)),
+        note,
+        account,
+        spend,
+    )
+    .unwrap()
+}
+#[allow(clippy::too_many_arguments)]
+pub fn issue_credis(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    account: Address,
+    note: B256,
+    spend: [u8; 32],
+    currency: u16,
+    reservation: U256,
+    stake: U256,
+) -> outbe_primitives::error::Result<(U256, U256)> {
+    runtime::issue_credis(
+        storage,
+        caller,
+        account,
+        credential(note, account, spend),
+        currency,
+        reservation,
+        stake,
+    )
 }

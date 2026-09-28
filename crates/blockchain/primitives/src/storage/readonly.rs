@@ -151,6 +151,10 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
         Ok(U256::ZERO)
     }
 
+    fn sload_for_cache(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.sload(address, key)
+    }
+
     fn sstore(&mut self, _address: Address, _key: U256, _value: U256) -> Result<()> {
         Err(PrecompileError::Fatal(
             "read-only: sstore not supported".into(),

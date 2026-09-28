@@ -180,7 +180,7 @@ fn pledge_quoted(
 ) -> outbe_primitives::error::Result<(B256, U256)> {
     let valuation_price = U256::from(2) * SCALE_1E18;
     let (gratis_amount, entry_price) = checked_quote(stables_amount, 6, valuation_price)?;
-    runtime::pledge_priced(
+    let (reply, amount) = runtime::pledge_priced(
         storage,
         caller,
         PledgeTerms {
@@ -194,7 +194,12 @@ fn pledge_quoted(
         },
         max_gratis,
         auth,
-    )
+    )?;
+    let view = derive_view_key(&test_enclave::state_key(), caller).unwrap();
+    Ok((
+        outbe_tee::confidential::decrypt_pledge_reply(&view, &reply).unwrap(),
+        amount,
+    ))
 }
 
 /// The pledger names the CREDIT they want; the gratis it costs is derived from the

@@ -2,13 +2,16 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
+use outbe_credis::precompile::ICredis;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::precompile::IGratis;
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     addresses::{
-        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
+        CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS,
+        GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
     },
     block::BlockContext,
     chain::CHAIN_ID,
@@ -44,7 +47,7 @@ const VAULT: Address = Address::new([0x55; 20]);
 const NOW: u64 = 1_700_000_000;
 
 #[test]
-fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
+fn issuance_and_settlement_commit_collateral_with_real_token_transfers() {
     // 0: success; 1: ERC20 false; 2: ERC20 revert; 3: excess redeposit revert;
     // 4: wrong contribution; 5: invalid spend authorization; 6/7: changed asset metadata;
     // 8: failed ERC20 payout followed by expiry and cancellation of the restored note.
@@ -113,6 +116,18 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
                     IVaultRouter::StablesTarget::Credis as u8,
                 )
                 .unwrap();
+            router
+                .liquidity_sources
+                .insert(CREDIS_FACTORY_ADDRESS)
+                .unwrap();
+            router
+                .liquidity_source_types
+                .write(
+                    &CREDIS_FACTORY_ADDRESS,
+                    IVaultRouter::StablesSource::CredisCostAmount as u8,
+                )
+                .unwrap();
+            router.asset_vault_set(ASSET).insert(VAULT).unwrap();
             // Reserve before pledging; the held assets are funded below through real ERC20 calls.
             router
                 .reservations
@@ -183,6 +198,22 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             )
             .unwrap()
         });
+        let view =
+            outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+        let note = outbe_tee::confidential::decrypt_pledge_reply(&view, &note).unwrap();
+        let credential = |spend| {
+            outbe_tee::confidential::encrypt_pledge_credential(
+                &outbe_tee_enclave::crypto::x25519_public(
+                    &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                ),
+                B256::from(U256::from(CHAIN_ID)),
+                note,
+                ACCOUNT,
+                spend,
+            )
+            .unwrap()
+            .into()
+        };
         provider.flush().unwrap();
         let mut ctx = Context::mainnet()
             .with_db(db)
@@ -256,12 +287,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         let spend = spend_auth_mac(&pledge_secret(&key, note), ACCOUNT);
         let issue = ICredisFactory::issueCredisCall {
             smartAccount: ACCOUNT,
-            pledgeNote: note,
-            spendAuth: if failure == 5 {
-                B256::ZERO
-            } else {
-                B256::from(spend)
-            },
+            credential: credential(if failure == 5 { [0; 32] } else { spend }),
             referenceCurrency: 840,
             reservationId: U256::ONE,
         };
@@ -344,6 +370,149 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         if failure == 0 {
             assert_eq!(payouts[0].receiver, CCA);
             assert_eq!(payouts[0].amount, U256::from(2_000_000));
+
+            let id = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)
+                .unwrap()
+                .positionId;
+            let payment = ICredisFactory::settleCall {
+                positionId: id,
+                amount: U256::from(1_000_000),
+            };
+            let position = ICredis::getPositionCall { positionId: id };
+            let balance = IGratis::balanceOfCall { account: OWNER };
+            let pledged = IGratis::pledgedOfCall { account: OWNER };
+            outbe_tee_enclave::confidential_ledger::clear_cache();
+            let cold = call!(OWNER, GRATIS_ADDRESS, U256::ZERO, balance.clone());
+            let warm = call!(OWNER, GRATIS_ADDRESS, U256::ZERO, balance.clone());
+            assert!(matches!(cold.status, SubCallStatus::Success));
+            assert_eq!(
+                cold.gas_used, warm.gas_used,
+                "cache warmth must not affect consensus gas"
+            );
+            assert_eq!(cold.returndata, warm.returndata);
+            // Recovery reads the original mint record but must not warm its slot
+            // for later EVM code (or warm and cold validators would diverge).
+            use outbe_primitives::storage::types::StorageKey;
+            let record_slot = 0u64.mapping_slot(U256::from(4));
+            let data_slot =
+                U256::from_be_bytes(alloy_primitives::keccak256(record_slot.to_be_bytes::<32>()).0);
+            assert!(
+                ctx.journaled_state
+                    .sload(GRATIS_ADDRESS, data_slot)
+                    .unwrap()
+                    .is_cold
+            );
+            let before = [
+                call!(OWNER, CREDIS_ADDRESS, U256::ZERO, position.clone()).returndata,
+                call!(OWNER, GRATIS_ADDRESS, U256::ZERO, balance.clone()).returndata,
+                call!(OWNER, GRATIS_ADDRESS, U256::ZERO, pledged.clone()).returndata,
+            ];
+            call!(
+                ACCOUNT,
+                ASSET,
+                U256::ZERO,
+                IFixture::approveCall {
+                    spender: CREDIS_FACTORY_ADDRESS,
+                    amount: U256::MAX
+                }
+            );
+            // False/reverting transfer, false approval, and a vault revert after
+            // token movement all restore the position and private journal heads.
+            for (target, mode) in [(ASSET, 1), (ASSET, 2), (ASSET, 9), (VAULT, 3)] {
+                call!(
+                    OWNER,
+                    target,
+                    U256::ZERO,
+                    IFixture::configureCall {
+                        mode: U256::from(mode)
+                    }
+                );
+                let logs = ctx.journaled_state.logs().len();
+                let failed = call!(ACCOUNT, CREDIS_FACTORY_ADDRESS, U256::ZERO, payment.clone());
+                assert!(
+                    !matches!(failed.status, SubCallStatus::Success),
+                    "payment mode {mode}"
+                );
+                assert_eq!(ctx.journaled_state.logs().len(), logs);
+                outbe_tee_enclave::confidential_ledger::clear_cache();
+                assert_eq!(
+                    [
+                        call!(OWNER, CREDIS_ADDRESS, U256::ZERO, position.clone()).returndata,
+                        call!(OWNER, GRATIS_ADDRESS, U256::ZERO, balance.clone()).returndata,
+                        call!(OWNER, GRATIS_ADDRESS, U256::ZERO, pledged.clone()).returndata,
+                    ],
+                    before
+                );
+                for (account, expected) in [
+                    (ACCOUNT, 2_000_000),
+                    (CREDIS_FACTORY_ADDRESS, 0),
+                    (VAULT_ROUTER_ADDRESS, 0),
+                    (VAULT, 1_000_000),
+                ] {
+                    let returned = call!(
+                        OWNER,
+                        ASSET,
+                        U256::ZERO,
+                        IFixture::balanceOfCall { account }
+                    );
+                    assert_eq!(
+                        IFixture::balanceOfCall::abi_decode_returns(&returned.returndata).unwrap(),
+                        U256::from(expected)
+                    );
+                }
+                call!(
+                    OWNER,
+                    target,
+                    U256::ZERO,
+                    IFixture::configureCall { mode: U256::ZERO }
+                );
+            }
+            let paid = call!(ACCOUNT, CREDIS_FACTORY_ADDRESS, U256::ZERO, payment);
+            assert!(
+                matches!(paid.status, SubCallStatus::Success),
+                "{:?}: {}",
+                paid.status,
+                String::from_utf8_lossy(&paid.returndata)
+            );
+            let paid = ICredisFactory::settleCall::abi_decode_returns(&paid.returndata).unwrap();
+            assert_eq!(paid.principal, U256::from(1_000_000));
+            assert_eq!(paid.interest, U256::ZERO);
+            let returned = call!(OWNER, CREDIS_ADDRESS, U256::ZERO, position);
+            let position =
+                ICredis::getPositionCall::abi_decode_returns(&returned.returndata).unwrap();
+            assert_eq!(position.outstanding, U256::from(1_000_000));
+            assert_eq!(position.collateralLocked, U256::from(500_000));
+            let returned = call!(OWNER, GRATIS_ADDRESS, U256::ZERO, balance);
+            let encrypted =
+                IGratis::balanceOfCall::abi_decode_returns(&returned.returndata).unwrap();
+            assert_eq!(
+                outbe_tee::confidential::decrypt_view(&view, OWNER, 0, &encrypted).unwrap(),
+                U256::from(500_000)
+            );
+            let returned = call!(OWNER, GRATIS_ADDRESS, U256::ZERO, pledged);
+            let encrypted =
+                IGratis::pledgedOfCall::abi_decode_returns(&returned.returndata).unwrap();
+            assert_eq!(
+                outbe_tee::confidential::decrypt_view(&view, OWNER, 1, &encrypted).unwrap(),
+                U256::from(500_000)
+            );
+            for (account, expected) in [
+                (ACCOUNT, 1_000_000),
+                (CREDIS_FACTORY_ADDRESS, 0),
+                (VAULT_ROUTER_ADDRESS, 0),
+                (VAULT, 2_000_000),
+            ] {
+                let returned = call!(
+                    OWNER,
+                    ASSET,
+                    U256::ZERO,
+                    IFixture::balanceOfCall { account }
+                );
+                assert_eq!(
+                    IFixture::balanceOfCall::abi_decode_returns(&returned.returndata).unwrap(),
+                    U256::from(expected)
+                );
+            }
         }
         // Reset counterparties and retry with the original note and exact contribution.
         for target in [ASSET, VAULT] {
@@ -361,7 +530,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             CREDIS_FACTORY_ADDRESS,
             stake,
             ICredisFactory::issueCredisCall {
-                spendAuth: B256::from(spend),
+                credential: credential(spend),
                 ..issue
             }
         );

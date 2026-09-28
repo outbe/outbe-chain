@@ -13,6 +13,7 @@ contract CredisIssuance {
     function isoCode() external view returns (uint16) { return mode == 6 ? 978 : 840; }
     function decimals() external view returns (uint8) { return mode == 7 ? 18 : 6; }
     function approve(address spender, uint256 amount) external returns (bool) {
+        if (mode == 9) return false;
         allowance[msg.sender][spender] = amount; return true;
     }
     function transfer(address to, uint256 amount) external returns (bool) {
@@ -23,6 +24,8 @@ contract CredisIssuance {
         return true;
     }
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        if (mode == 1) return false;
+        require(mode != 2, "PAYMENT_FAILED");
         allowance[from][msg.sender] -= amount;
         balanceOf[from] -= amount;
         balanceOf[to] += amount;

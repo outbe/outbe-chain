@@ -410,6 +410,10 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Ok(self.internals().tload(address, key))
     }
 
+    fn sload_for_cache(&mut self, address: Address, key: U256) -> Result<U256> {
+        outbe_primitives::storage::evm::read_cache_storage(&mut self.internals(), address, key)
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if !self.gas.record_regular_cost(SSTORE_RESET) {
             return Err(PrecompileError::OutOfGas);
