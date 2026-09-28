@@ -591,6 +591,7 @@ fn onboarding_cannot_decrypt_or_activate_before_finalized_admission_verifies() {
 
     let response = complete_onboarding_artifact_ingest_response(
         CompleteOnboardingArtifactIngestV1 {
+            upgrade_export: None,
             request_hash: B256::repeat_byte(0x70),
             artifact,
             expected_intent_hash: B256::repeat_byte(0x72),

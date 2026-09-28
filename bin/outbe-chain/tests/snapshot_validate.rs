@@ -161,6 +161,24 @@ fn validate_help_is_available_without_node_startup_and_restore_is_not_a_command(
     assert!(!restore.status.success());
 }
 
+#[cfg(feature = "test-protocol-overrides")]
+#[test]
+fn report_and_native_checks_parse_the_genesis_once() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = stopped_fixture(&root.path().join("donor"));
+    let report_path = root.path().join("headers-report.json");
+    let mut command = binary();
+    command
+        .args(["snapshot", "validate", "--checks", "headers", "--report"])
+        .arg(&report_path);
+    native_arguments(&mut command, &fixture);
+
+    let output = run(&mut command);
+    assert!(output.status.success(), "{}", transcript(&output));
+    let report = read_report(&report_path);
+    assert_eq!(status(&report, "headers"), "passed", "{report:#}");
+}
+
 #[test]
 fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
     let root = tempfile::tempdir().unwrap();

@@ -123,6 +123,7 @@ Feature: Off-chain computation and Metadosis
   @ocomp-late-local-result
   Scenario: A validator safely handles its correct late result after the network completes the job
     Given a fresh four-validator OCOMP public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When validator 3 OCOMP worker is stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -136,6 +137,7 @@ Feature: Off-chain computation and Metadosis
   @ocomp-fullnode-deadline
   Scenario: A FullNode restores its deadline barrier and resumes after an exact late result
     Given a fresh four-validator OCOMP public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When a fifth node syncs as a non-voting FullNode
     When the keyless FullNode compute roles stop before the job
     And an operator submits one encrypted tribute offer
@@ -153,6 +155,7 @@ Feature: Off-chain computation and Metadosis
   @ocomp-fullnode-mismatch
   Scenario: A FullNode mismatch is sticky and isolated from validator finality
     Given a fresh four-validator OCOMP public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When a fifth node syncs as a non-voting FullNode
     When the keyless FullNode arms one valid local-result mismatch
     And an operator submits one encrypted tribute offer
@@ -169,6 +172,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-003
   Scenario: Two timely votes cannot prevent exclusive-deadline expiry
     Given a fresh four-validator OCOMP short-window public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -183,6 +187,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-005
   Scenario: An expired public job remains terminal after workers recover
     Given a fresh four-validator OCOMP short-window public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -199,6 +204,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-006
   Scenario: Complete snapshot-exporter outage cannot halt consensus
     Given a fresh four-validator OCOMP short-window public recovery localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When all four OCOMP snapshot exporters are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -215,6 +221,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-007
   Scenario: Complete worker outage preserves exports and cannot halt consensus
     Given a fresh four-validator OCOMP short-window public recovery localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
@@ -229,6 +236,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery
     Given a fresh four-validator OCOMP public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When a fifth node syncs as a non-voting FullNode
     When validators 1, 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer

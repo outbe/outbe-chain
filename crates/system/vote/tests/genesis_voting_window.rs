@@ -72,18 +72,67 @@ fn governance_deadline_replay_ignores_local_environment() {
             validators
                 .activate_validator_via_boundary_for_test(proposer)
                 .unwrap();
-            let mut vote = Vote::new(storage);
+            let mut vote = Vote::new(storage.clone());
             let id = vote
                 .create_proposal(proposer, UPDATE_ADDRESS, "{}", 100, &REGISTRY)
                 .unwrap();
             let record = vote.proposals.get(id).unwrap().unwrap();
             assert_eq!(record.voting_deadline_height, 100 + expected_window);
             println!("witness:record:{record:?}");
+            // The explicit duration uses the same immutable genesis limit. A
+            // rejected duration must not allocate an id or emit an event.
+            let before = vote.proposal_count.read().unwrap();
+            for invalid in [0, expected_window + 1, u64::MAX] {
+                let error = vote
+                    .create_proposal_with_voting_window(
+                        proposer,
+                        UPDATE_ADDRESS,
+                        "{}",
+                        100,
+                        U256::ZERO,
+                        invalid,
+                        &REGISTRY,
+                    )
+                    .unwrap_err();
+                assert!(error.to_string().contains("voting window"), "{error}");
+                assert_eq!(vote.proposal_count.read().unwrap(), before);
+            }
+            // Close the legacy proposal so the same author can create another.
+            let ctx = BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(
+                    101 + expected_window,
+                    0,
+                    outbe_primitives::chain::TESTNET_CHAIN_ID,
+                ),
+                storage.clone(),
+            );
+            vote.process_begin_block(&ctx, &REGISTRY).unwrap();
+            let start = 102 + expected_window;
+            let window = expected_window.min(1_000);
+            let custom = vote
+                .create_proposal_with_voting_window(
+                    proposer,
+                    UPDATE_ADDRESS,
+                    "{}",
+                    start,
+                    U256::ZERO,
+                    window,
+                    &REGISTRY,
+                )
+                .unwrap();
+            let record = vote.proposals.get(custom).unwrap().unwrap();
+            assert_eq!(record.voting_deadline_height, start + window);
+            println!("witness:custom-record:{record:?}");
         }
         let events = provider.get_events(VOTE_ADDRESS);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let event = IVote::ProposalCreated::decode_log_data(&events[0]).unwrap();
         assert_eq!(event.votingDeadlineHeight, 100 + expected_window);
+        let custom = IVote::ProposalCreated::decode_log_data(&events[2]).unwrap();
+        assert_eq!(
+            custom.votingDeadlineHeight,
+            102 + expected_window + expected_window.min(1_000)
+        );
         println!("witness:events:{events:?}");
         return;
     }

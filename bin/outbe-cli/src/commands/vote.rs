@@ -17,7 +17,7 @@ pub enum VoteCmd {
         /// Target system module precompile address.
         #[arg(long)]
         target_module: Address,
-        /// JSON payload decoded by the target module.
+        /// Proposal JSON: target payload with optional votingWindowBlocks metadata.
         #[arg(
             long,
             conflicts_with = "payload_file",
@@ -93,10 +93,24 @@ fn resolve_proposal_payload(
     }
 }
 
-fn validate_json_payload(payload: &str) -> Result<()> {
-    serde_json::from_str::<serde_json::Value>(payload)
-        .wrap_err("payload must be valid JSON")
-        .map(|_| ())
+/// Voting duration belongs to Vote, not the target module's payload schema.
+/// Keep legacy payload bytes intact when no duration is supplied.
+fn split_proposal_json(payload: String) -> Result<(String, Option<u64>)> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(&payload).wrap_err("payload must be valid JSON")?;
+    let Some(window) = value
+        .as_object_mut()
+        .and_then(|object| object.remove("votingWindowBlocks"))
+    else {
+        return Ok((payload, None));
+    };
+    let window = window
+        .as_u64()
+        .filter(|window| *window > 0)
+        .ok_or_else(|| {
+            eyre::eyre!("votingWindowBlocks must be a positive integer number of blocks")
+        })?;
+    Ok((serde_json::to_string(&value)?, Some(window)))
 }
 
 async fn fetch_vote_proposal(
@@ -119,18 +133,79 @@ async fn propose(
     target_module: Address,
     payload: String,
 ) -> Result<()> {
-    validate_json_payload(&payload)?;
+    let (payload, voting_window_blocks) = split_proposal_json(payload)?;
+    let payload = prepare_enclave_upgrade_payload(client, target_module, payload).await?;
     let signer = super::require_signer(private_key)?;
 
-    let call = IVote::createProposalCall {
-        targetModule: target_module,
-        payload,
+    let data = match voting_window_blocks {
+        Some(window) => IVote::createProposalWithVotingWindowCall {
+            targetModule: target_module,
+            payload,
+            votingWindowBlocks: window,
+        }
+        .abi_encode(),
+        None => IVote::createProposalCall {
+            targetModule: target_module,
+            payload,
+        }
+        .abi_encode(),
     };
     let tx_hash = signer
-        .send_tx(client, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
+        .send_tx(client, VOTE_ADDRESS, data, U256::ZERO)
         .await?;
     println!("Proposal transaction sent: {tx_hash} (target {target_module:?})");
     Ok(())
+}
+
+async fn prepare_enclave_upgrade_payload(
+    client: &(impl Rpc + Sync),
+    target: Address,
+    payload: String,
+) -> Result<String> {
+    use outbe_primitives::{
+        addresses::{TEE_REGISTRY_ADDRESS, UPDATE_ADDRESS},
+        tee_attestation_v1::TeePolicyV1,
+        tee_registry_abi_v1::ITeeRegistryV1,
+    };
+    if target != UPDATE_ADDRESS {
+        return Ok(payload);
+    }
+    let value: serde_json::Value = serde_json::from_str(&payload)?;
+    let update = outbe_update::payload::ScheduleUpdatePayload::from_value(&value)?;
+    if update.mrenclave.is_none() {
+        return Ok(payload);
+    }
+    let finalized = client.eth_get_finalized_block().await?;
+    let tag = finalized
+        .get("number")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("finalized block has no number"))?;
+    let height = u64::from_str_radix(tag.trim_start_matches("0x"), 16)?;
+    let bytes = client
+        .eth_call_at(
+            TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::activePolicyV1Call {}.abi_encode(),
+            tag,
+        )
+        .await?;
+    let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&bytes)?;
+    let policy = TeePolicyV1::decode_canonical(&canonical)
+        .map_err(|e| eyre::eyre!("invalid finalized policy: {e}"))?;
+    if policy.measurement_rules.len() != 1
+        || update.mrenclave == Some(policy.measurement_rules[0].mrenclave)
+    {
+        eyre::bail!(
+            "enclave upgrade requires a different MRENCLAVE and one predecessor measurement"
+        );
+    }
+    let chain_id = client.eth_chain_id().await?;
+    if policy.chain_id != U256::from(chain_id).to_be_bytes() {
+        eyre::bail!("TEE policy chain identity mismatch");
+    }
+    update.validate(height, chain_id)?;
+    let payload = serde_json::to_string(&update)?;
+    println!("Enclave upgrade proposal: {payload}");
+    Ok(payload)
 }
 
 async fn cast_vote(
@@ -174,9 +249,10 @@ fn print_vote_proposal(label: &str, proposal: &IVote::ProposalInfo) {
     let deadline = proposal.votingDeadlineHeight;
     let yes = proposal.state.yes;
     let no = proposal.state.no;
+    let duration = deadline.saturating_sub(proposal.createdHeight);
 
     println!(
-        "{label} #{proposal_id}: target={:?} status={status} deadline={deadline} votes={yes}/{no}",
+        "{label} #{proposal_id}: target={:?} status={status} votingWindowBlocks={duration} deadline={deadline} votes={yes}/{no}",
         proposal.targetModule
     );
     println!("  payload: {}", proposal.payload);
@@ -195,6 +271,63 @@ mod tests {
     use std::collections::HashMap;
 
     const SAMPLE_PAYLOAD: &str = r#"{"version":"1.2","activationHeight":1000,"info":"notes"}"#;
+
+    #[test]
+    fn proposal_json_duration_is_vote_metadata_and_legacy_bytes_are_preserved() {
+        let raw = "{\n  \"version\": \"1.2\", \"activationHeight\": 2000\n}";
+        assert_eq!(split_proposal_json(raw.into()).unwrap(), (raw.into(), None));
+        for window in [1, 1000, 30000, 86400] {
+            let mut value: serde_json::Value = serde_json::from_str(raw).unwrap();
+            value["votingWindowBlocks"] = serde_json::json!(window);
+            let (payload, actual) = split_proposal_json(value.to_string()).unwrap();
+            assert_eq!(actual, Some(window));
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&payload).unwrap(),
+                serde_json::from_str::<serde_json::Value>(raw).unwrap()
+            );
+        }
+        for invalid in [
+            "0",
+            "-1",
+            "1.5",
+            "null",
+            "true",
+            "\"1000\"",
+            "18446744073709551616",
+        ] {
+            let err =
+                split_proposal_json(format!("{{\"votingWindowBlocks\":{invalid}}}")).unwrap_err();
+            assert!(err.to_string().contains("votingWindowBlocks"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn proposal_json_duration_is_sent_in_vote_creation() {
+        for window in [1000, 30000] {
+            let private_key = "0000000000000000000000000000000000000000000000000000000000000001";
+            let mut input: serde_json::Value = serde_json::from_str(SAMPLE_PAYLOAD).unwrap();
+            let target_payload = input.to_string();
+            input["votingWindowBlocks"] = serde_json::json!(window);
+            let call = IVote::createProposalWithVotingWindowCall {
+                targetModule: UPDATE_ADDRESS,
+                payload: target_payload,
+                votingWindowBlocks: window,
+            };
+            let rpc =
+                recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
+                    .unwrap();
+            let file = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(file.path(), input.to_string()).unwrap();
+            VoteCmd::Propose {
+                target_module: UPDATE_ADDRESS,
+                payload: None,
+                payload_file: Some(file.path().to_path_buf()),
+            }
+            .run(&rpc, Some(private_key))
+            .await
+            .unwrap();
+        }
+    }
 
     #[test]
     fn test_cli_parse_vote_status() {

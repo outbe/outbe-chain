@@ -85,6 +85,13 @@ interface IVote {
     /// @param payload JSON payload decoded only by the target module handler.
     function createProposal(address targetModule, string calldata payload) external payable returns (uint256 proposalId);
 
+    /// @notice Creates a proposal with a voting duration chosen by its author.
+    /// @param votingWindowBlocks Duration in 1..=the network governance voting window.
+    /// @dev Admission and bond rules are identical to createProposal. The deadline
+    /// is createdHeight + votingWindowBlocks, inclusive; tally runs in the next block.
+    function createProposalWithVotingWindow(address targetModule, string calldata payload, uint64 votingWindowBlocks)
+        external payable returns (uint256 proposalId);
+
     /// @notice Casts a vote on a pending proposal.
     /// @dev Only active validators may vote.
     function castVote(uint256 proposalId, bool approve) external;

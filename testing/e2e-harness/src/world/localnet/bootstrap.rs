@@ -366,19 +366,23 @@ impl Localnet {
             );
         }
         fs::rename(&genesis, &seeded)?;
-        let network_descriptor = if self.cfg.tee_mode == TeeMode::Real {
+        let network_descriptor = if !self.cfg.tee_mode.uses_mock_binary() {
             let binding = DcapSeededChainSpecBindingV1::from_genesis_path(&seeded)
-                .map_err(|error| eyre!("derive seeded DCAP network descriptor: {error}"))?;
+                .map_err(|error| eyre!("derive seeded network descriptor: {error}"))?;
             let descriptor = TrustedNetworkDescriptorV1 {
                 network_binding: NetworkBindingV1 {
                     chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
                     genesis_hash: binding.genesis_hash,
-                    attestation_mode: AttestationMode::DcapRequired,
+                    attestation_mode: if self.cfg.tee_mode == TeeMode::Real {
+                        AttestationMode::DcapRequired
+                    } else {
+                        AttestationMode::GramineDirectDev
+                    },
                 },
                 genesis_consensus_keys: binding.genesis_consensus_keys,
             }
             .encode_canonical()
-            .map_err(|error| eyre!("encode seeded DCAP network descriptor: {error}"))?;
+            .map_err(|error| eyre!("encode seeded network descriptor: {error}"))?;
             let path = self.cfg.dir.join("network-descriptor-v1.bin");
             fs::write(&path, descriptor)?;
             Some(path)

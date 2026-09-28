@@ -420,6 +420,7 @@ def update_generated_validators(
     hosts: list[str],
     consensus_p2p_base_port: int,
     reth_p2p_base_port: int,
+    consensus_port_stride: int = 1,
 ) -> list[dict[str, Any]]:
     validators = load_json(validators_path)
     if not isinstance(validators, list):
@@ -432,7 +433,10 @@ def update_generated_validators(
         if not isinstance(validator, dict):
             raise ValueError(f"generated validator {index} must be an object")
         host = hosts[index]
-        validator["p2p_address"] = f"{host}:{consensus_p2p_base_port + index}"
+        port = consensus_p2p_base_port + index * consensus_port_stride
+        if consensus_port_stride < 1 or not 1 <= port < 65535:
+            raise ValueError("invalid consensus port stride or port range")
+        validator["p2p_address"] = f"{host}:{port}"
         validator["reth_p2p_address"] = f"{host}:{reth_p2p_base_port + index}"
     write_json(validators_path, validators)
     return validators
@@ -1085,6 +1089,8 @@ def main() -> None:
     parser.add_argument("--dkg-activation-grace-blocks", type=int, default=DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
     parser.add_argument("--gas-limit", default=DEFAULT_GAS_LIMIT)
     parser.add_argument("--consensus-p2p-base-port", type=int, default=30400)
+    parser.add_argument("--consensus-port-stride", type=int, default=1,
+                        help="Spacing between generated consensus ports; reserve internal ports for a shared host")
     parser.add_argument("--reth-p2p-base-port", type=int, default=30303)
     parser.add_argument("--reth-discv5-base-port", type=int, default=31303)
     parser.add_argument("--rpc-base-port", type=int, default=8545)
@@ -1157,6 +1163,7 @@ def main() -> None:
             hosts=hosts,
             consensus_p2p_base_port=args.consensus_p2p_base_port,
             reth_p2p_base_port=args.reth_p2p_base_port,
+            consensus_port_stride=args.consensus_port_stride,
         )
         generate_founder_radicle_material(
             keygen_binary=args.keygen_binary,

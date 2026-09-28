@@ -42,6 +42,20 @@ impl VoteTarget for UpdateVoteTarget {
             PrecompileError::Fatal(format!("stored Update proposal payload is invalid: {err}"))
         })?;
         let outcome = ctx.with_checkpoint(|| {
+            decoded
+                .validate_measurement_upgrade()
+                .map_err(PrecompileError::from)?;
+            let mut tee_registry = TeeRegistry::new(ctx.storage.clone());
+            if tee_registry.strict_upgrade_pending_v1()?
+                || (decoded.mrenclave.is_some()
+                    && !Update::new(ctx.storage.clone())
+                        .list_waiting_for_activation_proposal_ids()?
+                        .is_empty())
+            {
+                return Err(PrecompileError::Revert(
+                    "enclave rollout requires an exclusive scheduled upgrade".into(),
+                ));
+            }
             match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
                 proposal_id,
                 &payload,
@@ -50,13 +64,22 @@ impl VoteTarget for UpdateVoteTarget {
                 Ok(()) => {}
                 Err(err) => return Err(classify_domain_error_as_precompile(err)),
             }
-            if let Some(policy) = decoded.tee_policy().map_err(|err| {
-                PrecompileError::Fatal(format!(
-                    "stored Update successor TEE policy is invalid: {err}"
-                ))
-            })? {
-                TeeRegistry::new(ctx.storage.clone())
-                    .stage_successor_policy_v1(proposal_id, &policy)?;
+            if let Some(mrenclave) = decoded.mrenclave {
+                // Bind the rollout to the policy active when the vote is approved.
+                // Callers supply only the successor measurement.
+                let predecessor =
+                    tee_registry
+                        .active_policy_v1()?
+                        .policy_hash()
+                        .map_err(|err| {
+                            PrecompileError::Fatal(format!("invalid active TEE policy: {err}"))
+                        })?;
+                tee_registry.stage_measurement_upgrade_v1(
+                    proposal_id,
+                    mrenclave,
+                    predecessor,
+                    decoded.activation_height,
+                )?;
             }
             if let Some(successor) = decoded.ocomp_successor().map_err(|err| {
                 PrecompileError::Fatal(format!("stored Update OCOMP successor is invalid: {err}"))

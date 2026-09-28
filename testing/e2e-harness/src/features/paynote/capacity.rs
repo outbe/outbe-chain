@@ -20,12 +20,23 @@ use crate::world::test_issuance::{self, ITestToken, SeriesSpec};
 use crate::world::{venue_probes, World};
 
 // Counts are bounded fixture sizes, not economic amounts.
-const NOTES: u32 = 1_000;
 const GEMS_PER_POSITION: u32 = 25;
-const DEPOSIT_BATCH: usize = 32;
+// Wait for each receipt before submitting the next fixture transaction. The
+// production txpool may reject a burst of 32 same-account pending nonces.
+const DEPOSIT_BATCH: usize = 1;
+
+#[then("10 PayNotes deposited before any spend fully settle 10 GEMs on every validator")]
+fn ten_notes_settle_gems(world: &mut World) {
+    settle_gems(world, 10);
+}
 
 #[then("1000 PayNotes deposited before any spend fully settle 1000 GEMs on every validator")]
 fn thousand_notes_settle_gems(world: &mut World) {
+    settle_gems(world, 1_000);
+}
+
+fn settle_gems(world: &mut World, notes_count: u32) {
+    assert!(notes_count >= 2);
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let owner = crate::world::origin_venue::deployer_address();
@@ -43,7 +54,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
         0
     );
 
-    let gems = issue_gems(world);
+    let gems = issue_gems(world, notes_count);
     let notes: Vec<_> = gems
         .iter()
         .map(|&gem_id| {
@@ -60,7 +71,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
             Note::new(chain_id, currency.asset, amount)
         })
         .collect();
-    assert_eq!(notes.len(), NOTES as usize);
+    assert_eq!(notes.len(), notes_count as usize);
     let commitments: BTreeSet<_> = notes.iter().map(|n| word(&n.commitment)).collect();
     let nullifiers: Vec<_> = notes
         .iter()
@@ -91,10 +102,12 @@ fn thousand_notes_settle_gems(world: &mut World) {
     let mut stale_proof = Vec::new();
     let mut last_deposit = None;
     while deposited < notes.len() {
-        // Observe the exact 31/32-later-append boundary before larger batches.
+        // The capacity case observes the exact 31/32-later-append boundary.
+        // Every fixture transaction waits for a receipt so txpool capacity
+        // cannot mask root behavior.
         let end = match deposited {
             0 => 1,
-            1 => 32,
+            1..=31 => (deposited + DEPOSIT_BATCH).min(32),
             32 => 33,
             _ => (deposited + DEPOSIT_BATCH).min(notes.len()),
         };
@@ -127,7 +140,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
                 addresses::PAYNOTE_ADDR,
                 &eth::IPayNote::NewNote {
                     commitment: word(&note.commitment),
-                    leafIndex: u32::try_from(index).expect("index is below 1000"),
+                    leafIndex: u32::try_from(index).expect("note index fits u32"),
                     rootAfter: word(&tree.root()),
                     asset: note.asset,
                     noteAmount: note.amount,
@@ -170,7 +183,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
             );
         }
     }
-    let deposited_height = finalize(world, last_deposit.as_ref().expect("1000 deposits"));
+    let deposited_height = finalize(world, last_deposit.as_ref().expect("deposits"));
     let tree = read_tree(world, port, chain_id);
     let root = word(&tree.root());
     assert_eq!(tree.leaves().len(), notes.len());
@@ -195,13 +208,21 @@ fn thousand_notes_settle_gems(world: &mut World) {
         [before[0] - total, before[1] + total, before[2], before[3]],
         "only deposits move ERC20 from payer to reserve"
     );
-    reject_without_mutation(
-        world,
-        gems[0],
-        &stale_proof,
-        nullifiers[0],
-        "PayNote root is not recent",
-    );
+    if notes_count > 32 {
+        reject_without_mutation(
+            world,
+            gems[0],
+            &stale_proof,
+            nullifiers[0],
+            "PayNote root is not recent",
+        );
+    } else {
+        assert!(read(
+            &url,
+            addresses::PAYNOTE_ADDR,
+            &eth::IPayNote::isKnownRootCall { root: first_root }
+        ));
+    }
 
     let mut last_settlement = None;
     for (index, (&gem_id, note)) in gems.iter().zip(&notes).enumerate() {
@@ -299,7 +320,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
         last_settlement = Some(outcome);
     }
 
-    let height = finalize(world, last_settlement.as_ref().expect("1000 settlements"));
+    let height = finalize(world, last_settlement.as_ref().expect("settlements"));
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
         assert_eq!(
@@ -309,7 +330,7 @@ fn thousand_notes_settle_gems(world: &mut World) {
                 &eth::IPayNote::leafCountCall {},
                 height
             ),
-            u64::from(NOTES)
+            u64::from(notes_count)
         );
         assert_eq!(
             read_at(
@@ -360,10 +381,12 @@ fn thousand_notes_settle_gems(world: &mut World) {
             );
         }
     }
-    eprintln!("paynote_capacity PASS deposited={NOTES} spent={NOTES} settled={NOTES} change_notes=0 amount={total} root={root:#x} finalized_height={height}");
+    eprintln!("paynote_capacity PASS deposited={notes_count} spent={notes_count} settled={notes_count} change_notes=0 amount={total} root={root:#x} finalized_height={height}");
 }
 
-fn issue_gems(world: &mut World) -> Vec<U256> {
+fn issue_gems(world: &mut World, notes_count: u32) -> Vec<U256> {
+    let gems_per_position = notes_count.min(GEMS_PER_POSITION);
+    assert_eq!(notes_count % gems_per_position, 0);
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let owner = crate::world::origin_venue::deployer_address();
@@ -399,7 +422,7 @@ fn issue_gems(world: &mut World) -> Vec<U256> {
         U256::from(entry),
         load,
         owner,
-        &[NOTES],
+        &[notes_count],
         &[u32::try_from(world.rpc.chain_id(port).expect("chain ID"))
             .expect("Intex chain ID fits uint32")],
         &[SeriesSpec {
@@ -409,12 +432,14 @@ fn issue_gems(world: &mut World) -> Vec<U256> {
     )
     .expect("issue capacity source series")[0];
     let deadline = Instant::now() + Duration::from_secs(180);
-    while venue_probes::series_balances(&url, nft, series, owner) != Some((u64::from(NOTES), 0)) {
+    while venue_probes::series_balances(&url, nft, series, owner)
+        != Some((u64::from(notes_count), 0))
+    {
         assert!(Instant::now() < deadline, "source Intex issuance timed out");
         sleep(Duration::from_millis(500));
     }
     let mut gems = Vec::new();
-    for _ in 0..NOTES / GEMS_PER_POSITION {
+    for _ in 0..notes_count / gems_per_position {
         // Refresh the previous-day fixture if the long run crosses UTC midnight.
         test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD_ISO, 1, U256::from(entry))
             .expect("seed issuance price");
@@ -428,7 +453,7 @@ fn issue_gems(world: &mut World) -> Vec<U256> {
             addresses::GEM_FACTORY_ADDR,
             &eth::IGemFactory::issueGemPositionCall {
                 sourceIntexId: series,
-                amount: U256::from(GEMS_PER_POSITION),
+                amount: U256::from(gems_per_position),
             },
         );
         assert_mined_success(&parked, "park capacity batch");
@@ -440,7 +465,7 @@ fn issue_gems(world: &mut World) -> Vec<U256> {
                 index: position_index,
             },
         );
-        for _ in 0..GEMS_PER_POSITION {
+        for _ in 0..gems_per_position {
             // Waiting for each receipt puts equal owner/load GEMs in different blocks.
             let issued = send(
                 &url,
@@ -474,7 +499,7 @@ fn issue_gems(world: &mut World) -> Vec<U256> {
             eprintln!("paynote_capacity phase=issue_gems completed={}", gems.len());
         }
     }
-    assert_eq!(gems.len(), NOTES as usize);
+    assert_eq!(gems.len(), notes_count as usize);
     assert_eq!(gems.iter().collect::<BTreeSet<_>>().len(), gems.len());
     let statuses: Vec<_> = gems
         .iter()

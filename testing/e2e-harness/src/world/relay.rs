@@ -148,7 +148,7 @@ struct Dispatch {
 fn read_dispatches(end: &RelayEnd, destination: u32) -> Result<Vec<Dispatch>> {
     let topic0 = IRelayMailbox::Dispatched::SIGNATURE_HASH;
     let destination_topic = format!("0x{:064x}", destination);
-    let logs = eth::raw_json_with_params(
+    let logs = eth::raw_json_result(
         &end.url,
         "eth_getLogs",
         serde_json::json!([{
@@ -158,7 +158,7 @@ fn read_dispatches(end: &RelayEnd, destination: u32) -> Result<Vec<Dispatch>> {
             "topics": [format!("{topic0:?}"), serde_json::Value::Null, destination_topic],
         }]),
     )
-    .ok_or_else(|| eyre!("relay could not read dispatches"))?;
+    .map_err(|error| eyre!("relay could not read dispatches: {error:#}"))?;
 
     let entries = logs
         .as_array()

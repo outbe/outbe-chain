@@ -181,7 +181,8 @@ use canonical::{
 
 mod failure;
 use failure::{
-    consume_projection_runtime_deadline, drain_exex_notifications, load_persisted_fatal_evidence,
+    consume_projection_runtime_deadline, drain_exex_notifications,
+    finished_height_consumer_closed_during_shutdown, load_persisted_fatal_evidence,
     persist_local_failure_evidence, projection_runtime_failure,
     projection_runtime_watch_closed_failure, projection_task_failure, publish_finished_height,
     without_execution_backfill,

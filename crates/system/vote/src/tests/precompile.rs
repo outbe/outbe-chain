@@ -42,6 +42,199 @@ fn precompile_abi_compiles() {
 }
 
 #[test]
+fn custom_window_persists_deadline_and_tallies_only_after_it() {
+    for window in [1, 1_000, 30_000, 86_400] {
+        let provider = with_vote_provider(100, |storage| {
+            let payload = empty_update_payload(100);
+            let data = IVote::createProposalWithVotingWindowCall {
+                targetModule: UPDATE_ADDRESS,
+                payload: payload.clone(),
+                votingWindowBlocks: window,
+            }
+            .abi_encode();
+            let ret = dispatch(storage.clone(), &data, PROPOSER, U256::ZERO).unwrap();
+            let id = IVote::createProposalWithVotingWindowCall::abi_decode_returns(&ret).unwrap();
+            let mut vote = Vote::new(storage.clone());
+            let get = IVote::getProposalCall { proposalId: id }.abi_encode();
+            let info = IVote::getProposalCall::abi_decode_returns(
+                &dispatch(storage.clone(), &get, PROPOSER, U256::ZERO).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(info.createdHeight, 100);
+            assert_eq!(info.votingDeadlineHeight, 100 + window);
+            assert_eq!(info.payload, payload);
+            vote.cast_vote_approve(id, VOTER_A, true, 100).unwrap();
+            // A fresh runtime reads the immutable deadline from existing storage.
+            drop(vote);
+            let mut vote = Vote::new(storage.clone());
+            vote.cast_vote_approve(id, VOTER_B, true, 100 + window)
+                .unwrap();
+            assert!(vote
+                .cast_vote_approve(id, PROPOSER, true, 101 + window)
+                .is_err());
+            let ctx = super::block_ctx(storage.clone(), 100 + window);
+            vote.process_begin_block(&ctx, test_vote_registry())
+                .unwrap();
+            assert_eq!(
+                vote.proposals
+                    .get(id)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                crate::state::ProposalStatus::Pending
+            );
+            let ctx = super::block_ctx(storage.clone(), 101 + window);
+            vote.process_begin_block(&ctx, test_vote_registry())
+                .unwrap();
+            assert_eq!(
+                vote.proposals
+                    .get(id)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                crate::state::ProposalStatus::Approved
+            );
+        });
+        let events = provider.get_events(VOTE_ADDRESS);
+        let log = events
+            .iter()
+            .find(|log| log.topics().first() == Some(&IVote::ProposalCreated::SIGNATURE_HASH))
+            .unwrap();
+        let event = IVote::ProposalCreated::decode_log_data(log).unwrap();
+        assert_eq!(event.votingDeadlineHeight, 100 + window);
+    }
+}
+
+#[test]
+fn custom_window_does_not_change_existing_proposal_or_quorum() {
+    with_vote_provider(100, |storage| {
+        let old = IVote::createProposalCall {
+            targetModule: UPDATE_ADDRESS,
+            payload: empty_update_payload(100),
+        }
+        .abi_encode();
+        let old_id = IVote::createProposalCall::abi_decode_returns(
+            &dispatch(storage.clone(), &old, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        let new = IVote::createProposalWithVotingWindowCall {
+            targetModule: UPDATE_ADDRESS,
+            payload: empty_update_payload(100),
+            votingWindowBlocks: 1_000,
+        }
+        .abi_encode();
+        let id = IVote::createProposalWithVotingWindowCall::abi_decode_returns(
+            &dispatch(storage.clone(), &new, VOTER_A, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        let mut vote = Vote::new(storage.clone());
+        vote.cast_vote_approve(id, VOTER_A, true, 101).unwrap();
+        vote.process_begin_block(&super::block_ctx(storage, 1101), test_vote_registry())
+            .unwrap();
+        assert_eq!(
+            vote.proposals
+                .get(id)
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            crate::state::ProposalStatus::Expired
+        );
+        let old = vote.proposals.get(old_id).unwrap().unwrap();
+        assert_eq!(
+            old.proposal_status().unwrap(),
+            crate::state::ProposalStatus::Pending
+        );
+        assert_eq!(
+            old.voting_deadline_height,
+            100 + crate::constants::VOTING_WINDOW_BLOCKS
+        );
+    });
+}
+
+#[test]
+fn custom_window_rejects_invalid_duration_overflow_and_unauthorized_creation() {
+    for (height, window, caller, value, expected) in [
+        (100, 0, PROPOSER, U256::ZERO, "voting window"),
+        (100, 86_401, PROPOSER, U256::ZERO, "voting window"),
+        (100, u64::MAX, PROPOSER, U256::ZERO, "voting window"),
+        (u64::MAX, 1, PROPOSER, U256::ZERO, "overflows"),
+        (100, 1_000, Address::ZERO, U256::ZERO, "active validator"),
+    ] {
+        let provider = with_vote_provider(height, |storage| {
+            let data = IVote::createProposalWithVotingWindowCall {
+                targetModule: UPDATE_ADDRESS,
+                payload: empty_update_payload(100),
+                votingWindowBlocks: window,
+            }
+            .abi_encode();
+            let before = Vote::new(storage.clone()).proposal_count.read().unwrap();
+            let err = dispatch(storage.clone(), &data, caller, value).unwrap_err();
+            assert!(err.to_string().contains(expected), "{err}");
+            assert_eq!(Vote::new(storage).proposal_count.read().unwrap(), before);
+        });
+        assert!(!has_event(
+            &provider,
+            IVote::ProposalCreated::SIGNATURE_HASH
+        ));
+    }
+}
+
+#[test]
+fn custom_window_preserves_target_bond_rules() {
+    with_vote_provider(100, |storage| {
+        let data = IVote::createProposalWithVotingWindowCall {
+            targetModule: UPDATE_ADDRESS,
+            payload: empty_update_payload(100),
+            votingWindowBlocks: 1_000,
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &data, PROPOSER, U256::from(1)).unwrap_err();
+        assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+            if bytes.starts_with(&IVote::InvalidProposalBond::SELECTOR)));
+        assert_eq!(
+            Vote::new(storage).proposal_count.read().unwrap(),
+            U256::ZERO
+        );
+    });
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(100);
+    provider.set_balance(VOTE_ADDRESS, U256::from(123));
+    let storage = StorageHandle::new(&mut provider);
+    let data = IVote::createProposalWithVotingWindowCall {
+        targetModule: UPDATE_ADDRESS,
+        payload: r#"{"kind":"public"}"#.into(),
+        votingWindowBlocks: 1_000,
+    }
+    .abi_encode();
+    let ret = dispatch_with_handlers(
+        storage.clone(),
+        &data,
+        Address::repeat_byte(0x99),
+        U256::from(123),
+        &PUBLIC_BONDED_REGISTRY,
+    )
+    .unwrap();
+    let id = IVote::createProposalWithVotingWindowCall::abi_decode_returns(&ret).unwrap();
+    let vote = Vote::new(storage);
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123));
+    assert_eq!(
+        vote.proposal_bond(id).unwrap().settlement,
+        BondSettlement::Unsettled
+    );
+    assert_eq!(
+        vote.proposals
+            .get(id)
+            .unwrap()
+            .unwrap()
+            .voting_deadline_height,
+        1100
+    );
+}
+
+#[test]
 fn dispatch_create_proposal_emits_event() {
     let provider = with_vote_provider(100, |storage| {
         let payload = empty_update_payload(100);

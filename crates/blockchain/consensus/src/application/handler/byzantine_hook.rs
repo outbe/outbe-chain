@@ -1,46 +1,50 @@
-//! Test-only byzantine proposer, compiled only with `test-protocol-overrides`
-//! (e2e builds). With `OUTBE_TEST_BYZANTINE_PREANNOUNCE` set, a leader whose
-//! parent ancestry already committed the round epoch's boundary carries a
-//! forged `CommitteePreAnnounce` for the next epoch: the committed boundary's
-//! own outcome relabelled as the successor's. It decodes and passes a
-//! follower's structural checks, so only the validators' admission rule stands
-//! between it and a finalized block.
+//! E2E-only Byzantine proposer hook. It is compiled only when both the E2E
+//! marker and test protocol overrides are enabled. The environment flag arms
+//! one forged committee pre-announce per successor epoch on each node.
 
-use commonware_consensus::types::Epoch;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 use tracing::warn;
 
-use crate::dkg_manager::{BoundaryRequirement, Mailbox, OdkoOutcome};
+use crate::dkg_manager::{BoundaryRequirement, OdkoOutcome};
 
-pub(super) const BYZANTINE_PREANNOUNCE_ENV: &str = "OUTBE_TEST_BYZANTINE_PREANNOUNCE";
+const BYZANTINE_PREANNOUNCE_ENV: &str = "OUTBE_TEST_BYZANTINE_PREANNOUNCE";
 
-pub(super) async fn override_artifact(
-    dkg_manager: &Mailbox,
+// Every validator is armed in this scenario. Once each has tried a forged
+// proposal, later rounds must carry the genuine pre-announce so handoff can
+// still finalize. Successor epochs start at 1, making 0 a safe initial value.
+static LAST_FORGED_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn override_artifact(
     requirement: BoundaryRequirement,
-    round_epoch: Epoch,
     planned: Option<ConsensusHeaderArtifact>,
 ) -> Option<ConsensusHeaderArtifact> {
-    if requirement != BoundaryRequirement::AlreadyCommitted
+    if requirement != BoundaryRequirement::NoPending
         || std::env::var_os(BYZANTINE_PREANNOUNCE_ENV).is_none()
     {
         return planned;
     }
-    let Some(committed) = dkg_manager.pending_boundary_artifact(round_epoch).await else {
+    let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }) = planned.as_ref()
+    else {
         return planned;
     };
-    let (Ok(mut outcome), Some(next)) = (
-        OdkoOutcome::decode(committed.outcome.as_ref()),
-        round_epoch.get().checked_add(1),
-    ) else {
+    let Ok(mut forged) = OdkoOutcome::decode(outcome.as_ref()) else {
         return planned;
     };
-    outcome.epoch = Epoch::new(next);
+    if LAST_FORGED_EPOCH.fetch_max(*epoch, Ordering::AcqRel) >= *epoch {
+        return planned;
+    }
+    // Rudis validates the entire pre-announce against its own pending DKG
+    // outcome. Toggling this canonical ODKO flag preserves structural decoding
+    // and the successor epoch while making those bytes differ from local DKG.
+    forged.is_full_dkg = !forged.is_full_dkg;
     warn!(
-        epoch = next,
+        epoch,
         "byzantine test hook: proposing a forged committee pre-announce"
     );
     Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
-        epoch: next,
-        outcome: outcome.encode(),
+        epoch: *epoch,
+        outcome: forged.encode(),
     })
 }

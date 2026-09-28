@@ -1,9 +1,9 @@
-//! A byzantine leader forging committee pre-announces in the window after an
-//! epoch boundary commits. Honest validators must reject every one, so
+//! A byzantine leader forging committee pre-announces after the successor DKG
+//! completes and before the activation boundary. Honest validators reject them, so
 //! finalized history and FullNodes only ever carry the genuine committee.
 //!
 //! Validators inherit `OUTBE_TEST_BYZANTINE_PREANNOUNCE` from the harness
-//! process; the node hook exists only in `test-protocol-overrides` builds.
+//! process; the node hook exists only in E2E builds with protocol overrides.
 
 use std::collections::BTreeMap;
 use std::thread::sleep;

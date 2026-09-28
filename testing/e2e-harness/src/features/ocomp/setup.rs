@@ -10,6 +10,10 @@ const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
 // both date conventions select the fixture WWD and it remains inside FORMING.
 const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
 
+// Bootstrap writes the genesis timestamp before this fixture samples now_secs.
+// Leave the processing time past midnight even when those seconds differ.
+const OCOMP_PUBLIC_UTC_BOUNDARY_MARGIN_SECS: u64 = 30;
+
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, None, None, false, None);
@@ -211,7 +215,9 @@ fn start_ocomp_measurement_localnet(
             OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
         } else {
             OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
-        };
+        }
+        .checked_sub(OCOMP_PUBLIC_UTC_BOUNDARY_MARGIN_SECS)
+        .expect("public OCOMP offering duration exceeds the UTC boundary margin");
         let mut opts = StartOpts::near_next_utc_day_with_lead(6, now_secs, boundary_lead_secs);
         let offset = opts
             .unix_time_offset_secs

@@ -15,6 +15,7 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
     ctx: &E,
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     bridge: ConsensusExecutionBridge,
+    parent_store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
 ) where
     E: Spawner + Metrics,
 {
@@ -23,8 +24,12 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
         .spawn(move |_| async move {
             let mut rx = rx;
             while let Some((height, reply)) = rx.recv().await {
-                let answer =
-                    finalization_bytes_for_height(&marshal_mailbox, Height::new(height)).await;
+                let answer = finalization_bytes_for_height(
+                    &marshal_mailbox,
+                    &parent_store,
+                    Height::new(height),
+                )
+                .await;
                 // The receiver may have gone away (RPC client disconnected); ignore.
                 let _ = reply.send(answer);
             }
@@ -35,17 +40,42 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
 /// for transport. `None` if either is missing locally.
 async fn finalization_bytes_for_height(
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+    parent_store: &outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
     height: Height,
 ) -> Option<outbe_primitives::consensus::FinalizedBlockBytes> {
     use commonware_codec::Encode as _;
 
-    let finalization = marshal_mailbox.get_finalization(height).await?;
-    // The block is keyed by the finalization's payload digest.
-    let block = marshal_mailbox
-        .get_block(&finalization.proposal.payload)
-        .await?;
+    let (_, digest) = marshal_mailbox.get_info(height).await?;
+    let block = marshal_mailbox.get_block(&digest).await?;
+    let mut finalization = marshal_mailbox.get_finalization(height).await;
+    if finalization.is_none() {
+        for record in parent_store.finalizations_for_block(height.get(), block.block_hash()) {
+            if let Ok(candidate) =
+                outbe_consensus::follow::decode_public_finalization(&record.encoded_proof, 256)
+            {
+                if candidate.proposal.payload == digest {
+                    finalization = Some(candidate);
+                    break;
+                }
+            }
+        }
+    }
+    if finalization.is_none() {
+        if let Some(next) = height.get().checked_add(1) {
+            if let Some((_, child_digest)) = marshal_mailbox.get_info(Height::new(next)).await {
+                if let Some(child) = marshal_mailbox.get_block(&child_digest).await {
+                    finalization =
+                        outbe_consensus::follow::upstream::parent_finalization_from_child(
+                            &block, &child,
+                        );
+                }
+            }
+        }
+    }
     Some(outbe_primitives::consensus::FinalizedBlockBytes {
-        finalization: alloy_primitives::Bytes::from(finalization.encode().to_vec()),
+        finalization: finalization
+            .map(|value| alloy_primitives::Bytes::from(value.encode().to_vec()))
+            .unwrap_or_default(),
         block: alloy_primitives::Bytes::from(block.encode().to_vec()),
     })
 }
@@ -505,17 +535,17 @@ where
     let archive_block_tip =
         marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
     ensure!(
-        archive_finalization_tip == replay_suffix_upper && archive_block_tip == replay_suffix_upper,
-        "certified follower replay normalization did not pair archive tips at height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
+        archive_finalization_tip == archive_block_tip
+            && archive_finalization_tip >= replay_suffix_upper
+            && archive_finalization_tip <= replay_suffix_upper.saturating_add(64),
+        "certified follower replay normalization did not pair bounded archive tips from height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
     );
-    let preselected_anchor_height = archive_finalization_tip
-        .min(archive_block_tip)
-        .min(last_execution_height);
+    let recovery_archive_tip = archive_finalization_tip.min(replay_suffix_upper);
+    let preselected_anchor_height = recovery_archive_tip.min(last_execution_height);
     let archived_finalization = if preselected_anchor_height == 0 {
         None
     } else {
-        Some(
-            marshal::store::Certificates::get(
+        marshal::store::Certificates::get(
                 &finalizations_archive,
                 commonware_storage::archive::Identifier::Index(preselected_anchor_height),
             )
@@ -525,12 +555,6 @@ where
                     "failed to read archived follower finalization at height {preselected_anchor_height}"
                 )
             })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "follower finalization archive tip includes height {preselected_anchor_height} but its exact record is missing"
-                )
-            })?,
-        )
     };
     let archived_block = if preselected_anchor_height == 0 {
         None
@@ -595,8 +619,8 @@ where
     let recovery_height =
         select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
             marshal_processed: last_consensus_finalized.get(),
-            archive_finalization_tip,
-            archive_block_tip,
+            archive_finalization_tip: recovery_archive_tip,
+            archive_block_tip: recovery_archive_tip,
             execution_tip: last_execution_height,
             reth_finalized: initial_reth_forkchoice
                 .finalized
@@ -635,28 +659,25 @@ where
             block: marshal_genesis_anchor,
         }
     } else {
-        let local_finalization = archived_finalization.as_ref().ok_or_else(|| {
-            eyre::eyre!("missing local finalization for recovery height {recovery_height}")
-        })?;
         let local_block = archived_block.as_ref().ok_or_else(|| {
             eyre::eyre!("missing local block for recovery height {recovery_height}")
         })?;
         let upstream = upstream_client
-            .get_finalization(Height::new(recovery_height))
+            .get_finality_proof(Height::new(recovery_height))
             .await
             .ok_or_else(|| {
                 eyre::eyre!(
                     "upstream did not return exact recovery finalization at height {recovery_height}"
                 )
             })?;
-        validate_certified_follower_recovery_record(
+        validate_ancestor_follower_recovery_record(
             recovery_height,
             recovery_hash,
-            local_finalization,
+            archived_finalization.as_ref(),
             local_block,
-            &upstream.finalization,
-            &upstream.block,
+            &upstream,
             &certificate_scheme_provider,
+            &epocher,
         )?
     };
 
@@ -766,7 +787,12 @@ where
     // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
     // retention both succeed. --------------------------------------
-    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
+    spawn_finalization_drainer(
+        &ctx,
+        marshal_mailbox.clone(),
+        bridge.clone(),
+        finalized_parent_cert_store.clone(),
+    );
 
     // -- 5. Assemble + run the follower engine ----------------------------
     let observer_mailbox = marshal_mailbox.clone();
@@ -778,6 +804,20 @@ where
         let mut last_persisted = None;
         while let Some(height) = execution_finalized_height_rx.recv().await {
             if !follower_height_has_certified_finalization(height) {
+                continue;
+            }
+            if observer_mailbox
+                .get_finalization(Height::new(height))
+                .await
+                .is_none()
+            {
+                ensure!(
+                    observer_mailbox
+                        .get_info(Height::new(height))
+                        .await
+                        .is_some(),
+                    "marshal lost finalized follower block {height} before proof drain"
+                );
                 continue;
             }
             reconcile_certified_follower_height(

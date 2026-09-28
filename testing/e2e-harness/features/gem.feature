@@ -37,6 +37,16 @@ Feature: Gem from a parked Intex to Promis
     When the position's validity runs out
     Then the position returns its unissued capacity to the same pool
 
+  @ocomp @price-oracle @paynote-main
+  Scenario: Ten old PayNotes fully settle ten GEMs
+    Given a fresh localnet with a 20-block voting window
+    When the intex engine is deployed on the committee chain
+    Then the committee chain hosts the intex engine
+    When the settlement currency is registered on the committee chain
+    Then owners may settle in that currency
+    And the controlled COEN USD quote is finalized through the real price feeder
+    Then 10 PayNotes deposited before any spend fully settle 10 GEMs on every validator
+
   @ocomp @price-oracle @paynote-capacity
   Scenario: One thousand old PayNotes fully settle one thousand GEMs
     Given a fresh localnet with a 20-block voting window

@@ -12,6 +12,7 @@ pub mod ocomp;
 pub mod payload_builder;
 pub mod projection;
 pub mod shutdown;
+pub mod tee_call_context;
 pub mod tee_canary;
 pub mod tee_remote_session;
 

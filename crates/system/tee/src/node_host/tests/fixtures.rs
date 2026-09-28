@@ -128,6 +128,7 @@ pub(super) fn replacement_fixture_for_mode(
         }),
         AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
             outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+                transition_key_ready_proof: None,
                 intent,
                 dev_attestation_public: enclave_signer.verifying_key().to_bytes(),
                 dev_signature: enclave_signature,

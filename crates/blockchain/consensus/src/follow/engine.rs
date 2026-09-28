@@ -210,7 +210,7 @@ where
         return Ok(anchor_epoch);
     }
     let recovered = source
-        .get_finalization(recovered_height)
+        .get_finality_proof(recovered_height)
         .await
         .ok_or_else(|| {
             eyre!(
@@ -218,8 +218,8 @@ where
                 recovered_height.get()
             )
         })?;
-    validate_certified_envelope(&recovered, recovered_height)?;
-    let target_epoch = recovered.finalization.proposal.round.epoch();
+    recovered.validate_envelope(recovered_height)?;
+    let target_epoch = recovered.certified.finalization.proposal.round.epoch();
     ensure!(
         target_epoch >= anchor_epoch,
         "recovered epoch {} precedes follower anchor epoch {}",
@@ -244,7 +244,7 @@ where
 
     {
         let guard = chain.lock();
-        guard.verify_finalization(target_epoch, &recovered.finalization)?;
+        guard.verify_finalization(target_epoch, &recovered.certified.finalization)?;
     }
     ensure!(
         epocher
@@ -299,13 +299,15 @@ where
             continue;
         }
         let height = Height::new(raw_height);
-        let certified = source.get_finalization(height).await.ok_or_else(|| {
+        let proof = source.get_finality_proof(height).await.ok_or_else(|| {
             eyre!(
                 "upstream did not return follower replay suffix height {}",
                 height.get()
             )
         })?;
-        authenticate_live_finalized(chain, epocher, height, &certified)?;
+        authenticate_ancestor_proof(chain, epocher, height, &proof)?;
+        let certified = &proof.certified;
+        let height = Height::new(certified.block.number());
 
         let digest = certified.block.digest();
         match certificates
@@ -348,28 +350,43 @@ where
             }
         }
 
-        match blocks
-            .get(Identifier::Index(height.get()))
-            .await
-            .map_err(|error| {
-                eyre!(
-                    "failed to read follower replay block at height {}: {error}",
+        for block in proof
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&certified.block))
+        {
+            let height = Height::new(block.number());
+            if let Some(local_certificate) = certificates
+                .get(Identifier::Index(height.get()))
+                .await
+                .map_err(|error| eyre!("read replay ancestor certificate: {error}"))?
+            {
+                ensure!(
+                    local_certificate.proposal.payload == block.digest(),
+                    "local replay ancestor certificate payload mismatch"
+                );
+                chain.lock().verify_finalization(
+                    local_certificate.proposal.round.epoch(),
+                    &local_certificate,
+                )?;
+            }
+            match blocks
+                .get(Identifier::Index(height.get()))
+                .await
+                .map_err(|error| eyre!("read follower replay block: {error}"))?
+            {
+                Some(local) => ensure!(
+                    local.encode() == block.encode(),
+                    "local follower replay block differs from authenticated upstream at height {}",
                     height.get()
-                )
-            })? {
-            Some(local) => ensure!(
-                local.encode() == certified.block.encode(),
-                "local follower replay block differs from authenticated upstream at height {}",
-                height.get()
-            ),
-            None => {
-                blocks = blocks.put(certified.block).await.map_err(|error| {
-                    eyre!(
-                        "failed to repair follower replay block at height {}: {error}",
-                        height.get()
-                    )
-                })?;
-                wrote_blocks = true;
+                ),
+                None => {
+                    blocks = blocks
+                        .put(block.clone())
+                        .await
+                        .map_err(|error| eyre!("repair follower replay block: {error}"))?;
+                    wrote_blocks = true;
+                }
             }
         }
     }
@@ -431,7 +448,7 @@ where
             continue;
         }
         let fetched = if local_block.is_none() {
-            Some(source.get_finalization(height).await.ok_or_else(|| {
+            Some(source.get_finality_proof(height).await.ok_or_else(|| {
                 eyre!(
                     "upstream did not return retained follower history height {}",
                     height.get()
@@ -442,7 +459,7 @@ where
         };
         let inspected_block = local_block
             .as_ref()
-            .or_else(|| fetched.as_ref().map(|certified| &certified.block))
+            .or_else(|| fetched.as_ref().map(|proof| proof.target()))
             .expect("retained follower history block source must exist");
         let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
             inspected_block.header().extra_data().as_ref(),
@@ -462,7 +479,7 @@ where
 
         let certified = match fetched {
             Some(certified) => certified,
-            None => source.get_finalization(height).await.ok_or_else(|| {
+            None => source.get_finality_proof(height).await.ok_or_else(|| {
                 eyre!(
                     "upstream did not return retained follower preannounce height {}",
                     height.get()
@@ -471,12 +488,12 @@ where
         };
         if let Some(local_block) = local_block {
             ensure!(
-                local_block.encode() == certified.block.encode(),
+                local_block.encode() == certified.target().encode(),
                 "local retained follower preannounce differs from authenticated upstream at height {}",
                 height.get()
             );
         }
-        authenticate_live_finalized(chain, epocher, height, &certified)?;
+        authenticate_ancestor_proof(chain, epocher, height, &certified)?;
         found_successor = true;
     }
     Ok(())
@@ -538,6 +555,57 @@ pub(super) fn authenticate_live_finalized(
     Ok(())
 }
 
+/// Authenticate a target without a direct certificate through a certified
+/// descendant and its consecutive parent-hash chain.
+pub(super) fn authenticate_ancestor_proof(
+    chain: &SharedCommitteeChain,
+    epocher: &FollowerEpocher,
+    expected_height: Height,
+    proof: &crate::follow::upstream::AncestorFinalityProof,
+) -> Result<()> {
+    if proof.ancestors.is_empty() {
+        return authenticate_live_finalized(chain, epocher, expected_height, &proof.certified);
+    }
+    proof.validate_envelope(expected_height)?;
+    let epoch = proof.certified.finalization.proposal.round.epoch();
+    chain
+        .lock()
+        .verify_finalization(epoch, &proof.certified.finalization)?;
+    for block in proof
+        .ancestors
+        .iter()
+        .chain(std::iter::once(&proof.certified.block))
+    {
+        let height = Height::new(block.number());
+        let routed_epoch = epocher
+            .containing(height)
+            .ok_or_else(|| {
+                eyre!(
+                    "height {} is outside the observed follower epoch window",
+                    height.get()
+                )
+            })?
+            .epoch();
+        let admission = chain
+            .lock()
+            .admit_authenticated_header(
+                epoch,
+                block.header().extra_data().as_ref(),
+                AdmissionPolicy::Routed { routed_epoch },
+            )
+            .map_err(|error| {
+                eyre!(
+                    "authenticated ancestor at height {} rejected: {error}",
+                    height.get()
+                )
+            })?;
+        if let Admission::BoundaryRegistered(boundary_epoch) = admission {
+            epocher.observe_boundary(boundary_epoch, height)?;
+        }
+    }
+    Ok(())
+}
+
 async fn rebuild_epoch_boundary<F>(
     chain: &SharedCommitteeChain,
     source: &F,
@@ -571,12 +639,12 @@ where
 
     let mut boundary = None;
     for height in (earliest.get()..=scan_end).rev() {
-        let Some(candidate) = source.get_finalization(Height::new(height)).await else {
+        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
             continue;
         };
-        validate_certified_envelope(&candidate, Height::new(height))?;
+        candidate.validate_envelope(Height::new(height))?;
         let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-            candidate.block.header().extra_data().as_ref(),
+            candidate.target().header().extra_data().as_ref(),
         )
         .map_err(|error| eyre!("failed to decode boundary candidate at {height}: {error:?}"))?;
         if matches!(
@@ -584,11 +652,17 @@ where
             Some(CHA::BoundaryOutcome(ref value)) if value.epoch == epoch.get()
         ) {
             ensure!(
-                candidate.finalization.proposal.round.epoch() == epoch,
+                candidate.certified.finalization.proposal.round.epoch() == epoch,
                 "epoch {} boundary candidate at height {} is finalized by epoch {}",
                 epoch.get(),
                 height,
-                candidate.finalization.proposal.round.epoch().get()
+                candidate
+                    .certified
+                    .finalization
+                    .proposal
+                    .round
+                    .epoch()
+                    .get()
             );
             boundary = Some((Height::new(height), candidate));
             break;
@@ -609,16 +683,18 @@ where
         .get();
     let mut carrier_height = None;
     for height in (previous_activation..boundary_height.get()).rev() {
-        let Some(candidate) = source.get_finalization(Height::new(height)).await else {
+        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
             continue;
         };
-        validate_certified_envelope(&candidate, Height::new(height))?;
-        if candidate.finalization.proposal.round.epoch() != previous_epoch {
+        candidate.validate_envelope(Height::new(height))?;
+        if candidate.certified.finalization.proposal.round.epoch() != previous_epoch {
             continue;
         }
-        let admission = chain.lock().admit(
-            &candidate.finalization,
-            candidate.block.header().extra_data().as_ref(),
+        let mut guard = chain.lock();
+        guard.verify_finalization(previous_epoch, &candidate.certified.finalization)?;
+        let admission = guard.admit_authenticated_header(
+            previous_epoch,
+            candidate.target().header().extra_data().as_ref(),
             AdmissionPolicy::CarrierFor { epoch },
         )?;
         if admission == Admission::SuccessorRegistered(epoch) {
@@ -636,19 +712,15 @@ where
 
     // The boundary block, finalized by the new committee itself, must carry
     // the outcome its carrier pre-announced - exactly as live delivery checks.
-    let admission = chain.lock().admit(
-        &boundary.finalization,
-        boundary.block.header().extra_data().as_ref(),
-        AdmissionPolicy::Routed {
-            routed_epoch: previous_epoch,
-        },
-    )?;
+    authenticate_ancestor_proof(chain, epocher, boundary_height, &boundary)?;
     ensure!(
-        admission == Admission::BoundaryRegistered(epoch),
+        chain
+            .lock()
+            .highest_registered()
+            .is_some_and(|registered| registered >= epoch),
         "epoch {} boundary block did not confirm its committee",
         epoch.get()
     );
-    epocher.observe_boundary(epoch, boundary_height)?;
     info!(
         epoch = epoch.get(),
         previous_epoch = previous_epoch.get(),
@@ -682,17 +754,20 @@ where
         .activation_height(anchor_epoch)
         .ok_or_else(|| eyre!("epocher has no activation carrier for anchor epoch"))?;
 
-    let certified = upstream.get_finalization(candidate).await.ok_or_else(|| {
-        eyre!(
-            "upstream did not return the anchor epoch's boundary block at height {candidate}; \
+    let certified = upstream
+        .get_finality_proof(candidate)
+        .await
+        .ok_or_else(|| {
+            eyre!(
+                "upstream did not return the anchor epoch's boundary block at height {candidate}; \
                  cannot bootstrap the committee chain"
-        )
-    })?;
+            )
+        })?;
 
-    validate_certified_envelope(&certified, candidate)?;
+    certified.validate_envelope(candidate)?;
     let registered = chain.lock().admit_anchor(
-        &certified.finalization,
-        certified.block.header().extra_data().as_ref(),
+        &certified.certified.finalization,
+        certified.target().header().extra_data().as_ref(),
     )?;
     ensure!(
         registered == anchor_epoch,

@@ -43,6 +43,7 @@ pub struct RemoteSessionAdmissionV1 {
     responder_static_x25519: [u8; 32],
     deadline: u64,
     finalized_view: FinalizedRegistryViewV1,
+    retirement_height: u64,
 }
 
 /// Structurally checked Registry data accepted only because the caller
@@ -79,6 +80,14 @@ impl RpcTrustedRemoteSessionV1 {
 }
 
 impl RemoteSessionAdmissionV1 {
+    #[doc(hidden)]
+    pub fn with_retirement_height(mut self, height: u64) -> Self {
+        self.retirement_height = height;
+        self
+    }
+    pub const fn retirement_height(&self) -> u64 {
+        self.retirement_height
+    }
     #[must_use]
     pub const fn initiator_static_x25519(&self) -> [u8; 32] {
         self.initiator_static_x25519
@@ -125,6 +134,8 @@ pub enum RemoteSessionAdmissionError {
     SourceExpired,
     #[error("target registration lease is expired")]
     TargetExpired,
+    #[error("remote session references a retired enclave registration")]
+    RetiredEnclave,
 }
 
 /// Applies the common binding/lease checks after the caller has authenticated
@@ -186,6 +197,7 @@ pub fn admit_remote_session_v1(
         responder_static_x25519: target.noise_responder_x25519,
         deadline: source.valid_until.min(target.valid_until),
         finalized_view: source.view,
+        retirement_height: 0,
     })
 }
 

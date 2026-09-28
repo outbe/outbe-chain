@@ -150,11 +150,11 @@ impl NetworkBindingV1 {
     }
 }
 
-/// Release-measured authority for one production DCAP network.
+/// Release-measured authority for one SGX network.
 ///
 /// The ordinary [`NetworkBindingV1`] is carried through node/enclave protocol
 /// messages. A modified NodeHost can choose those bytes, so they are not by
-/// themselves a trust root. Production DCAP bundles additionally measure this
+/// themselves a trust root. SGX release bundles additionally measure this
 /// descriptor as a Gramine trusted file. The enclave accepts an initialization
 /// manifest only when its network binding equals this descriptor exactly.
 ///
@@ -221,10 +221,19 @@ impl TrustedNetworkDescriptorV1 {
 
     fn validate(&self) -> Result<(), CodecError> {
         self.network_binding.validate()?;
-        if self.network_binding.attestation_mode != AttestationMode::DcapRequired {
-            return Err(CodecError::NonCanonical(
-                "trusted production network descriptor is not DCAP-required",
-            ));
+        if self.network_binding.attestation_mode == AttestationMode::GramineDirectDev {
+            let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
+                self.network_binding.chain_id,
+            ))
+            .map_err(|_| CodecError::NonCanonical("descriptor chain id exceeds u64"))?;
+            if !crate::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                self.network_binding.attestation_mode,
+            ) {
+                return Err(CodecError::NonCanonical(
+                    "descriptor attestation mode is forbidden for this network",
+                ));
+            }
         }
         if self.genesis_consensus_keys.is_empty()
             || self.genesis_consensus_keys.len() > Self::MAX_GENESIS_CONSENSUS_KEYS
@@ -322,15 +331,24 @@ pub enum AttestationOperationV1 {
     RenewEnclave = 0x02,
     TransitionEnclaveMeasurement = 0x03,
     ReplaceEnclaveBinding = 0x04,
+    PrepareEnclaveUpgrade = 0x05,
 }
 
 impl AttestationOperationV1 {
+    pub const fn is_measurement_upgrade(self) -> bool {
+        matches!(
+            self,
+            Self::TransitionEnclaveMeasurement | Self::PrepareEnclaveUpgrade
+        )
+    }
+
     fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::RegisterEnclave),
             0x02 => Ok(Self::RenewEnclave),
             0x03 => Ok(Self::TransitionEnclaveMeasurement),
             0x04 => Ok(Self::ReplaceEnclaveBinding),
+            0x05 => Ok(Self::PrepareEnclaveUpgrade),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "attestation operation",
                 value,
@@ -798,6 +816,22 @@ impl RegistrationIntentV1 {
         ))
     }
 
+    /// Candidate identity excludes lease/renewal counters: a live old binding may
+    /// renew while the candidate receives its key. The final transition still
+    /// validates fresh counters independently.
+    pub fn upgrade_target_hash(&self) -> Result<B256, CodecError> {
+        let mut target = self.clone();
+        target.operation = AttestationOperationV1::PrepareEnclaveUpgrade;
+        target.registration_version = 0;
+        target.renewal_nonce = 0;
+        target.transition_nonce = 0;
+        target.requested_valid_until = 1;
+        Ok(domain_hash(
+            b"outbe/tee/upgrade-target/v1",
+            &target.encode_canonical()?,
+        ))
+    }
+
     /// Verify the NodeHost proof of possession over this exact registration
     /// authorization. TeeRegistry separately authenticates the EVM caller
     /// against the canonical address-to-NodeHost association.
@@ -1241,6 +1275,8 @@ pub struct GramineDirectEvidenceV1 {
     pub intent: RegistrationIntentV1,
     pub dev_attestation_public: [u8; 32],
     pub dev_signature: [u8; 64],
+    /// Payload v2 only; v1 registration/renewal encoding remains byte-identical.
+    pub transition_key_ready_proof: Option<TransitionKeyReadyProofV1>,
 }
 
 impl GramineDirectEvidenceV1 {
@@ -1257,25 +1293,56 @@ impl GramineDirectEvidenceV1 {
         }
         let intent = self.intent.encode_canonical()?;
         let mut out = Vec::new();
-        out.push(PROTOCOL_VERSION_V1);
+        if self.transition_key_ready_proof.is_some()
+            != (self.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement)
+        {
+            return Err(CodecError::NonCanonical(
+                "DirectDev transition proof presence",
+            ));
+        }
+        out.push(if self.transition_key_ready_proof.is_some() {
+            2
+        } else {
+            PROTOCOL_VERSION_V1
+        });
         put_len_u32(&mut out, intent.len())?;
         out.extend_from_slice(&intent);
         out.extend_from_slice(&self.dev_attestation_public);
         out.extend_from_slice(&self.dev_signature);
+        if let Some(proof) = &self.transition_key_ready_proof {
+            out.extend_from_slice(&proof.encode_canonical()?);
+        }
         Ok(out)
     }
 
     fn decode_payload(input: &[u8]) -> Result<Self, CodecError> {
         let mut decoder = Decoder::new(input);
-        decoder.version("GramineDirectEvidenceV1")?;
+        let version = decoder.u8()?;
+        if version != 1 && version != 2 {
+            return Err(CodecError::NonCanonical("DirectDev evidence version"));
+        }
         let intent_len =
             decoder.declared_len("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?;
         let value = Self {
             intent: RegistrationIntentV1::decode_canonical(decoder.take(intent_len)?)?,
             dev_attestation_public: decoder.array()?,
             dev_signature: decoder.array()?,
+            transition_key_ready_proof: if version == 2 {
+                Some(TransitionKeyReadyProofV1::decode_canonical(
+                    decoder.take(TransitionKeyReadyProofV1::CANONICAL_LEN)?,
+                )?)
+            } else {
+                None
+            },
         };
         decoder.finish()?;
+        if (version == 2)
+            != (value.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement)
+        {
+            return Err(CodecError::NonCanonical(
+                "DirectDev transition evidence version",
+            ));
+        }
         if value.intent.attestation_mode != AttestationMode::GramineDirectDev {
             return Err(CodecError::NonCanonical(
                 "Gramine evidence intent mode mismatch",
@@ -1297,6 +1364,18 @@ pub enum AttestationEvidenceV1 {
 }
 
 impl AttestationEvidenceV1 {
+    pub fn intent(&self) -> &RegistrationIntentV1 {
+        match self {
+            Self::Dcap(v) => &v.intent,
+            Self::GramineDirectDev(v) => &v.intent,
+        }
+    }
+    pub fn transition_key_ready_proof(&self) -> Option<&TransitionKeyReadyProofV1> {
+        match self {
+            Self::Dcap(v) => v.transition_key_ready_proof.as_ref(),
+            Self::GramineDirectDev(v) => v.transition_key_ready_proof.as_ref(),
+        }
+    }
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         let (mode, payload) = match self {
             Self::Dcap(value) => (AttestationMode::DcapRequired, value.encode_payload()?),
@@ -1865,6 +1944,7 @@ pub enum RegistryMutatorV1 {
     RenewEnclave,
     TransitionEnclaveMeasurement,
     ReplaceEnclaveBinding,
+    PrepareEnclaveUpgrade,
 }
 
 /// Canonical dimensions used to charge one block-1 `OST3` system call.
@@ -2053,9 +2133,8 @@ impl TeeRegistryGasScheduleV1 {
         match kind {
             RegistryMutatorV1::RegisterEnclave => self.register_fixed / 2,
             RegistryMutatorV1::RenewEnclave => self.renew_fixed / 2,
-            RegistryMutatorV1::TransitionEnclaveMeasurement => {
-                self.measurement_transition_fixed / 2
-            }
+            RegistryMutatorV1::TransitionEnclaveMeasurement
+            | RegistryMutatorV1::PrepareEnclaveUpgrade => self.measurement_transition_fixed / 2,
             RegistryMutatorV1::ReplaceEnclaveBinding => self.profile_replacement_fixed / 2,
         }
     }
@@ -2183,7 +2262,8 @@ impl TeeRegistryGasScheduleV1 {
                 self.secp256k1_verify,
                 self.ed25519_verify,
             ])?,
-            RegistryMutatorV1::TransitionEnclaveMeasurement => checked_sum(&[
+            RegistryMutatorV1::TransitionEnclaveMeasurement
+            | RegistryMutatorV1::PrepareEnclaveUpgrade => checked_sum(&[
                 self.measurement_transition_fixed,
                 input_charge,
                 qvl,

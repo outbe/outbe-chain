@@ -165,61 +165,307 @@ fn approved_vote_proposal_schedules_update_and_activates() {
 }
 
 #[test]
-fn approved_software_update_atomically_stages_successor_tee_policy() {
-    with_vote(|storage| {
-        let current_height = 100u64;
+fn custom_voting_window_schedules_software_and_enclave_updates_before_default_deadline() {
+    use alloy_primitives::U256;
+    use alloy_sol_types::SolCall;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_vote::precompile::{dispatch_with_handlers, IVote};
+
+    for window in [1_000, 30_000] {
+        for change_enclave in [false, true] {
+            let created = 100;
+            let deadline = created + window;
+            let activation = min_activation(deadline + 1) + 10;
+            assert!(activation < created + VOTING_WINDOW_BLOCKS);
+            let mut provider = HashMapStorageProvider::new_with_chain_identity(
+                TEST_CHAIN_ID,
+                B256::repeat_byte(1),
+            );
+            provider.set_block_number(created);
+            let original = tee_policy(
+                B256::repeat_byte(1),
+                1,
+                1,
+                B256::ZERO,
+                B256::repeat_byte(0x41),
+            );
+            let measurement = B256::repeat_byte(0x42);
+            let proposal = {
+                let storage = StorageHandle::new(&mut provider);
+                setup_validators(storage.clone());
+                TeeRegistry::new(storage.clone())
+                    .install_initial_policy_v1(&original)
+                    .unwrap();
+                let mut payload = ScheduleUpdatePayload::new(PV, activation, "short vote");
+                if change_enclave {
+                    payload.mrenclave = Some(measurement);
+                }
+                let call = IVote::createProposalWithVotingWindowCall {
+                    targetModule: UPDATE_ADDRESS,
+                    payload: serde_json::to_string(&payload).unwrap(),
+                    votingWindowBlocks: window,
+                };
+                let ret = dispatch_with_handlers(
+                    storage.clone(),
+                    &call.abi_encode(),
+                    PROPOSER,
+                    U256::ZERO,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap();
+                let proposal =
+                    IVote::createProposalWithVotingWindowCall::abi_decode_returns(&ret).unwrap();
+                let mut vote = Vote::new(storage);
+                vote.cast_vote_approve(proposal, VOTER_A, true, created + 1)
+                    .unwrap();
+                vote.cast_vote_approve(proposal, VOTER_B, true, created + 2)
+                    .unwrap();
+                proposal
+            };
+            provider.set_block_number(deadline);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                process_begin_block_test(storage.clone(), deadline);
+                assert_eq!(
+                    Vote::new(storage.clone())
+                        .proposals
+                        .get(proposal)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Pending
+                );
+                assert!(Update::new(storage)
+                    .read_scheduled_update(proposal)
+                    .unwrap()
+                    .is_none());
+            }
+            provider.set_block_number(deadline + 1);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                process_begin_block_test(storage.clone(), deadline + 1);
+                assert_eq!(
+                    Vote::new(storage.clone())
+                        .proposals
+                        .get(proposal)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Approved
+                );
+                assert_eq!(
+                    Update::new(storage.clone())
+                        .read_scheduled_update(proposal)
+                        .unwrap()
+                        .unwrap()
+                        .activation_height,
+                    activation
+                );
+                let registry = TeeRegistry::new(storage);
+                assert_eq!(registry.active_policy_v1().unwrap(), original);
+                assert_eq!(
+                    registry.strict_upgrade_pending_v1().unwrap(),
+                    change_enclave
+                );
+            }
+            for height in [activation - 1, activation] {
+                provider.set_block_number(height);
+                let storage = StorageHandle::new(&mut provider);
+                Update::new(storage.clone())
+                    .process_begin_block_with_handlers(
+                        &block_ctx(storage.clone(), height),
+                        &EMPTY_UPGRADE_HANDLER_REGISTRY,
+                    )
+                    .unwrap();
+                let active = TeeRegistry::new(storage.clone())
+                    .active_policy_v1()
+                    .unwrap();
+                let expected_measurement = if change_enclave && height == activation {
+                    measurement
+                } else {
+                    original.measurement_rules[0].mrenclave
+                };
+                assert_eq!(active.measurement_rules[0].mrenclave, expected_measurement);
+                if height == activation {
+                    assert_eq!(Update::new(storage).get_active_version().unwrap(), PV);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn software_only_update_keeps_enclave_for_absent_null_and_empty_measurement() {
+    for field in [
+        None,
+        Some(serde_json::json!(null)),
+        Some(serde_json::json!("")),
+    ] {
+        with_vote(|storage| {
+            let current_height = 100;
+            let deadline = current_height + VOTING_WINDOW_BLOCKS + 1;
+            let activation = min_activation(deadline);
+            let current = tee_policy(
+                storage.genesis_hash().unwrap(),
+                1,
+                1,
+                B256::ZERO,
+                B256::repeat_byte(0x41),
+            );
+            let mut registry = TeeRegistry::new(storage.clone());
+            registry.install_initial_policy_v1(&current).unwrap();
+            let mut payload =
+                serde_json::to_value(ScheduleUpdatePayload::new(PV, activation, "software only"))
+                    .unwrap();
+            if let Some(field) = field {
+                payload["mrenclave"] = field;
+            }
+            let mut vote = Vote::new(storage.clone());
+            let proposal = vote
+                .create_proposal(
+                    PROPOSER,
+                    UPDATE_ADDRESS,
+                    &payload.to_string(),
+                    current_height,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_A, true, current_height + 1)
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_B, true, current_height + 2)
+                .unwrap();
+            process_begin_block_test(storage.clone(), deadline);
+            assert_eq!(
+                vote.proposals
+                    .get(proposal)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Approved
+            );
+            assert!(registry.staged_successor_policy_v1().unwrap().is_none());
+            assert!(registry.enclave_upgrade_v1().unwrap().proposal_id.is_zero());
+            let ctx = block_ctx(storage.clone(), activation);
+            let mut update = Update::new(storage);
+            update
+                .process_begin_block_with_handlers(&ctx, &EMPTY_UPGRADE_HANDLER_REGISTRY)
+                .unwrap();
+            assert_eq!(update.get_active_version().unwrap(), PV);
+            assert_eq!(registry.active_policy_v1().unwrap(), current);
+        });
+    }
+}
+
+#[test]
+fn measurement_only_vote_derives_policy_and_promotes_only_at_deadline() {
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    for changed_during_vote in [false, true] {
+        let current_height = 100;
         let deadline = current_height + VOTING_WINDOW_BLOCKS + 1;
         let activation = min_activation(deadline);
-        let genesis_hash = storage.genesis_hash().unwrap();
-        let current = tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x41));
-        let successor = tee_policy(
-            genesis_hash,
-            2,
-            activation,
-            current.policy_hash().unwrap(),
-            B256::repeat_byte(0x42),
-        );
-        TeeRegistry::new(storage.clone())
-            .install_initial_policy_v1(&current)
-            .unwrap();
-        let payload = serde_json::to_string(
-            &ScheduleUpdatePayload::with_tee_policy(PV, activation, "release", &successor).unwrap(),
-        )
-        .unwrap();
-
-        let mut vote = Vote::new(storage.clone());
-        let proposal_id = vote
-            .create_proposal(
-                PROPOSER,
-                UPDATE_ADDRESS,
-                &payload,
-                current_height,
-                &VOTE_TARGET_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, current_height + 1)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_B, true, current_height + 2)
-            .unwrap();
-
-        process_begin_block_test(storage.clone(), deadline);
-
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Approved
-        );
-        assert_eq!(
-            TeeRegistry::new(storage)
-                .staged_successor_policy_v1()
-                .unwrap(),
-            Some((proposal_id, successor))
-        );
-    });
+        let genesis_hash = B256::repeat_byte(1);
+        let mut provider =
+            HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
+        provider.set_block_number(current_height);
+        let mut current = tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x41));
+        let measurement = B256::repeat_byte(0x42);
+        let proposal = {
+            let storage = StorageHandle::new(&mut provider);
+            setup_validators(storage.clone());
+            TeeRegistry::new(storage.clone())
+                .install_initial_policy_v1(&current)
+                .unwrap();
+            let mut payload = ScheduleUpdatePayload::new(PV, activation, "measurement upgrade");
+            payload.mrenclave = Some(measurement);
+            let mut vote = Vote::new(storage);
+            let proposal = vote
+                .create_proposal(
+                    PROPOSER,
+                    UPDATE_ADDRESS,
+                    &serde_json::to_string(&payload).unwrap(),
+                    current_height,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_A, true, current_height + 1)
+                .unwrap();
+            vote.cast_vote_approve(proposal, VOTER_B, true, current_height + 2)
+                .unwrap();
+            proposal
+        };
+        if changed_during_vote {
+            let mut replacement = current.clone();
+            replacement.policy_version += 1;
+            replacement.predecessor_policy_hash = current.policy_hash().unwrap();
+            replacement.activation_height = current_height + 4;
+            replacement.maximum_lease /= 2;
+            {
+                let storage = StorageHandle::new(&mut provider);
+                TeeRegistry::new(storage)
+                    .stage_successor_policy_v1(alloy_primitives::U256::from(999), &replacement)
+                    .unwrap();
+            }
+            provider.set_block_number(replacement.activation_height);
+            TeeRegistry::new(StorageHandle::new(&mut provider))
+                .promote_staged_successor_policy_v1(
+                    alloy_primitives::U256::from(999),
+                    replacement.activation_height,
+                )
+                .unwrap();
+            current = replacement;
+        }
+        let mut expected = current.clone();
+        expected.policy_version += 1;
+        expected.predecessor_policy_hash = current.policy_hash().unwrap();
+        expected.activation_height = activation;
+        expected.measurement_rules[0].mrenclave = measurement;
+        expected.measurement_rules[0].admit_from_height = activation;
+        expected.measurement_rules[0].admit_until_height_exclusive = u64::MAX;
+        provider.set_block_number(deadline);
+        {
+            let storage = StorageHandle::new(&mut provider);
+            process_begin_block_test(storage.clone(), deadline);
+            assert_eq!(
+                Vote::new(storage.clone())
+                    .proposals
+                    .get(proposal)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Approved
+            );
+            let mut registry = TeeRegistry::new(storage);
+            assert_eq!(registry.enclave_upgrade_v1().unwrap().proposal_id, proposal);
+            assert!(registry.strict_upgrade_pending_v1().unwrap());
+            assert_eq!(registry.active_policy_v1().unwrap(), current);
+            assert_eq!(
+                registry.staged_successor_policy_v1().unwrap(),
+                Some((proposal, expected.clone()))
+            );
+            assert!(registry
+                .promote_staged_successor_policy_v1(proposal, activation - 1)
+                .is_err());
+        }
+        provider.set_block_number(activation);
+        {
+            let storage = StorageHandle::new(&mut provider);
+            let ctx = block_ctx(storage.clone(), activation);
+            Update::new(storage.clone())
+                .process_begin_block_with_handlers(&ctx, &EMPTY_UPGRADE_HANDLER_REGISTRY)
+                .unwrap();
+            let registry = TeeRegistry::new(storage);
+            assert!(!registry.strict_upgrade_pending_v1().unwrap());
+            assert_eq!(registry.active_policy_v1().unwrap(), expected);
+            assert_eq!(
+                registry.last_enclave_retirement_height_v1().unwrap(),
+                activation
+            );
+        }
+    }
 }
 
 #[test]
@@ -248,15 +494,10 @@ fn one_approved_update_atomically_stages_tee_and_ocomp_successors() {
             .initialize_genesis_authority(&current_ocomp, B256::repeat_byte(0x53), 1, 1, &limits)
             .unwrap();
 
-        let payload = ScheduleUpdatePayload::with_tee_policy(
-            PV,
-            activation,
-            "TEE and OCOMP release",
-            &successor_tee,
-        )
-        .unwrap()
-        .with_ocomp_successor(&successor_ocomp)
-        .unwrap();
+        let mut payload = ScheduleUpdatePayload::new(PV, activation, "TEE and OCOMP release")
+            .with_ocomp_successor(&successor_ocomp)
+            .unwrap();
+        payload.mrenclave = Some(successor_tee.measurement_rules[0].mrenclave);
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal(
@@ -290,28 +531,19 @@ fn one_approved_update_atomically_stages_tee_and_ocomp_successors() {
 }
 
 #[test]
-fn wrong_policy_predecessor_rolls_back_update_schedule_and_staging() {
+fn unchanged_measurement_rolls_back_update_schedule_and_staging() {
     with_vote(|storage| {
         let current_height = 100u64;
         let deadline = current_height + VOTING_WINDOW_BLOCKS + 1;
         let activation = min_activation(deadline);
         let genesis_hash = storage.genesis_hash().unwrap();
         let current = tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x43));
-        let successor = tee_policy(
-            genesis_hash,
-            2,
-            activation,
-            B256::repeat_byte(0xee),
-            B256::repeat_byte(0x44),
-        );
         TeeRegistry::new(storage.clone())
             .install_initial_policy_v1(&current)
             .unwrap();
-        let payload = serde_json::to_string(
-            &ScheduleUpdatePayload::with_tee_policy(PV, activation, "bad predecessor", &successor)
-                .unwrap(),
-        )
-        .unwrap();
+        let mut payload = ScheduleUpdatePayload::new(PV, activation, "unchanged measurement");
+        payload.mrenclave = Some(current.measurement_rules[0].mrenclave);
+        let payload = serde_json::to_string(&payload).unwrap();
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal(

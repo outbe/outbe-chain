@@ -23,6 +23,15 @@ pub(crate) fn configure_outbe_engine_args(engine: &mut reth_node_core::args::Eng
     engine.allow_unwind_canonical_header = true;
 }
 
+/// Finalized admission proofs use exact historical state roots. Keep the
+/// default bounded while allowing an explicit operator override.
+const OUTBE_ETH_PROOF_WINDOW: u64 = 128;
+
+pub(crate) fn outbe_default_rpc_values() -> reth_node_core::args::DefaultRpcServerArgs {
+    reth_node_core::args::DefaultRpcServerArgs::default()
+        .with_rpc_eth_proof_window(OUTBE_ETH_PROOF_WINDOW)
+}
+
 /// Outbe's transaction-pool defaults, installed before CLI parsing so operator
 /// `--txpool.*` flags still override them.
 ///

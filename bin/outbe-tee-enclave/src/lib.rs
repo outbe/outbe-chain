@@ -31,12 +31,18 @@ pub mod gramine;
 pub mod gratis;
 pub mod initialization;
 pub mod keys;
+#[cfg(feature = "local-e2e")]
+pub mod local_e2e;
 mod onboarding_upload;
 pub mod payload;
 pub mod process;
 pub mod promis;
 pub mod run;
 pub mod seal;
+#[cfg(not(feature = "sgx-sealing-probe"))]
+mod sgx_sealing;
+#[cfg(feature = "sgx-sealing-probe")]
+pub mod sgx_sealing;
 pub mod telemetry;
 pub mod transport;
 pub mod zk_claim;

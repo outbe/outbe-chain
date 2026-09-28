@@ -74,10 +74,11 @@ use committed_join::{
 
 mod replacement;
 pub use replacement::{
-    construct_finalized_replacement_authorization_v1, load_replacement_candidate_relay,
-    load_replacement_candidate_submission, persist_replacement_candidate_relay,
-    persist_replacement_candidate_submission, prepare_node_host_enclave_replacement_candidate,
-    promote_replacement_candidate, ReplacementCandidateEnclaveV1,
+    clear_expired_transition_submission_v1, construct_finalized_replacement_authorization_v1,
+    load_replacement_candidate_relay, load_replacement_candidate_submission,
+    persist_replacement_candidate_relay, persist_replacement_candidate_submission,
+    prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
+    ReplacementCandidateEnclaveV1,
 };
 use replacement::{validate_durable_replacement_submission, validate_replacement_candidate_state};
 

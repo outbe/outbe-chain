@@ -491,6 +491,7 @@ fn fill_plain_finalized_range(
 }
 
 mod admission;
+mod ancestor;
 mod chain;
 mod replay;
 mod replay_conflicts;

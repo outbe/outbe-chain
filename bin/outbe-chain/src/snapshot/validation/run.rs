@@ -485,15 +485,13 @@ pub(crate) fn verify_native_files(
     Ok(())
 }
 
-pub(crate) fn validate_snapshot(
+pub(crate) fn validate_snapshot_with_node(
     inputs: &ValidationInputs,
-    node_args: Vec<std::ffi::OsString>,
+    parse_node: impl FnOnce() -> eyre::Result<crate::snapshot::config::NodeInputs>,
     scratch_parent: &std::path::Path,
 ) -> eyre::Result<super::report::ValidationReport> {
     use super::report::{CheckName::*, ValidationReport};
-    use crate::snapshot::config::{
-        parse_node_inputs, resolve_requested_layout, NativeReadSelection,
-    };
+    use crate::snapshot::config::{resolve_requested_layout, NativeReadSelection};
 
     let selection = CheckSelection::resolve(
         &inputs.checks,
@@ -535,7 +533,7 @@ pub(crate) fn validate_snapshot(
     if !native_requested && !selection.checks.contains(&Files) {
         return Ok(report);
     }
-    let node = match parse_node_inputs(node_args) {
+    let node = match parse_node() {
         Ok(node) => node,
         Err(error) => {
             fail_selected(
@@ -650,17 +648,25 @@ pub(crate) fn validate_snapshot(
     Ok(report)
 }
 
+#[cfg(test)]
+pub(crate) fn validate_snapshot(
+    inputs: &ValidationInputs,
+    node_args: Vec<std::ffi::OsString>,
+    scratch_parent: &std::path::Path,
+) -> eyre::Result<super::report::ValidationReport> {
+    validate_snapshot_with_node(
+        inputs,
+        || crate::snapshot::config::parse_node_inputs(node_args),
+        scratch_parent,
+    )
+}
+
 /// Resolve report destinations without opening native stores or requiring any
 /// native semantic check. Unknown configured roots prevent file publication.
 pub(crate) fn report_protected_paths(
-    node_args: Vec<std::ffi::OsString>,
+    inputs: &crate::snapshot::config::NodeInputs,
 ) -> eyre::Result<outbe_snapshot::layout::ProtectedPaths> {
-    if node_args.is_empty() {
-        // Artifact-only inspection may supply no native dataset at all.
-        return Ok(outbe_snapshot::layout::ProtectedPaths::default());
-    }
-    let inputs = crate::snapshot::config::parse_node_inputs(node_args)?;
-    let layout = crate::snapshot::config::resolve_report_layout(&inputs)?;
+    let layout = crate::snapshot::config::resolve_report_layout(inputs)?;
     Ok(validation_protected(&layout))
 }
 

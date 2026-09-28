@@ -1,9 +1,9 @@
 @tee @min-validators-4
 Feature: Byzantine committee pre-announces
-  A leader proposing a forged CommitteePreAnnounce right after an epoch
-  boundary commits must be rejected by every honest validator, so finalized
-  history only ever carries the genuine committee. Run with
-  OUTBE_TEST_BYZANTINE_PREANNOUNCE=1 and a test-protocol-overrides build.
+  A leader proposing a forged CommitteePreAnnounce after the successor DKG
+  completes but before its activation boundary must be rejected by honest
+  validators, so finalized history only carries the genuine committee. Run
+  with OUTBE_TEST_BYZANTINE_PREANNOUNCE=1 and the E2E node feature set.
 
   @byzantine-preannounce
   Scenario: Forged committee pre-announces from byzantine leaders never finalize

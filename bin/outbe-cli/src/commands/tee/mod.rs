@@ -9,7 +9,7 @@
 //! then can the node execute offer blocks. Mirrors `secretd tx register auth` +
 //! `q register seed` + `configure-secret`, run before `secretd start`.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use clap::Subcommand;
 use eyre::Result;
@@ -46,6 +46,9 @@ pub enum TeeCmd {
         /// `OfferKeySealedForRegistryV1` transaction event.
         #[arg(long, default_value_t = 60)]
         timeout_secs: u64,
+        /// Register against the approved successor before activation.
+        #[arg(long)]
+        successor_policy: bool,
     },
     /// Generate, durably journal, submit and reconcile one manual renewal.
     Renew {
@@ -86,6 +89,27 @@ pub enum TeeCmd {
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
     },
+    /// Register a pending candidate and provision its key through the network.
+    UpgradeProvision {
+        #[arg(long)]
+        candidate_enclave_socket: String,
+        #[arg(long)]
+        node_data_dir: PathBuf,
+        #[arg(long)]
+        reth_p2p_secret_key: Option<PathBuf>,
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        binding_id: String,
+        #[arg(long)]
+        valid_until: u64,
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
+        #[arg(long)]
+        legacy_direct_dev_source: bool,
+        #[arg(long)]
+        new_attempt: bool,
+    },
     /// Copy only MRSIGNER-sealed `sealed_root.bin` from A to B and fsync the
     /// checkpoint. Stop B before this command and restart B afterwards.
     UpgradeCopyRoot {
@@ -105,6 +129,13 @@ pub enum TeeCmd {
         binding_id: String,
         #[arg(long)]
         valid_until: u64,
+    },
+    /// Finalize the upgrade after its Registry binding becomes final.
+    UpgradeFinalize {
+        #[arg(long)]
+        node_data_dir: PathBuf,
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
     },
     /// Print the durable same-platform upgrade checkpoint without changing it.
     UpgradeStatus {
@@ -138,6 +169,7 @@ impl TeeCmd {
                 binding_id,
                 valid_until,
                 timeout_secs,
+                successor_policy,
             } => {
                 join(
                     client,
@@ -150,6 +182,7 @@ impl TeeCmd {
                         binding_id: &binding_id,
                         valid_until,
                         timeout_secs,
+                        successor_policy,
                     },
                 )
                 .await
@@ -191,6 +224,32 @@ impl TeeCmd {
                 .await
             }
             TeeCmd::UpgradeCopyRoot { node_data_dir } => upgrade_copy_root(&node_data_dir),
+            TeeCmd::UpgradeProvision {
+                candidate_enclave_socket,
+                node_data_dir,
+                reth_p2p_secret_key,
+                genesis,
+                binding_id,
+                valid_until,
+                timeout_secs,
+                legacy_direct_dev_source,
+                new_attempt,
+            } => {
+                upgrade_network::provision(
+                    client,
+                    private_key,
+                    &candidate_enclave_socket,
+                    &node_data_dir,
+                    reth_p2p_secret_key.as_deref(),
+                    &genesis,
+                    &binding_id,
+                    valid_until,
+                    Duration::from_secs(timeout_secs),
+                    legacy_direct_dev_source,
+                    new_attempt,
+                )
+                .await
+            }
             TeeCmd::UpgradeSubmit {
                 candidate_enclave_socket,
                 node_data_dir,
@@ -210,6 +269,10 @@ impl TeeCmd {
                 .await
             }
             TeeCmd::UpgradeStatus { node_data_dir } => upgrade_status(&node_data_dir),
+            TeeCmd::UpgradeFinalize {
+                node_data_dir,
+                timeout_secs,
+            } => upgrade_finalize(client, &node_data_dir, Duration::from_secs(timeout_secs)).await,
             TeeCmd::Pubkey {
                 enclave_socket,
                 diff_chain,
@@ -238,7 +301,12 @@ mod renewal;
 use renewal::{renew, renewal_status};
 
 mod upgrade;
-use upgrade::{upgrade_copy_root, upgrade_prepare, upgrade_status, upgrade_submit};
+use upgrade::{
+    upgrade_copy_root, upgrade_finalize, upgrade_prepare, upgrade_status, upgrade_submit,
+};
+
+mod admission_history;
+mod upgrade_network;
 
 mod join;
 

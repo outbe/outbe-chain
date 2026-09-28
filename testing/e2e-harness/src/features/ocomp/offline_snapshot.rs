@@ -3755,7 +3755,7 @@ struct SnapshotOwnerSample<T> {
     after: u64,
 }
 
-// Recognize only the adjacent, unchanged-root transition observed in E2E6.
+// Recognize only an adjacent, unchanged-root CE marker at the observed RPC head.
 // The RPC diagnostic is not a stable wire format: unknown spellings fail closed.
 fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64) -> bool {
     fn fields<'a>(text: &'a str, names: &[&str]) -> Option<Vec<&'a str>> {
@@ -3804,8 +3804,9 @@ fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64) -> bool {
         let parent_hash = marker[3].parse::<alloy_primitives::B256>().ok()?;
         let parent_root = marker[4].parse::<alloy_primitives::B256>().ok()?;
         let new_root = marker[5].parse::<alloy_primitives::B256>().ok()?;
-        (before <= required_height
-            && marker_height <= after
+        (required_height <= before
+            && before <= marker_height
+            && marker_height == after
             && required_scheme == 1
             && required_scheme == marker_scheme
             && required_height.checked_add(1) == Some(marker_height)
@@ -3822,9 +3823,7 @@ fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64) -> bool {
 fn snapshot_owner_decision<T>(sample: SnapshotOwnerSample<T>) -> Result<Option<T>, String> {
     match sample.observation {
         Err(error) => {
-            if sample.after > sample.before
-                && snapshot_forward_ce_mismatch(&error, sample.before, sample.after)
-            {
+            if snapshot_forward_ce_mismatch(&error, sample.before, sample.after) {
                 Ok(None)
             } else {
                 Err(error)
@@ -3969,6 +3968,19 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
+    fn stable_rpc_head_with_adjacent_ce_race_restarts_the_whole_owner_observation() {
+        let (result, calls) = observe(
+            vec![
+                sample(522, Err(CE_RACE.to_owned()), 522),
+                sample(522, Ok(Some(7)), 522),
+            ],
+            5,
+        );
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
     fn crossed_forward_success_is_discarded_before_accepting_a_stable_tuple() {
         let (result, calls) = observe(
             vec![
@@ -3982,7 +3994,7 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
-    fn same_head_or_regressing_head_ce_mismatch_is_an_error() {
+    fn stale_or_regressing_head_ce_mismatch_is_an_error() {
         for (before, after) in [(521, 521), (522, 521)] {
             let (result, calls) = observe(vec![sample(before, Err(CE_RACE.to_owned()), after)], 5);
             assert!(result.unwrap_err().to_string().contains(CE_RACE));
@@ -3996,6 +4008,13 @@ mod snapshot_owner_observation_tests {
     #[test]
     fn unrelated_head_movement_does_not_authorize_retry_of_an_old_ce_error() {
         let (result, calls) = observe(vec![sample(600, Err(CE_RACE.to_owned()), 601)], 5);
+        assert!(result.unwrap_err().to_string().contains(CE_RACE));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn ce_marker_behind_observed_head_does_not_authorize_retry() {
+        let (result, calls) = observe(vec![sample(522, Err(CE_RACE.to_owned()), 523)], 5);
         assert!(result.unwrap_err().to_string().contains(CE_RACE));
         assert_eq!(calls, 1);
     }

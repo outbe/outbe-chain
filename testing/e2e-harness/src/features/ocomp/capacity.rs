@@ -101,7 +101,7 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
                 .map(|handle| {
                     handle
                         .join()
-                        .map_err(|_| "capacity Tribute submission thread panicked".to_owned())?
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
                 })
                 .collect::<Result<Vec<_>, String>>()
         })

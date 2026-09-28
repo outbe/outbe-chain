@@ -143,6 +143,20 @@ pub struct FinalizedStagedSuccessorPolicyV1 {
 pub async fn read_finalized_staged_successor_policy_v1(
     rpc: &(impl RenewalRpc + Sync),
 ) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
+    read_finalized_upgrade_policy_inner_v1(rpc, false).await
+}
+
+/// Includes the activated strict successor, allowing a missed deadline to be repaired.
+pub async fn read_finalized_upgrade_policy_v1(
+    rpc: &(impl RenewalRpc + Sync),
+) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
+    read_finalized_upgrade_policy_inner_v1(rpc, true).await
+}
+
+async fn read_finalized_upgrade_policy_inner_v1(
+    rpc: &(impl RenewalRpc + Sync),
+    allow_activated: bool,
+) -> Result<Option<FinalizedStagedSuccessorPolicyV1>> {
     let finalized = rpc
         .finalized_block()
         .await
@@ -163,13 +177,47 @@ pub async fn read_finalized_staged_successor_policy_v1(
         )
         .await
         .wrap_err("read finalized staged successor TEE policy")?;
-    let view = ITeeRegistryV1::stagedSuccessorPolicyV1Call::abi_decode_returns(&encoded)
+    let mut view = ITeeRegistryV1::stagedSuccessorPolicyV1Call::abi_decode_returns(&encoded)
         .wrap_err("decode finalized staged successor TEE policy")?;
     if !view.exists {
         if !view.proposalId.is_zero() || !view.policy.is_empty() {
             eyre::bail!("empty finalized staged policy view has non-empty anchors");
         }
-        return Ok(None);
+        if !allow_activated {
+            return Ok(None);
+        }
+        let encoded = rpc
+            .call_at(
+                TEE_REGISTRY_ADDRESS,
+                &ITeeRegistryV1::enclaveUpgradeV1Call {}.abi_encode(),
+                &tag,
+            )
+            .await?;
+        let upgrade = ITeeRegistryV1::enclaveUpgradeV1Call::abi_decode_returns(&encoded)?;
+        if upgrade.proposalId.is_zero() || finalized_height < upgrade.activationHeight {
+            return Ok(None);
+        }
+        let encoded = rpc
+            .call_at(
+                TEE_REGISTRY_ADDRESS,
+                &ITeeRegistryV1::activePolicyV1Call {}.abi_encode(),
+                &tag,
+            )
+            .await?;
+        let bytes = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&encoded)?;
+        let active = TeePolicyV1::decode_canonical(&bytes)
+            .map_err(|e| eyre::eyre!("invalid active successor: {e}"))?;
+        if active
+            .policy_hash()
+            .map_err(|e| eyre::eyre!("invalid active successor: {e}"))?
+            != upgrade.successorPolicyHash
+            || active.activation_height != upgrade.activationHeight
+        {
+            eyre::bail!("activated enclave upgrade anchors disagree");
+        }
+        view.exists = true;
+        view.proposalId = upgrade.proposalId;
+        view.policy = bytes;
     }
     if view.proposalId.is_zero() || view.policy.is_empty() {
         eyre::bail!("finalized staged policy view is incomplete");
@@ -194,7 +242,7 @@ pub async fn read_finalized_renewal_view_v1(
 ) -> Result<FinalizedRenewalChainViewV1> {
     let view = read_finalized_registry_view_v1(rpc, selector).await?;
     require_dcap_renewal_mode_v1(view.policy.attestation_mode)?;
-    require_bound_renewal_view_v1(view)
+    resolve_bound_renewal_policy_v1(rpc, view).await
 }
 
 /// Read the exact finalized policy and required binding for the shared manual
@@ -204,6 +252,39 @@ pub async fn read_finalized_bound_renewal_view_v1(
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
     let view = read_finalized_registry_view_v1(rpc, selector).await?;
+    resolve_bound_renewal_policy_v1(rpc, view).await
+}
+
+async fn resolve_bound_renewal_policy_v1(
+    rpc: &(impl RenewalRpc + Sync),
+    mut view: FinalizedRegistryChainViewV1,
+) -> Result<FinalizedRenewalChainViewV1> {
+    let active_hash = view
+        .policy
+        .policy_hash()
+        .map_err(|e| eyre::eyre!("invalid policy: {e}"))?;
+    if view
+        .binding
+        .as_ref()
+        .is_some_and(|binding| binding.policy_hash != active_hash)
+    {
+        if let Some(staged) = read_finalized_staged_successor_policy_v1(rpc).await? {
+            if staged.finalized_hash != view.schedule.finalized_hash {
+                eyre::bail!("renewal binding and staged policy use different finalized heads");
+            }
+            let hash = staged
+                .policy
+                .policy_hash()
+                .map_err(|e| eyre::eyre!("invalid staged policy: {e}"))?;
+            if view
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.policy_hash == hash)
+            {
+                view.policy = staged.policy;
+            }
+        }
+    }
     require_bound_renewal_view_v1(view)
 }
 
@@ -359,6 +440,7 @@ mod tests {
     #[derive(Clone)]
     struct RegistryRpc {
         policy: TeePolicyV1,
+        staged: Option<TeePolicyV1>,
         binding: NodeEnclaveBindingV1View,
         schedule: TeeRenewalScheduleV1,
     }
@@ -400,6 +482,21 @@ mod tests {
                 return Ok(ITeeRegistryV1::activePolicyV1Call::abi_encode_returns(
                     &policy,
                 ));
+            }
+            if data.starts_with(&ITeeRegistryV1::stagedSuccessorPolicyV1Call::SELECTOR) {
+                use alloy_sol_types::SolValue;
+                let value = self
+                    .staged
+                    .as_ref()
+                    .map(|p| {
+                        (
+                            true,
+                            U256::from(7),
+                            Bytes::from(p.encode_canonical().unwrap()),
+                        )
+                    })
+                    .unwrap_or((false, U256::ZERO, Bytes::new()));
+                return Ok(value.abi_encode_params());
             }
             if data.starts_with(&ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR) {
                 return Ok(
@@ -455,9 +552,11 @@ mod tests {
             }
             AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
         };
+        let policy =
+            initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, B256::repeat_byte(0x72)).unwrap();
         RegistryRpc {
-            policy: initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, B256::repeat_byte(0x72))
-                .unwrap(),
+            policy: policy.clone(),
+            staged: None,
             binding: NodeEnclaveBindingV1View {
                 exists: binding_exists,
                 nodeIdHash: B256::repeat_byte(0x73),
@@ -465,7 +564,7 @@ mod tests {
                 bindingId: B256::repeat_byte(0x75),
                 intentHash: B256::repeat_byte(0x76),
                 evidenceHash: B256::repeat_byte(0x77),
-                policyHash: B256::repeat_byte(0x78),
+                policyHash: policy.policy_hash().unwrap(),
                 bindingVersion: 1,
                 registrationVersion: 1,
                 renewalNonce: 1,
@@ -497,6 +596,24 @@ mod tests {
                 minimum_block_time_millis: 2_000,
             },
         }
+    }
+
+    #[tokio::test]
+    async fn renewal_of_early_upgraded_node_selects_its_exact_staged_policy() {
+        let mut rpc = registry_rpc(true, AttestationMode::GramineDirectDev);
+        let mut successor = rpc.policy.clone();
+        successor.policy_version += 1;
+        successor.predecessor_policy_hash = rpc.policy.policy_hash().unwrap();
+        successor.activation_height = 500;
+        successor.measurement_rules[0].mrenclave = B256::repeat_byte(0xe1);
+        rpc.binding.policyHash = successor.policy_hash().unwrap();
+        rpc.staged = Some(successor.clone());
+        let view =
+            read_finalized_bound_renewal_view_v1(&rpc, &NodeBindingSelectorV1::NodeHost([2; 33]))
+                .await
+                .unwrap();
+        assert_eq!(view.policy, successor);
+        assert_eq!(view.schedule.finalized_height, 120);
     }
 
     #[test]

@@ -1,5 +1,51 @@
 use super::*;
 
+pub(crate) fn enforce_enclave_upgrade_deadline(
+    ctx: &BlockRuntimeContext,
+) -> outbe_primitives::error::Result<()> {
+    let mut registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+    let Some(upgrade) = registry.upgrade_sweep_due_v1()? else {
+        return Ok(());
+    };
+    let mut reports = Vec::new();
+    ctx.with_checkpoint(|| {
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+        let active = validators.get_active_validators()?;
+        for validator in active {
+            let address = validator.validator_address;
+            let updated = registry
+                .validator_enclave_binding_v1(address)?
+                .is_some_and(|binding| {
+                    binding.policy_hash == upgrade.successor_policy_hash
+                        && binding.mrenclave == upgrade.mrenclave
+                });
+            if updated || registry.upgrade_penalty_applied_v1(upgrade.proposal_id, address)? {
+                continue;
+            }
+            if let Some(report) = validators.jail_validator_deferred(address)? {
+                reports.push(report);
+            }
+            let slashed = outbe_staking::contract::Staking::new(ctx.storage.clone())
+                .slash_stake(address, 10)?;
+            registry.mark_upgrade_penalty_v1(upgrade.proposal_id, address)?;
+            registry.emit(
+                outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1 {
+                    proposalId: upgrade.proposal_id,
+                    validator: address,
+                    activationHeight: upgrade.activation_height,
+                    requiredMrenclave: upgrade.mrenclave,
+                    slashedAmount: slashed,
+                },
+            )?;
+        }
+        registry.mark_upgrade_swept_v1(upgrade.proposal_id)
+    })?;
+    for report in reports {
+        report.record();
+    }
+    Ok(())
+}
+
 /// Runs the Outbe pre-execution hook chain against a pre-built runtime context.
 ///
 /// Exercised by `OutbeBlockExecutor::apply_pre_execution_changes` against a Reth
@@ -66,6 +112,7 @@ fn run_outbe_pre_execution_hooks_inner(
         hook_ctx,
         crate::handlers::update::registry(),
     )?;
+    enforce_enclave_upgrade_deadline(hook_ctx)?;
 
     // EmissionLimit no longer participates in pre-execution lifecycle.
     // Per-block emission dispatch was removed (Phase 4 of

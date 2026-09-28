@@ -1,6 +1,7 @@
+use crate::snapshot::config::parse_node_inputs;
 use crate::snapshot::validation::{
     report::ValidationReport,
-    run::{report_protected_paths, validate_snapshot, ValidationInputs},
+    run::{report_protected_paths, validate_snapshot_with_node, ValidationInputs},
 };
 use std::{
     ffi::OsString,
@@ -61,13 +62,26 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
     // The validation engine creates its own bounded work under this external
     // disposable directory. No scratch is placed in the copied native stores.
     let scratch = tempfile::tempdir()?;
-    // Resolve output isolation separately, but preserve semantic stdout results
-    // even when supplied configuration prevents safe report publication.
-    let report_paths = args
+    // Report isolation and semantic validation must share one native argument
+    // parse because chain parsing initializes process-wide protocol constants.
+    let parsed_node = args
         .report
         .as_ref()
-        .map(|_| report_protected_paths(args.node_args.clone()));
-    let mut report = validate_snapshot(&inputs, args.node_args, scratch.path())?;
+        .filter(|_| !args.node_args.is_empty())
+        .map(|_| parse_node_inputs(args.node_args.clone()));
+    let report_paths = args.report.as_ref().map(|_| match parsed_node.as_ref() {
+        Some(Ok(node)) => report_protected_paths(node),
+        Some(Err(error)) => Err(eyre::eyre!("{error:#}")),
+        None => Ok(Default::default()),
+    });
+    let mut report = validate_snapshot_with_node(
+        &inputs,
+        || match parsed_node {
+            Some(result) => result,
+            None => parse_node_inputs(args.node_args),
+        },
+        scratch.path(),
+    )?;
     scratch.close()?;
     let console_result = (|| -> eyre::Result<()> {
         let mut stdout = std::io::stdout().lock();

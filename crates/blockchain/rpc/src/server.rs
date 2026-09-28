@@ -17,7 +17,7 @@ use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
-        readonly::{ReadOnlyStorageProvider, StorageReader},
+        readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
 };
@@ -74,6 +74,7 @@ impl StorageReader for RethStateReader<'_> {
 #[derive(Clone)]
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
+    chain_identity: Option<(u64, B256)>,
     bridge: Option<ConsensusExecutionBridge>,
     /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
     /// also holds a bridge (to serve `outbe_getFinalization` to downstream
@@ -145,6 +146,7 @@ impl<P> OutbeApiHandler<P> {
     pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
+            chain_identity: None,
             bridge: None,
             is_validator: false,
             projection_readiness,
@@ -164,6 +166,7 @@ impl<P> OutbeApiHandler<P> {
     ) -> Self {
         Self {
             provider,
+            chain_identity: None,
             bridge: Some(bridge),
             is_validator: true,
             projection_readiness,
@@ -185,6 +188,7 @@ impl<P> OutbeApiHandler<P> {
     ) -> Self {
         Self {
             provider,
+            chain_identity: None,
             bridge: Some(bridge),
             is_validator: false,
             projection_readiness,
@@ -194,6 +198,12 @@ impl<P> OutbeApiHandler<P> {
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
+    }
+
+    #[must_use]
+    pub fn with_chain_identity(mut self, chain_id: u64, genesis_hash: B256) -> Self {
+        self.chain_identity = Some((chain_id, genesis_hash));
+        self
     }
 
     #[must_use]
@@ -666,6 +676,88 @@ where
         })
     }
 
+    async fn upgrade_key_v1(
+        &self,
+        context: Bytes,
+        proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev_source: bool,
+    ) -> RpcResult<Bytes> {
+        // Bound concurrent expensive verification on this process; never queue
+        // it on the consensus enclave connection.
+        static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let permit = GATE
+            .try_acquire()
+            .map_err(|_| internal_err("upgrade key source is busy; retry".into()))?;
+        proof.validate().map_err(|e| internal_err(e.to_string()))?;
+        let context = outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&context)
+            .map_err(|_| internal_err("invalid upgrade context".into()))?;
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(|e| internal_err(e.to_string()))?
+            .ok_or_else(|| internal_err("finalized state unavailable".into()))?;
+        let header = self
+            .provider
+            .sealed_header(finalized.number)
+            .map_err(|e| internal_err(e.to_string()))?
+            .ok_or_else(|| internal_err("finalized header unavailable".into()))?;
+        if header.hash() != finalized.hash {
+            return Err(internal_err("finalized header mismatch".into()));
+        }
+        {
+            let state = self
+                .provider
+                .state_by_block_hash(finalized.hash)
+                .map_err(|e| internal_err(e.to_string()))?;
+            let reader = RethStateReader { state: &state };
+            let (chain_id, genesis_hash) = self
+                .chain_identity
+                .filter(|(id, hash)| *id != 0 && !hash.is_zero())
+                .ok_or_else(|| internal_err("immutable chain identity is not configured".into()))?;
+            let mut provider = ReadOnlyStorageProvider::new_with_block_context(
+                reader,
+                ReadOnlyBlockContext {
+                    chain_id,
+                    genesis_hash,
+                    block_number: finalized.number,
+                    timestamp: header.timestamp(),
+                },
+            );
+            let registry = outbe_teeregistry::TeeRegistry::new(StorageHandle::new(&mut provider));
+            let check = (|| -> outbe_primitives::error::Result<bool> {
+                let node = context.node_id_hash;
+                let policy = registry.active_policy_v1()?;
+                Ok(registry.upgrade_candidate_context.read(&node)? == context.context_hash()
+                    && registry.upgrade_candidate_expiry.read(&node)? > header.timestamp()
+                    && registry.upgrade_candidate_source.read(&node)? == registry.v1_node_binding_id.read(&node)?
+                    && !registry.v1_node_binding_id.read(&node)?.is_zero()
+                    && registry.strict_upgrade_successor.read()? == context.policy_hash
+                    && registry.offer_public_key()?.0 == context.tribute_offer_public
+                    && registry.key_epoch()? == context.key_epoch
+                    && registry.tribute_offer_epoch()? == context.tribute_offer_epoch
+                    && context.chain_id == policy.chain_id && context.genesis_hash == policy.genesis_hash
+                    && (!legacy_direct_dev_source || policy.attestation_mode == outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev))
+            })().map_err(|e| internal_err(e.to_string()))?;
+            if !check {
+                return Err(internal_err(
+                    "recipient is not a live finalized upgrade candidate".into(),
+                ));
+            }
+        }
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            outbe_tee::upgrade_transfer::export_from_network_source(
+                context,
+                &proof,
+                legacy_direct_dev_source,
+            )
+        })
+        .await
+        .map_err(|e| internal_err(format!("upgrade export task: {e}")))?
+        .map_err(|e| internal_err(e.to_string()))?;
+        Ok(result.into())
+    }
+
     async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
         let config = self
             .tee_renewal_schedule
@@ -918,10 +1010,71 @@ where
                 "no finalization available for height {height} (not finalized locally or pruned)"
             ))
         })?;
+        if proof.finalization.is_empty() {
+            return Err(internal_err(format!(
+                "no direct finalization available for height {height}"
+            )));
+        }
         Ok(FinalizationProof {
             finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
             block_hex: format!("0x{}", hex::encode(&proof.block)),
         })
+    }
+
+    async fn get_consensus_block(&self, height: u64) -> RpcResult<Bytes> {
+        let bridge = self
+            .bridge
+            .as_ref()
+            .ok_or_else(|| internal_err("node is not serving consensus blocks".to_owned()))?;
+        bridge
+            .request_finalization(height)
+            .await
+            .map(|proof| proof.block)
+            .ok_or_else(|| {
+                internal_err(format!(
+                    "no finalized consensus block available for height {height}"
+                ))
+            })
+    }
+
+    async fn get_finality_proof(
+        &self,
+        height: u64,
+    ) -> RpcResult<crate::api::AncestorFinalizationProof> {
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err("node is not serving consensus finalizations".to_owned())
+        })?;
+        let mut ancestors = Vec::new();
+        let mut total_bytes = 0usize;
+        for offset in 0..=64u64 {
+            let next = height
+                .checked_add(offset)
+                .ok_or_else(|| internal_err("proof height overflow".to_owned()))?;
+            let proof = bridge.request_finalization(next).await.ok_or_else(|| {
+                internal_err(format!("no finality evidence available at height {next}"))
+            })?;
+            total_bytes = total_bytes.saturating_add(proof.block.len());
+            // Hex JSON doubles the block payload. Stay below the default
+            // upstream HTTP client's 10 MiB response bound with envelope room.
+            if total_bytes > 4 * 1024 * 1024 {
+                return Err(internal_err(
+                    "ancestor finality proof exceeds byte limit".to_owned(),
+                ));
+            }
+            if !proof.finalization.is_empty() {
+                return Ok(crate::api::AncestorFinalizationProof {
+                    certified: FinalizationProof {
+                        finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
+                        block_hex: format!("0x{}", hex::encode(proof.block)),
+                    },
+                    ancestor_blocks_hex: ancestors,
+                });
+            }
+            ancestors.push(format!("0x{}", hex::encode(proof.block)));
+        }
+        Err(internal_err(
+            "no descendant finalization within 64 blocks".to_owned(),
+        ))
     }
 }
 

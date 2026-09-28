@@ -23,7 +23,10 @@ pub use crate::abi::IVote;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IVote::createProposalCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[
+    IVote::createProposalCall::SELECTOR,
+    IVote::createProposalWithVotingWindowCall::SELECTOR,
+];
 
 /// Dispatches an ABI-encoded call to the Vote precompile.
 pub fn dispatch_with_handlers(
@@ -59,6 +62,18 @@ fn dispatch_vote_call(
                 &c.payload,
                 block_number,
                 value,
+                registry,
+            )
+        }),
+        createProposalWithVotingWindow(c) => mutate(c, caller, |sender, c| {
+            let block_number = storage.block_number()?;
+            governance.create_proposal_with_voting_window(
+                sender,
+                c.targetModule,
+                &c.payload,
+                block_number,
+                value,
+                c.votingWindowBlocks,
                 registry,
             )
         }),

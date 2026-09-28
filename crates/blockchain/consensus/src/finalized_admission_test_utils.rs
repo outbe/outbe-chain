@@ -95,7 +95,20 @@ impl FinalityCommitteeFixture {
         state_root: B256,
         extra_data: Vec<u8>,
     ) -> CertifiedBlockFixture {
+        self.certify_child_block(epoch, height, timestamp, state_root, extra_data, B256::ZERO)
+    }
+
+    pub fn certify_child_block(
+        &self,
+        epoch: Epoch,
+        height: u64,
+        timestamp: u64,
+        state_root: B256,
+        extra_data: Vec<u8>,
+        parent_hash: B256,
+    ) -> CertifiedBlockFixture {
         let mut block = Block::default();
+        block.header.parent_hash = parent_hash;
         block.header.number = height;
         block.header.timestamp = timestamp;
         block.header.state_root = state_root;

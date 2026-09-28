@@ -485,14 +485,12 @@ impl ApplicationShared {
             BoundaryRequirement::MustEmit => crate::metrics::DkgBoundaryDecision::MustEmit,
         });
         let consensus_header_artifact = plan.artifact;
-        #[cfg(feature = "test-protocol-overrides")]
-        let consensus_header_artifact = super::byzantine_hook::override_artifact(
-            &self.dkg_manager,
-            plan.requirement,
-            round.epoch(),
-            consensus_header_artifact,
-        )
-        .await;
+        #[cfg(all(
+            feature = "e2e-byzantine-preannounce",
+            feature = "test-protocol-overrides"
+        ))]
+        let consensus_header_artifact =
+            super::byzantine_hook::override_artifact(plan.requirement, consensus_header_artifact);
 
         // Non-blocking direct-parent proof selection
         // (finalization first -> certified-notarization -> marshal-archive

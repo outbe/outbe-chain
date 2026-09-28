@@ -230,6 +230,14 @@ fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
 pub async fn run() {
     // Parse cucumber's built-in flags (--tags/--name/--input) plus our EnvCli.
     let mut opts = cli::Opts::<_, _, _, EnvCli>::parsed();
+    // Several scenarios prove different circuits in this one process. The
+    // Barretenberg SRS is one-shot, so size it for the largest canonical
+    // circuit before a smaller proof can initialize it first. CRS setup may
+    // block on a file read/download; keep it off the Tokio runtime.
+    std::thread::spawn(outbe_zk_backend::barretenberg::init_crs)
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        .expect("initialize the E2E proving CRS before any scenario");
     let mut environment = Environment::from_cli(&opts.custom);
     // Cucumber 0.21 treats its built-in name/tag filters as alternatives to
     // `filter_run`'s predicate. Move them into our one composed predicate so

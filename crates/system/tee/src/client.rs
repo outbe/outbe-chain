@@ -207,6 +207,7 @@ pub struct GeneratedDcapQuoteV1 {
 
 /// Production session authenticated by the sealed NodeHost initiator key.
 pub struct AuthorizedEnclaveClient {
+    call_context: crate::call_context::StreamContext,
     stream: Transport,
     noise: snow::TransportState,
     attestation_pub: [u8; 32],
@@ -443,9 +444,18 @@ impl EnclaveClient {
         &self.raw_quote
     }
 
-    /// Send one request, read one response, encrypted under the session.
+    /// Send an operation with an explicit block context; retries preserve it.
+    pub fn request_with_context(
+        &mut self,
+        ctx: crate::call_context::EnclaveCallContextV1,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let _scope = crate::call_context::ContextScope::enter(ctx);
+        self.request(request)
+    }
+
     pub fn request(&mut self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let plain = encode_request(req)?;
+        let plain = crate::codec::encode_call(crate::call_context::resolve()?, req)?;
         let mut ct = vec![0u8; plain.len() + 64];
         let n = self
             .noise
@@ -633,6 +643,7 @@ impl AuthorizedEnclaveClient {
             stream,
             noise,
             attestation_pub,
+            call_context: Default::default(),
         })
     }
 
@@ -653,6 +664,16 @@ impl AuthorizedEnclaveClient {
         Ok(response)
     }
 
+    /// Send an operation with an explicit block context; retries preserve it.
+    pub fn request_with_context(
+        &mut self,
+        ctx: crate::call_context::EnclaveCallContextV1,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let _scope = crate::call_context::ContextScope::enter(ctx);
+        self.request(request)
+    }
+
     /// Sends an ordinary authenticated owner request. Remote-ticket
     /// installation is reserved for the opaque finalized-admission route.
     pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
@@ -664,6 +685,7 @@ impl AuthorizedEnclaveClient {
         if matches!(
             request,
             EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+                | EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
                 | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
                 | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
                 | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
@@ -673,6 +695,24 @@ impl AuthorizedEnclaveClient {
             ));
         }
         self.request_internal(request)
+    }
+
+    /// Transfer a complete upgrade proof on one authenticated connection.
+    /// Never retry a frame: callers must restart the whole operation on failure.
+    pub fn transfer_upgrade_key_v1(
+        &mut self,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        artifact: &[u8],
+        export: bool,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let _call_context =
+            crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
+        crate::upgrade_transfer::transfer(
+            |request| self.request_internal(request),
+            proof,
+            artifact,
+            export,
+        )
     }
 
     /// Upload and install one exact finalized onboarding admission over this
@@ -690,6 +730,8 @@ impl AuthorizedEnclaveClient {
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     ) -> Result<[u8; 32], TransportError> {
+        let _call_context =
+            crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
         let request_hash = self.begin_finalized_admission_v1(
             artifact,
             anchor_outcome,
@@ -834,7 +876,8 @@ impl AuthorizedEnclaveClient {
         &mut self,
         request: &EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
-        let plaintext = encode_request(request)?;
+        let plaintext =
+            crate::codec::encode_call(self.call_context.for_request(request)?, request)?;
         let mut ciphertext = vec![0u8; plaintext.len() + 64];
         let length = self
             .noise
@@ -876,13 +919,25 @@ impl AuthorizedEnclaveClient {
             deadline: admission.deadline(),
             finalized_block_hash: admission.finalized_view().block_hash,
         };
-        let response = self.request_internal(&EnclaveRequest::AuthorizeRemoteSessionV1 {
-            ticket_id: ticket.ticket_id,
-            initiator_static_x25519: ticket.initiator_static_x25519,
-            responder_static_x25519: ticket.responder_static_x25519,
-            deadline: ticket.deadline,
-            finalized_block_hash: ticket.finalized_block_hash,
-        })?;
+        let request = if admission.retirement_height() == 0 {
+            EnclaveRequest::AuthorizeRemoteSessionV1 {
+                ticket_id: ticket.ticket_id,
+                initiator_static_x25519: ticket.initiator_static_x25519,
+                responder_static_x25519: ticket.responder_static_x25519,
+                deadline: ticket.deadline,
+                finalized_block_hash: ticket.finalized_block_hash,
+            }
+        } else {
+            EnclaveRequest::AuthorizeRemoteSessionV2 {
+                ticket_id: ticket.ticket_id,
+                initiator_static_x25519: ticket.initiator_static_x25519,
+                responder_static_x25519: ticket.responder_static_x25519,
+                deadline: ticket.deadline,
+                finalized_block_hash: ticket.finalized_block_hash,
+                retirement_height: admission.retirement_height(),
+            }
+        };
+        let response = self.request_internal(&request)?;
         match response {
             EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id }
                 if ticket_id == ticket.ticket_id =>
@@ -1058,6 +1113,8 @@ impl AuthorizedEnclaveClient {
         request_hash: B256,
         begin: EnclaveRequest,
     ) -> Result<EnclaveResponse, TransportError> {
+        let _call_context =
+            crate::call_context::ContextScope::enter(crate::call_context::resolve()?);
         match self.request(&begin)? {
             EnclaveResponse::DcapVerificationStartedV1 {
                 request_hash: echoed,
@@ -1205,7 +1262,7 @@ impl RemoteEnclaveClient {
     }
 
     fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let plaintext = encode_request(request)?;
+        let plaintext = crate::codec::encode_call(crate::call_context::resolve()?, request)?;
         let mut ciphertext = vec![0_u8; plaintext.len() + 64];
         let length = self
             .noise
