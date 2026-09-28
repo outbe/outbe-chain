@@ -898,6 +898,42 @@ fn unrepresentable_volume_keeps_the_vote_and_stays_out_of_the_median() {
 }
 
 #[test]
+fn unrepresentable_median_volume_omits_snapshot_without_penalizing_any_validator() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+
+        let voters = [
+            Address::new([0x11; 20]),
+            Address::new([0x22; 20]),
+            Address::new([0x33; 20]),
+            Address::new([0x44; 20]),
+        ];
+        for voter in voters {
+            register_validator(storage.clone(), voter, native_coen(100));
+        }
+        for voter in &voters[..3] {
+            oracle
+                .submit_vote(*voter, &[(COEN, usd(), coen_iso(2), U256::MAX)])
+                .unwrap();
+        }
+        oracle
+            .submit_vote(voters[3], &[(COEN, usd(), coen_iso(2), coen_iso(1))])
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(2));
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        for voter in &voters {
+            assert_eq!(oracle.penalty_success_count.read(voter).unwrap(), 1);
+        }
+    });
+}
+
+#[test]
 fn exhausted_existing_aggregate_omits_snapshot_without_penalizing_valid_votes() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
