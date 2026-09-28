@@ -1032,7 +1032,18 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         )
         .unwrap();
         let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, other_policy.to_u256());
-        assert!(err_msg(res).contains("does not match"));
+        assert_eq!(
+            err_msg(res),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
+                        authorized: other_policy.to_u256(),
+                        required,
+                    }
+                )
+            )
+        );
         let reference = runtime::settle_gem(&storage, ALICE, gem_id, STABLE, quoted);
         assert!(err_msg(reference).contains("unexpected amount"));
         assert_eq!(

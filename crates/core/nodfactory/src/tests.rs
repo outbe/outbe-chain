@@ -1973,7 +1973,51 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
-fn a_policy_change_between_quote_and_payment_rejects_the_old_snapshot() {
+fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xab));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let quote = |world: &mut World| {
+        world
+            .enter(|storage, scope, parent| {
+                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+            })
+            .unwrap()
+    };
+    let (_, _, quoted) = quote(&mut world);
+    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff()
+        + 3_600;
+    world.mark_called(nod_id, deadline - u64::from(CALL_NOTICE_PERIOD));
+
+    world.set_timestamp(deadline);
+    let (_, _, required) = quote(&mut world);
+    let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
+    assert_eq!(
+        stale.unwrap_err().to_string(),
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+            authorized: quoted,
+            required,
+        })
+        .to_string()
+    );
+
+    world.set_timestamp(deadline + 1);
+    let late = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, required);
+    assert_eq!(
+        late.unwrap_err().to_string(),
+        PrecompileError::from(NodFactoryError::CallDeadlineExpired).to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn a_snapshot_of_another_policy_is_rejected() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xaa));
     let nod_id = world.issue(&input);
@@ -2006,7 +2050,14 @@ fn a_policy_change_between_quote_and_payment_rejects_the_old_snapshot() {
         other_policy.to_u256(),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("does not match"), "{error}");
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+            authorized: other_policy.to_u256(),
+            required: quoted,
+        })
+        .to_string()
+    );
     assert!(!is_settled(&mut world, nod_id));
 }
 
@@ -2119,14 +2170,21 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     // The euro trades live, but the window it converts at holds no euro price.
     world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
     let spend = cost_of(&input) / 2;
-    let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
+    let (proof, nullifier) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
-    assert!(
-        error.to_string().contains("oracle nominal unavailable"),
-        "unexpected error: {error}"
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
+    assert!(
+        !world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap())
+    );
+
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert!(is_settled(&mut world, nod_id));
 }
 
 #[test]

@@ -293,6 +293,14 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
     StorageHandle::enter(&mut storage, f)
 }
 
+/// A payment token that accepts `transferFrom` but never credits the factory, so a
+/// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
+fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
+    use crate::sol_ext::IERC20;
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::transferFromCall::SELECTOR, word(1));
+}
+
 /// The storage behind [`with_dual_currency_series`], for tests that move the clock.
 fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
@@ -462,6 +470,7 @@ fn the_reference_currency_settles_without_reading_any_rate() {
 #[test]
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
             runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
@@ -497,11 +506,13 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
         .cutoff();
-    // The fixture token stubs no transfer, so reaching the payment ends here.
-    let token_error = "sub-call not available";
+    let reached_payment = outbe_primitives::error::PrecompileError::from(
+        crate::errors::IntexFactoryError::SettlementAmountMismatch,
+    )
+    .to_string();
 
     storage.set_timestamp(U256::from(cutoff + 3_599));
-    assert!(settle(&mut storage, quoted).contains(token_error));
+    assert_eq!(settle(&mut storage, quoted), reached_payment);
 
     storage.set_timestamp(U256::from(cutoff + 3_600));
     let (_, next_amount, required) = quote(&mut storage);
@@ -524,15 +535,97 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         },
     )
     .unwrap();
-    assert!(settle(&mut storage, other_policy.to_u256()).contains("does not match"));
+    assert_eq!(
+        settle(&mut storage, other_policy.to_u256()),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: other_policy.to_u256(),
+                required,
+            }
+        )
+        .to_string()
+    );
     StorageHandle::enter(&mut storage, |s| {
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }
 
 #[test]
+fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
+    let mut storage = dual_currency_series(EUR_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
+    let quote = |storage: &mut HashMapStorageProvider| {
+        StorageHandle::enter(storage, |s| {
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE)
+                .unwrap()
+                .2
+        })
+    };
+    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
+        StorageHandle::enter(storage, |s| {
+            runtime::settle_intex(
+                &s,
+                sid(7),
+                owner(),
+                owner(),
+                U256::ONE,
+                payment_token(),
+                snapshot,
+            )
+            .unwrap_err()
+            .to_string()
+        })
+    };
+    StorageHandle::enter(&mut storage, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+    });
+    let quoted = quote(&mut storage);
+    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff()
+        + 3_600;
+    StorageHandle::enter(&mut storage, |s| {
+        let notice = outbe_intex::api::read_series(&s, sid(7))
+            .unwrap()
+            .call_notice_period_seconds;
+        outbe_intex::api::mark_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+    });
+
+    storage.set_timestamp(U256::from(deadline));
+    let required = quote(&mut storage);
+    assert_eq!(
+        settle(&mut storage, quoted),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: quoted,
+                required,
+            }
+        )
+        .to_string()
+    );
+
+    storage.set_timestamp(U256::from(deadline + 1));
+    assert_eq!(
+        settle(&mut storage, required),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::DeadlineExpired
+        )
+        .to_string()
+    );
+}
+
+#[test]
 fn a_reference_payment_ignores_the_snapshot_it_names() {
-    with_dual_currency_series(REFERENCE_ISO as u64, |s| {
+    let mut storage = dual_currency_series(REFERENCE_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
+    StorageHandle::enter(&mut storage, |s| {
         seed_qualifying_day(&s);
         let err = runtime::settle_intex(
             &s,
@@ -544,6 +637,12 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             U256::from(7u64),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("sub-call not available"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementAmountMismatch
+            )
+            .to_string()
+        );
     });
 }

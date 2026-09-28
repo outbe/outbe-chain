@@ -1381,8 +1381,15 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
         let next =
             crate::window::get_vwap_snapshot_id(now + hour, &crate::window::DEFAULT_VWAP_POLICY)
                 .unwrap();
-        assert!(read(next.to_u256()).is_err());
-        assert!(read(snapshot_id + U256::ONE).is_err());
+        let error = |err: crate::errors::OracleError| {
+            outbe_primitives::error::PrecompileError::from(err).to_string()
+        };
+        let invalid = error(crate::errors::OracleError::InvalidVwapSnapshot);
+        assert_eq!(read(next.to_u256()).unwrap_err().to_string(), invalid);
+        assert_eq!(
+            read(snapshot_id + U256::ONE).unwrap_err().to_string(),
+            invalid
+        );
         let unregistered = call(
             IOracle::getFinalizedWindowVwapCall {
                 currency: 978,
@@ -1390,7 +1397,12 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
             }
             .abi_encode(),
         );
-        assert!(unregistered.is_err());
+        assert_eq!(
+            unregistered.unwrap_err().to_string(),
+            error(crate::errors::OracleError::PairNotRegistered {
+                pair: AddressPair::new_coen_to(978),
+            })
+        );
     });
 }
 

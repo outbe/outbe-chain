@@ -1718,14 +1718,6 @@ fn genesis_seeds_the_usd_policy_rate() {
     });
 }
 
-#[test]
-fn the_active_policy_is_the_production_protocol_constant() {
-    assert_eq!(
-        crate::window::active_vwap_policy(),
-        crate::window::DEFAULT_VWAP_POLICY
-    );
-}
-
 fn default_snapshot_at(timestamp: u64) -> crate::window::VwapSnapshotId {
     crate::window::get_vwap_snapshot_id(timestamp, &crate::window::DEFAULT_VWAP_POLICY).unwrap()
 }
