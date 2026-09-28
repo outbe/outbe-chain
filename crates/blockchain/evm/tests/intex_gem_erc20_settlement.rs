@@ -156,9 +156,7 @@ impl World {
             .unwrap();
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             oracle
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair, U256::from(2_160_001))
+                .record_utc_day_vwap(day, pair, U256::from(2_160_001))
                 .unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
             match factory {

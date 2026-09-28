@@ -408,6 +408,11 @@ pub struct NodContract {
     /// `(bin << 32) | entries left`; 0 left walks the bin from the top.
     #[attribute(order = 71)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+
+    /// UTC day the entry-price snapshot was read from. Appended here, not beside the
+    /// snapshot slots, because the OCOMP opening plan pins their dense indices.
+    #[attribute(order = 72)]
+    pub entry_price_source_day: Mapping<WorldwideDay, u32>,
 }
 
 impl<'storage> NodContract<'storage> {

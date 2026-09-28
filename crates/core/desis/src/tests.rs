@@ -262,9 +262,7 @@ fn seed_price(s: &StorageHandle, now: u64, iso_code: u16, pair_id: u32, rate: u1
     register_pair(&oracle, iso_code, pair_id);
     let day = price_day(now);
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&pair_id, U256::from(rate))
+        .record_utc_day_vwap(day, pair_id, U256::from(rate))
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();

@@ -58,16 +58,23 @@ pub fn entry_price_snapshot(
     NodContract::new(storage).entry_price_snapshot(day)
 }
 
+/// UTC day the frozen snapshot was read from, or `None` before it was captured.
+pub fn entry_price_source_day(storage: StorageHandle, day: WorldwideDay) -> Result<Option<u32>> {
+    NodContract::new(storage).entry_price_source_day(day)
+}
+
 /// Stores the complete map atomically. A frozen day cannot be overwritten.
 pub fn store_entry_price_snapshot(
     storage: StorageHandle,
     day: WorldwideDay,
+    source_day: u32,
     prices: &BTreeMap<u16, U256>,
 ) -> Result<()> {
-    NodContract::new(storage).store_entry_price_snapshot(day, prices)
+    NodContract::new(storage).store_entry_price_snapshot(day, source_day, prices)
 }
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+/// Positive inputs have a minimum cost of one reference-currency minor unit.
 /// Price and cost use six-decimal reference-currency precision; the load uses
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
@@ -75,7 +82,12 @@ pub fn store_entry_price_snapshot(
 /// the load on the Nod itself, and lysis mints the Nod from exactly this
 /// formula.
 pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
-    checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
+    let cost = checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
+    if !entry_price_minor.is_zero() && !gratis_load_minor.is_zero() {
+        Ok(cost.max(U256::ONE))
+    } else {
+        Ok(cost)
+    }
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not
@@ -255,4 +267,48 @@ pub fn settle_nod(
     storage
         .clone()
         .with_checkpoint(|| nod.record_nod_settled(scope, item, bucket))
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::settlement_cost_minor;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn positive_dust_cost_has_a_one_minor_unit_minimum() {
+        // Actual Rudis AmountMap failures and the smallest positive inputs.
+        for (price, load) in [(19_u64, 25_629_u64), (19, 1_882), (19, 2_529), (1, 1)] {
+            assert_eq!(
+                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
+                U256::from(1)
+            );
+        }
+    }
+
+    #[test]
+    fn non_dust_cost_keeps_floor_rounding() {
+        for (price, load, expected) in [
+            (19_u64, 52_631_u64, 1_u64),
+            (19, 52_632, 1),
+            (19, 105_263, 1),
+            (19, 105_264, 2),
+            (2_000_000, 5_000_000, 10_000_000),
+        ] {
+            assert_eq!(
+                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
+                U256::from(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn minimum_does_not_mask_zero_inputs_or_overflow() {
+        for (price, load) in [(0_u64, 1_u64), (1, 0), (0, 0)] {
+            assert_eq!(
+                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
+                U256::ZERO
+            );
+        }
+        assert!(settlement_cost_minor(U256::MAX, U256::from(2)).is_err());
+    }
 }

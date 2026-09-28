@@ -10,7 +10,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     if params.owner.is_zero() {
         return Err(GemError::InvalidOwner.into());
     }
-    // A zero floor qualifies the gem from birth, which only the genesis type may do.
+    // Only the genesis type is issued without a floor.
     if params.floor_price_minor.is_zero() && params.gem_type != crate::schema::GENESIS_GEM_TYPE {
         return Err(GemError::ZeroFloorPrice.into());
     }
@@ -63,11 +63,9 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
     gem.set_state(gem_id, new_state)
 }
 
-/// Qualified from birth without a floor (Genesis), or once a finalized daily VWAP closed above it.
+/// Qualified once a finalized daily VWAP closed above the floor. A zero floor clears on the
+/// first eligible full day, since every positive price exceeds it.
 pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
-    if item.floor_price_minor.is_zero() {
-        return Ok(true);
-    }
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
         item.reference_currency,

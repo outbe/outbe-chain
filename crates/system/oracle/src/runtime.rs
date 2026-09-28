@@ -643,9 +643,8 @@ impl OracleContract<'_> {
         // Keyed by the registry index; unwritten entries stay zero and read back
         // as "no VWAP for this pair on this day". Re-finalizing a closed day
         // recomputes over the same immutable window, so no stale entry survives.
-        let value_map = self.utc_day_vwap_value.get_nested(&utc_day);
         for (pair, vwap) in pairs.iter().copied().zip(vwaps.iter().copied()) {
-            value_map.write(&self.pair_index_of(pair)?, vwap)?;
+            self.record_utc_day_vwap(utc_day, self.pair_index_of(pair)?, vwap)?;
             if profile_ready && pair.same_market(&DAY_TYPE_PAIR) {
                 self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
             }

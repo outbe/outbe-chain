@@ -140,6 +140,57 @@ contract VwapRegistryTest is Test {
         assertEq(registry.maxUtcDayVwapSince(USD, 20240229), 5_000_000);
     }
 
+    function test_Record_SamePriceAgainIsIdempotent() public {
+        _record(20260315, USD, 1_500_000);
+        _record(20260315, USD, 1_500_000);
+        assertEq(registry.vwapOf(20260315, USD), 1_500_000);
+    }
+
+    function test_RevertWhen_RecordedDayArrivesWithAnotherPrice() public {
+        _record(20260315, USD, 1_500_000);
+        vm.expectRevert(abi.encodeWithSelector(IVwapRegistry.DayAlreadyRecorded.selector, uint32(20260315), USD));
+        _record(20260315, USD, 1_400_000);
+        assertEq(registry.vwapOf(20260315, USD), 1_500_000);
+    }
+
+    /// @notice A start long before the first recorded day reads from that day on, not from year zero.
+    function test_MaxUtcDayVwapSince_AnEarlyStartReadsFromTheFirstRecordedDay() public {
+        _record(20260310, USD, 2_000_000);
+        _record(20260402, USD, 1_000_000);
+        assertEq(registry.maxUtcDayVwapSince(USD, 101), 2_000_000);
+    }
+
+    /// @notice Month-bucketed reads return exactly what a walk over every recorded day would.
+    function test_MaxUtcDayVwapSince_MatchesAWalkOverEveryDay() public {
+        uint32[] memory days_ = new uint32[](180);
+        uint64[] memory prices = new uint64[](180);
+        uint256 n;
+        uint256 seed = 0x2545f491;
+        for (uint32 year = 2024; year <= 2026; ++year) {
+            for (uint32 month = 1; month <= 12; ++month) {
+                uint32[5] memory dds = [uint32(1), 9, 15, 28, 31];
+                for (uint256 k = 0; k < 5; ++k) {
+                    seed = uint256(keccak256(abi.encode(seed)));
+                    days_[n] = year * 10_000 + month * 100 + dds[k];
+                    // One day before a start inside its month outranks every other price.
+                    prices[n] = days_[n] == 20250601 ? 88_888 : uint64(1 + seed % 10_000);
+                    _record(days_[n], USD, prices[n]);
+                    ++n;
+                }
+            }
+        }
+        uint32[10] memory froms = [
+            uint32(20230101), 20240101, 20240131, 20240201, 20241231, 20250101, 20250615, 20251231, 20261231, 20270101
+        ];
+        for (uint256 f = 0; f < froms.length; ++f) {
+            uint256 expected;
+            for (uint256 i = 0; i < n; ++i) {
+                if (days_[i] >= froms[f] && prices[i] > expected) expected = prices[i];
+            }
+            assertEq(registry.maxUtcDayVwapSince(USD, froms[f]), expected);
+        }
+    }
+
     function test_SupportsInterface_VwapSource() public view {
         assertTrue(registry.supportsInterface(type(IVwapRegistry).interfaceId));
         assertTrue(registry.supportsInterface(type(IVwapSource).interfaceId));
