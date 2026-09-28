@@ -76,28 +76,20 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         emit ITargetRouter.InboundMessageIgnored(uint32(block.chainid), msgType, series, reason);
     }
 
-    /// @dev Slots a Called mark, then rewrites the slot to the retired mark type 9.
-    function _slotRetiredMark() internal {
-        vm.record();
-        _deliver(_called());
-        (, bytes32[] memory writes) = vm.accesses(address(router));
-        bytes32 slotted = bytes32(uint256(BridgeMsgCodec.MSG_MARK_CALLED) | (block.timestamp << 8));
-        for (uint256 i = 0; i < writes.length; ++i) {
-            if (vm.load(address(router), writes[i]) == slotted) {
-                vm.store(address(router), writes[i], bytes32(uint256(9)));
-                return;
-            }
-        }
-        revert("mark slot not found");
+    function _expectZeroCallTimeIgnored() internal {
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.InboundMessageIgnored(
+            uint32(block.chainid), BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(DAY)), InboundReason.INVALID
+        );
     }
 
     // --- unknown series: slot, then apply on creation ---
 
     function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.MarkParked(series, BridgeMsgCodec.MSG_MARK_CALLED);
+        emit ITargetRouter.MarkParked(series);
         _deliver(_called());
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "slotted");
+        assertEq(router.parkedMark(series), uint32(block.timestamp), "slotted with its call time");
     }
 
     /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
@@ -106,21 +98,10 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.ParkedMarkApplied(series, BridgeMsgCodec.MSG_MARK_CALLED);
+        emit ITargetRouter.ParkedMarkApplied(series);
         _deliver(_issuance());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
         assertEq(router.parkedMark(series), 0, "nothing waits any more");
-    }
-
-    function test_ASlotHoldingARetiredMarkIsClearedWithoutEffect() public {
-        _slotRetiredMark();
-        router.applyParkedMark(series);
-        assertEq(router.parkedMark(series), 0, "the valve clears it");
-
-        _slotRetiredMark();
-        _deliver(_issuance());
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
-        assertEq(router.parkedMark(series), 0, "issuance clears it");
     }
 
     function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
@@ -151,7 +132,26 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         vm.expectRevert();
         router.applyParkedMark(series);
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "slot kept");
+        assertEq(router.parkedMark(series), uint32(block.timestamp), "slot kept");
+    }
+
+    // --- a zero call time ---
+
+    function test_AZeroCallTimeForAnUnknownSeriesIsInvalidAndNotSlotted() public {
+        _expectZeroCallTimeIgnored();
+        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
+        assertEq(router.parkedMark(series), 0, "nothing waits");
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
+        router.applyParkedMark(series);
+    }
+
+    function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
+        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
+        _expectZeroCallTimeIgnored();
+        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
+        assertEq(router.parkedMark(series), 0, "nothing waits");
     }
 
     // --- already there ---

@@ -4,7 +4,5 @@ pub mod api;
 pub mod program_v1;
 pub mod runtime;
 
-pub use runtime::{lysis, LysisResult};
-
 #[cfg(test)]
 mod tests;

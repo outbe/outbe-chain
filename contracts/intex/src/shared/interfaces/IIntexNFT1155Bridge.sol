@@ -162,10 +162,6 @@ interface IIntexNFT1155Bridge {
     /// @param receiveId Inbound bridge message id being retried.
     /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
     error NoSuchFailedCrosschainMint(bytes32 receiveId, uint256 idx);
-    /// @notice Parked entry carries no origin chainId (pre-upgrade entry); reclaim cannot route back.
-    /// @param receiveId Inbound bridge message id being reclaimed.
-    /// @param idx Position in the original batch.
-    error NoReclaimSource(bytes32 receiveId, uint256 idx);
 
     /// @notice Register (or clear) the matching adapter on `chainId` as an ERC-7930 interoperable address.
     /// @param chainId Destination/source chainId.

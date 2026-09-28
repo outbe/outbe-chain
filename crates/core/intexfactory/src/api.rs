@@ -27,9 +27,9 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
     runtime::send_issuance(storage, legs)
 }
 
-/// Discard a day's contributor map. The clearing engine calls this for a day
-/// that issued nothing at all: with no series anywhere, the recorded creator
-/// rewards can never be distributed.
+/// Close a day's proceeds aggregation. The clearing engine calls this for a
+/// day that issued nothing at all: with no series anywhere, no proceeds can
+/// arrive to pay out.
 pub fn discard_day_contributors(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,

@@ -195,7 +195,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     // --- Inbound BIDS_DONE ---
     function test_inbound_bidsDone_dispatches() public {
         _fireStart(DAY); // freeze the day's snapshot so TARGET_A is an accepted source
-        bytes memory pkt = BridgeMsgCodec.encodeBidsDone(DAY, TARGET_A, 1, 2, 7);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsDone(DAY, TARGET_A, 2, 7);
         vm.expectEmit(true, true, false, true, address(origin));
         emit IOriginRouter.BidsDoneReceived(TARGET_A, DAY, 2, 7);
         _deliver(TARGET_A, peerA, address(origin), pkt);
@@ -251,12 +251,12 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
         origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
         bytes32 key = bytes32((uint256(DAY) << 32) | 9);
-        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 1, 0, 1, new address[](0), new uint256[](0));
+        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 0, 1, new address[](0), new uint256[](0));
         vm.expectEmit(true, true, true, true, address(origin));
         emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_BATCH, key, InboundReason.NOT_FOUND);
         _deliver(9, address(0x9999), address(origin), batch);
 
-        bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 1, 0);
+        bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 0);
         vm.expectEmit(true, true, true, true, address(origin));
         emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_DONE, key, InboundReason.NOT_FOUND);
         _deliver(9, address(0x9999), address(origin), done);

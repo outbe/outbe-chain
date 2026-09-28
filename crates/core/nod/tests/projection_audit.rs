@@ -70,7 +70,6 @@ fn fixture() -> Arc<MemoryStorage> {
                 bucket_key: B256::with_last_byte(seed + 10),
                 worldwide_day: id(seed).worldwide_day(),
                 floor_price_minor: U256::from(1),
-                is_qualified: false,
                 entry_price_minor: U256::from(2),
                 reference_currency: 978,
             })

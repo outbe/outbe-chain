@@ -7,10 +7,10 @@ use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use crate::fixture_kernel::FixtureKernelExt;
 use crate::tests::with_contract;
 
-/// Pins the hand-derived `METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` against the slot
-/// the `#[storage_schema]` macro actually assigns to the appended snapshot
-/// mapping. If the Metadosis layout ever shifts, this fails loudly rather than
-/// letting the node/worker open the wrong slots.
+/// Pins the hand-derived `METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`, and the Fidelity
+/// opening codec that names it, against the slot the `#[storage_schema]` macro
+/// actually assigns to the snapshot mapping. If the Metadosis layout ever shifts,
+/// this fails loudly rather than letting the node/worker open the wrong slots.
 #[test]
 fn snapshot_base_slot_matches_the_generated_dsl_layout() {
     with_contract(|metadosis| {
@@ -19,6 +19,12 @@ fn snapshot_base_slot_matches_the_generated_dsl_layout() {
             U256::from(METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT),
         );
     });
+    let plan =
+        format!("metadosis_league_snapshot_slots_v1(base={METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT},");
+    assert!(
+        outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_DESCRIPTOR.contains(&plan),
+        "{plan}"
+    );
 }
 
 /// The node and worker derive each owner's league slot purely (no storage

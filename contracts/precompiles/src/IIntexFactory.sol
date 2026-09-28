@@ -3,11 +3,11 @@ pragma solidity ^0.8.30;
 
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
-///         settlement, Promis mining, and the dual-wallet authorized-settler
-///         setter. Issuance is a module-to-module call (Desis -> IntexFactory)
-///         exposed through the Rust `api`, not a precompile selector. Series
-///         identity + lifecycle live in Intex; this precompile owns
-///         settlement bookkeeping and the call-price index.
+///         settlement, Promis mining, auction proceeds intake and the
+///         certified contributor payout. Issuance is a module-to-module call
+///         (Desis -> IntexFactory) exposed through the Rust `api`, not a
+///         precompile selector. Series identity + lifecycle live in Intex; this
+///         precompile owns settlement bookkeeping and the call-price index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
@@ -61,10 +61,9 @@ interface IIntexFactory {
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
-    ///         Creators are paid, proportional to each owner's Tribute Nominal
-    ///         Amount, once every winning chain has routed its proceeds (or the
-    ///         fan-in deadline passes); the payout itself is drained over later
-    ///         blocks by the begin-block hook.
+    ///         The day's payout round opens once every winning chain has routed
+    ///         its proceeds (or the fan-in deadline passes); `payContributorBatch`
+    ///         pays each certified contributor in proportion to its nominal.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
     /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
@@ -159,10 +158,6 @@ interface IIntexFactory {
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain
     ///         routing its proceeds in parts emits once per part.
     event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
-
-    /// @notice The day's auction proceeds were fully paid out to `contributors`
-    ///         tribute owners, totalling `amount` native COEN.
-    event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount, uint32 contributors);
 
     /// @notice Ownerless proceeds for the day (no contributors recorded) were
     ///         burned instead of being distributed.

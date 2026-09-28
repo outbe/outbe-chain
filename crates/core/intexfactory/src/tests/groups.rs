@@ -28,7 +28,7 @@ mod group_index {
     }
 
     fn bin_count(f: &IntexFactoryContract<'_>, bin: u32) -> u32 {
-        f.qualified_bin_count
+        f.call_bin_count
             .read(&IntexFactoryContract::scoped(ISO, bin))
             .unwrap()
     }

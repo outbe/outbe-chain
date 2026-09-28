@@ -95,9 +95,7 @@ fn item(owner: Address, floor: U256, reference_currency: u16) -> NodItemState {
     }
 }
 
-/// Dense `order`-packing puts these fields at contiguous offsets 0..=14. The
-/// per-currency bin re-keying changed field *types* but must not move a single
-/// slot; nothing else in CI guards this layout.
+/// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
@@ -105,12 +103,6 @@ fn nod_contract_slot_layout_is_pinned() {
         let nod = NodContract::new(storage);
         for (index, actual) in [
             nod.total_supply.slot(),
-            nod.retired_bin_tree_root.base_slot(),
-            nod.retired_bin_tree_mid.base_slot(),
-            nod.retired_bin_tree_leaf.base_slot(),
-            nod.retired_unqualified_bin_count.base_slot(),
-            nod.retired_unqualified_bin_buckets.base_slot(),
-            nod.retired_unqualified_bin_scan_cursor.base_slot(),
             nod.bucket_worldwide_day.base_slot(),
             nod.ocomp_target_generation.base_slot(),
             nod.ocomp_namespace_root.base_slot(),
@@ -233,7 +225,6 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             !api::is_qualified(&storage, &eur_bucket).unwrap(),
             "a COEN/USD price must not qualify a EUR-denominated floor"
         );
-        assert!(!usd_bucket.is_qualified, "nothing is stored");
     });
 }
 
@@ -268,33 +259,6 @@ fn qualification_skips_days_before_first_full_day() {
         assert!(!qualified());
         close_day_above(&storage, USD, body.floor_price_minor, full_day);
         assert!(qualified());
-    });
-}
-
-/// A bucket issued before the stamp existed carries zero. Zero is "unsealed",
-/// not epoch-midnight; it cannot qualify on any VWAP day.
-#[test]
-fn a_zero_issued_at_stamp_does_not_qualify() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let body = item(
-        Address::repeat_byte(0x11),
-        U256::from(500_000_000_000_000_000u128),
-        USD,
-    );
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
-        NodContract::new(storage.clone())
-            .callable_bucket_issued_at
-            .clear(&body.bucket_key)
-            .unwrap();
-        qualify(&storage, &body);
-        assert!(
-            !api::is_qualified(&storage, &bucket_of(&storage, &scope, &parent, &body)).unwrap()
-        );
     });
 }
 
@@ -424,7 +388,6 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
         (true, false, 100, 17, 117, 2, 117),
         (true, false, 100, 17, 118, 4, 117),
         (true, true, 100, 17, 118, 3, 117),
-        (true, false, 100, 0, u64::MAX, 2, u64::MAX),
         (true, false, u64::MAX - 1, 17, u64::MAX, 2, u64::MAX),
     ] {
         let mut provider = HashMapStorageProvider::new(1);
@@ -526,11 +489,9 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 expected.push(format!(
                     r#"{{"trait_type":"Called At","value":{called_at},"display_type":"date"}}"#
                 ));
-                if deadline != u64::MAX {
-                    expected.push(format!(
-                        r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
-                    ));
-                }
+                expected.push(format!(
+                    r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
+                ));
             }
             for trait_json in expected {
                 assert!(json.contains(&trait_json), "{json}");
@@ -892,8 +853,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     });
 }
 
-/// A settled Nod keeps its bucket's call stamp, and an unbounded notice has no deadline to
-/// show: neither may leak call rows onto the card.
+/// A settled Nod keeps its bucket's call stamp, which must not leak call rows onto the card.
 #[test]
 fn nod_card_hides_call_rows_it_cannot_honour() {
     use crate::precompile::{dispatch, INod};
@@ -901,76 +861,64 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
     use alloy_sol_types::SolCall;
     use base64::Engine;
 
-    for (paid, notice) in [(true, 17), (false, 0)] {
-        let mut provider = HashMapStorageProvider::new(1);
-        provider.set_timestamp(U256::from(118));
-        let scope = ExecutionScope::new();
-        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-        let json = StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage);
-            begin_block(storage.clone(), &scope).unwrap();
-            let item = item(Address::repeat_byte(0x88), U256::from(13), USD);
-            api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
-            let mut nod = NodContract::new(storage.clone());
-            nod.seal_bucket_call_terms(
-                item.bucket_key,
-                CallTerms {
-                    call_price: U256::from(937),
-                    reference_currency: USD,
-                    call_rate: 23,
-                    call_window: 432_000,
-                    call_threshold: 172_800,
-                    call_notice_period: notice,
-                },
-            )
-            .unwrap();
-            qualify(&storage, &item);
-            if paid {
-                let bucket_id =
-                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
-                api::settle_nod(
-                    &storage,
-                    &scope,
-                    api::load_item(&storage, &scope, &parent, item.nod_id)
-                        .unwrap()
-                        .unwrap(),
-                    api::load_bucket(&storage, &scope, &parent, bucket_id)
-                        .unwrap()
-                        .unwrap(),
-                )
-                .unwrap();
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(118));
+    let scope = ExecutionScope::new();
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let json = StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let item = item(Address::repeat_byte(0x88), U256::from(13), USD);
+        api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+        let mut nod = NodContract::new(storage.clone());
+        nod.seal_bucket_call_terms(
+            item.bucket_key,
+            CallTerms {
+                call_price: U256::from(937),
+                reference_currency: USD,
+                call_rate: 23,
+                call_window: 432_000,
+                call_threshold: 172_800,
+                call_notice_period: 17,
+            },
+        )
+        .unwrap();
+        qualify(&storage, &item);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        api::settle_nod(
+            &storage,
+            &scope,
+            api::load_item(&storage, &scope, &parent, item.nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
+        let out = dispatch(
+            storage.clone(),
+            &scope,
+            &parent,
+            &INod::tokenURICall {
+                nodId: item.nod_id.to_u256(),
             }
-            nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
-            let out = dispatch(
-                storage.clone(),
-                &scope,
-                &parent,
-                &INod::tokenURICall {
-                    nodId: item.nod_id.to_u256(),
-                }
-                .abi_encode(),
-                item.owner,
-                U256::ZERO,
-            )
-            .unwrap();
-            let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
-            String::from_utf8(
-                base64::engine::general_purpose::STANDARD
-                    .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
-                    .unwrap(),
-            )
-            .unwrap()
-        });
+            .abi_encode(),
+            item.owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    });
 
-        assert!(!json.contains("Settlement Deadline"), "{json}");
-        if paid {
-            assert!(json.contains(r#"{"trait_type":"State","value":"Settled"}"#));
-            assert!(!json.contains("Called At"), "{json}");
-        } else {
-            assert!(json.contains(r#"{"trait_type":"State","value":"Called"}"#));
-            assert!(
-                json.contains(r#"{"trait_type":"Called At","value":100,"display_type":"date"}"#)
-            );
-        }
-    }
+    assert!(json.contains(r#"{"trait_type":"State","value":"Settled"}"#));
+    assert!(!json.contains("Called At"), "{json}");
+    assert!(!json.contains("Settlement Deadline"), "{json}");
 }

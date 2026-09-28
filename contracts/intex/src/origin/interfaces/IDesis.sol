@@ -20,21 +20,14 @@ interface IDesis {
     function processBidsBatch(
         uint32 worldwideDay,
         uint32 srcChainId,
-        uint32 relayGeneration,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidderAddresses,
         uint256[] calldata packedBids
     ) external;
 
-    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day/generation.
-    function processBidsDone(
-        uint32 worldwideDay,
-        uint32 srcChainId,
-        uint32 relayGeneration,
-        uint16 totalBatches,
-        uint32 totalBids
-    ) external;
+    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day.
+    function processBidsDone(uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
 
     function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
     function getBidsCount(uint32 worldwideDay) external view returns (uint256);
