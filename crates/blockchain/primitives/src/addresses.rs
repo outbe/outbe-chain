@@ -302,23 +302,6 @@ pub const ENTRY_POINT_V07_ADDRESS: Address = address!("0x0000000071727De22E5E9d8
 pub const SENDER_CREATOR_V07_ADDRESS: Address =
     address!("0xEFC2c1444eBCC4Db75e7613d20C6a62fF67A167C");
 
-///
-/// Test-only stateful precompile that exercises the production sub-call path
-/// end-to-end. Calldata: `(address target, int256 x)` ABI-encoded. The
-/// precompile constructs `inc(int256 x)` calldata for the user-supplied
-/// `target` Solidity contract address and invokes it via
-/// `storage.sub_call`, logging every step through `tracing::info!`. Errors
-/// returned by the target (e.g. `NegativeNotAllowed(x)` on `x < 0`)
-/// propagate back as `PrecompileError::RevertBytes`.
-///
-/// A genesis-deployed `Counter` fixture at
-/// `0x000000000000000000000000000000000000C0DE` (see
-/// `scripts/contracts/counter.code.hex` and `e2e/evm/README.md`) is the
-/// canonical target for the localnet smoke flow, but the precompile is
-/// target-agnostic - any contract implementing `inc(int256)` works.
-pub const DEBUG_SUBCALL_PRECOMPILE_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000F999");
-
 /// Desis precompile address. Runs the Intex auction and clearing engine
 /// (bid ingestion, reveal, clearing, issuance handoff to IntexFactory).
 pub const DESIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001016");
