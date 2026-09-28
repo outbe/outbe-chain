@@ -237,6 +237,54 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
 }
 
 #[test]
+fn pledge_prices_from_the_trailing_vwap_window() {
+    with_env(|storage| {
+        let seed = pledge_cost() * U256::from(2u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mint, alice(), seed, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        for (ts, rate) in [
+            (snapshot.start() - 1, oracle_rate() * U256::from(10u64)),
+            (snapshot.cutoff() - 1, oracle_rate()),
+        ] {
+            oracle
+                .write_snapshot(
+                    ts,
+                    &[(
+                        outbe_oracle::api::DAY_TYPE_PAIR,
+                        rate,
+                        one_six_decimal_unit(),
+                    )],
+                )
+                .unwrap();
+        }
+
+        runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+        )
+        .unwrap();
+
+        assert_eq!(view_balance(&storage, alice()), seed - pledge_cost());
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage).unwrap(),
+            pledge_cost()
+        );
+    });
+}
+
+#[test]
 fn pledge_rejects_an_unavailable_period_even_with_a_current_price() {
     with_env(|storage| {
         let seed = pledge_cost() * U256::from(2u64);

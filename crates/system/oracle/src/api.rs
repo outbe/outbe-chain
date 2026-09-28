@@ -174,26 +174,6 @@ pub fn settlement_fx_rates(
     }))
 }
 
-/// Previous half-open eight-hour VWAP as canonical `issuanceCurrencyVwapMinor`
-/// (scale 1e6, so 1.0 = 10^6).
-///
-/// The period implementation is pending; currently returns `None`.
-///
-/// | current_timestamp, UTC | Returned period value  |
-/// | --- | --- |
-/// | 00:00 <= time < 08:00 | Previous day's 16:00-24:00 |
-/// | 08:00 <= time < 16:00 | Same day's 00:00-08:00 |
-/// | 16:00 <= time < 24:00 | Same day's 08:00-16:00 |
-pub fn previous_half_open_8hours_vwap(
-    storage: StorageHandle,
-    pair: AddressPair,
-    current_timestamp: u64,
-) -> Result<Option<U256>> {
-    // TODO implement logic
-    _ = (storage, pair, current_timestamp);
-    Ok(None)
-}
-
 /// Reference currencies available for pricing through a storage-only caller.
 pub fn reference_currencies(storage: StorageHandle) -> Result<Vec<u16>> {
     OracleContract::new(storage).reference_currencies.read_all()
