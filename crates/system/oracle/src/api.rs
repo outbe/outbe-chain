@@ -127,7 +127,8 @@ pub fn four_hour_vwap(
     oracle.four_hour_vwap(pair, end_date)
 }
 
-/// Previous half-open eight-hour VWAP, scaled by `SCALE_1E18` (1.0 = 10^18).
+/// Previous half-open eight-hour VWAP as canonical `issuanceCurrencyVwapMinor`
+/// (scale 1e6, so 1.0 = 10^6).
 ///
 /// The period implementation is pending; currently returns `None`.
 ///

@@ -474,7 +474,7 @@ fn repay(world: &mut World) {
             eth::read_call(
                 &url,
                 CREDIS_ADDRESS,
-                &ICredis::accruedInterestCall {
+                &ICredis::interestAccruedMinorCall {
                     positionId: f.position_id
                 }
             ),
@@ -557,6 +557,7 @@ fn repay(world: &mut World) {
         assert_eq!(after.native, before.native);
         assert_eq!(after.liquid, before.liquid + released);
         assert_eq!(after.pledged, before.pledged - released);
+        assert_eq!(a.interestPaidMinor, f.interest_paid + interest);
         world.state.credis.as_mut().expect("fixture").interest_paid += interest;
     }
 }

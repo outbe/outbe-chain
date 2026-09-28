@@ -89,6 +89,7 @@ pub fn pledge_gratis(
     }
     let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
     let block_timestamp = storage.timestamp()?.to::<u64>();
+    // Reader output is already issuanceCurrencyVwapMinor (scale 1e6).
     let valuation_price = previous_half_open_8hours_vwap(
         storage.clone(),
         AddressPair::new_coen_to(issuance_currency),
