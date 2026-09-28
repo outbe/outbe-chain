@@ -7,8 +7,6 @@ use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_nod::NodContract;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::constants::calc_floor_price;
-
 use super::{
     execute::{
         calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
@@ -443,7 +441,11 @@ pub fn amount_map(
             });
         }
         let floor_price_minor =
-            calc_floor_price(item.tribute.tribute_price_minor.max(entry_price_minor));
+            NodContract::floor_price_minor(entry_price_minor).ok_or_else(|| {
+                ProgramErrorV1::Arithmetic {
+                    message: format!("Nod floor overflow at {raw_ordinal}"),
+                }
+            })?;
         let settlement_cost_minor =
             calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
         checked_segment_gratis_total = checked_segment_gratis_total

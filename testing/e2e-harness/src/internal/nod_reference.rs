@@ -55,9 +55,7 @@ pub(crate) fn single_league_actions(
                 / scale;
             assert!(!load.is_zero(), "positive expected load");
             remaining = remaining.checked_sub(load).expect("loads fit input budget");
-            let floor_price = tribute
-                .tribute_price_minor
-                .max(entry_price)
+            let floor_price = entry_price
                 .checked_mul(U256::from(108))
                 .expect("fixture floor numerator")
                 / U256::from(100);
@@ -255,7 +253,7 @@ mod tests {
                 assert_eq!(action.owner, Address::repeat_byte(ordinal as u8 + 1));
                 assert_eq!(action.wwd, 20260908);
                 assert_eq!(action.league_id, 3);
-                assert_eq!(action.floor_price_minor, U256::from(1_188_001));
+                assert_eq!(action.floor_price_minor, U256::from(1_080_003));
                 assert_eq!(action.gratis_load_minor, U256::from(load));
                 assert_eq!(action.entry_price_minor, U256::from(1_000_003));
                 assert_eq!(action.settlement_cost_minor, U256::from(cost));

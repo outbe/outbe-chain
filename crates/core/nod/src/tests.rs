@@ -125,6 +125,19 @@ fn nod_contract_slot_layout_is_pinned() {
 }
 
 #[test]
+fn a_nod_floor_is_its_entry_marked_up_and_rounded_down() {
+    assert_eq!(
+        NodContract::floor_price_minor(U256::from(2_000_000u64)),
+        Some(U256::from(2_160_000u64))
+    );
+    assert_eq!(
+        NodContract::floor_price_minor(U256::from(999u64)),
+        Some(U256::from(1_078u64))
+    );
+    assert_eq!(NodContract::floor_price_minor(U256::MAX), None);
+}
+
+#[test]
 fn bucket_key_binds_the_reference_currency() {
     let day = WorldwideDay::new(20_260_715);
     let floor = U256::from(13);

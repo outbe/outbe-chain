@@ -160,7 +160,6 @@ fn nod_params(day: u32) -> NodIssueParams {
         gratis_load_minor: U256::from(GRATIS_LOAD),
         worldwide_day: WorldwideDay::new(day),
         league_id: 1,
-        floor_price_minor: U256::from(540),
         // The cost is derived, never stored: entry_price x gratis_load / 1e6.
         entry_price_minor: U256::from(COST * 1_000_000 / GRATIS_LOAD),
         issuance_currency: REFERENCE_CURRENCY,
@@ -237,15 +236,17 @@ fn fixture() -> (
             let params = nod_params(day);
             let nod_id =
                 outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
+            let floor_price_minor =
+                NodContract::floor_price_minor(params.entry_price_minor).unwrap();
             let bucket_key = NodContract::bucket_key(
                 params.worldwide_day,
-                params.floor_price_minor,
+                floor_price_minor,
                 params.reference_currency,
             );
             qualify(
                 &storage,
                 bucket_key,
-                params.floor_price_minor,
+                floor_price_minor,
                 params.reference_currency,
             );
             nod_id
