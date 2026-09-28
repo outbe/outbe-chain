@@ -354,6 +354,27 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
+fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
+        oracle
+            .record_utc_day_vwap(day, EUR_PAIR_ID, U256::from(4u64) * COEN_ISO_RATE_SCALE)
+            .unwrap();
+
+        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
+    });
+}
+
+#[test]
 fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
@@ -390,7 +411,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
 }
 
 #[test]
-fn a_rate_the_closed_day_never_priced_cannot_be_settled_in() {
+fn a_rate_the_window_never_priced_cannot_be_settled_in() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(
@@ -399,7 +420,7 @@ fn a_rate_the_closed_day_never_priced_cannot_be_settled_in() {
             PAIR_ID,
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
-        // The euro trades live, but the day it converts at closed without it.
+        // The euro trades live, but the window it converts at holds no euro price.
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
@@ -415,7 +436,12 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE);
-        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX);
+        write_day_rate(
+            &oracle,
+            EUR_ISO,
+            EUR_PAIR_ID,
+            U256::MAX / COEN_ISO_RATE_SCALE,
+        );
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");

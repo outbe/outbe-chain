@@ -122,6 +122,19 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         let oracle = OracleContract::new(handle.clone());
         oracle.reference_currencies.push(840u16).unwrap();
         oracle.config_lookback_duration.write(86_400).unwrap();
+        let policy = outbe_oracle::api::DEFAULT_VWAP_POLICY;
+        oracle
+            .config_vwap_lookback_seconds
+            .write(policy.lookback_seconds)
+            .unwrap();
+        oracle
+            .config_vwap_update_interval_seconds
+            .write(policy.update_interval_seconds)
+            .unwrap();
+        oracle
+            .config_vwap_policy_version
+            .write(policy.version)
+            .unwrap();
         if let Some(rate) = rate {
             outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
@@ -975,6 +988,39 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
 }
 
 #[test]
+fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(usd_rate), |storage| {
+        register_currency(storage, 978, six_decimal_unit());
+        seed_day_vwap(storage, 840, usd_rate);
+        let gem_id = issue_at_live_rate(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        let (_, before) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
+            .unwrap()
+            .unwrap();
+        OracleContract::new(storage.clone())
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(T_NOW)),
+                index,
+                U256::from(4u64) * six_decimal_unit(),
+            )
+            .unwrap();
+        let (_, after) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
+        let (_, reference) = runtime::quote_settlement(storage, gem_id, STABLE).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(after, reference / U256::from(2u64));
+    });
+}
+
+#[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
     let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
     let block = 1u64;
@@ -1007,7 +1053,7 @@ fn a_position_reports_its_full_terms() {
 }
 
 #[test]
-fn cross_currency_settlement_rejects_a_leg_the_closed_day_never_priced() {
+fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage_paying(Some(rate), STABLE, ALICE, |storage, proof| {
         // EUR trades live but the closed day left it unpriced, so the pivot has
@@ -1545,14 +1591,25 @@ fn issue_merchant_gem_after_expiry_rejects() {
     });
 }
 
-/// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`.
+/// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
+/// and as the only observation of the trailing window settlement converts at.
 fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .expect("COEN pair registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW));
-    OracleContract::new(storage.clone())
-        .record_utc_day_vwap(day, index, vwap)
+    let mut oracle = OracleContract::new(storage.clone());
+    oracle.record_utc_day_vwap(day, index, vwap).unwrap();
+    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+    oracle
+        .write_snapshot(
+            snapshot.cutoff() - 1,
+            &[(
+                outbe_oracle::api::AddressPair::new_coen_to(iso),
+                vwap,
+                six_decimal_unit(),
+            )],
+        )
         .unwrap();
 }
 
@@ -1589,6 +1646,27 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
             item.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
         );
+    });
+}
+
+#[test]
+fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let vwap = U256::from(3u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, vwap);
+        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        OracleContract::new(storage.clone())
+            .write_snapshot(
+                snapshot.cutoff() - 1,
+                &[(
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(9u64) * six_decimal_unit(),
+                    U256::from(1_000u64) * six_decimal_unit(),
+                )],
+            )
+            .unwrap();
+        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
     });
 }
 

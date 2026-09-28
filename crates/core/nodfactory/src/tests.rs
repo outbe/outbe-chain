@@ -129,6 +129,38 @@ fn nod_pow_binds_owner_and_zero_sequence() {
     );
 }
 
+fn seed_vwap_policy(storage: &StorageHandle<'_>) {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let policy = outbe_oracle::api::DEFAULT_VWAP_POLICY;
+    oracle
+        .config_vwap_lookback_seconds
+        .write(policy.lookback_seconds)
+        .unwrap();
+    oracle
+        .config_vwap_update_interval_seconds
+        .write(policy.update_interval_seconds)
+        .unwrap();
+    oracle
+        .config_vwap_policy_version
+        .write(policy.version)
+        .unwrap();
+}
+
+/// One observation at `rate` in the last second of the current trailing window.
+fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
+    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .write_snapshot(
+            snapshot.cutoff() - 1,
+            &[(
+                outbe_oracle::api::AddressPair::new_coen_to(iso_code),
+                rate,
+                U256::from(SIX_DECIMALS),
+            )],
+        )
+        .unwrap();
+}
+
 struct World {
     provider: HashMapStorageProvider,
     scope: ExecutionScope,
@@ -155,6 +187,7 @@ impl World {
         );
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage);
+            seed_vwap_policy(&storage);
             begin_block(storage, &scope).unwrap();
         });
         Self {
@@ -265,8 +298,8 @@ impl World {
         });
     }
 
-    /// Prices `COEN/<iso>` at `rate` live and for the last closed UTC day, which
-    /// is the one settlement converts at.
+    /// Prices `COEN/<iso>` at `rate` live, for the last closed UTC day and inside
+    /// the trailing VWAP window settlement converts at.
     fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
         self.publish_coen_spot(iso_code, rate);
         self.enter(|storage, _, _| {
@@ -280,6 +313,7 @@ impl World {
             outbe_oracle::schema::OracleContract::new(storage.clone())
                 .record_utc_day_vwap(day, index, rate)
                 .unwrap();
+            seed_window_vwap(&storage, iso_code, rate);
         });
     }
 
@@ -1825,6 +1859,33 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
 }
 
 #[test]
+fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa8));
+    let nod_id = world.issue(&input);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+
+    let quoted = world.enter(|storage, scope, parent| {
+        use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+        let day = previous_date_key(timestamp_to_date_key(
+            storage.timestamp().unwrap().to::<u64>(),
+        ));
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
+            .unwrap()
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .record_utc_day_vwap(day, index, U256::from(4 * SIX_DECIMALS))
+            .unwrap();
+        api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+            .unwrap()
+            .1
+    });
+    assert_eq!(quoted, U256::from(cost_of(&input) / 2));
+}
+
+#[test]
 fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa3));
@@ -1907,14 +1968,14 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
 }
 
 #[test]
-fn issuance_rail_rejects_a_leg_the_closed_day_never_priced() {
+fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa5));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    // The euro trades live, but the day it converts at closed without it.
+    // The euro trades live, but the window it converts at holds no euro price.
     world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
     let spend = cost_of(&input) / 2;
     let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);

@@ -158,6 +158,12 @@ pub fn active_vwap_policy(storage: StorageHandle) -> Result<VwapPolicy> {
     OracleContract::new(storage).active_vwap_policy()
 }
 
+/// Snapshot required at the current block under the active policy.
+pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
+    let now = storage.timestamp()?.to::<u64>();
+    get_vwap_snapshot_id(now, &active_vwap_policy(storage)?)
+}
+
 /// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
 /// six-decimal scale. `None` when the pair is unregistered or the window holds
 /// no observation.

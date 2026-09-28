@@ -5,13 +5,11 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_oracle::api::get_utc_day_vwap_for_iso;
+use outbe_oracle::api::{current_vwap_snapshot, get_finalized_window_vwap, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{
-    first_full_day, previous_date_key, timestamp_to_date_key, WorldwideDay,
-};
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -760,7 +758,7 @@ pub fn settle_intex(
 ) -> Result<()> {
     settle(storage, series_id, intex_owner, settler, amount, |series| {
         let currency = accept_payment_token(storage, asset, series)?;
-        let cost = cost_in_token(storage, series, asset, currency, amount)?;
+        let (cost, _) = cost_in_token(storage, series, asset, currency, amount)?;
         deposit_payment(storage, settler, asset, cost)
     })
 }
@@ -935,7 +933,7 @@ fn discharge_cost(
     }
 
     let currency = accept_payment_token(storage, claim.asset, series)?;
-    let cost = cost_in_token(storage, series, claim.asset, currency, amount)?;
+    let (cost, _) = cost_in_token(storage, series, claim.asset, currency, amount)?;
     // Exact: the surplus of an over-spend is already in the reserve vault.
     if claim.spend_amount != cost {
         return Err(IntexFactoryError::PayNoteCostMismatch {
@@ -990,10 +988,8 @@ pub fn quote_settlement(
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    Ok((
-        settlement_currency,
-        cost_in_token(storage, &series, payment_token, currency, amount)?,
-    ))
+    let (cost, _) = cost_in_token(storage, &series, payment_token, currency, amount)?;
+    Ok((settlement_currency, cost))
 }
 
 /// Which of the series' two currencies a payment token is denominated in.
@@ -1003,24 +999,27 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// COEN price of `iso_code` from the last closed UTC day.
-fn day_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
+/// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
+fn window_coen_rate(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    snapshot: VwapSnapshotId,
+) -> Result<U256> {
+    get_finalized_window_vwap(storage.clone(), iso_code, snapshot)?
         .ok_or_else(|| IntexFactoryError::OracleUnavailable.into())
 }
 
-/// Cost of `amount` units in `token`'s minor units. The Cost Amount is denominated
-/// in the reference currency; an issuance-currency token is charged at the COEN
-/// cross rate of the last closed UTC day, folded into the same fraction so the
-/// operation is floored once.
+/// Cost of `amount` units in `token`'s minor units and, on the issuance rail, the
+/// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
+/// reference currency; an issuance-currency token is charged at the snapshot's
+/// COEN cross rate, folded into the same fraction so the operation is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
     token: Address,
     currency: PaymentCurrency,
     amount: U256,
-) -> Result<U256> {
+) -> Result<(U256, Option<VwapSnapshotId>)> {
     let payment_decimals = erc20_decimals(storage, token)?;
     let product = series
         .entry_price_minor
@@ -1030,16 +1029,18 @@ fn cost_in_token(
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let rate = if target_iso == series.reference_currency {
-        None
+    let (rate, snapshot) = if target_iso == series.reference_currency {
+        (None, None)
     } else {
-        // One timestamp, so both legs come from the same closed day.
-        let now = storage.timestamp()?.to::<u64>();
-        let from = day_coen_rate(storage, series.reference_currency, now)?;
-        let to = day_coen_rate(storage, target_iso, now)?;
-        Some((to, from))
+        let snapshot = current_vwap_snapshot(storage.clone())?;
+        let from = window_coen_rate(storage, series.reference_currency, snapshot)?;
+        let to = window_coen_rate(storage, target_iso, snapshot)?;
+        (Some((to, from)), Some(snapshot))
     };
-    settlement_units(product, amount, rate, payment_decimals)
+    Ok((
+        settlement_units(product, amount, rate, payment_decimals)?,
+        snapshot,
+    ))
 }
 
 /// Rejects `token` unless the router holds a vault for it and the token reports

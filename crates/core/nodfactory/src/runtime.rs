@@ -7,11 +7,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_oracle::api::get_utc_day_vwap_for_iso;
+use outbe_oracle::api::{current_vwap_snapshot, get_finalized_window_vwap, VwapSnapshotId};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
@@ -122,7 +121,7 @@ pub fn settle_nod(
             terms.issuance_currency,
             terms.reference_currency,
         )?;
-        let cost = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        let (cost, _) = cost_in_token(storage, terms, entry_price, asset, currency)?;
         if !cost.is_zero() {
             let before = token_balance(storage, asset)?;
             checked_token_call(
@@ -356,7 +355,7 @@ fn discharge_cost(
         terms.issuance_currency,
         terms.reference_currency,
     )?;
-    let cost = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
+    let (cost, _) = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
     if claim.spend_amount != cost {
         return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
@@ -411,41 +410,45 @@ fn accept_payment_asset(
     Err(NodFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
-/// COEN price of `iso_code` from the last closed UTC day.
-fn day_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
+/// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
+fn window_coen_rate(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    snapshot: VwapSnapshotId,
+) -> Result<U256> {
+    get_finalized_window_vwap(storage.clone(), iso_code, snapshot)?
         .ok_or_else(|| NodFactoryError::OracleUnavailable.into())
 }
 
-/// Cost of one Nod in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate of the last closed UTC day into the same fraction, so the whole
-/// thing is floored once.
+/// Cost of one Nod in `asset`'s minor units and, on the issuance rail, the VWAP
+/// snapshot both COEN legs came from. The cross rate is folded into the same
+/// fraction, so the whole thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
     entry_price_minor: U256,
     asset: Address,
     currency: PaymentCurrency,
-) -> Result<U256> {
+) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let rate = match currency {
-        PaymentCurrency::Reference => None,
+    let (rate, snapshot) = match currency {
+        PaymentCurrency::Reference => (None, None),
         PaymentCurrency::Issuance => {
-            // One timestamp, so both legs come from the same closed day.
-            let now = storage.timestamp()?.to::<u64>();
-            Some((
-                day_coen_rate(storage, terms.issuance_currency, now)?,
-                day_coen_rate(storage, terms.reference_currency, now)?,
-            ))
+            let snapshot = current_vwap_snapshot(storage.clone())?;
+            let rate = (
+                window_coen_rate(storage, terms.issuance_currency, snapshot)?,
+                window_coen_rate(storage, terms.reference_currency, snapshot)?,
+            );
+            (Some(rate), Some(snapshot))
         }
     };
-    settlement_units(
+    let cost = settlement_units(
         entry_price_minor,
         terms.gratis_load_minor,
         rate,
         asset_decimals,
-    )
+    )?;
+    Ok((cost, snapshot))
 }
 
 /// The Nod's cost in the settlement asset's minor units, floored once.
@@ -519,16 +522,14 @@ pub fn quote_settlement(
         PaymentCurrency::Reference => terms.reference_currency,
         PaymentCurrency::Issuance => terms.issuance_currency,
     };
-    Ok((
-        settlement_currency,
-        cost_in_token(
-            storage,
-            &terms,
-            bucket.body().entry_price_minor,
-            asset,
-            currency,
-        )?,
-    ))
+    let (cost, _) = cost_in_token(
+        storage,
+        &terms,
+        bucket.body().entry_price_minor,
+        asset,
+        currency,
+    )?;
+    Ok((settlement_currency, cost))
 }
 
 /// PoW gate for `mine_gratis`. The preimage is
