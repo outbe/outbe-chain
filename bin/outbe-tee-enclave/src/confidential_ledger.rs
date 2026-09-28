@@ -798,6 +798,21 @@ mod tests {
                 matches!(applied.value, Value::View { nonce, .. } if nonce == PAGE_RECORDS + 1)
             );
 
+            clear_cache();
+            let failure = outbe_tee::confidential::execute(
+                &storage,
+                Call::GratisView { account, field: 2 },
+                |wire| {
+                    if matches!(wire, EnclaveRequest::LoadConfidential { page } if page.after.count > 0) {
+                        clear_cache();
+                    }
+                    Some(EnclaveResponse::Confidential { response: dispatch(wire, &gkey, &fkey, &[0; 32]) })
+                },
+            ).unwrap_err();
+            assert!(failure
+                .to_string()
+                .contains("cache recovery did not converge"));
+
             // Authentication covers the chain, domain and preceding head, and
             // a rejected page must not leave partially materialized state.
             for invalid in 0..4 {

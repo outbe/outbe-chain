@@ -403,21 +403,20 @@ pub enum GratisOpStatus {
     Rejected { reason: String },
 }
 
-/// Public result of an `ApplyGratisOp`: the new ciphertext blobs to store verbatim
-/// plus the plaintext receipt the host needs (aggregate deltas, event amount,
-/// pledge linkage). Per-account plaintext balances never appear here.
+/// Internal Gratis economics receipt. The confidential ledger seals the updated
+/// account state into its journal and clears the balance/pledged blobs and note
+/// before returning this receipt. Pledge replies are encrypted to the owner.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
-    /// New balance blob (`version || ct`) to store verbatim.
+    /// Internal new balance blob; cleared by the confidential wrapper.
     pub new_balance: Vec<u8>,
-    /// New pledged-ledger blob (`version || ct`) to store verbatim.
+    /// Internal new pledged-ledger blob; cleared by the confidential wrapper.
     pub new_pledged: Vec<u8>,
-    /// New pledge-lock-ticket blob (`version || ct`) for `Pledge`; empty on
-    /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
-    /// ticket slot). Empty and untouched for all other ops.
+    /// Internal pledge ticket for `Pledge`. The confidential wrapper replaces
+    /// it with the owner-encrypted pledge reply and clears it for other operations.
     pub new_pledge_record: Vec<u8>,
-    /// Deterministic pledge note for a `Pledge` (zero otherwise).
+    /// Internal pledge note; always cleared before returning to the host.
     pub pledge_note: B256,
     /// Pledged gratis surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
@@ -427,7 +426,7 @@ pub struct GratisOpResult {
     pub pledge_terms: Option<PledgeTerms>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
-    /// The account's next modify-auth nonce (for the host to persist).
+    /// The account's next modify-auth nonce, persisted inside the encrypted journal.
     pub next_op_nonce: u64,
     /// Receipt of the co-located Fidelity section; `Some` iff the request
     /// carried one and the op was applied.

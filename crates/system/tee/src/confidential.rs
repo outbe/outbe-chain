@@ -180,6 +180,15 @@ pub fn execute(
     };
     let expected_hash = hash(&request).map_err(fault)?;
     let mut last_progress = None;
+    // Allow a full recovery retry after reconnect, but do not loop indefinitely
+    // when the sidecar repeatedly loses its cache between pages.
+    let mut pages_left = request
+        .gratis
+        .count
+        .div_ceil(PAGE_RECORDS)
+        .saturating_add(request.fidelity.count.div_ceil(PAGE_RECORDS))
+        .saturating_add(2)
+        .saturating_mul(2);
     loop {
         let wire = EnclaveRequest::Confidential {
             request: Box::new(request.clone()),
@@ -208,6 +217,9 @@ pub fn execute(
             }
             Response::Rejected { reason } => return Err(PrecompileError::Revert(reason)),
             Response::Missing { domain, mut after } => {
+                pages_left = pages_left
+                    .checked_sub(1)
+                    .ok_or_else(|| fault("cache recovery did not converge"))?;
                 let target = match domain {
                     Domain::Gratis => request.gratis,
                     Domain::Fidelity => request.fidelity,
