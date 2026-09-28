@@ -51,3 +51,13 @@ Feature: FullNode synchronization, failover, promotion, and replay
     And the follower reaches the committee finalized checkpoint with matching hash and state root
     When the follower restarts from its durable datadir against the same upstream
     Then the follower reaches the committee finalized checkpoint with matching hash and state root
+
+  @byzantine-preannounce-fullnode
+  Scenario: A FullNode follows only the genuine committee past byzantine pre-announces
+    Given every validator is armed to forge committee pre-announces
+    And a fresh localnet with a short epoch
+    When the committee drives past a reshare
+    And a production FullNode with its own enclave syncs from the committee
+    Then the follower reaches lockstep with the committee
+    And finalized history authenticates from genesis through two committee handoffs
+    And forged pre-announces were proposed and every one was rejected
