@@ -1113,6 +1113,18 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     );
 }
 
+/// Past its issuance window a day whose START the router still refuses is retired as
+/// overdue, so its limit does not wait on the router forever.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
+    let outcome = start_at(ANCHOR + 3 * 86_400, false, ocomp_brief_at_now);
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), false)
+    );
+}
+
 // --- Schedule tick ---
 
 // --- The day is priced when its auction starts ---

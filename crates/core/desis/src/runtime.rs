@@ -387,8 +387,25 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
             AuctionStage::Cleared | AuctionStage::Cancelled => {
                 return contract.remove_sched_active(worldwide_day);
             }
-            // A day that never started is retired by its start, which announces it.
-            _ if stage != AuctionStage::Briefed && now >= issuance_end => {
+            _ if now >= issuance_end => {
+                // A day that never started goes out as a late start while the router takes it.
+                if stage == AuctionStage::Briefed
+                    && storage
+                        .with_checkpoint(|| {
+                            start_auction(
+                                storage,
+                                &mut contract,
+                                worldwide_day,
+                                commit_end,
+                                reveal_end,
+                                issuance_end,
+                                now,
+                            )
+                        })
+                        .is_ok()
+                {
+                    return Ok(());
+                }
                 contract.emit(IDesis::AuctionOverdue {
                     worldwideDay: worldwide_day.into(),
                 })?;
