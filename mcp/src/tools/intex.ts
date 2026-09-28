@@ -1176,7 +1176,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_settlement_tokens",
     "Tokens you can settle a series with and what settling `units` of it costs in each. Use the cost " +
       "to size the PayNote you deposit before calling auction_bid_settle: the chain floors the whole " +
-      "operation once, so quote the units you will actually settle.",
+      "operation once, so quote the units you will actually settle. An issuance-currency cost holds " +
+      "only until the next whole UTC hour (its `snapshotId` changes then), so settle within that hour " +
+      "or quote again.",
     { series: seriesArg, units: z.number().int().positive().optional(), network: networkArg.optional() },
     handler(async ({ series, units, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
