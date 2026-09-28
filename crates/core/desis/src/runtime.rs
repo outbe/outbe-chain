@@ -37,8 +37,7 @@ use crate::sol_ext::IOriginRouter;
 
 /// Validate every technical prerequisite before the API may classify
 /// an oversized Desis Limit as the sole committed business rejection. Returns the
-/// schedule anchor: the midnight of `now`, or the next one when too little of
-/// the commit window would remain.
+/// schedule anchor: the UTC midnight of `now`.
 pub(crate) fn preflight_brief(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -51,21 +50,8 @@ pub(crate) fn preflight_brief(
     if contract.read_stage(worldwide_day)? != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
-    // Anchor to this midnight while it still leaves the minimum commit window;
-    // a late brief (stall past midnight) anchors to the next one instead.
     let midnight = now - now % SECONDS_PER_DAY;
-    let elapsed = now.checked_sub(midnight).ok_or_else(|| {
-        PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
-    })?;
-    let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
-    let anchor_ts = if remaining >= MIN_COMMIT_WINDOW_SECONDS {
-        midnight
-    } else {
-        midnight
-            .checked_add(SECONDS_PER_DAY)
-            .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
-    };
-    u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
+    u32::try_from(midnight).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
 }
 
 pub(crate) fn record_preflighted_brief(
@@ -411,6 +397,9 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
                 return contract.remove_sched_active(worldwide_day);
             }
             AuctionStage::Briefed if now >= anchor => {
+                // The chain has to run the windows the START message announces.
+                #[cfg(feature = "e2e-test")]
+                contract.auction_at.write(&worldwide_day, ts32(anchor)?)?;
                 if let StartOutcome::Retired = start_auction(
                     storage,
                     &mut contract,
@@ -447,7 +436,8 @@ enum StartOutcome {
 }
 
 /// Dispatch the START message for a briefed day: a red, unpriced or sub-unit day is born
-/// cancelled, a day past its commit window is cancelled unstarted, otherwise it starts green.
+/// cancelled, a day left with less than the minimum commit window is cancelled unstarted,
+/// otherwise it starts green.
 #[allow(clippy::too_many_arguments)]
 fn start_auction(
     storage: &StorageHandle<'_>,
@@ -458,7 +448,7 @@ fn start_auction(
     issuance_end: u64,
     now: u64,
 ) -> Result<StartOutcome> {
-    // The day before this start, not before the brief: a deferred anchor sits a day earlier.
+    // The day before this start, not before the brief.
     let utc_day = previous_date_key(timestamp_to_date_key(now));
     let rows: Vec<ReferenceCurrencyPrice> =
         outbe_oracle::api::priced_reference_currencies(storage.clone(), utc_day)?
@@ -513,8 +503,8 @@ fn start_auction(
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
-    if now >= commit_end {
-        contract.emit(IDesis::AuctionOverdue {
+    if commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS {
+        contract.emit(IDesis::AuctionCancelledLateStart {
             worldwideDay: worldwide_day.into(),
         })?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
