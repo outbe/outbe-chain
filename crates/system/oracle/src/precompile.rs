@@ -228,13 +228,6 @@ pub fn dispatch(
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_vwap_lookback(pair, now, 86400)
             }),
-            getFourHourVwap(c) => view(c, |c| {
-                let pair = oracle.require_pair_from(c.base, c.quote)?;
-                let now = oracle.storage.timestamp()?.to::<u64>();
-                oracle
-                    .four_hour_vwap(pair, now)?
-                    .ok_or_else(|| OracleError::NoVwapData.into())
-            }),
             getVwapPolicy(_) => metadata::<IOracle::getVwapPolicyCall>(|| {
                 let policy = active_vwap_policy();
                 Ok(IOracle::getVwapPolicyReturn {

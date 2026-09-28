@@ -119,17 +119,6 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-/// Rolling four-hour VWAP in the pair's registered scale, capped by the
-/// configured lookback. An empty window returns `None`; other errors propagate.
-pub fn four_hour_vwap(
-    storage: StorageHandle,
-    pair: AddressPair,
-    end_date: u64,
-) -> Result<Option<U256>> {
-    let oracle = OracleContract::new(storage);
-    oracle.four_hour_vwap(pair, end_date)
-}
-
 /// Snapshot required at the current block under the active policy.
 pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
     let now = storage.timestamp()?.to::<u64>();

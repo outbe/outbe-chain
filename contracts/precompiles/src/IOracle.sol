@@ -192,10 +192,6 @@ interface IOracle {
     /// @notice Returns VWAP over the last 24 hours for a pair.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAP over the last four hours in the pair's registered scale.
-    /// @dev Like getDayVwap, the lookback is capped by the configured lookback duration.
-    function getFourHourVwap(address base, address quote) external view returns (uint256 vwap);
-
     /// @notice Returns the trailing VWAP policy pinned by the protocol constants:
     ///         snapshots cover `[cutoff - vwapLookbackSeconds, cutoff)` with a
     ///         cutoff every `vwapUpdateIntervalSeconds` from the UTC epoch.

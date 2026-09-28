@@ -57,8 +57,6 @@ impl VwapAccumulator {
     }
 }
 
-const FOUR_HOURS: u64 = 4 * 60 * 60;
-
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
@@ -283,11 +281,6 @@ impl OracleContract<'_> {
     ) -> Result<U256> {
         self.try_calculate_vwap(pair, start_time, end_time)?
             .ok_or_else(|| OracleError::NoVwapData.into())
-    }
-
-    pub(crate) fn four_hour_vwap(&self, pair: AddressPair, end_date: u64) -> Result<Option<U256>> {
-        let lookback = self.config_lookback_duration.read()?.min(FOUR_HOURS);
-        self.try_calculate_vwap(pair, end_date.saturating_sub(lookback), end_date)
     }
 
     /// [`Self::calculate_vwap`] with "the window held no samples" as `Ok(None)`.
