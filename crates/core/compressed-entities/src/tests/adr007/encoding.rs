@@ -71,7 +71,6 @@ fn body_codecs_cover_all_three_closed_variants() {
         bucket_key: B256::repeat_byte(11),
         worldwide_day: WorldwideDay::new(16),
         floor_price_minor: U256::from(12),
-        is_qualified: true,
         entry_price_minor: U256::from(14),
         reference_currency: 840,
     };

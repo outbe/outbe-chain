@@ -189,7 +189,7 @@ fn third_party_settles_and_mines(world: &mut World) {
         &eth::IGratis::opNonceOfCall { account: owner },
     )
     .expect("owner mint nonce");
-    let pow = find_mining_pow_nonce(id.to_u256(), owner);
+    let pow = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Nod, id.to_u256(), owner);
     let pair_chain_id = chain_id_b256(world);
     // This is a valid MAC for the payer's own account, never the Nod owner's.
     let wrong_mac = outbe_tee_enclave::gratis::modify_mac(
@@ -1159,7 +1159,7 @@ fn compressed_body(
     };
     let package = world
         .rpc
-        .compressed_entity(port, request)
+        .compressed_entity_ready(port, request)
         .expect("finalized compressed Nod proof");
     assert!(
         package.header.block_number >= minimum,
@@ -1334,7 +1334,6 @@ mod tests {
             bucket_key,
             worldwide_day: day,
             floor_price_minor: U256::from(10),
-            is_qualified: true,
             entry_price_minor: U256::from(9),
             reference_currency: 840,
             settled_nods: 0,

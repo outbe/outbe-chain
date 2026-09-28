@@ -1795,6 +1795,36 @@ where
         certification_timeout = ?bt.certification_timeout,
         "consensus timeouts (genesis-sourced, no CLI override)"
     );
+    // Promote the committed DKG boundary, first adopting its finalized carrier
+    // from the chain if live delivery never committed it; leave validator mode
+    // when the boundary excludes the local key. Expanded at every point that can
+    // precede the next ceremony's completion (see `dkg::promotion`).
+    macro_rules! promote_committed_boundary_or_exit {
+        ($scope:expr) => {
+            let finalized_height = finalization_view.read().last_finalized_number;
+            adopt_finalized_boundary_carrier(
+                &dkg_manager,
+                &node.provider,
+                last_dkg_activation_height,
+                finalized_height,
+            )?;
+            let local_key = signing_key.public_key();
+            let active = ActiveDkgMaterial {
+                local_key: &local_key,
+                output: last_dkg_output.as_ref(),
+                share: signing_share.as_ref(),
+                polynomial: &polynomial,
+            };
+            let keys_dir = args.keys_dir.as_deref();
+            if promote_committed_boundary(&dkg_manager, keys_dir, &key_backend, active, $scope)
+                .await?
+                == BoundaryPromotion::LocalExcluded
+            {
+                return Ok(EpochLoopOutcome::StackExit);
+            }
+        };
+    }
+
     'epoch_loop: loop {
         // -- a. Register or take pre-registered epoch sub-channels -------
         // Activation pre-registers `next_epoch_subchannels` at DKG
@@ -2106,6 +2136,8 @@ where
                                 ));
                             }
 
+                            // Recording the next boundary drops an untaken commit.
+                            promote_committed_boundary_or_exit!(RetireScope::PendingMaterialOnly);
                             let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
                                 persist_completed_dkg_before_activation(
                                     keys_dir,
@@ -2487,6 +2519,10 @@ where
                             if let Some(current_height) = pending_provider_ready_height {
                                 let _ = execution_finalized_height_tx.send(current_height);
                             }
+                            // The height arm is off while a reshare runs.
+                            if reshare_in_progress {
+                                promote_committed_boundary_or_exit!(RetireScope::PendingMaterialOnly);
+                            }
                         }
                         Err(error) => {
                             warn!(%error, "consensus tip watch channel closed");
@@ -2521,57 +2557,7 @@ where
                             }
                             pending_provider_ready_height = None;
                             provider_ready_retry_timer = Box::pin(std::future::pending());
-                            if let Some(boundary) =
-                                dkg_manager.take_committed_boundary_artifact().await
-                            {
-                                let boundary_output = decode_boundary_output(&boundary)
-                                    .wrap_err("failed to decode finalized DKG boundary output")?;
-                                if last_dkg_output.as_ref() != Some(&boundary_output) {
-                                    let local_pk = signing_key.public_key();
-                                    if boundary_output.players().position(&local_pk).is_none() {
-                                        if let Some(ref keys_dir) = args.keys_dir {
-                                            retire_activated_dkg_retry_state(
-                                                keys_dir,
-                                                &key_backend,
-                                            )?;
-                                        }
-                                        info!(
-                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
-                                            "finalized DKG boundary excludes local validator; exiting validator mode"
-                                        );
-                                        return Ok(EpochLoopOutcome::StackExit);
-                                    }
-                                    return Err(eyre::eyre!(
-                                        "finalized DKG boundary output does not match active local DKG output"
-                                    ));
-                                }
-                                if let Some(ref keys_dir) = args.keys_dir {
-                                    if let Some(share) = signing_share.as_ref() {
-                                        save_dkg_state(
-                                            keys_dir,
-                                            share,
-                                            &polynomial,
-                                            &boundary_output,
-                                            &key_backend,
-                                        )
-                                        .wrap_err(
-                                            "failed to promote finalized DKG state to disk",
-                                        )?;
-                                        info!(
-                                            keys_dir = %keys_dir.display(),
-                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
-                                            "promoted finalized DKG state to durable storage"
-                                        );
-                                    } else {
-                                        info!(
-                                            keys_dir = %keys_dir.display(),
-                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
-                                            "finalized DKG boundary adopted in verifier mode; no private share to promote"
-                                        );
-                                    }
-                                    retire_activated_dkg_retry_state(keys_dir, &key_backend)?;
-                                }
-                            }
+                            promote_committed_boundary_or_exit!(RetireScope::All);
                         }
                         None => {
                             pending_provider_ready_height = Some(current_height);
@@ -2809,6 +2795,8 @@ where
                                 .as_ref()
                                 .map(|pending| pending.target.clone())
                                 .ok_or_else(|| eyre::eyre!("dealer-only activation disappeared while preparing boundary"))?;
+                            // Recording the next boundary drops an untaken commit.
+                            promote_committed_boundary_or_exit!(RetireScope::PendingMaterialOnly);
                             let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
                                 persist_observed_dkg_boundary_before_activation(
                                     keys_dir,

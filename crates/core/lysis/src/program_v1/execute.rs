@@ -1,4 +1,4 @@
-//! Pure sequential Lysis V1 semantic program and its staged legacy adapter seam.
+//! Pure sequential Lysis V1 semantic program.
 
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -9,7 +9,6 @@ use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_nod::NodContract;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 use crate::constants::calc_floor_price;
@@ -440,7 +439,11 @@ pub(crate) fn calculate_cost(
     gratis_load_minor: U256,
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
-    let cost = scaled_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
+    // Use the same minor-unit minimum as Nod reads and settlement.
+    let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
+        .map_err(|error| ProgramErrorV1::Arithmetic {
+            message: error.to_string(),
+        })?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,

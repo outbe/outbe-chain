@@ -15,9 +15,8 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 
-/// A lifecycle mark for a series this chain has not seen waits in one slot per series (Called overrides
-/// Qualified) and is applied when ISSUANCE creates the series; a mark the series already carries, or one a
-/// later mark superseded, is acknowledged without effect.
+/// A Called mark for a series this chain has not seen waits in one slot per series and is applied when
+/// ISSUANCE creates the series; a mark the series already carries is acknowledged without effect.
 contract TargetRouterMarkSlotTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
@@ -43,10 +42,6 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function _deliver(bytes memory packet) internal {
         _deliver(uint32(block.chainid), originSender, address(router), packet);
-    }
-
-    function _qualified() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkQualified(DAY, MarkBatchLib.one(CreateSeriesLib.seriesId(DAY)));
     }
 
     function _called() internal view returns (bytes memory) {
@@ -81,39 +76,30 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         emit ITargetRouter.InboundMessageIgnored(uint32(block.chainid), msgType, series, reason);
     }
 
+    function _expectZeroCallTimeIgnored() internal {
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.InboundMessageIgnored(
+            uint32(block.chainid), BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(DAY)), InboundReason.INVALID
+        );
+    }
+
     // --- unknown series: slot, then apply on creation ---
 
     function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.MarkParked(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
-        _deliver(_qualified());
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_QUALIFIED, "slotted");
-    }
-
-    function test_IssuanceCreatingTheSeriesAppliesTheSlottedMark() public {
-        _deliver(_qualified());
-
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.ParkedMarkApplied(series, BridgeMsgCodec.MSG_MARK_QUALIFIED);
-        _deliver(_issuance());
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Qualified), "applied on creation");
-        assertEq(router.parkedMark(series), 0, "slot cleared");
-    }
-
-    function test_CalledOverridesAWaitingQualifiedButNotTheReverse() public {
-        _deliver(_qualified());
+        emit ITargetRouter.MarkParked(series);
         _deliver(_called());
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called wins");
-        _deliver(_qualified());
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Qualified cannot demote it");
+        assertEq(router.parkedMark(series), uint32(block.timestamp), "slotted with its call time");
     }
 
     /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
     ///      rather than holding for the valve.
     function test_IssuanceCreatingTheSeriesAppliesAWaitingCalled() public {
         _deliver(_called());
-        _deliver(_issuance());
 
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.ParkedMarkApplied(series);
+        _deliver(_issuance());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
         assertEq(router.parkedMark(series), 0, "nothing waits any more");
     }
@@ -146,39 +132,34 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         vm.expectRevert();
         router.applyParkedMark(series);
-        assertEq(router.parkedMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "slot kept");
+        assertEq(router.parkedMark(series), uint32(block.timestamp), "slot kept");
     }
 
-    // --- already there / superseded ---
+    // --- a zero call time ---
 
-    function test_ARepeatedQualifiedIsADuplicate() public {
+    function test_AZeroCallTimeForAnUnknownSeriesIsInvalidAndNotSlotted() public {
+        _expectZeroCallTimeIgnored();
+        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
+        assertEq(router.parkedMark(series), 0, "nothing waits");
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoParkedMark.selector, series));
+        router.applyParkedMark(series);
+    }
+
+    function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
-        _deliver(_qualified());
-        _expectIgnored(BridgeMsgCodec.MSG_MARK_QUALIFIED, InboundReason.DUPLICATE);
-        _deliver(_qualified());
-        assertEq(router.parkedMark(series), 0, "nothing slotted");
+        _expectZeroCallTimeIgnored();
+        _deliver(BridgeMsgCodec.encodeMarkCalled(DAY, 0, MarkBatchLib.one(series)));
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
+        assertEq(router.parkedMark(series), 0, "nothing waits");
     }
+
+    // --- already there ---
 
     function test_ARepeatedCalledIsADuplicate() public {
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
         _expectIgnored(BridgeMsgCodec.MSG_MARK_CALLED, InboundReason.DUPLICATE);
         _deliver(_called());
-    }
-
-    function test_AQualifiedAfterCalledIsObsolete() public {
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
-        _deliver(_called());
-        _expectIgnored(BridgeMsgCodec.MSG_MARK_QUALIFIED, InboundReason.OBSOLETE);
-        _deliver(_qualified());
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "Called stands");
-        assertEq(router.parkedMark(series), 0, "nothing slotted");
-    }
-
-    function test_ACalledAfterQualifiedApplies() public {
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
-        _deliver(_qualified());
-        _deliver(_called());
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "the normal order still works");
     }
 }

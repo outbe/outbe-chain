@@ -52,9 +52,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-
-        tokenA.markQualified(SERIES_ID);
-        tokenB.markQualified(SERIES_ID);
     }
 
     function test_HopAToB_TotalSupplyPreservedAndBelowCap() public {
@@ -99,7 +96,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
         tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
-        tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
         uint256 bridged = 100;
@@ -123,7 +119,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
         tokenB.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
-        tokenB.markQualified(parkSeries);
         adapterB.retryCrosschainMint(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
@@ -140,7 +135,6 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
         tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
-        tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
         tokenA.issue(user, minted, parkSeries);

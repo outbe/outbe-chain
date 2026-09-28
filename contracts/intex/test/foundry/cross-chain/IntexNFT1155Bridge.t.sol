@@ -60,8 +60,6 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             bytes14 series = i == 0 ? SERIES_A : SERIES_B;
             srcToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
             dstToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
-            srcToken.markQualified(series);
-            dstToken.markQualified(series);
         }
 
         srcToken.grantRole(srcToken.RELAYER_ROLE(), address(srcBatch));

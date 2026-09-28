@@ -121,7 +121,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
         _deliver(packet); // first CLEARING relays
 
-        // A redelivered CLEARING must not re-relay under a fresh generation.
+        // A redelivered CLEARING must not relay the day again.
         vm.recordLogs();
         _deliver(packet);
         assertEq(_countLogs(keccak256("BidsDoneSent(bytes32,uint32,uint16,uint32)")), 0, "no re-relay");
@@ -293,15 +293,14 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
-    // --- _handleMarkQualified: pure status flip on the local IntexNFT1155 ---
-    function test_handleMarkQualified_flipsStatusOnIntex() public {
+    function test_aRetiredMarkQualifiedIsAnUnknownType() public {
         _seedSeriesOnIntex();
 
-        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
+        bytes memory packet = abi.encodePacked(hex"0109", abi.encode(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 9));
         _deliver(packet);
 
-        IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
-        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Qualified), "series flipped to Qualified");
+        assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "state untouched");
     }
 
     // --- Helpers ---

@@ -102,8 +102,8 @@ fn run_outbe_pre_execution_hooks_inner(
     // closed UTC day. Reads the same Oracle surface, so it must run after Oracle.
     <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // INTEX: carry on the same two sweeps for series, plus the payout and expiry
-    // drains. Reads the same Oracle surface, so it runs after Oracle.
+    // INTEX: carry on the call sweep for series, plus the payout and expiry drains.
+    // Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())

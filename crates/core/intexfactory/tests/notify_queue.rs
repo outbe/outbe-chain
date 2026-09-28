@@ -7,16 +7,16 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::MAX_ROUTER_CALLS_PER_FIRING;
-use outbe_intexfactory::qualified::{drain_notices, NOTICE_CALLED};
+use outbe_intexfactory::notify::{drain_notices, pack_called_notice};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
+const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(20_260_101 + index), *b"USD", b'U')
@@ -28,9 +28,8 @@ fn seed(handle: &StorageHandle<'_>, count: u32) {
     for index in 0..count {
         factory
             .notify_at
-            .write(&index, series(index).to_word())
+            .write(&index, pack_called_notice(series(index), CALLED_AT))
             .unwrap();
-        factory.notify_kind.write(&index, NOTICE_CALLED).unwrap();
     }
     factory.notify_tail.write(count).unwrap();
 }

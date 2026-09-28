@@ -1,53 +1,15 @@
 use super::*;
 
-use super::lifecycle::{fill_days, list_reference, qualify_series, setup_pair};
+use super::lifecycle::{fill_days, setup_pair};
 use outbe_primitives::storage::types::Storable as _;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
 const MATURE_TS: u64 = ISSUED_AT as u64 + 21 * DAY + 1;
 
 #[test]
-fn scan_and_qualify_promotes_aged_series() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        // The closed day's price above the floor.
-        let oracle = OracleContract::new(s.clone());
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            MATURE_TS,
-            U256::from(EXPECTED_FLOOR) + U256::from(1),
-        );
-        list_reference(&oracle);
-
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
-
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(
-            r.lifecycle_state().unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
-        let f = IntexFactoryContract::new(s.clone());
-        let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-        assert_eq!(
-            f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, trig_bin))
-                .unwrap(),
-            1
-        );
-    });
-}
-
-#[test]
 fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
-        let _f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -80,10 +42,10 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // scan day itself stays unfinalized, so reading any other day - or any
     // other store - drops below the threshold and fails the call.
     with_factory(|s| {
-        let _f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
-        // Exact midnight UTC, well past the qualification period.
+        // Exact midnight UTC, well past issuance.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
@@ -135,110 +97,9 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn scan_does_not_halt_on_overflow_rate() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        // Out-of-range day price: price_to_bin overflows.
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, U256::MAX);
-        list_reference(&oracle);
-
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-        // Must not halt: returns Ok(0) and leaves the series untouched.
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
-    });
-}
-
-#[test]
-fn a_day_without_a_price_qualifies_nothing_and_the_next_one_still_can() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        list_reference(&oracle);
-        // Finalized, but no trade that day: the pair is known and the day is empty.
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, U256::ZERO);
-
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, MATURE_TS, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
-
-        let next_ts = MATURE_TS + DAY;
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            next_ts,
-            U256::from(EXPECTED_FLOOR + 1),
-        );
-        let next = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(qualified::scan_and_qualify(&next).unwrap(), 1);
-    });
-}
-
-#[test]
-fn scan_isolates_bad_series() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        // A bin entry whose series record does not exist: read_series errors -> the series must be
-        // skipped (logged), not halt the block.
-        IntexFactoryContract::new(s.clone())
-            .insert_unqualified(sid(999), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
-            .unwrap();
-
-        let oracle = OracleContract::new(s.clone());
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            MATURE_TS,
-            U256::from(EXPECTED_FLOOR) + U256::from(1),
-        );
-        list_reference(&oracle);
-
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-        // Bad series (999) skipped; healthy series (7) still qualifies.
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
-    });
-}
-
-#[test]
 fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
-        let _f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -250,83 +111,19 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
             s.clone(),
         );
-        // Must not halt: returns Ok(0) and leaves the series Qualified.
+        // Must not halt: returns Ok(0) and leaves the series Issued.
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .lifecycle_state()
                 .unwrap(),
-            outbe_intex::IntexState::Qualified
+            outbe_intex::IntexState::Issued
         );
     });
 }
 
-#[test]
-fn scan_caps_work_per_block_and_resumes_via_cursor() {
-    with_factory(|s| {
-        let oracle = OracleContract::new(s.clone());
-        // Rate well above both floors so both bins are eligible.
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            MATURE_TS,
-            U256::from(EXPECTED_FLOOR) * U256::from(1000),
-        );
-        list_reference(&oracle);
-
-        // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
-        // Bogus ids (no series record) are per-series skipped but still count toward the cap.
-        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK;
-        let f1 = U256::from(EXPECTED_FLOOR);
-        let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
-        {
-            let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=cap {
-                factory
-                    .insert_unqualified(sid(id), REFERENCE_ISO, f1)
-                    .unwrap();
-            }
-            for id in 1001..=1005u32 {
-                factory
-                    .insert_unqualified(sid(id), REFERENCE_ISO, f2)
-                    .unwrap();
-            }
-        }
-        let bin2 = IntexFactoryContract::price_to_bin(f2).unwrap();
-
-        let ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, ts, CHAIN_ID), s.clone());
-
-        // Block 1 caps after the first (cap-sized) bin; the second bin is deferred.
-        qualified::scan_and_qualify(&ctx).unwrap();
-        let cursor1 = IntexFactoryContract::new(s.clone())
-            .qualify_scan_cursor
-            .read(&REFERENCE_ISO)
-            .unwrap();
-        assert!(cursor1 > 0, "cursor advanced past the capped bin");
-        assert_eq!(
-            IntexFactoryContract::new(s.clone())
-                .unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin2))
-                .unwrap(),
-            5,
-            "second bin untouched in block 1"
-        );
-
-        // Block 2 resumes at the second bin and wraps the cursor to 0.
-        qualified::run_qualify_slice(&ctx).unwrap();
-        let cursor2 = IntexFactoryContract::new(s.clone())
-            .qualify_scan_cursor
-            .read(&REFERENCE_ISO)
-            .unwrap();
-        assert_eq!(cursor2, 0, "cursor wrapped after a full sweep");
-    });
-}
-
-/// Seed a series directly in the registry + bin index, bypassing issue()
+/// Seed a series directly in the registry + call-price index, bypassing issue()
 /// so tests can omit the OriginRouter stub.
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     seed_issued_at(s, id, ISSUED_AT);
@@ -355,7 +152,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
     )
     .unwrap();
     IntexFactoryContract::new(s.clone())
-        .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
+        .insert_call_bin(sid(id), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
         .unwrap();
 }
 
@@ -385,15 +182,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
         StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             seed_issued_at(&s, 7, issued_at);
-            outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
             let mut f = IntexFactoryContract::new(s.clone());
-            f.insert_qualified_group(
-                REFERENCE_ISO,
-                WorldwideDay::new(7),
-                U256::from(EXPECTED_TRIGGER),
-                &[sid(7)],
-            )
-            .unwrap();
 
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
@@ -406,7 +195,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
             );
 
             let group = f
-                .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+                .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
                 .unwrap();
             assert_eq!(
                 call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
@@ -418,36 +207,9 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
 }
 
 #[test]
-fn qualify_survives_router_failure() {
-    // No OriginRouter stub: notify_qualified fails silently.
-    // The Issued -> Qualified transition must still complete.
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    storage.stub_sub_call_at(
-        crate::constants::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    StorageHandle::enter(&mut storage, |s| {
-        seed_issued(&s, 7);
-        let mut f = IntexFactoryContract::new(s.clone());
-        assert_eq!(
-            qualify_day(&s, &mut f, 7, U256::from(EXPECTED_FLOOR) + U256::from(1)),
-            1
-        );
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
-    });
-}
-
-#[test]
 fn call_survives_router_failure() {
     // No OriginRouter stub: notify_called fails silently.
-    // The Qualified -> Called transition must still complete.
+    // The Issued -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     storage.stub_sub_call_at(
@@ -456,15 +218,7 @@ fn call_survives_router_failure() {
     );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
-        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified_group(
-            REFERENCE_ISO,
-            WorldwideDay::new(7),
-            U256::from(EXPECTED_TRIGGER),
-            &[sid(7)],
-        )
-        .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -479,7 +233,7 @@ fn call_survives_router_failure() {
         );
 
         let group = f
-            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
         assert_eq!(
             call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
@@ -508,139 +262,22 @@ fn eur_series(worldwide_day: u32) -> IssuanceParams {
 #[test]
 fn a_currency_rate_never_qualifies_another_currency_series() {
     with_factory(|s| {
-        // Both series carry the same entry price, so their floors land in the
-        // same bin: only the currency namespace keeps them apart.
         runtime::issue(&s, sample(7)).unwrap();
         runtime::issue(&s, eur_series(8)).unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-        oracle.reference_currencies.push(EUR_ISO).unwrap();
         let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
         let below = U256::from(EXPECTED_FLOOR) - U256::from(1);
         write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, above);
         write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, below);
 
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
-
-        // The euro series shares the dollar series' bin and sits below its own
-        // rate, so a scan that crossed the currency border would have taken it.
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
+        // Both carry the same floor; only the euro's own day price decides for it.
         let eur_id = eur_series(8).series_id;
-        assert_eq!(
-            outbe_intex::api::read_series(&s, eur_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
+        assert!(runtime::is_series_qualified(&s, sid(7)).unwrap());
+        assert!(!runtime::is_series_qualified(&s, eur_id).unwrap());
 
-        // Its own rate crossing the floor is what qualifies it.
         write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, above);
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, eur_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
-    });
-}
-
-#[test]
-fn an_unpriced_reference_currency_is_skipped_not_fatal() {
-    with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        // Listed before its pair exists - the registry and the pair registry are
-        // populated independently.
-        oracle.reference_currencies.push(EUR_ISO).unwrap();
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            MATURE_TS,
-            U256::from(EXPECTED_FLOOR) + U256::from(1),
-        );
-
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
-    });
-}
-
-#[test]
-fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
-    with_factory(|s| {
-        runtime::issue(&s, eur_series(8)).unwrap();
-
-        let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-        oracle.reference_currencies.push(EUR_ISO).unwrap();
-        let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, above);
-        write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, above);
-
-        // The dollar bin alone fills a whole block's budget. Ids without a series
-        // record are skipped per series but still count against it.
-        {
-            let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
-                factory
-                    .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
-                    .unwrap();
-            }
-        }
-
-        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
-            s.clone(),
-        );
-
-        let eur_id = eur_series(8).series_id;
-        qualified::scan_and_qualify(&ctx).unwrap();
-        assert_eq!(
-            outbe_intex::api::read_series(&s, eur_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued,
-            "the dollar bin consumed the block's budget"
-        );
-        assert_eq!(
-            IntexFactoryContract::new(s.clone())
-                .qualify_currency_cursor
-                .read()
-                .unwrap(),
-            u32::from(REFERENCE_ISO),
-            "the next slice resumes where the budget gave out"
-        );
-
-        qualified::run_qualify_slice(&ctx).unwrap();
-        assert_eq!(
-            outbe_intex::api::read_series(&s, eur_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Qualified
-        );
+        assert!(runtime::is_series_qualified(&s, eur_id).unwrap());
     });
 }
 
@@ -648,17 +285,17 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     let currencies = [840u16, 978u16];
     assert_eq!(
-        crate::qualified::currency_position(&currencies, u32::from(EUR_ISO)),
+        crate::called::currency_position(&currencies, u32::from(EUR_ISO)),
         1,
         "the cursor names a currency, not a slot"
     );
     assert_eq!(
-        crate::qualified::currency_position(&currencies[1..], u32::from(EUR_ISO)),
+        crate::called::currency_position(&currencies[1..], u32::from(EUR_ISO)),
         0,
         "dropping the currency ahead of it does not shift the cursor onto a stranger"
     );
     assert_eq!(
-        crate::qualified::currency_position(&currencies, 392),
+        crate::called::currency_position(&currencies, 392),
         0,
         "a currency the registry no longer carries restarts at the head"
     );
@@ -901,7 +538,7 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
 #[test]
 fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
     with_factory(|s| {
-        let _f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -967,14 +604,13 @@ fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeCont
     )
 }
 
-/// The rule the sweep exists for: a spike inside the day that leaves the day's VWAP at
-/// the floor qualifies nothing, however high and fresh the live rate stands.
+/// A spike inside the day that leaves the day's VWAP at the floor qualifies nothing,
+/// however high and fresh the live rate stands.
 #[test]
 fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        list_reference(&oracle);
         write_rate(
             &oracle,
             REFERENCE_ISO,
@@ -993,12 +629,7 @@ fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
             U256::from(EXPECTED_FLOOR),
         );
 
-        let ctx = block_at(&s, 1, MATURE_TS);
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
-        for _ in 0..3 {
-            qualified::run_qualify_slice(&ctx).unwrap();
-        }
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
+        assert!(!runtime::is_series_qualified(&s, sid(7)).unwrap());
     });
 }
 
@@ -1008,20 +639,18 @@ fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
 fn the_issue_day_qualifies_only_a_series_issued_at_midnight() {
     let day = previous_date_key(timestamp_to_date_key(MATURE_TS));
     let midnight = date_key_to_utc_timestamp(day) as u32;
-    for (issued_at, expected) in [(midnight, 1), (midnight + 1, 0)] {
+    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
         with_factory(|s| {
             seed_issued_at(&s, 7, issued_at);
-            let oracle = OracleContract::new(s.clone());
-            list_reference(&oracle);
             write_day_vwap(
-                &oracle,
+                &OracleContract::new(s.clone()),
                 REFERENCE_ISO,
                 PAIR_ID,
                 MATURE_TS,
                 U256::from(EXPECTED_FLOOR + 1),
             );
             assert_eq!(
-                qualified::scan_and_qualify(&block_at(&s, 1, MATURE_TS)).unwrap(),
+                runtime::is_series_qualified(&s, sid(7)).unwrap(),
                 expected,
                 "issued at {issued_at}"
             );
@@ -1029,192 +658,8 @@ fn the_issue_day_qualifies_only_a_series_issued_at_midnight() {
     }
 }
 
-/// A running sweep keeps its day while the next ones queue behind it: one waits, a
-/// newer one takes its place and names the day it pushed out, and the old day is
-/// finished against its own price before the queued one starts.
-#[test]
-fn a_running_qualify_sweep_keeps_its_day_while_the_next_ones_queue() {
-    use alloy_sol_types::SolEvent;
-
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    for stubbed in [
-        crate::constants::INTEX_NFT1155_ADDRESS,
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
-    ] {
-        storage.stub_sub_call_at(stubbed, alloy_primitives::Bytes::from(vec![0u8; 32]));
-    }
-    let skipped = StorageHandle::enter(&mut storage, |s| {
-        select_prod_profile(&s);
-        runtime::issue(&s, sample(7)).unwrap();
-        // Ids without a series record fill a lower bin: each costs a decision and stays.
-        {
-            let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1000..1000 + crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
-                factory
-                    .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR / 2))
-                    .unwrap();
-            }
-        }
-        let oracle = OracleContract::new(s.clone());
-        list_reference(&oracle);
-        let stamps = [MATURE_TS, MATURE_TS + DAY, MATURE_TS + 2 * DAY];
-        let closed = stamps.map(|ts| previous_date_key(timestamp_to_date_key(ts)));
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            stamps[0],
-            U256::from(EXPECTED_FLOOR + 1),
-        );
-
-        let factory = IntexFactoryContract::new(s.clone());
-        qualified::scan_and_qualify(&block_at(&s, 1, stamps[0])).unwrap();
-        let cursor = factory.qualify_scan_cursor.read(&REFERENCE_ISO).unwrap();
-        assert_ne!(cursor, 0, "the first slice gave out inside the range");
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
-
-        // The later days close at the floor: only the pinned day's price qualifies.
-        for (number, ts) in [(2, stamps[1]), (3, stamps[2])] {
-            write_day_vwap(
-                &oracle,
-                REFERENCE_ISO,
-                PAIR_ID,
-                ts,
-                U256::from(EXPECTED_FLOOR),
-            );
-            assert_eq!(
-                qualified::scan_and_qualify(&block_at(&s, number, ts)).unwrap(),
-                0
-            );
-        }
-        assert_eq!(factory.qualify_sweep_day.read().unwrap(), closed[0]);
-        assert_eq!(factory.qualify_pending_day.read().unwrap(), closed[2]);
-        assert_eq!(
-            factory.qualify_scan_cursor.read(&REFERENCE_ISO).unwrap(),
-            cursor,
-            "the walk in flight was not restarted"
-        );
-
-        qualified::run_qualify_slice(&block_at(&s, 4, stamps[2])).unwrap();
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Qualified);
-        assert_eq!(factory.qualify_sweep_day.read().unwrap(), closed[2]);
-        assert_eq!(factory.qualify_pending_day.read().unwrap(), 0);
-        closed[1]
-    });
-
-    let events: Vec<_> = storage
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| IIntexFactory::SweepDaySkipped::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, crate::constants::QUALIFY_SWEEP);
-    assert_eq!(events[0].skippedDay, skipped);
-}
-
-/// Each currency is walked once a sweep, so two currencies each holding more
-/// undecided groups than a slice may decide still let the sweep end.
-#[test]
-fn a_qualify_sweep_over_several_currencies_always_ends() {
-    with_factory(|s| {
-        let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-        oracle.reference_currencies.push(EUR_ISO).unwrap();
-        let above = U256::from(EXPECTED_FLOOR + 1);
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, above);
-        write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, above);
-        // Ids without a series record: each costs a decision and stays in its bin.
-        {
-            let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK + 1 {
-                for iso in [REFERENCE_ISO, EUR_ISO] {
-                    factory
-                        .insert_unqualified(sid(id), iso, U256::from(EXPECTED_FLOOR))
-                        .unwrap();
-                }
-            }
-        }
-
-        let ctx = block_at(&s, 1, MATURE_TS);
-        qualified::scan_and_qualify(&ctx).unwrap();
-        for _ in 0..3 {
-            qualified::run_qualify_slice(&ctx).unwrap();
-        }
-        assert_eq!(
-            IntexFactoryContract::new(s.clone())
-                .qualify_sweep_day
-                .read()
-                .unwrap(),
-            0,
-            "the sweep closed"
-        );
-    });
-}
-
-/// A qualified notice costs the router calls it makes, one per eight series, and no
-/// more, so a firing sends a full budget of one-series groups.
-#[test]
-fn a_firing_sends_a_full_budget_of_qualified_groups() {
-    with_factory(|s| {
-        let mut factory = IntexFactoryContract::new(s.clone());
-        let budget = crate::constants::MAX_ROUTER_CALLS_PER_FIRING;
-        for id in 1..=budget + 5 {
-            factory
-                .insert_qualified_group(
-                    REFERENCE_ISO,
-                    WorldwideDay::new(id),
-                    U256::from(EXPECTED_TRIGGER),
-                    &[sid(id)],
-                )
-                .unwrap();
-            qualified::enqueue_notice(
-                &mut factory,
-                qualified::NOTICE_QUALIFIED,
-                U256::from(IntexFactoryContract::scoped(REFERENCE_ISO, id)),
-            )
-            .unwrap();
-        }
-
-        qualified::drain_notices(&block_at(&s, 1, MATURE_TS)).unwrap();
-        assert_eq!(factory.notify_head.read().unwrap(), budget);
-    });
-}
-
-/// A day price the bin ladder cannot hold settles its currency for the day and says so
-/// once, instead of halting the block.
-#[test]
-fn an_unindexable_day_price_is_reported_once() {
-    use alloy_sol_types::SolEvent;
-
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    let day = StorageHandle::enter(&mut storage, |s| {
-        select_prod_profile(&s);
-        seed_issued(&s, 7);
-        let oracle = OracleContract::new(s.clone());
-        list_reference(&oracle);
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, U256::MAX);
-
-        let ctx = block_at(&s, 1, MATURE_TS);
-        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
-        qualified::run_qualify_slice(&ctx).unwrap();
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
-        previous_date_key(timestamp_to_date_key(MATURE_TS))
-    });
-
-    let events: Vec<_> = storage
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| IIntexFactory::QualifyScanSkipped::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
-    assert_eq!(events[0].utcDay, day);
-}
-
-/// The Called sweep reports a currency it cannot price just as the qualify sweep does:
-/// the day's window price is out of the bin ladder, so the currency waits a day.
+/// The Called sweep reports a currency it cannot price: the day's window price is out
+/// of the bin ladder, so the currency waits a day.
 #[test]
 fn an_unindexable_window_price_is_reported_once() {
     use alloy_sol_types::SolEvent;
@@ -1224,15 +669,6 @@ fn an_unindexable_window_price_is_reported_once() {
     let day = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         seed_issued(&s, 7);
-        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
-        IntexFactoryContract::new(s.clone())
-            .insert_qualified_group(
-                REFERENCE_ISO,
-                WorldwideDay::new(7),
-                U256::from(EXPECTED_TRIGGER),
-                &[sid(7)],
-            )
-            .unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let day = previous_date_key(timestamp_to_date_key(MATURE_TS));
@@ -1242,7 +678,7 @@ fn an_unindexable_window_price_is_reported_once() {
             called::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(),
             0
         );
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Qualified);
+        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
         day
     });
 
@@ -1263,7 +699,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
     let mut provider = factory_provider();
     let retry_day = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        let _f = qualify_series(&s, 7, sample(7));
+        runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;

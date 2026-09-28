@@ -43,20 +43,12 @@ fn arm_genesis_ocomp(storage: &StorageHandle, chain_id: u64) {
     // Fidelity leagues are enclave-computed; every test thread that reaches the
     // OCOMP snapshot path needs the in-process dev enclave (thread-local).
     outbe_fidelity::enclave_client::test_enclave::install();
-    let install = crate::fixture_kernel::fork_install_fixture(
-        crate::ocomp::fork::OcompForkInstallClassification::Measurement,
-        1,
-        chain_id,
-        B256::repeat_byte(0x11),
-    );
-    let mut metadosis = MetadosisContract::new(storage.clone());
-    let limits = crate::ocomp::schema::poc_schema_limits();
-    metadosis
-        .initialize_ocomp_request_profile(&install.request_profile, &limits)
-        .unwrap();
-    metadosis
-        .initialize_ocomp_activation_authority(&install.protocol_bundle, &limits)
-        .unwrap();
+    crate::fixture_kernel::seed_registry_authority(
+        storage,
+        &crate::fixture_kernel::fixture_authority(chain_id),
+        &crate::ocomp::schema::poc_schema_limits(),
+    )
+    .unwrap();
 }
 
 fn form_due_fixture_day_limits(storage: &StorageHandle, timestamp: u64) {
@@ -171,9 +163,7 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         outbe_primitives::time::timestamp_to_date_key(timestamp),
     );
     oracle
-        .utc_day_vwap_value
-        .get_nested(&last_closed)
-        .write(&index, U256::from(100u64))
+        .record_utc_day_vwap(last_closed, index, U256::from(100u64))
         .unwrap();
 }
 

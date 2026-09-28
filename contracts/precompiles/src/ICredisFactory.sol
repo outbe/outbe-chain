@@ -34,11 +34,10 @@ interface ICredisFactory {
     /// @param referenceCurrency ISO 4217 numeric code of the threshold-evaluation
     ///        anchor, elected here and fixed for the position's life. Must be a
     ///        registered reference currency; the call price is struck from the
-    ///        COEN/<referenceCurrency> quote and the daily breach scan reads that same
-    ///        series. Passing the disbursed asset's own currency reuses the rate sealed
-    ///        at `pledgeGratis`, so the threshold cannot drift between pledge and
-    ///        origination; any other currency is quoted at origination instead. It does
-    ///        not denominate the position.
+    ///        previous completed UTC-day COEN/<referenceCurrency> VWAP times 1.64.
+    ///        The daily breach scan reads that same currency's series. The anchor
+    ///        is independent of spot and the pledge entry price, even when the
+    ///        reference and issuance currencies match. It does not denominate the position.
     /// @return positionId Derived from `pledgeNote` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function issueCredis(
@@ -51,7 +50,8 @@ interface ICredisFactory {
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.
-    ///         A position is settleable from the moment it opens. Payment is applied
+    ///         A position is settleable from the moment it opens through its call
+    ///         settlement deadline, inclusive. Payment is applied
     ///         interest first, principal second, so an `amount` below the interest accrued
     ///         since the last settlement is rejected - query
     ///         `ICredis.accruedInterest` for that floor. Collateral is released in

@@ -1,7 +1,7 @@
 [Unit]
 Description=Outbe OCOMP SnapshotExporter
 After=outbe-full-node.service outbe-validator.service
-PartOf=outbe-full-node.service outbe-validator.service
+PartOf=outbe-validator.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

@@ -99,7 +99,7 @@ fn verified_input(
     for &port in &ports {
         let package = world
             .rpc
-            .compressed_entity(port, request)
+            .compressed_entity_ready(port, request)
             .expect("finalized public input proof");
         let height = package.header.block_number;
         world

@@ -29,14 +29,6 @@
 //! ```compile_fail
 //! use outbe_metadosis::ocomp::request::run_terminal_request;
 //! ```
-//!
-//! ```compile_fail
-//! use outbe_metadosis::schema::MetadosisContract;
-//! fn raw_profile_or_fork_initializer(contract: &mut MetadosisContract<'_>) {
-//!     let _ = contract.initialize_ocomp_request_profile(todo!(), todo!());
-//!     let _ = contract.initialize_ocomp_fork_install(todo!(), 0, todo!());
-//! }
-//! ```
 
 mod aggregate;
 pub mod api;

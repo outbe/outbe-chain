@@ -15,7 +15,7 @@ contract IntexNFT1155ExpiredTest is Test {
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 21 days;
 
-    /// erc7201:outbe.intex.IntexNFT1155; `seriesData` is the namespace's second member.
+    /// erc7201:outbe.intex.IntexNFT1155; `seriesData` is the namespace's first member.
     bytes32 internal constant STORAGE_SLOT = 0xe941cbaf65abb9f7003c3006add9c5d12ba7e339abdf88d4afd5defeb8932900;
 
     address internal admin = makeAddr("admin");
@@ -32,18 +32,17 @@ contract IntexNFT1155ExpiredTest is Test {
         vm.startPrank(relayer);
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         token.issue(user, 10, SERIES_ID);
-        token.markQualified(SERIES_ID);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
         (iTok, sTok) = token.tokenIds(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
     }
 
-    /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`,
-    /// `status` and `state` into the record's fourth slot, `state` at byte 13.
+    /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
+    /// and `state` into the record's fourth slot, `state` at byte 12.
     function _storedState() internal view returns (uint8) {
-        bytes32 base = keccak256(abi.encode(iTok, bytes32(uint256(STORAGE_SLOT) + 1)));
-        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 104);
+        bytes32 base = keccak256(abi.encode(iTok, STORAGE_SLOT));
+        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
     }
 
     function test_ReadsCalledUpToTheDeadlineAndExpiredAfterIt() public {
@@ -52,12 +51,6 @@ contract IntexNFT1155ExpiredTest is Test {
 
         vm.warp(deadline + 1);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Expired));
-    }
-
-    function test_SeriesDataAgreesWithReadData() public {
-        vm.warp(deadline + 1);
-        (,,,,,,,,,,,, IIntexNFT1155.IntexState state) = token.seriesData(iTok);
-        assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Expired));
     }
 
     /// The whole point of deriving: storage still says `Called`, so `_update`,

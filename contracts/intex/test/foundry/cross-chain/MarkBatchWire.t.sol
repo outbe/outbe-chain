@@ -87,12 +87,12 @@ contract MarkBatchWireTest is CrossChainTest {
         uint256 fee = bridge.fee();
         vm.deal(intexFactory, fee);
         vm.prank(intexFactory);
-        outbeRouter.sendMarkQualified{value: fee}(WORLDWIDE_DAY, batch);
+        outbeRouter.sendMarkCalled{value: fee}(WORLDWIDE_DAY, uint32(block.timestamp), batch);
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), bridge.lastPayload());
 
-        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Qualified), "USD series marked");
-        assertEq(_state(EUR_SERIES), uint8(IIntexNFT1155.IntexState.Qualified), "EUR series marked");
+        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "USD series marked");
+        assertEq(_state(EUR_SERIES), uint8(IIntexNFT1155.IntexState.Called), "EUR series marked");
     }
 
     /// @notice One series missing on the target must not cost the rest of its batch.
@@ -103,11 +103,13 @@ contract MarkBatchWireTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES))
+            BridgeMsgCodec.encodeMarkCalled(
+                WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
+            )
         );
 
-        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Qualified), "the known series applied");
-        assertEq(bnbRouter.parkedMark(EUR_SERIES), BridgeMsgCodec.MSG_MARK_QUALIFIED, "only the missing one waits");
+        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "the known series applied");
+        assertEq(bnbRouter.parkedMark(EUR_SERIES), uint32(block.timestamp), "only the missing one waits");
         assertEq(bnbRouter.parkedMark(USD_SERIES), 0, "the applied one has no slot");
     }
 
@@ -115,11 +117,8 @@ contract MarkBatchWireTest is CrossChainTest {
     ///      message type: a batch relayed on a single series' budget runs out on arrival.
     function test_theSendBuysDestinationGasForTheWholeBatch() public {
         vm.startPrank(intexFactory);
-        outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(USD_SERIES));
-        _assertLastGas(IntexGas.markQualified(1));
-
-        outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
-        _assertLastGas(IntexGas.markQualified(2));
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));
+        _assertLastGas(IntexGas.markCalled(1));
 
         outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markCalled(2));
@@ -155,6 +154,6 @@ contract MarkBatchWireTest is CrossChainTest {
                 outbeRouter.INTEX_FACTORY_ROLE()
             )
         );
-        outbeRouter.sendMarkQualified(WORLDWIDE_DAY, batch);
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
     }
 }

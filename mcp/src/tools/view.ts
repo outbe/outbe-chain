@@ -121,13 +121,12 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
       "qualified (born so, or derived from finalized daily VWAPs) plus parsed tokenURI metadata.",
     { id: z.string().describe("Gem token id (decimal or 0x hex)") },
     handler(async ({ id }) => {
-      // A node without the view still answers the rest.
       const [data, qualified, metadata] = await Promise.all([
         view(ctx, "gem", "getGemStatus", [BigInt(id)]),
-        view(ctx, "gem", "isQualified", [BigInt(id)]).catch(() => undefined),
+        view(ctx, "gem", "isQualified", [BigInt(id)]),
         view(ctx, "gem", "tokenURI", [BigInt(id)]),
       ]);
-      return ok({ gemId: id, data, ...(qualified === undefined ? {} : { qualified }), metadata });
+      return ok({ gemId: id, data, qualified, metadata });
     }),
   );
 
@@ -221,7 +220,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_claimable",
-    "Claimable AgentReward balance for an account (in COEN), both pools summed.",
+    "Claimable AgentReward balance for an account (in COEN), all three pools summed.",
     { account: addr },
     handler(async ({ account }) =>
       ok(await view(ctx, "agentreward", "getClaimableBalance", [account])),
@@ -230,8 +229,8 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_pool_claimable",
-    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA), in COEN.",
-    { account: addr, pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA") },
+    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA, 2 = CCA), in COEN.",
+    { account: addr, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
     handler(async ({ account, pool }) =>
       ok(await view(ctx, "agentreward", "getPoolClaimableBalance", [account, pool])),
     ),

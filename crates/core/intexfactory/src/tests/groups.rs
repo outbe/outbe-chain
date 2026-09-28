@@ -12,7 +12,7 @@ mod group_index {
 
     const CHAIN_ID: u64 = 1;
     const ISO: u16 = 840;
-    const FLOOR: u64 = 2_000;
+    const CALL_PRICE: u64 = 2_000;
 
     fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -28,31 +28,31 @@ mod group_index {
     }
 
     fn bin_count(f: &IntexFactoryContract<'_>, bin: u32) -> u32 {
-        f.unqualified_bin_count
+        f.call_bin_count
             .read(&IntexFactoryContract::scoped(ISO, bin))
             .unwrap()
     }
 
-    fn floor_bin() -> u32 {
-        IntexFactoryContract::price_to_bin(U256::from(FLOOR)).unwrap()
+    fn call_bin() -> u32 {
+        IntexFactoryContract::price_to_bin(U256::from(CALL_PRICE)).unwrap()
     }
 
     #[test]
     fn members_of_one_day_share_a_single_bin_entry() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            let floor = U256::from(FLOOR);
-            f.insert_unqualified(sid(20260212, b"USD"), ISO, floor)
+            let price = U256::from(CALL_PRICE);
+            f.insert_call_bin(sid(20260212, b"USD"), ISO, price)
                 .unwrap();
-            f.insert_unqualified(sid(20260212, b"EUR"), ISO, floor)
+            f.insert_call_bin(sid(20260212, b"EUR"), ISO, price)
                 .unwrap();
-            f.insert_unqualified(sid(20260212, b"TRY"), ISO, floor)
+            f.insert_call_bin(sid(20260212, b"TRY"), ISO, price)
                 .unwrap();
 
             // Three series, one group: the bin holds days, not series.
-            assert_eq!(bin_count(&f, floor_bin()), 1);
+            assert_eq!(bin_count(&f, call_bin()), 1);
             assert_eq!(
-                f.unqualified_group_members(ISO, WorldwideDay::new(20260212))
+                f.call_bin_group_members(ISO, WorldwideDay::new(20260212))
                     .unwrap(),
                 vec![
                     sid(20260212, b"USD"),
@@ -61,7 +61,7 @@ mod group_index {
                 ]
             );
             assert_eq!(
-                f.unqualified_groups_in_bin(ISO, floor_bin()).unwrap(),
+                f.call_bin_groups(ISO, call_bin()).unwrap(),
                 vec![WorldwideDay::new(20260212)]
             );
         });
@@ -71,15 +71,15 @@ mod group_index {
     fn separate_days_are_separate_groups_in_one_bin() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            let floor = U256::from(FLOOR);
-            f.insert_unqualified(sid(20260212, b"USD"), ISO, floor)
+            let price = U256::from(CALL_PRICE);
+            f.insert_call_bin(sid(20260212, b"USD"), ISO, price)
                 .unwrap();
-            f.insert_unqualified(sid(20260213, b"USD"), ISO, floor)
+            f.insert_call_bin(sid(20260213, b"USD"), ISO, price)
                 .unwrap();
 
-            assert_eq!(bin_count(&f, floor_bin()), 2);
+            assert_eq!(bin_count(&f, call_bin()), 2);
             assert_eq!(
-                f.unqualified_groups_in_bin(ISO, floor_bin()).unwrap(),
+                f.call_bin_groups(ISO, call_bin()).unwrap(),
                 vec![WorldwideDay::new(20260212), WorldwideDay::new(20260213)]
             );
         });
@@ -89,12 +89,12 @@ mod group_index {
     fn a_member_priced_into_another_bin_is_refused() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            f.insert_unqualified(sid(20260212, b"USD"), ISO, U256::from(FLOOR))
+            f.insert_call_bin(sid(20260212, b"USD"), ISO, U256::from(CALL_PRICE))
                 .unwrap();
 
             // One decision per group, so a second price for the same day is a split.
             let err = f
-                .insert_unqualified(sid(20260212, b"EUR"), ISO, U256::from(FLOOR * 4))
+                .insert_call_bin(sid(20260212, b"EUR"), ISO, U256::from(CALL_PRICE * 4))
                 .unwrap_err();
             assert!(
                 err.to_string().contains("indexed in bin"),
@@ -107,35 +107,32 @@ mod group_index {
     fn removing_the_group_clears_its_members_and_its_bin() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            let floor = U256::from(FLOOR);
-            f.insert_unqualified(sid(20260212, b"USD"), ISO, floor)
+            let price = U256::from(CALL_PRICE);
+            f.insert_call_bin(sid(20260212, b"USD"), ISO, price)
                 .unwrap();
-            f.insert_unqualified(sid(20260212, b"EUR"), ISO, floor)
+            f.insert_call_bin(sid(20260212, b"EUR"), ISO, price)
                 .unwrap();
-            f.insert_unqualified(sid(20260213, b"USD"), ISO, floor)
+            f.insert_call_bin(sid(20260213, b"USD"), ISO, price)
                 .unwrap();
 
-            f.remove_unqualified_group(ISO, WorldwideDay::new(20260212))
+            f.remove_call_bin_group(ISO, WorldwideDay::new(20260212))
                 .unwrap();
 
             // Swap-and-pop keeps the untouched day reachable.
-            assert_eq!(bin_count(&f, floor_bin()), 1);
+            assert_eq!(bin_count(&f, call_bin()), 1);
             assert_eq!(
-                f.unqualified_groups_in_bin(ISO, floor_bin()).unwrap(),
+                f.call_bin_groups(ISO, call_bin()).unwrap(),
                 vec![WorldwideDay::new(20260213)]
             );
             assert!(f
-                .unqualified_group_members(ISO, WorldwideDay::new(20260212))
+                .call_bin_group_members(ISO, WorldwideDay::new(20260212))
                 .unwrap()
                 .is_empty());
 
-            f.remove_unqualified_group(ISO, WorldwideDay::new(20260213))
+            f.remove_call_bin_group(ISO, WorldwideDay::new(20260213))
                 .unwrap();
-            assert_eq!(bin_count(&f, floor_bin()), 0);
-            assert!(f
-                .unqualified_groups_in_bin(ISO, floor_bin())
-                .unwrap()
-                .is_empty());
+            assert_eq!(bin_count(&f, call_bin()), 0);
+            assert!(f.call_bin_groups(ISO, call_bin()).unwrap().is_empty());
         });
     }
 
@@ -143,15 +140,15 @@ mod group_index {
     fn removing_an_unindexed_group_is_a_no_op() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            f.insert_unqualified(sid(20260212, b"USD"), ISO, U256::from(FLOOR))
+            f.insert_call_bin(sid(20260212, b"USD"), ISO, U256::from(CALL_PRICE))
                 .unwrap();
 
-            f.remove_unqualified_group(ISO, WorldwideDay::new(20260213))
+            f.remove_call_bin_group(ISO, WorldwideDay::new(20260213))
                 .unwrap();
 
-            assert_eq!(bin_count(&f, floor_bin()), 1);
+            assert_eq!(bin_count(&f, call_bin()), 1);
             assert_eq!(
-                f.unqualified_group_members(ISO, WorldwideDay::new(20260212))
+                f.call_bin_group_members(ISO, WorldwideDay::new(20260212))
                     .unwrap(),
                 vec![sid(20260212, b"USD")]
             );
@@ -159,46 +156,20 @@ mod group_index {
     }
 
     #[test]
-    fn indexing_a_group_twice_is_refused() {
+    fn the_currencies_stay_apart() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
-            let day = WorldwideDay::new(20260212);
-            let trigger = U256::from(FLOOR);
-            f.insert_qualified_group(ISO, day, trigger, &[sid(20260212, b"USD")])
-                .unwrap();
-
-            let err = f
-                .insert_qualified_group(ISO, day, trigger, &[sid(20260212, b"EUR")])
-                .unwrap_err();
-            assert!(
-                err.to_string().contains("already indexed"),
-                "unexpected error: {err}"
-            );
-        });
-    }
-
-    #[test]
-    fn the_two_indexes_and_the_currencies_stay_apart() {
-        with_factory(|s| {
-            let mut f = IntexFactoryContract::new(s.clone());
-            let floor = U256::from(FLOOR);
+            let price = U256::from(CALL_PRICE);
             let series = sid(20260212, b"USD");
-            f.insert_unqualified(series, ISO, floor).unwrap();
-            f.insert_qualified_group(ISO, WorldwideDay::new(20260212), floor, &[series])
-                .unwrap();
-            f.insert_unqualified(series, 978, floor).unwrap();
+            f.insert_call_bin(series, ISO, price).unwrap();
+            f.insert_call_bin(series, 978, price).unwrap();
 
-            f.remove_unqualified_group(ISO, WorldwideDay::new(20260212))
+            f.remove_call_bin_group(ISO, WorldwideDay::new(20260212))
                 .unwrap();
 
-            assert_eq!(bin_count(&f, floor_bin()), 0);
+            assert_eq!(bin_count(&f, call_bin()), 0);
             assert_eq!(
-                f.qualified_group_members(ISO, WorldwideDay::new(20260212))
-                    .unwrap(),
-                vec![series]
-            );
-            assert_eq!(
-                f.unqualified_group_members(978, WorldwideDay::new(20260212))
+                f.call_bin_group_members(978, WorldwideDay::new(20260212))
                     .unwrap(),
                 vec![series]
             );
@@ -211,22 +182,21 @@ mod group_scans {
     //! all of its series together.
 
     use alloy_primitives::U256;
-    use outbe_intex::{IntexState, SeriesId};
+    use outbe_intex::SeriesId;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::time::{first_full_day, WorldwideDay};
+    use outbe_primitives::time::WorldwideDay;
 
+    use crate::called::ScanBudget;
     use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
-    use crate::qualified::{self, ScanBudget};
     use crate::runtime;
     use crate::schema::{IntexFactoryContract, IssuanceParams};
-    use crate::state::Group;
 
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
     const ISSUED_AT: u32 = 1_700_000_000;
     const ENTRY_PRICE: u64 = 1_000_000;
-    const EXPECTED_FLOOR: u64 = 1_080_000;
+    const EXPECTED_TRIGGER: u64 = 2_280_000;
     const WWD: u32 = 20260212;
 
     /// Issuance currencies of one day's series; they share every decision input.
@@ -281,118 +251,21 @@ mod group_scans {
         }
     }
 
-    /// The first day every series issued in these cases held in full.
-    fn full_day() -> u32 {
-        first_full_day(ISSUED_AT as u64)
-    }
-
-    fn above_floor() -> U256 {
-        U256::from(EXPECTED_FLOOR) + U256::from(1)
-    }
-
-    fn qualify(
-        s: &StorageHandle<'_>,
-        f: &mut IntexFactoryContract,
-        rate: U256,
-    ) -> outbe_primitives::error::Result<u32> {
-        let group = f.unqualified_group(REFERENCE_ISO, day())?;
-        qualified::try_qualify_group(s, f, &group, rate, full_day())
-    }
-
     #[test]
-    fn a_days_series_qualify_together() {
+    fn a_days_series_share_one_call_group() {
         with_factory(|s| {
             issue_day(&s, WWD);
-            let mut f = IntexFactoryContract::new(s.clone());
-            let members = f.unqualified_group_members(REFERENCE_ISO, day()).unwrap();
+            let f = IntexFactoryContract::new(s.clone());
+            let members = f.call_bin_group_members(REFERENCE_ISO, day()).unwrap();
             assert_eq!(members.len(), ISSUANCES.len());
-
-            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 3);
-
-            for series_id in &members {
-                assert_eq!(
-                    outbe_intex::api::read_series(&s, *series_id)
-                        .unwrap()
-                        .lifecycle_state()
-                        .unwrap(),
-                    IntexState::Qualified
-                );
-            }
-            // The whole group left the floor index for the call-trigger one.
-            assert!(f
-                .unqualified_group_members(REFERENCE_ISO, day())
-                .unwrap()
-                .is_empty());
-            assert_eq!(
-                f.qualified_group_members(REFERENCE_ISO, day()).unwrap(),
-                members
-            );
-        });
-    }
-
-    #[test]
-    fn the_floor_gate_holds_for_the_whole_group() {
-        with_factory(|s| {
-            issue_day(&s, WWD);
-            let mut f = IntexFactoryContract::new(s.clone());
-            let floor = U256::from(EXPECTED_FLOOR);
-
-            // The rate only reaches the floor (strict >).
-            assert_eq!(qualify(&s, &mut f, floor).unwrap(), 0);
-            // Past the floor.
-            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 3);
-            // Latched: the group is gone from the floor index.
-            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 0);
-        });
-    }
-
-    #[test]
-    fn a_member_without_a_record_holds_back_only_its_own_group() {
-        with_factory(|s| {
-            issue_day(&s, WWD);
-            let other = WWD + 1;
-            issue_day(&s, other);
-
-            let mut f = IntexFactoryContract::new(s.clone());
-            // A member the registry never got: the group's transition cannot complete.
-            let ghost = SeriesId::for_pair(day(), 124, REFERENCE_ISO).unwrap();
-            f.insert_unqualified(ghost, REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
-                .unwrap();
-
-            assert!(qualify(&s, &mut f, above_floor()).is_err());
-
-            // The neighbouring day is untouched by it and still qualifies.
-            let group = f
-                .unqualified_group(REFERENCE_ISO, WorldwideDay::new(other))
-                .unwrap();
-            assert_eq!(
-                qualified::try_qualify_group(&s, &mut f, &group, above_floor(), full_day())
-                    .unwrap(),
-                3
-            );
-        });
-    }
-
-    #[test]
-    fn an_empty_group_decides_nothing() {
-        with_factory(|s| {
-            let mut f = IntexFactoryContract::new(s.clone());
-            let empty = Group {
-                iso_code: REFERENCE_ISO,
-                worldwide_day: day(),
-                members: Vec::new(),
-            };
-            assert_eq!(
-                qualified::try_qualify_group(&s, &mut f, &empty, above_floor(), full_day())
-                    .unwrap(),
-                0
-            );
+            let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+            assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![day()]);
         });
     }
 
     #[test]
     fn the_budget_takes_groups_whole() {
-        let mut budget = ScanBudget::for_qualify();
+        let mut budget = ScanBudget::for_call();
         assert!(budget.admits_actions(2));
         budget.spend_decision();
         budget.spend_actions(2);
@@ -404,17 +277,17 @@ mod group_scans {
 
         // A group wider than the whole allowance would stall forever, so an
         // untouched budget takes it on.
-        assert!(ScanBudget::for_qualify().admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK + 1));
+        assert!(ScanBudget::for_call().admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK + 1));
     }
 
     #[test]
     fn the_budget_stops_when_either_half_runs_out() {
-        let mut budget = ScanBudget::for_qualify();
+        let mut budget = ScanBudget::for_call();
         budget.spend_actions(MAX_SERIES_ACTIONS_PER_BLOCK);
         assert!(budget.is_spent());
         assert!(!budget.admits_actions(1));
 
-        let mut budget = ScanBudget::for_qualify();
+        let mut budget = ScanBudget::for_call();
         for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
             budget.spend_decision();
         }

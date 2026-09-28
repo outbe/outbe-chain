@@ -703,11 +703,7 @@ mod tests {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
         );
-        oracle
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, rate_6)
-            .unwrap();
+        oracle.record_utc_day_vwap(day, index, rate_6).unwrap();
     }
 
     fn one_coen840() -> U256 {
@@ -978,8 +974,8 @@ mod tests {
                 .unwrap();
             assert_eq!(x_item.gem_type, GemTypes::Genesis as u8);
             assert!(
-                outbe_gem::api::is_qualified(&ctx.storage, &x_item).unwrap(),
-                "Genesis gem qualifies from birth"
+                x_item.floor_price_minor.is_zero(),
+                "Genesis gem carries no floor"
             );
 
             assert_eq!(gem.balance_of(VAL_Y).unwrap(), 1);
@@ -1147,9 +1143,7 @@ mod tests {
                 outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
             );
             outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-                .utc_day_vwap_value
-                .get_nested(&day)
-                .write(&pair_index, U256::ZERO)
+                .record_utc_day_vwap(day, pair_index, U256::ZERO)
                 .unwrap();
 
             assert_eq!(

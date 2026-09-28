@@ -34,6 +34,9 @@ pub(crate) const PROMIS_FACTORY_ADDR: Address =
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const GEM_ADDR: Address = address!("0x0000000000000000000000000000000000001013");
 #[cfg(feature = "ocomp-integration")]
+pub(crate) const INTEX_FACTORY_ADDR: Address =
+    address!("0x0000000000000000000000000000000000001015");
+#[cfg(feature = "ocomp-integration")]
 pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000002013");
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const VAULT_ROUTER_ADDR: Address =

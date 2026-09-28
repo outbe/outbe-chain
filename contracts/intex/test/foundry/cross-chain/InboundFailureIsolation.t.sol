@@ -45,7 +45,6 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
-        intex.markQualified(SERIES_GOOD);
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridgeBnb));
@@ -133,7 +132,6 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
-        intex.markQualified(SERIES_BAD);
 
         // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
@@ -156,7 +154,6 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Fix upstream + retry once.
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
-        intex.markQualified(SERIES_BAD);
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
         // Second retry must revert - slot has been deleted.

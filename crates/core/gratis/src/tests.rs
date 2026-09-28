@@ -40,6 +40,9 @@ fn terms(stables: U256, gratis: U256) -> api::PledgeTerms {
         gratis_amount: gratis,
         asset: asset(),
         entry_price: stables * U256::from(1_000_000u64) / gratis,
+        issuance_currency: 840,
+        asset_decimals: 6,
+        valuation_price: stables * outbe_primitives::units::SCALE_1E18 / gratis,
     }
 }
 
@@ -355,6 +358,135 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
         assert!(api::consume_pledge(storage.clone(), handle, smart_account(), spend).is_err());
+    });
+}
+
+#[test]
+fn pledge_validity_preserves_expired_cancellation_and_prevents_replay() {
+    // Creation just before an eight-hour boundary must not shorten the 900-second lifetime.
+    const CREATED: u64 = 28_799;
+    for (now, rejected) in [
+        (U256::from(CREATED - 1), Some("pledge note not yet valid")),
+        (U256::from(CREATED + 899), None),
+        (U256::from(CREATED + 900), None),
+        (U256::from(CREATED + 901), Some("pledge note expired")),
+        (
+            U256::from(u64::MAX) + U256::ONE,
+            Some("pledge timestamp exceeds u64"),
+        ),
+    ] {
+        with_env(|storage| {
+            storage.set_block_timestamp(U256::from(CREATED)).unwrap();
+            let amount = U256::from(1000);
+            let stables = U256::from(500);
+            api::mint(
+                storage.clone(),
+                alice(),
+                amount,
+                auth(GratisOp::Mint, alice(), amount, 0),
+            )
+            .unwrap();
+            let accepted_terms = terms(stables, amount);
+            let note = api::pledge(
+                storage.clone(),
+                alice(),
+                stables,
+                accepted_terms,
+                auth(GratisOp::Pledge, alice(), stables, 1),
+            )
+            .unwrap();
+            let gratis = crate::Gratis::new(storage.clone());
+            let ticket = gratis.pledge_ticket_ct_of(note).unwrap();
+            let balance = api::balance_ct(storage.clone(), alice()).unwrap();
+            let mk = derive_modify_key(&test_enclave::state_key(), alice()).unwrap();
+            let spend = spend_auth_mac(&pledge_secret(&mk, note), smart_account());
+            storage.set_block_timestamp(now).unwrap();
+            let result = api::consume_pledge(storage.clone(), note, smart_account(), spend);
+            assert_eq!(api::total_supply(storage.clone()).unwrap(), amount);
+            assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
+            assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+            assert_eq!(api::balance_ct(storage.clone(), alice()).unwrap(), balance);
+
+            if let Some(reason) = rejected {
+                assert!(result.unwrap_err().to_string().contains(reason));
+                assert_eq!(gratis.pledge_ticket_ct_of(note).unwrap(), ticket);
+                assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+                // Cancellation remains possible even when the consume clock is invalid/expired.
+                assert_eq!(
+                    api::unpledge(
+                        storage.clone(),
+                        alice(),
+                        stables,
+                        note,
+                        auth(GratisOp::Unpledge, alice(), stables, 2)
+                    )
+                    .unwrap(),
+                    amount
+                );
+                assert_eq!(view_balance(storage.clone(), alice()), amount);
+                assert_eq!(
+                    api::pledged_total_supply(storage.clone()).unwrap(),
+                    U256::ZERO
+                );
+                // A fresh nonce cannot replay cancellation of a deleted ticket.
+                assert!(api::unpledge(
+                    storage.clone(),
+                    alice(),
+                    stables,
+                    note,
+                    auth(GratisOp::Unpledge, alice(), stables, 3)
+                )
+                .is_err());
+            } else {
+                assert_eq!(result.unwrap().0, accepted_terms);
+                assert_eq!(view_pledged(storage.clone(), alice()), amount);
+                assert!(api::unpledge(
+                    storage.clone(),
+                    alice(),
+                    stables,
+                    note,
+                    auth(GratisOp::Unpledge, alice(), stables, 2)
+                )
+                .is_err());
+            }
+            assert!(gratis.pledge_ticket_ct_of(note).unwrap().is_empty());
+            assert!(api::consume_pledge(storage.clone(), note, smart_account(), spend).is_err());
+        });
+    }
+}
+
+#[test]
+fn pledge_rejects_unrepresentable_timestamps_without_locking_value() {
+    with_env(|storage| {
+        let amount = U256::from(1000);
+        let stables = U256::from(500);
+        api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let before = api::balance_ct(storage.clone(), alice()).unwrap();
+        for now in [U256::from(u64::MAX), U256::from(u64::MAX) + U256::ONE] {
+            storage.set_block_timestamp(now).unwrap();
+            let error = api::pledge(
+                storage.clone(),
+                alice(),
+                stables,
+                terms(stables, amount),
+                auth(GratisOp::Pledge, alice(), stables, 1),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("pledge timestamp"));
+            assert_eq!(api::balance_ct(storage.clone(), alice()).unwrap(), before);
+            assert_eq!(api::total_supply(storage.clone()).unwrap(), amount);
+            assert_eq!(
+                api::pledged_total_supply(storage.clone()).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
+        }
     });
 }
 

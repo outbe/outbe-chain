@@ -6,9 +6,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
-use outbe_intexfactory::qualified::{
-    drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
-};
+use outbe_intexfactory::notify::{drain_notices, joins_run, pack_called_notice};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -31,20 +29,14 @@ fn series(index: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(DAY), iso, b'U').expect("well-formed series id")
 }
 
-fn push(handle: &StorageHandle<'_>, kind: u8, entry: U256) {
+fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
     let factory = IntexFactoryContract::new(handle.clone());
     let tail = factory.notify_tail.read().unwrap();
-    factory.notify_at.write(&tail, entry).unwrap();
-    factory.notify_kind.write(&tail, kind).unwrap();
+    factory
+        .notify_at
+        .write(&tail, pack_called_notice(series(index), called_at))
+        .unwrap();
     factory.notify_tail.write(tail + 1).unwrap();
-}
-
-fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
-    push(
-        handle,
-        NOTICE_CALLED,
-        pack_called_notice(series(index), called_at),
-    );
 }
 
 fn drain(handle: &StorageHandle<'_>) {
@@ -134,28 +126,6 @@ fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
         !joins_run(day, CALLED_AT, other_day, CALLED_AT),
         "the wire carries one day per message"
     );
-}
-
-#[test]
-fn a_qualified_entry_ends_the_run() {
-    let mut storage = provider();
-    StorageHandle::enter(&mut storage, |handle| {
-        push_called(&handle, 0, CALLED_AT);
-        push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
-        push_called(&handle, 1, CALLED_AT);
-
-        drain(&handle);
-
-        let factory = IntexFactoryContract::new(handle.clone());
-        for index in 0..3u32 {
-            assert_eq!(
-                factory.notify_at.read(&index).unwrap(),
-                U256::ZERO,
-                "every entry consumed once"
-            );
-        }
-        assert_eq!(bounds(&handle), (0, 0));
-    });
 }
 
 #[test]

@@ -81,7 +81,6 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         intex.createSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
         bytes14 open = "20260502-USD-U";
         intex.issue(owner, 5, open);
-        intex.markQualified(open);
 
         uint256 openTokenId = intex.issuedTokenId(open);
         vm.prank(owner);

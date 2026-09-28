@@ -208,12 +208,6 @@ contract OriginRouterTest is CrossChainTest {
         );
     }
 
-    function test_sendMarkQualified_revert_unauthorized() public {
-        vm.prank(user);
-        vm.expectRevert();
-        originRouter.sendMarkQualified{value: 0.1 ether}(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
-    }
-
     // --- Validation Tests ---
     function test_sendIssuanceInstructions_emptyRecipients_ok() public {
         // Empty recipients is valid: a snapshot chain with no local winners still gets its series created.

@@ -14,8 +14,14 @@ pub enum GratisFactoryError {
     EntryPriceZero,
     #[error("asset does not report a decodable ISO 4217 code")]
     AssetIsoUndecodable,
-    #[error("oracle conversion overflow")]
-    OracleConversionOverflow,
+    #[error("pledge valuation price unavailable")]
+    PledgePriceUnavailable,
+    #[error("asset has no registered Reserve vault")]
+    ReserveVaultUnavailable,
+    #[error("asset does not report decodable decimals")]
+    AssetDecimalsUndecodable,
+    #[error("unsupported pledge asset decimals")]
+    UnsupportedAssetDecimals,
     #[error("pledge cost exceeds maxGratis")]
     GratisCapExceeded,
 }

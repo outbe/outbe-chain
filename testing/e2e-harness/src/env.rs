@@ -186,9 +186,10 @@ pub struct EnvCli {
 
     /// Hard wall-clock deadline for one scenario, including setup, teardown,
     /// evidence capture, and log audit. A timeout tears down owned processes
-    /// and exits non-zero with a durable timeout record.
-    #[arg(long, default_value_t = 3_600)]
-    pub scenario_timeout_secs: u64,
+    /// and exits non-zero with a durable timeout record. Defaults to one hour,
+    /// or six hours for the 1,000-proof PayNote capacity scenario.
+    #[arg(long)]
+    pub scenario_timeout_secs: Option<u64>,
 
     /// Exact Metadosis P0 parity case. Test-only: validates and retains the
     /// removed process input inherited by every node child.
@@ -258,7 +259,7 @@ pub struct Environment {
     pub data_dir: PathBuf,
     pub evidence_dir: Option<PathBuf>,
     pub artifact_manifest: Option<PathBuf>,
-    pub scenario_timeout_secs: u64,
+    pub scenario_timeout_secs: Option<u64>,
     pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
     pub ocomp_bin: PathBuf,
@@ -363,7 +364,7 @@ impl Default for Environment {
             data_dir: None,
             evidence_dir: None,
             artifact_manifest: None,
-            scenario_timeout_secs: 3_600,
+            scenario_timeout_secs: None,
             metadosis_p0_case: None,
             chain_bin: None,
             ocomp_bin: None,
@@ -534,6 +535,20 @@ pub fn requires_tee(feature: &Feature, scenario: &Scenario) -> bool {
     has_tag(feature, scenario, "tee")
 }
 
+pub(crate) fn scenario_timeout_secs(
+    feature: &Feature,
+    scenario: &Scenario,
+    env: &Environment,
+) -> u64 {
+    env.scenario_timeout_secs.unwrap_or_else(|| {
+        if has_tag(feature, scenario, "paynote-capacity") {
+            6 * 3_600
+        } else {
+            3_600
+        }
+    })
+}
+
 /// Parse `N` out of a `min-validators-<N>` tag (tags are `@`-less here).
 fn parse_min_validators_tag(tag: &str) -> Option<usize> {
     tag.strip_prefix("min-validators-")?.parse().ok()
@@ -594,6 +609,47 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[test]
+    fn paynote_capacity_runs_in_the_full_suite_with_an_overridable_timeout() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/gem.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse GEM features");
+        let scenarios: Vec<_> = feature
+            .scenarios
+            .iter()
+            .filter(|s| has_tag(&feature, s, "paynote-capacity"))
+            .collect();
+        assert_eq!(scenarios.len(), 1);
+        let scenario = scenarios[0];
+        let mut env = Environment {
+            validators: 4,
+            all: true,
+            ..Environment::default()
+        };
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_eq!(scenario_timeout_secs(&feature, scenario, &env), 21_600);
+        let ordinary = feature
+            .scenarios
+            .iter()
+            .find(|s| !has_tag(&feature, s, "paynote-capacity"))
+            .expect("ordinary GEM lifecycle");
+        assert_eq!(scenario_timeout_secs(&feature, ordinary, &env), 3_600);
+        if cfg!(feature = "ocomp-integration") {
+            assert_eq!(unmet(&feature, scenario, &env), None);
+            assert_registered_steps(&feature, scenario);
+        } else {
+            assert!(unmet(&feature, scenario, &env)
+                .expect("build requirement")
+                .contains("ocomp-integration"));
+        }
+        for seconds in [60, 3_600, 30_000] {
+            env.scenario_timeout_secs = Some(seconds);
+            assert_eq!(scenario_timeout_secs(&feature, scenario, &env), seconds);
+            assert_eq!(scenario_timeout_secs(&feature, ordinary, &env), seconds);
+        }
+    }
     #[cfg(feature = "ocomp-integration")]
     #[test]
     fn offchain_storage_network_scenario_is_registered_for_rocksdb() {

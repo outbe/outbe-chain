@@ -97,7 +97,7 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexDrainNotices => outbe_intexfactory::qualified::drain_notices(ctx),
+            Self::IntexDrainNotices => outbe_intexfactory::notify::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
@@ -117,7 +117,7 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
-/// The qualify and Called sweeps are daily in production. An e2e run seeds the days
+/// The Called sweep is daily in production. An e2e run seeds the days
 /// they read rather than living through them, so they need to come round sooner.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
@@ -180,7 +180,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_daily",
             period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to qualify and call series; no
+            // Reads finalized oracle VWAP history to call series; no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
             // The sweeps take their day from the block clock, so a missed slot
@@ -234,7 +234,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_drain_notices",
             period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Drains a queue the qualify sweep filled; reads no accounting state.
+            // Drains a queue the call sweep filled; reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,

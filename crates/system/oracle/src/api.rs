@@ -14,41 +14,16 @@ pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::Result,
-    storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
-};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum OcompAuctionEntryPriceSource {
-    LastClosedDayVwap = 1,
-    /// No longer produced; the discriminant is part of a hashed wire enum.
-    CurrentVwapFallback = 2,
-}
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
 /// Bounded Oracle projection captured before the terminal OCOMP request.
 ///
 /// `oracle_state_version` reuses the authoritative monotonic snapshot stream
 /// index: every exchange-rate snapshot advances it, while the WWD and S-curve
 /// counters identify the exact derived collections read for this day.
-/// One reference currency's frozen auction entry price.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OcompReferenceEntryPrice {
-    pub reference_currency: u16,
-    pub entry_price_minor: U256,
-    pub source: OcompAuctionEntryPriceSource,
-    pub source_day: u32,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompOraclePreAdmissionProjection {
     pub profile_ready: bool,
-    /// One row per priced reference currency, ascending by currency; an unpriced
-    /// currency is absent rather than zero.
-    pub auction_entry_prices: Vec<OcompReferenceEntryPrice>,
     pub oracle_state_version: u64,
     /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
     /// opening proof can be asked to cover. Now that the WorldwideDay VWAP
@@ -150,6 +125,25 @@ pub fn four_hour_vwap(
 ) -> Result<Option<U256>> {
     let oracle = OracleContract::new(storage);
     oracle.four_hour_vwap(pair, end_date)
+}
+
+/// Previous half-open eight-hour VWAP, scaled by `SCALE_1E18` (1.0 = 10^18).
+///
+/// The period implementation is pending; currently returns `None`.
+///
+/// | current_timestamp, UTC | Returned period value  |
+/// | --- | --- |
+/// | 00:00 <= time < 08:00 | Previous day's 16:00-24:00 |
+/// | 08:00 <= time < 16:00 | Same day's 00:00-08:00 |
+/// | 16:00 <= time < 24:00 | Same day's 08:00-16:00 |
+pub fn previous_half_open_8hours_vwap(
+    storage: StorageHandle,
+    pair: AddressPair,
+    current_timestamp: u64,
+) -> Result<Option<U256>> {
+    // TODO implement logic
+    _ = (storage, pair, current_timestamp);
+    Ok(None)
 }
 
 /// Reference currencies available for pricing through a storage-only caller.
@@ -361,27 +355,10 @@ pub fn priced_reference_currencies(
     Ok(priced)
 }
 
-/// Selects the already-stored auction entry prices and the authenticated collection counts;
-/// never invokes calculation. One price per reference currency, so the read walks the
-/// registry; a currency the last closed UTC day carries no price for is omitted, the
-/// day-type currency included.
+/// Reads the authenticated collection counts; never invokes calculation.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
-    block_timestamp: u64,
 ) -> Result<OcompOraclePreAdmissionProjection> {
-    let last_closed_day = previous_date_key(timestamp_to_date_key(block_timestamp));
-    // Hashed in order, so the order the selector returns is part of the day's identity.
-    let auction_entry_prices = priced_reference_currencies(storage.clone(), last_closed_day)?
-        .into_iter()
-        .map(
-            |(reference_currency, entry_price_minor)| OcompReferenceEntryPrice {
-                reference_currency,
-                entry_price_minor,
-                source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: last_closed_day,
-            },
-        )
-        .collect();
     let oracle = OracleContract::new(storage);
     let scurve_count = oracle.scurve_count.read()?;
     let scurve_oldest = oracle.scurve_oldest_idx.read()?;
@@ -391,7 +368,6 @@ pub fn ocomp_pre_admission_projection(
 
     Ok(OcompOraclePreAdmissionProjection {
         profile_ready: oracle.ocomp_profile_ready.read()?,
-        auction_entry_prices,
         oracle_state_version: oracle.ocomp_state_version.read()?,
         wwd_pair_entries: oracle.pair_count.read()?,
         active_scurve_entries,
@@ -462,7 +438,7 @@ pub fn closed_above_floor(
     floor_minor: U256,
     from_utc_day: u32,
 ) -> Result<bool> {
-    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| vwap > floor_minor)
+    Ok(max_day_vwap_since(storage, iso_code, from_utc_day, Some(floor_minor))? > floor_minor)
 }
 
 /// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on; zero when none.
@@ -471,43 +447,21 @@ pub fn max_utc_day_vwap_since(
     iso_code: u16,
     from_utc_day: u32,
 ) -> Result<U256> {
-    let mut max = U256::ZERO;
-    scan_utc_day_vwaps(storage, iso_code, from_utc_day, |vwap| {
-        max = max.max(vwap);
-        false
-    })?;
-    Ok(max)
+    max_day_vwap_since(storage, iso_code, from_utc_day, None)
 }
 
-/// Walks the finalized days from the newest back to `from_utc_day` until `stop` holds; whether it did.
-fn scan_utc_day_vwaps(
+fn max_day_vwap_since(
     storage: StorageHandle,
     iso_code: u16,
     from_utc_day: u32,
-    mut stop: impl FnMut(U256) -> bool,
-) -> Result<bool> {
-    if from_utc_day == 0 {
-        return Ok(false);
-    }
+    stop_above: Option<U256>,
+) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     if index == 0 {
-        return Ok(false);
+        return Ok(U256::ZERO);
     }
-    let mut day = oracle.utc_day_vwap_last_finalized.read()?;
-    while day >= from_utc_day {
-        if oracle
-            .get_utc_day_vwap_for_pair(day, index)?
-            .is_some_and(&mut stop)
-        {
-            return Ok(true);
-        }
-        match previous_date_key(day) {
-            previous if previous < day => day = previous,
-            _ => break,
-        }
-    }
-    Ok(false)
+    oracle.max_finalized_day_vwap_since(index, from_utc_day, stop_above)
 }
 
 /// Returns the finalized UTC-day VWAP for `COEN/<iso_code>` at its original `10^6` scale.

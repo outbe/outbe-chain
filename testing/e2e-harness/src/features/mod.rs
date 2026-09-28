@@ -13,7 +13,10 @@
 pub mod agent_reward;
 #[cfg(feature = "ocomp-integration")]
 mod auction_expectations;
+mod byzantine_preannounce;
 pub mod common;
+#[cfg(feature = "ocomp-integration")]
+pub mod credis;
 #[cfg(feature = "ocomp-integration")]
 pub mod gem_lifecycle;
 pub mod governance;

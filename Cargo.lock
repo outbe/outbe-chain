@@ -8219,6 +8219,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8545,6 +8546,7 @@ dependencies = [
  "alloy-trie",
  "ark-bn254",
  "ark-ff 0.6.0",
+ "base64 0.22.1",
  "blst",
  "bytes",
  "clap",
@@ -9057,18 +9059,12 @@ name = "outbe-lysis"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "hex",
  "outbe-compressed-entities",
- "outbe-fidelity",
- "outbe-intex",
  "outbe-nod",
- "outbe-nodfactory",
  "outbe-ocomp-protocol",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-tribute",
  "serde",
  "serde_json",
 ]

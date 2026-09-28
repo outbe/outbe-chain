@@ -8,8 +8,8 @@ import {IERC1155Bridgeable} from "./IERC1155Bridgeable.sol";
  * @title IntexNFT1155 Contract Interface
  * @author Outbe
  * @notice Public API, events, errors, and data types for `IntexNFT1155`.
- * @dev Series are keyed by `seriesId` (uint32). Each series has two ERC1155 token ids:
- * issued = `uint256(seriesId)`, settled = `keccak256("SETTLED", seriesId)`.
+ * @dev Series are keyed by `seriesId` (bytes14). Each series has two ERC1155 token ids:
+ * issued = `uint112(seriesId)`, settled = the same with bit 112 set.
  * Also implements `IERC1155Bridgeable` for ERC-7786 cross-chain compatibility.
  * @dev Keep continuation lines flush against the leading `*`. The Rust
  * precompiles bind this interface with `sol!`, which re-emits this block as a
@@ -28,9 +28,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is read-only:
-    ///      storage keeps `Called` so the transfer and bridge freezes, which compare the
-    ///      stored field, keep applying.
+    /// @dev Issued -> Called -> Expired; `Qualified` is derived, never stored. `Expired` is read-only:
+    ///      storage keeps `Called`, so the freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
         Qualified,
@@ -63,10 +62,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Series-level data, stored per token id (one entry for the Issued token id
-    ///         and one for the Settled token id; `status` distinguishes them).
-    /// @dev `issuedUnits` is meaningful only on the Issued entry; it caps the current
-    ///      `totalSupply` minted via `mint` (a burn frees cap room).
+    /// @notice Series-level data, stored once per series under its Issued token id.
+    /// @dev `issuedUnits` caps the current `totalSupply` minted via `mint` (a burn frees cap room).
     struct SeriesData {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
@@ -91,8 +88,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 calledAt;
         /// @notice Total supply of this token id across all owners.
         uint32 totalSupply;
-        /// @notice Token classification (Issued or Settled).
-        IntexStatus status;
         /// @notice Current series lifecycle state.
         IntexState state;
         /// @notice Worldwide day whose tributes fed this series.
@@ -136,7 +131,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens burned.
     event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 amount);
 
-    /// @notice Emitted when the collection's daily VWAP source is set.
     event VwapSourceSet(address indexed source);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
@@ -163,16 +157,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroAmount();
     /// @notice A mint or crosschainMint quantity exceeds the range its packed storage field can hold.
     error QuantityTooLarge(uint256 quantity);
-    /// @notice Settle attempted in a series state that does not allow it.
-    error InvalidStateForSettle(uint8 state);
     /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
     error SoulboundSettled(uint256 tokenId);
     /// @notice Owner-to-owner transfer attempted while the series is Called.
     error TransferOnCalledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
-    /// @notice Bridge crosschainBurn/crosschainMint attempted while the series state disallows it.
-    error BridgeStateForbidden(uint256 tokenId, uint8 state);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a `Called` series after the settlement
     ///         deadline (`calledAt + callNoticePeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
@@ -214,17 +204,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     function issue(address to, uint256 quantity, bytes14 seriesId) external;
 
-    /// @notice Mark a series as Qualified (Issued -> Qualified).
-    /// @param seriesId Series identifier.
-    function markQualified(bytes14 seriesId) external;
-
-    /// @notice Mark a series as Called (Issued/Qualified -> Called).
+    /// @notice Mark a series as Called (Issued -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
+    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification; a Called
+    ///      series settles only until its deadline.
     /// @param seriesId Series identifier.
     /// @param from Owner whose Issued tokens are burned.
     /// @param to Recipient of the newly minted Settled tokens.
@@ -240,7 +227,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Burn `amount` Issued Intex from `owner` when the tokens are sent to the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued or Qualified - no Call Event yet). The capacity record lives in the
+    ///      (Issued - no Call Event yet). The capacity record lives in the
     ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
@@ -248,12 +235,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The amount of burned tokens.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 amount) external returns (uint256);
 
-    /// @notice Point the collection at the daily VWAP source its cards read. Admin only; zero derives none.
+    /// @notice Zero derives no qualification.
     function setVwapSource(address source) external;
 
     // --- Reads ---
 
-    /// @notice The daily VWAP source the cards read; zero until set.
     function vwapSource() external view returns (address);
 
     /// @notice Whether the series has been created here.
@@ -264,6 +250,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
+    /// @notice Whether a finalized daily VWAP from the series' first full UTC day on closed above its floor,
+    ///         as the card renders it. A missing or failing source reads as not qualified.
+    /// @param seriesId Series identifier.
+    function isQualified(bytes14 seriesId) external view returns (bool);
+
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure helper.
@@ -287,10 +278,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return settled The Settled token id.
     function tokenIds(bytes14 seriesId) external pure returns (uint256 issued, uint256 settled);
 
-    /// @notice Token classification (Issued/Settled) for a token id.
+    /// @notice Token classification (Issued/Settled) for a token id, read off the id itself.
     /// @param tokenId Token id to classify.
     /// @return The token classification.
-    function statusOf(uint256 tokenId) external view returns (IntexStatus);
+    function statusOf(uint256 tokenId) external pure returns (IntexStatus);
 
     /// @notice Read series data by series id.
     /// @param seriesId Series identifier.

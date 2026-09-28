@@ -1,4 +1,7 @@
 //! Anchored access to stopped native files and publication of one archive.
+//!
+//! Creation requires Linux `openat2`; other platforms return `Unsupported`
+//! before opening a source or creating a pending archive.
 
 use std::{
     ffi::OsString,
@@ -9,9 +12,40 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use rustix::fs::{
-    openat, openat2, renameat_with, unlinkat, AtFlags, Mode, OFlags, RenameFlags, ResolveFlags, CWD,
-};
+use rustix::fs::{openat, renameat_with, unlinkat, AtFlags, Mode, OFlags, RenameFlags, CWD};
+#[cfg(target_os = "linux")]
+use rustix::fs::{openat2, ResolveFlags};
+
+/// Fail closed where atomic no-symlink, beneath-root resolution is unavailable.
+fn open_source(
+    directory: impl std::os::fd::AsFd,
+    path: &Path,
+    flags: OFlags,
+    beneath: bool,
+) -> io::Result<File> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut resolve = ResolveFlags::NO_SYMLINKS;
+        if beneath {
+            resolve |= ResolveFlags::BENEATH;
+        }
+        Ok(File::from(openat2(
+            directory,
+            path,
+            flags,
+            Mode::empty(),
+            resolve,
+        )?))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (directory, path, flags, beneath);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "snapshot creation requires Linux openat2 path-resolution guarantees",
+        ))
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileIdentity {
@@ -48,14 +82,12 @@ pub struct SourceRoot {
 
 impl SourceRoot {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let fd = openat2(
+        let directory = open_source(
             CWD,
             path,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::NO_SYMLINKS,
+            false,
         )?;
-        let directory = File::from(fd);
         let identity = FileIdentity::read(&directory.metadata()?);
         let path = if path.is_absolute() {
             path.to_path_buf()
@@ -86,14 +118,12 @@ impl SourceRoot {
         } else {
             member
         };
-        let fd = openat2(
+        let file = open_source(
             &self.directory,
             member,
             OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-            Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS,
+            true,
         )?;
-        let file = File::from(fd);
         let metadata = file.metadata()?;
         if !(metadata.is_file() || metadata.is_dir())
             || (metadata.is_file() && metadata.nlink() != 1)
@@ -236,6 +266,19 @@ impl Drop for PendingArchive {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn snapshot_creation_is_unsupported_without_secure_path_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let error = super::SourceRoot::open(temp.path()).err().unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        let output = temp.path().join("snapshot.tar");
+        let error = super::PendingArchive::new(&output).err().unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn output_may_use_the_pending_naming_pattern() {
         let temp = tempfile::tempdir().unwrap();

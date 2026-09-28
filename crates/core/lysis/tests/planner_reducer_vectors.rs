@@ -2023,6 +2023,74 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
 }
 
 #[test]
+fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
+    let day = WorldwideDay::new(20_260_918);
+    let entry_price = U256::from(19);
+    let mut tributes = [25_629_u64, 1_882, 2_529]
+        .into_iter()
+        .enumerate()
+        .map(|(index, load)| {
+            let mut item = observed(index as u32 + 1, day, load, 1, false);
+            item.tribute.reference_currency = 840;
+            item.entry_price_minor = ObservationValueV1::Value(entry_price);
+            item
+        })
+        .collect::<Vec<_>>();
+    tributes.sort_by_key(|item| item.tribute.tribute_id);
+    let budget = tributes
+        .iter()
+        .map(|item| item.tribute.nominal_amount_minor)
+        .sum::<U256>();
+    let logical_time = 1_789_689_600;
+    let sequential = execute(ProgramInputV1 {
+        worldwide_day: day,
+        logical_evaluation_time: logical_time,
+        lysis_limit_minor: budget,
+        tributes: tributes.clone(),
+    })
+    .unwrap();
+
+    let fidelity = fidelity_map(0, &tributes).unwrap();
+    let fractions = finalize_fi_fraction_table(&fidelity.aggregate, budget).unwrap();
+    let amount = amount_map(0, &tributes, &fidelity.observations, &fractions).unwrap();
+    let limits = poc_schema_limits();
+    let amount = decode_amount_run(&encode_amount_run(&amount, &limits).unwrap(), &limits).unwrap();
+    let loads = amount
+        .ordered_records
+        .iter()
+        .map(|record| record.gratis_load_minor)
+        .collect::<Vec<_>>();
+    let prefix = finalize_gratis_leaf(Some(budget), 0, &loads).unwrap();
+    let finalized = output_finalize(&amount, &prefix, logical_time).unwrap();
+    let finalized = decode_finalized_output_run(
+        &encode_finalized_output_run(&finalized, &limits).unwrap(),
+        &limits,
+    )
+    .unwrap();
+    let actions = finalized
+        .ordered_records
+        .iter()
+        .map(|record| record.nod_action.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(actions, sequential.nod_actions);
+    assert_eq!(sequential.remaining_lysis_limit_minor, U256::ZERO);
+    assert_eq!(prefix.outgoing_remaining, U256::ZERO);
+    assert_eq!(amount.checked_segment_gratis_total, budget);
+    for (action, tribute) in actions.iter().zip(&tributes) {
+        assert_eq!(
+            action.gratis_load_minor,
+            tribute.tribute.nominal_amount_minor
+        );
+        assert_eq!(action.entry_price_minor, entry_price);
+        assert_eq!(action.settlement_cost_minor, U256::from(1));
+        assert_eq!(
+            action.settlement_cost_minor,
+            outbe_nod::api::settlement_cost_minor(entry_price, action.gratis_load_minor).unwrap()
+        );
+    }
+}
+
+#[test]
 fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_one() {
     let day = WorldwideDay::new(20_260_724);
     let mut tributes = (0..257_u32)

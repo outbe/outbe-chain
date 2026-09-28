@@ -75,7 +75,8 @@ interface INodFactory {
         returns (uint16 settlementCurrency, uint256 payableUnits);
 
     /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
-    /// @param nonce PoW over `sha256(nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
+    /// @param nonce PoW over
+    /// `sha256("OUTBE_NOD_MINING_V1" || nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.

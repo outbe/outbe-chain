@@ -3,16 +3,16 @@ pragma solidity ^0.8.30;
 
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
-///         settlement, Promis mining, and the dual-wallet authorized-settler
-///         setter. Issuance is a module-to-module call (Desis -> IntexFactory)
-///         exposed through the Rust `api`, not a precompile selector. Series
-///         identity + lifecycle live in Intex; this precompile owns
-///         settlement bookkeeping and the autonomous qualification index.
+///         settlement, Promis mining, auction proceeds intake and the
+///         certified contributor payout. Issuance is a module-to-module call
+///         (Desis -> IntexFactory) exposed through the Rust `api`, not a
+///         precompile selector. Series identity + lifecycle live in Intex; this
+///         precompile owns settlement bookkeeping and the call-price index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexOwner`, paying the cost in `asset`. Any caller may pay; the
-    ///         settled units stay with the owner. Allowed in Qualified (voluntary)
-    ///         and Called (forced).
+    ///         settled units stay with the owner. Allowed once qualified (voluntary,
+    ///         see `isSeriesQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
@@ -41,6 +41,9 @@ interface IIntexFactory {
         view
         returns (uint16 settlementCurrency, uint256 payableUnits);
 
+    /// @notice Derived from finalized daily VWAPs on every call, never stored.
+    function isSeriesQualified(bytes14 seriesId) external view returns (bool);
+
     /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay` on, 0 when none.
     function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
 
@@ -58,10 +61,9 @@ interface IIntexFactory {
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
-    ///         Creators are paid, proportional to each owner's Tribute Nominal
-    ///         Amount, once every winning chain has routed its proceeds (or the
-    ///         fan-in deadline passes); the payout itself is drained over later
-    ///         blocks by the begin-block hook.
+    ///         The day's payout round opens once every winning chain has routed
+    ///         its proceeds (or the fan-in deadline passes); `payContributorBatch`
+    ///         pays each certified contributor in proportion to its nominal.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
     /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
@@ -133,21 +135,14 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 amount, uint256 promisAmount);
 
-    /// @notice The series qualified (Issued -> Qualified).
-    event SeriesQualified(bytes14 indexed seriesId);
-
-    /// @notice A reference currency was left out of one day's qualification because its
-    ///         day price could not be indexed. The next day's pass tries it again.
-    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice The series was force-called (Qualified -> Called).
+    /// @notice The series was force-called.
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next day's pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 
-    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
     ///         gave its place to a newer day and will not be walked.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
@@ -163,10 +158,6 @@ interface IIntexFactory {
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain
     ///         routing its proceeds in parts emits once per part.
     event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
-
-    /// @notice The day's auction proceeds were fully paid out to `contributors`
-    ///         tribute owners, totalling `amount` native COEN.
-    event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount, uint32 contributors);
 
     /// @notice Ownerless proceeds for the day (no contributors recorded) were
     ///         burned instead of being distributed.

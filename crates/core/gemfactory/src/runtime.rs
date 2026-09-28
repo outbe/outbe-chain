@@ -168,7 +168,7 @@ pub fn issue_gem_position(
 
 /// Burn `amount` of the merchant's Issued Intex units via `sendToGemFactory`
 /// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-sendable (non-Issued/Qualified) state or `amount` is zero.
+/// non-sendable (non-Issued) state or `amount` is zero.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
@@ -344,8 +344,7 @@ fn settle(
                 return Err(GemFactoryError::DeadlineExpired.into());
             }
         }
-        s if (s == GemState::Issued as u8 || s == GemState::Qualified as u8)
-            && gem_api::is_qualified(storage, &item)? => {}
+        s if s == GemState::Issued as u8 && gem_api::is_qualified(storage, &item)? => {}
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
@@ -648,7 +647,7 @@ fn compute_floor(
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let floor_price = match gem_type {
-        // A zero floor qualifies the gem from birth: every price clears it.
+        // A zero floor clears at any price on the gem's first full day.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
             U256::ZERO
@@ -712,8 +711,14 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// PoW gate for `mine_promis`. The preimage is
-/// `gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
 pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
-    pow::validate_mining_pow(gem_id, owner, pow::SINGLE_EXERCISE_SEQUENCE, nonce)
-        .map_err(|e| GemFactoryError::from(e).into())
+    pow::validate_mining_pow(
+        pow::MiningDomain::Gem,
+        gem_id,
+        owner,
+        pow::SINGLE_EXERCISE_SEQUENCE,
+        nonce,
+    )
+    .map_err(|e| GemFactoryError::from(e).into())
 }

@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
-import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
+import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
@@ -12,7 +12,6 @@ import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     BidsRelayProgress,
     ChunkProgress,
-    ParkedMark,
     ParkedIssuance,
     ParkedProceeds,
     RefundProgress,
@@ -25,7 +24,7 @@ interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
     function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
-    function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external;
+    function applyMarkOne(bytes14 seriesId, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
 }
 
@@ -448,23 +447,18 @@ library TargetInbound {
 
     /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
     ///         will not take the mark yet.
+    /// @dev A zero call time is acknowledged without effect: no series can take it, and a slot reads zero as empty.
     function handleMarkCalled(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (, uint32 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
+        (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
+        if (calledAt == 0) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(worldwideDay)), InboundReason.INVALID);
+            return;
+        }
         for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark($, srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED, calledAt);
+            _applyMark($, srcChainId, seriesIds[i], calledAt);
         }
     }
 
-    /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the rest.
-    function handleMarkQualified(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(message);
-        for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark($, srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED, 0);
-        }
-    }
-
-    /// @notice Record one finalized day into the registry. A chain without a registry refuses the day, so the
-    ///         transport redelivers it once one is wired.
     function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
         if (address($.vwapRegistry) == address(0)) revert ITargetRouter.VwapRegistryUnset();
@@ -472,88 +466,45 @@ library TargetInbound {
         emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
-    /// @dev Apply one lifecycle mark through its self-call shim. A series this chain has not seen keeps the mark
-    ///      in its slot; a mark the series already carries (or one a later mark superseded) is acknowledged
-    ///      without effect; any other failure slots the mark for `applyParkedMark`.
-    function _applyMark(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes14 seriesId,
-        uint8 msgType,
-        uint32 calledAt
-    ) private {
+    /// @dev An unseen series keeps the mark in its slot; an already called one is acknowledged; any other
+    ///      failure slots it for `applyParkedMark`.
+    function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint32 calledAt) private {
         if (!$.intex.seriesExists(seriesId)) {
-            _slotMark($, srcChainId, seriesId, msgType, calledAt);
+            _slotMark($, seriesId, calledAt);
             return;
         }
         // solhint-disable-next-line no-empty-blocks
-        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {}
+        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, calledAt) {}
         catch (bytes memory reason) {
+            // Only a series that is already called refuses the mark by its state.
             if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) {
-                IIntexNFT1155.IntexState state = $.intex.readData(seriesId).state;
-                // `Expired` is a called series past its notice period, still a duplicate.
-                bool already =
-                    (msgType == BridgeMsgCodec.MSG_MARK_CALLED
-                            && (state == IIntexNFT1155.IntexState.Called || state == IIntexNFT1155.IntexState.Expired))
-                        || (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED && state == IIntexNFT1155.IntexState.Qualified);
-                _ignore(srcChainId, msgType, seriesId, already ? InboundReason.DUPLICATE : InboundReason.OBSOLETE);
+                _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, seriesId, InboundReason.DUPLICATE);
                 return;
             }
-            if (_slotMark($, srcChainId, seriesId, msgType, calledAt)) {
-                _ignore(srcChainId, msgType, seriesId, InboundReason.DEFERRED);
-            }
+            _slotMark($, seriesId, calledAt);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, seriesId, InboundReason.DEFERRED);
             return;
         }
-        // Applied, so its own slot is settled. A Qualified never clears a waiting Called: the two arrive
-        // independently, and the Called is the later decision even when it lands second.
-        if (
-            msgType == BridgeMsgCodec.MSG_MARK_CALLED
-                || $.parkedMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
-        ) {
-            delete $.parkedMarks[seriesId];
-        }
-        if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
-            emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
-        } else {
-            emit ITargetRouter.MarkQualifiedReceived(srcChainId, seriesId);
-        }
-    }
-
-    /// @dev Keep a mark for a series that cannot take it yet; Called overrides Qualified, never the reverse
-    ///      (a Qualified arriving under a waiting Called is superseded and only acknowledged).
-    /// @return slotted True when the mark now waits in the slot, false when a waiting Called superseded it.
-    function _slotMark(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes14 seriesId,
-        uint8 msgType,
-        uint32 calledAt
-    ) private returns (bool slotted) {
-        if (
-            msgType != BridgeMsgCodec.MSG_MARK_CALLED
-                && $.parkedMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
-        ) {
-            _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
-            return false;
-        }
-        $.parkedMarks[seriesId] = ParkedMark({msgType: msgType, calledAt: calledAt});
-        emit ITargetRouter.MarkParked(seriesId, msgType);
-        return true;
-    }
-
-    /// @dev Apply the mark waiting for a series that has just been created. A mark is a state flip and
-    ///      moves no balances, so Called applies here as readily as Qualified. A failure re-announces the slot.
-    function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
-        ParkedMark memory waiting = $.parkedMarks[seriesId];
-        uint8 msgType = waiting.msgType;
-        if (msgType == 0) return;
-        uint32 calledAt = waiting.calledAt;
         delete $.parkedMarks[seriesId];
-        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {
-            emit ITargetRouter.ParkedMarkApplied(seriesId, msgType);
+        emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
+    }
+
+    function _slotMark(TargetRouterStorage storage $, bytes14 seriesId, uint32 calledAt) private {
+        $.parkedMarks[seriesId] = calledAt;
+        emit ITargetRouter.MarkParked(seriesId);
+    }
+
+    /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
+    ///      the slot.
+    function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
+        uint32 calledAt = $.parkedMarks[seriesId];
+        if (calledAt == 0) return;
+        delete $.parkedMarks[seriesId];
+        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, calledAt) {
+            emit ITargetRouter.ParkedMarkApplied(seriesId);
         } catch {
-            $.parkedMarks[seriesId] = waiting;
-            emit ITargetRouter.MarkParked(seriesId, msgType);
+            $.parkedMarks[seriesId] = calledAt;
+            emit ITargetRouter.MarkParked(seriesId);
         }
     }
 

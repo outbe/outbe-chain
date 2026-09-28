@@ -26,7 +26,7 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
     uint8 internal constant MSG_MARK_CALLED = 8;
-    uint8 internal constant MSG_MARK_QUALIFIED = 9;
+    // 9 was MARK_QUALIFIED; not to be reused.
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 10;
     /// @dev Origin -> target: one finalized UTC day's VWAPs.
@@ -51,8 +51,7 @@ library BridgeMsgCodec {
     ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
     uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 24;
 
-    /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's series
-    ///         that took the same decision at the same moment, so it is short.
+    /// @notice Series one MARK_CALLED message may carry; a batch is one day's series called together.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
@@ -85,10 +84,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds); one series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
-    // MARK_QUALIFIED: header + abi.encode(worldwideDay, seriesIds); one series is 4 words.
-    uint16 internal constant MIN_LEN_MARK_QUALIFIED = HEADER_LEN + 128;
-    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
-    uint16 internal constant MIN_LEN_BIDS_DONE = 20;
+    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
+    uint16 internal constant MIN_LEN_BIDS_DONE = 16;
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
     // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
@@ -98,14 +95,14 @@ library BridgeMsgCodec {
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
-    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
-    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9x32 = 288
+    //   BIDS_BATCH(uint32, uint32, uint16, uint16, address[], uint256[]):
+    //     4 static head words + 2 dynamic head offsets + 2 empty length words = 8x32 = 256
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
     //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
     //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 13 static + 2 dynamic fields):
     //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 13 static
     //     + 2 inner offsets + 2 empty length words = 23x32 = 736
-    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
+    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 256;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 736;
 
@@ -178,7 +175,6 @@ library BridgeMsgCodec {
     error RefundBatchTooLarge(uint256 count, uint256 max);
     /// @notice A live day was encoded without a single reference price to bid against.
     error MissingReferencePrices();
-    /// @notice A DAILY_VWAP message carried no prices at all.
     error EmptyDailyVwap();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
     error EmptyIssuanceBatch();
@@ -210,40 +206,33 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes a BIDS_DONE marker: source chain `_srcChainId` has sent all `_totalBatches` batches
-    ///         of this flush generation for `_worldwideDay`.
+    ///         of its relay for `_worldwideDay`.
     /// @dev Fixed-length encodePacked. `_totalBids` is an integrity check: the receiver requires it to equal the
     ///      sum of the arrived batch sizes before it treats the chain as complete. Redundant with the per-batch
     ///      `totalBatches` field, kept as the explicit completeness marker + a cross-check.
     /// @return The wire-encoded BIDS_DONE message.
-    function encodeBidsDone(
-        uint32 _worldwideDay,
-        uint32 _srcChainId,
-        uint32 _relayGeneration,
-        uint16 _totalBatches,
-        uint32 _totalBids
-    ) internal pure returns (bytes memory) {
-        return abi.encodePacked(
-            BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _relayGeneration, _totalBatches, _totalBids
-        );
+    function encodeBidsDone(uint32 _worldwideDay, uint32 _srcChainId, uint16 _totalBatches, uint32 _totalBids)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _totalBatches, _totalBids);
     }
 
     /// @notice Encodes BIDS_BATCH message.
-    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches sharing one
-    ///      `_relayGeneration`; the receiver collects all `_totalBatches` (in any order) before finalizing
-    ///      and replaces a re-flushed generation rather than double-counting it. Reverts `PayloadArrayTooLong`
-    ///      if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches; the receiver collects
+    ///      all `_totalBatches` (in any order) before finalizing. Reverts `PayloadArrayTooLong` if
+    ///      `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
-    /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
-    /// @param _batchIndex Index of this batch within the flush (0-based).
-    /// @param _totalBatches Total number of batches in this flush (the receiver waits for all of them).
+    /// @param _batchIndex Index of this batch within the relay (0-based).
+    /// @param _totalBatches Total number of batches in the relay (the receiver waits for all of them).
     /// @param _bidderAddresses The bidder addresses (parallel with `_packedBids`).
     /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
         uint32 _worldwideDay,
         uint32 _srcChainId,
-        uint32 _relayGeneration,
         uint16 _batchIndex,
         uint16 _totalBatches,
         address[] memory _bidderAddresses,
@@ -258,9 +247,7 @@ library BridgeMsgCodec {
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
-            abi.encode(
-                _worldwideDay, _srcChainId, _relayGeneration, _batchIndex, _totalBatches, _bidderAddresses, _packedBids
-            )
+            abi.encode(_worldwideDay, _srcChainId, _batchIndex, _totalBatches, _bidderAddresses, _packedBids)
         );
     }
 
@@ -595,20 +582,6 @@ library BridgeMsgCodec {
         return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_worldwideDay, _calledAt, _seriesIds));
     }
 
-    /// @notice Encodes MARK_QUALIFIED message for one day's batch of series.
-    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds)
-    /// @param _worldwideDay The worldwide day the series were derived from.
-    /// @param _seriesIds The auction series identifiers, at most `MAX_SERIES_PER_MARK`.
-    /// @return The wire-encoded MARK_QUALIFIED message.
-    function encodeMarkQualified(uint32 _worldwideDay, bytes14[] memory _seriesIds)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        _assertMarkBatch(_seriesIds);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, abi.encode(_worldwideDay, _seriesIds));
-    }
-
     /// @dev A mark batch carries at least one series and at most `MAX_SERIES_PER_MARK`.
     function _assertMarkBatch(bytes14[] memory _seriesIds) private pure {
         if (_seriesIds.length == 0) revert EmptyMarkBatch();
@@ -697,21 +670,19 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded BIDS_DONE message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId that finished sending its bids.
-    /// @return relayGeneration The flush generation this marker stamps.
-    /// @return totalBatches Total batches the source chain sent for this generation.
+    /// @return totalBatches Total batches the source chain sent for the day.
     /// @return totalBids Total bids across those batches (integrity cross-check).
     function decodeBidsDone(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 srcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+        returns (uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids)
     {
         _assertExactLength(_msg, MSG_BIDS_DONE, MIN_LEN_BIDS_DONE);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
         srcChainId = uint32(bytes4(_msg[6:10]));
-        relayGeneration = uint32(bytes4(_msg[10:14]));
-        totalBatches = uint16(bytes2(_msg[14:16]));
-        totalBids = uint32(bytes4(_msg[16:20]));
+        totalBatches = uint16(bytes2(_msg[10:12]));
+        totalBids = uint32(bytes4(_msg[12:16]));
     }
 
     /// @notice Returns the body version byte (offset 0).
@@ -756,9 +727,8 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded BIDS_BATCH message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
-    /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
-    /// @return batchIndex Index of this batch within the flush (0-based).
-    /// @return totalBatches Total number of batches in this flush (the receiver waits for all of them).
+    /// @return batchIndex Index of this batch within the relay (0-based).
+    /// @return totalBatches Total number of batches in the relay (the receiver waits for all of them).
     /// @return bidderAddresses The bidder addresses (parallel with `packedBids`).
     /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsBatch(bytes calldata _msg)
@@ -767,7 +737,6 @@ library BridgeMsgCodec {
         returns (
             uint32 worldwideDay,
             uint32 srcChainId,
-            uint32 relayGeneration,
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
@@ -779,8 +748,8 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids) =
-            abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint256[]));
+        (worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids) =
+            abi.decode(_msg[2:], (uint32, uint32, uint16, uint16, address[], uint256[]));
         // The two arrays are indexed in lockstep downstream; unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidderAddresses.length != packedBids.length) {
@@ -927,32 +896,6 @@ library BridgeMsgCodec {
         _assertMarkBatch(seriesIds);
     }
 
-    /// @notice Decodes MARK_QUALIFIED message.
-    /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
-    ///      `UnsupportedBodyVersion`, then the batch bounds.
-    /// @param _msg The wire-encoded MARK_QUALIFIED message.
-    /// @return worldwideDay The worldwide day the series were derived from.
-    /// @return seriesIds The auction series identifiers.
-    function decodeMarkQualified(bytes calldata _msg)
-        external
-        pure
-        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
-    {
-        return _decodeMark(_msg, MSG_MARK_QUALIFIED, MIN_LEN_MARK_QUALIFIED);
-    }
-
-    /// @dev Shared body of the two mark decoders; they differ only in which type they report.
-    function _decodeMark(bytes calldata _msg, uint8 _msgType, uint16 _minLen)
-        private
-        pure
-        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
-    {
-        if (_msg.length < _minLen) revert InvalidPayloadLength(_msgType, _msg.length, _minLen);
-        _assertBodyVersion(_msg);
-        (worldwideDay, seriesIds) = abi.decode(_msg[2:], (uint32, bytes14[]));
-        _assertMarkBatch(seriesIds);
-    }
-
     // --- Validation helpers ---
 
     /// @notice Returns the minimum encoded length for the given `msgType`, or 0 if not recognised.
@@ -965,7 +908,6 @@ library BridgeMsgCodec {
         if (_msgType == MSG_AUCTION_STAGE_CLEARING) return MIN_LEN_AUCTION_STAGE_CLEARING;
         if (_msgType == MSG_AUCTION_RESULT) return MIN_LEN_AUCTION_RESULT;
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
-        if (_msgType == MSG_MARK_QUALIFIED) return MIN_LEN_MARK_QUALIFIED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
         if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
         if (_msgType == MSG_BIDS_REMAINING) return MIN_LEN_BIDS_REMAINING;

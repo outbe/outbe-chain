@@ -75,20 +75,11 @@ fn validator_receives_reward_gem(world: &mut World) {
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     assert_eq!(gem.owner, owner);
     match gem.gemType {
-        // Genesis: no floor, so every price clears it and it qualifies from birth.
-        0 => {
-            assert!(
-                gem.floorPrice.is_zero(),
-                "a Genesis reward Gem carries no floor"
-            );
-            assert!(
-                crate::features::gem_lifecycle::gem_is_qualified(
-                    &world.rpc.url(world.validators.primary_port()),
-                    gem_id
-                ),
-                "a Genesis reward Gem qualifies from birth"
-            );
-        }
+        // Genesis: no floor, so it qualifies on its first closed day at any positive price.
+        0 => assert!(
+            gem.floorPrice.is_zero(),
+            "a Genesis reward Gem carries no floor"
+        ),
         // Validator: floor = rate x 1.08, so it qualifies once a day closes above it.
         1 => assert!(
             !gem.floorPrice.is_zero(),
@@ -380,10 +371,9 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // A Validator reward Gem is born Issued against its floor. It qualifies on a closed day
-    // it held in full, and this one was delivered minutes ago: stamp it behind the day that
-    // is then seeded above its floor.
-    if gem.state == 0 {
+    // A reward Gem qualifies on a closed day it held in full, and this one was delivered
+    // minutes ago: stamp it behind the day that is then seeded above its floor.
+    if !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
         let now = world
             .rpc
             .latest_block_timestamp(world.validators.primary_port())
@@ -404,32 +394,37 @@ fn validator_redeems_reward_gem(world: &mut World) {
             DEPLOYER_KEY,
             USD_ISO,
             1,
+            // A Genesis floor is zero, and a zero VWAP is no price at all.
             gem.floorPrice
                 .checked_mul(U256::from(2u64))
-                .expect("qualifying day VWAP"),
+                .expect("qualifying day VWAP")
+                .max(gem.entryPrice),
         )
         .expect("seed the closed day's VWAP above the reward Gem floor");
-        // The daily trigger that opens the qualify sweep comes round every minute in e2e.
+        // Qualification is derived on read once the seeded day is closed.
         let deadline = Instant::now() + Duration::from_secs(240);
-        loop {
-            gem = eth::read_call(
-                &url,
-                addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
-            )
-            .expect("read the same reward Gem during qualification");
-            if gem.state == 1 {
-                break;
-            }
-            assert_eq!(gem.state, 0, "unexpected reward Gem lifecycle transition");
+        while !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
             assert!(
                 Instant::now() < deadline,
                 "reward Gem qualification timed out"
             );
             sleep(Duration::from_millis(250));
         }
+        gem = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: gem_id },
+        )
+        .expect("read the same reward Gem after qualification");
     }
-    assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
+    assert_eq!(
+        gem.state, 0,
+        "reward Gem must still be Issued for settlement"
+    );
+    assert!(
+        crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
+        "reward Gem must be qualified for settlement"
+    );
     // The cost is derived, so what to fund is the factory's own quote — already in
     // the settlement asset's units, which the reference amount never was.
     let payable = eth::read_call(
@@ -539,7 +534,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         promis_nonce,
         chain_id,
     );
-    let pow = find_mining_pow_nonce(gem_id, owner);
+    let pow = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, owner);
     let mine_promis = eth::send_sponsored_call(
         &url,
         &key,
@@ -636,13 +631,35 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("all validators finalize the reward Gem delivery");
     let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
     if !qualified() {
-        crate::features::price_oracle::publish_controlled_quote(
-            world,
+        // A reward Gem qualifies on a closed day it held in full, and this one was delivered
+        // minutes ago: stamp it behind the day that is then seeded above its floor.
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp");
+        eth::send_call(
+            &url,
+            addresses::GEM_ADDR,
+            DEPLOYER_KEY,
+            &crate::features::gem_lifecycle::IGemTestArming::backdateGemForTestCall {
+                gemId: gem_id,
+                issuedAt: now.saturating_sub(3 * 86_400),
+            },
+            None,
+        )
+        .expect("backdate the reward Gem's issuance stamp");
+        test_issuance::seed_day_vwaps(
+            &url,
+            DEPLOYER_KEY,
+            USD_ISO,
+            1,
             gem.floorPrice
-                .checked_add(U256::ONE)
-                .expect("qualifying quote"),
-        );
-        let deadline = Instant::now() + Duration::from_secs(120);
+                .checked_mul(U256::from(2u64))
+                .expect("qualifying day VWAP")
+                .max(gem.entryPrice),
+        )
+        .expect("seed the closed day's VWAP above the reward Gem floor");
+        let deadline = Instant::now() + Duration::from_secs(240);
         while !qualified() {
             assert!(
                 Instant::now() < deadline,
@@ -761,7 +778,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &key,
             &eth::IGemFactory::minePromisCall {
                 gemId: gem_id,
-                nonce: find_mining_pow_nonce(gem_id, owner),
+                nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, owner),
                 mac: B256::from(mac),
                 opNonce: nonce,
             },
@@ -1086,7 +1103,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_mining_pow_nonce(U256::from_be_slice(&nod_id), owner);
+    let pow = find_mining_pow_nonce(
+        outbe_common::pow::MiningDomain::Nod,
+        U256::from_be_slice(&nod_id),
+        owner,
+    );
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -1560,11 +1581,16 @@ pub(crate) fn chain_id_b256(world: &World) -> B256 {
     ))
 }
 
-/// The shared mining preimage: Nod and Gem both bind the right and its owner.
-pub(crate) fn find_mining_pow_nonce(id: U256, owner: Address) -> u64 {
+/// The shared mining preimage: Nod and Gem bind the right, its owner and their own domain.
+pub(crate) fn find_mining_pow_nonce(
+    domain: outbe_common::pow::MiningDomain,
+    id: U256,
+    owner: Address,
+) -> u64 {
     (0_u64..100_000)
         .find(|nonce| {
             outbe_common::pow::validate_mining_pow(
+                domain,
                 id,
                 owner,
                 outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,

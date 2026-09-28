@@ -68,11 +68,6 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "mint is supply-only");
 
-        nft.markQualified(SERIES_ID);
-        (count, tokenId) = _metadataUpdates();
-        assertEq(count, 1, "markQualified changes the document");
-        assertEq(tokenId, iTok);
-
         nft.sendToGemFactory(user, SERIES_ID, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "sendToGemFactory is supply-only");

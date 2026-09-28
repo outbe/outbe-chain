@@ -235,7 +235,10 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
             rate * U256::from(228u64) / U256::from(100u64)
         );
         assert_eq!(item.state, GemState::Issued as u8);
-        assert!(gem_api::is_qualified(storage, &item).unwrap());
+        assert!(
+            !gem_api::is_qualified(storage, &item).unwrap(),
+            "a zero floor still waits for its first finalized day"
+        );
         assert_eq!(item.gem_type, GemTypes::Genesis as u8);
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -243,9 +246,9 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
     });
 }
 
-/// Without a floor, a Genesis gem settles before any day has closed.
+/// A Genesis gem settles once its first full day closes: a zero floor clears at any price.
 #[test]
-fn a_genesis_gem_settles_with_no_closed_day() {
+fn a_genesis_gem_settles_once_its_first_day_closes() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
@@ -253,6 +256,7 @@ fn a_genesis_gem_settles_with_no_closed_day() {
         issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap()
     });
     StorageHandle::enter(&mut provider, |storage| {
+        seed_qualifying_day(&storage, gem_id);
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
         assert_eq!(
             gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
@@ -642,9 +646,7 @@ fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
         .unwrap();
     let day = outbe_primitives::time::first_full_day(item.issued_at);
     oracle
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&pair, item.floor_price_minor + U256::ONE)
+        .record_utc_day_vwap(day, pair, item.floor_price_minor + U256::ONE)
         .unwrap();
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
@@ -1137,16 +1139,45 @@ fn settle_rejects_non_qualified_state() {
 }
 
 #[test]
-fn gem_pow_binds_the_owner() {
-    use outbe_common::pow::{compute_mining_pow_hash, SINGLE_EXERCISE_SEQUENCE};
+fn gem_pow_binds_the_owner_and_its_own_domain() {
+    use outbe_common::pow::{compute_mining_pow_hash, MiningDomain, SINGLE_EXERCISE_SEQUENCE};
 
     let gem_id = U256::from(0x1234_5678u64);
     let nonce = find_valid_nonce(gem_id, ALICE);
 
     assert!(runtime::validate_pow(gem_id, ALICE, nonce).is_ok());
     assert_ne!(
-        compute_mining_pow_hash(gem_id, ALICE, SINGLE_EXERCISE_SEQUENCE, nonce),
-        compute_mining_pow_hash(gem_id, BOB, SINGLE_EXERCISE_SEQUENCE, nonce)
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            BOB,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        )
+    );
+    assert_ne!(
+        compute_mining_pow_hash(
+            MiningDomain::Gem,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        compute_mining_pow_hash(
+            MiningDomain::Nod,
+            gem_id,
+            ALICE,
+            SINGLE_EXERCISE_SEQUENCE,
+            nonce
+        ),
+        "a Nod nonce must not settle a Gem"
     );
 }
 
@@ -1521,9 +1552,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
         .expect("COEN pair registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW));
     OracleContract::new(storage.clone())
-        .utc_day_vwap_value
-        .get_nested(&day)
-        .write(&index, vwap)
+        .record_utc_day_vwap(day, index, vwap)
         .unwrap();
 }
 

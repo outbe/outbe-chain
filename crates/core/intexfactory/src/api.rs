@@ -12,7 +12,7 @@ use crate::config::{self, IntexParams};
 use crate::runtime;
 use crate::schema::IssuanceParams;
 
-/// Create a series and enroll it for autonomous qualification, returning what each
+/// Create a series and enroll it in the call-price index, returning what each
 /// target chain must be told. Called by the clearing engine after a cleared auction,
 /// which packs the day's legs into messages and sends them.
 pub fn issue(
@@ -27,9 +27,9 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
     runtime::send_issuance(storage, legs)
 }
 
-/// Discard a day's contributor map. The clearing engine calls this for a day
-/// that issued nothing at all: with no series anywhere, the recorded creator
-/// rewards can never be distributed.
+/// Close a day's proceeds aggregation. The clearing engine calls this for a
+/// day that issued nothing at all: with no series anywhere, no proceeds can
+/// arrive to pay out.
 pub fn discard_day_contributors(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,

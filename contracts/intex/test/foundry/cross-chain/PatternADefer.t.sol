@@ -140,7 +140,6 @@ contract PatternADeferTest is CrossChainTest {
 
         // Series so markCalled + owner enumeration work.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
-        intex.markQualified(SERIES_ID);
     }
 
     /// @dev Deliver an inbound packet to the router from the registered Outbe peer.

@@ -238,12 +238,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
     let exact_radicle_binaries = if input.radicle.validator_node_ids.is_empty() {
         None
     } else {
-        let heartwood_target = input
-            .env
-            .repo
-            .parent()
-            .unwrap_or(&input.env.repo)
-            .join("outbe-heartwood/target/release");
+        let heartwood_target = input.env.repo.join("target/e2e-heartwood/bin");
         let mut binaries = serde_json::Map::new();
         for (name, path) in [
             (

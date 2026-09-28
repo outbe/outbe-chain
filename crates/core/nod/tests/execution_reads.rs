@@ -145,7 +145,6 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
             Some(U256::from(14))
         );
         assert!(api::is_qualified(&storage, &bucket()).unwrap());
-        assert!(!bucket().is_qualified, "nothing is stored");
     });
     // Only issuance logged: qualifying writes nothing.
     let signatures: Vec<_> = provider
@@ -201,9 +200,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         let full_day = first_full_day(1_752_534_000);
         oracle
-            .utc_day_vwap_value
-            .get_nested(&full_day)
-            .write(&index, U256::from(1299))
+            .record_utc_day_vwap(full_day, index, U256::from(1299))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(full_day).unwrap();
 
@@ -276,9 +273,7 @@ fn idle_daily_scans_do_not_write_storage() {
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         oracle.reference_currencies.push(978).unwrap();
         oracle
-            .utc_day_vwap_value
-            .get_nested(&20260715)
-            .write(&index, U256::from(13))
+            .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
         for (owner, floor) in [(0x51, 12), (0x52, 13)] {
