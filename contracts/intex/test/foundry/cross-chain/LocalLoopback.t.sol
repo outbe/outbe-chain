@@ -33,7 +33,6 @@ uint16 constant REFERENCE_CCY = 840;
 contract RecordingDesis {
     uint32 public lastDay;
     uint32 public lastSrcChainId;
-    uint32 public lastGeneration;
     uint16 public lastTotalBatches;
     address[] public bidders;
     uint16[] public quantities;
@@ -50,7 +49,6 @@ contract RecordingDesis {
     function processBidsBatch(
         uint32 worldwideDay,
         uint32 srcChainId,
-        uint32 relayGeneration,
         uint16, /* batchIndex */
         uint16 totalBatches,
         address[] calldata bidderAddresses,
@@ -58,7 +56,6 @@ contract RecordingDesis {
     ) external {
         lastDay = worldwideDay;
         lastSrcChainId = srcChainId;
-        lastGeneration = relayGeneration;
         lastTotalBatches = totalBatches;
         for (uint256 i = 0; i < bidderAddresses.length; i++) {
             (uint16 q, uint32 r,,,) = BridgeMsgCodec.unpackBid(packedBids[i]);
@@ -68,7 +65,7 @@ contract RecordingDesis {
         }
     }
 
-    function processBidsDone(uint32, uint32 srcChainId, uint32, uint16 totalBatches, uint32 totalBids) external {
+    function processBidsDone(uint32, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external {
         doneSrcChainId = srcChainId;
         doneTotalBatches = totalBatches;
         doneTotalBids = totalBids;
@@ -290,7 +287,6 @@ contract LocalLoopbackTest is Test {
         assertEq(desis.bidsCount(), 2, "bids not relayed");
         assertEq(desis.lastDay(), DAY, "relay day");
         assertEq(desis.lastSrcChainId(), local, "relay source chain");
-        assertEq(desis.lastGeneration(), 1, "relay generation");
         assertEq(desis.lastTotalBatches(), 1, "relay batches");
         assertEq(desis.doneSrcChainId(), local, "marker source chain");
         assertEq(desis.doneTotalBatches(), 1, "marker batches");

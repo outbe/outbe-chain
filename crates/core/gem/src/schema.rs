@@ -10,8 +10,6 @@ pub const GENESIS_GEM_TYPE: u8 = 0;
 #[repr(u8)]
 pub enum GemState {
     Issued = 0,
-    /// Nothing writes it; records from before qualification was derived still carry it.
-    Qualified = 1,
     Called = 2,
     Settled = 3,
 }
@@ -93,10 +91,6 @@ pub struct GemData {
     #[attribute(order = 14, default = 0)]
     pub call_threshold_seconds: u32,
 
-    /// Retired with the qualify sweep: never read or written, kept so the record decodes.
-    #[attribute(order = 15, default = 0)]
-    pub retired_qualified_at: u64,
-
     /// Block timestamp when the gem was Settled; `0` until Settled.
     #[attribute(order = 16, default = 0)]
     pub settled_at: u64,
@@ -123,44 +117,27 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // Retired with the qualify sweep, as is every `retired_*` below: kept only to hold slots.
-    #[attribute(order = 6)]
-    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-    #[attribute(order = 7)]
-    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 8)]
-    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 9)]
-    pub retired_unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 10)]
-    pub retired_unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
-
     // --- Call-price bin index, one trie per reference currency; a gem enters it at issuance.
     #[attribute(order = 11)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
     #[attribute(order = 12)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 13)]
-    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 14)]
-    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     #[attribute(order = 15)]
-    pub qualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub call_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
-
-    #[attribute(order = 18)]
-    pub retired_qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
-    #[attribute(order = 19)]
-    pub retired_qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // --- Called gems, bucketed by the hour their notice period closes in. Calling is
     // driven by price and expiry only by time, so the two stages stay separate.
@@ -182,7 +159,7 @@ pub struct GemContract {
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod); see crate::config.
     #[attribute(order = 26)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
@@ -210,10 +187,6 @@ pub struct GemContract {
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 34)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 35)]
-    pub retired_qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 36)]
-    pub retired_qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

@@ -84,8 +84,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds); one series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
-    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
-    uint16 internal constant MIN_LEN_BIDS_DONE = 20;
+    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
+    uint16 internal constant MIN_LEN_BIDS_DONE = 16;
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
     // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
@@ -95,14 +95,14 @@ library BridgeMsgCodec {
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
-    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
-    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9x32 = 288
+    //   BIDS_BATCH(uint32, uint32, uint16, uint16, address[], uint256[]):
+    //     4 static head words + 2 dynamic head offsets + 2 empty length words = 8x32 = 256
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
     //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
     //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 13 static + 2 dynamic fields):
     //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 13 static
     //     + 2 inner offsets + 2 empty length words = 23x32 = 736
-    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
+    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 256;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 736;
 
@@ -206,40 +206,33 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes a BIDS_DONE marker: source chain `_srcChainId` has sent all `_totalBatches` batches
-    ///         of this flush generation for `_worldwideDay`.
+    ///         of its relay for `_worldwideDay`.
     /// @dev Fixed-length encodePacked. `_totalBids` is an integrity check: the receiver requires it to equal the
     ///      sum of the arrived batch sizes before it treats the chain as complete. Redundant with the per-batch
     ///      `totalBatches` field, kept as the explicit completeness marker + a cross-check.
     /// @return The wire-encoded BIDS_DONE message.
-    function encodeBidsDone(
-        uint32 _worldwideDay,
-        uint32 _srcChainId,
-        uint32 _relayGeneration,
-        uint16 _totalBatches,
-        uint32 _totalBids
-    ) internal pure returns (bytes memory) {
-        return abi.encodePacked(
-            BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _relayGeneration, _totalBatches, _totalBids
-        );
+    function encodeBidsDone(uint32 _worldwideDay, uint32 _srcChainId, uint16 _totalBatches, uint32 _totalBids)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _totalBatches, _totalBids);
     }
 
     /// @notice Encodes BIDS_BATCH message.
-    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches sharing one
-    ///      `_relayGeneration`; the receiver collects all `_totalBatches` (in any order) before finalizing
-    ///      and replaces a re-flushed generation rather than double-counting it. Reverts `PayloadArrayTooLong`
-    ///      if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches; the receiver collects
+    ///      all `_totalBatches` (in any order) before finalizing. Reverts `PayloadArrayTooLong` if
+    ///      `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
-    /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
-    /// @param _batchIndex Index of this batch within the flush (0-based).
-    /// @param _totalBatches Total number of batches in this flush (the receiver waits for all of them).
+    /// @param _batchIndex Index of this batch within the relay (0-based).
+    /// @param _totalBatches Total number of batches in the relay (the receiver waits for all of them).
     /// @param _bidderAddresses The bidder addresses (parallel with `_packedBids`).
     /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
         uint32 _worldwideDay,
         uint32 _srcChainId,
-        uint32 _relayGeneration,
         uint16 _batchIndex,
         uint16 _totalBatches,
         address[] memory _bidderAddresses,
@@ -254,9 +247,7 @@ library BridgeMsgCodec {
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
-            abi.encode(
-                _worldwideDay, _srcChainId, _relayGeneration, _batchIndex, _totalBatches, _bidderAddresses, _packedBids
-            )
+            abi.encode(_worldwideDay, _srcChainId, _batchIndex, _totalBatches, _bidderAddresses, _packedBids)
         );
     }
 
@@ -679,21 +670,19 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded BIDS_DONE message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId that finished sending its bids.
-    /// @return relayGeneration The flush generation this marker stamps.
-    /// @return totalBatches Total batches the source chain sent for this generation.
+    /// @return totalBatches Total batches the source chain sent for the day.
     /// @return totalBids Total bids across those batches (integrity cross-check).
     function decodeBidsDone(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 srcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+        returns (uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids)
     {
         _assertExactLength(_msg, MSG_BIDS_DONE, MIN_LEN_BIDS_DONE);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
         srcChainId = uint32(bytes4(_msg[6:10]));
-        relayGeneration = uint32(bytes4(_msg[10:14]));
-        totalBatches = uint16(bytes2(_msg[14:16]));
-        totalBids = uint32(bytes4(_msg[16:20]));
+        totalBatches = uint16(bytes2(_msg[10:12]));
+        totalBids = uint32(bytes4(_msg[12:16]));
     }
 
     /// @notice Returns the body version byte (offset 0).
@@ -738,9 +727,8 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded BIDS_BATCH message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
-    /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
-    /// @return batchIndex Index of this batch within the flush (0-based).
-    /// @return totalBatches Total number of batches in this flush (the receiver waits for all of them).
+    /// @return batchIndex Index of this batch within the relay (0-based).
+    /// @return totalBatches Total number of batches in the relay (the receiver waits for all of them).
     /// @return bidderAddresses The bidder addresses (parallel with `packedBids`).
     /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsBatch(bytes calldata _msg)
@@ -749,7 +737,6 @@ library BridgeMsgCodec {
         returns (
             uint32 worldwideDay,
             uint32 srcChainId,
-            uint32 relayGeneration,
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
@@ -761,8 +748,8 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids) =
-            abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint256[]));
+        (worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids) =
+            abi.decode(_msg[2:], (uint32, uint32, uint16, uint16, address[], uint256[]));
         // The two arrays are indexed in lockstep downstream; unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidderAddresses.length != packedBids.length) {

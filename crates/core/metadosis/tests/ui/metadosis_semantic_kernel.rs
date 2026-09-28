@@ -1,5 +1,5 @@
-use outbe_metadosis::test_support::kernel::EmergencyFailKernel;
+use outbe_metadosis::test_support::kernel::ActivationKernel;
 
 fn main() {
-    let _ = std::any::type_name::<EmergencyFailKernel>();
+    let _ = std::any::type_name::<ActivationKernel>();
 }

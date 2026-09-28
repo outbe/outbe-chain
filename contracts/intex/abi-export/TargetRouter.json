@@ -431,9 +431,9 @@
       ],
       "outputs": [
         {
-          "name": "",
-          "type": "uint8",
-          "internalType": "uint8"
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"
@@ -1213,12 +1213,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -1270,12 +1264,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
         }
       ],
       "anonymous": false

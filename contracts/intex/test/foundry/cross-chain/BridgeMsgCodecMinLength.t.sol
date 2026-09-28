@@ -14,6 +14,11 @@ contract BridgeMsgCodecMinLengthTest is Test {
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS, "refund floor");
     }
 
+    function test_BidsBatchFloorIsAnEmptyBatch() public pure {
+        bytes memory smallest = BridgeMsgCodec.encodeBidsBatch(20_250_101, 1, 0, 1, new address[](0), new uint256[](0));
+        assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_BIDS_BATCH, "bids batch floor");
+    }
+
     function test_IssuanceFloorIsTheSmallestRealIssuance() public view {
         // One series, no winners on this chain - the message a snapshot chain gets when it
         // only needs the series created.

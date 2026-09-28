@@ -29,6 +29,7 @@ import {
   NETWORKS,
   NFT_ABI,
   NFT_BRIDGE_ABI,
+  OUTBE,
   INTEX_ABI,
   ORIGIN_ROUTER_ABI,
   VAULT_ROUTER_ABI,
@@ -365,11 +366,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       })) as Record<string, number>;
       const u256 = (v: bigint | number) => v as bigint;
       const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
-      // A node without the view still answers the rest.
-      const [metadata, qualified] = await Promise.all([
-        seriesMetadata(n, series),
-        seriesQualified(n, series).catch(() => undefined),
-      ]);
+      const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
       return ok({
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
@@ -393,7 +390,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
-        ...(qualified === undefined ? {} : { qualified }),
+        qualified,
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
         callDeadline: epochIso(callDeadlineSec),
@@ -452,8 +449,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             args: [tokenId],
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
-          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id is
-          // hashed and carries no deadline - that position is already settled.
+          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id
+          // carries no deadline - that position is already settled.
           if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
           try {
@@ -466,7 +463,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             const deadlineSec =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
             // Only outbe has the factory that derives it.
-            const qualified = await seriesQualified(n, seriesHex).catch(() => undefined);
+            const qualified = n.name === OUTBE ? await seriesQualified(n, seriesHex) : undefined;
             return {
               ...base,
               series: fromSeriesId(seriesHex),
@@ -708,7 +705,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           ])) as [
             Hex,
             boolean,
-            { lockedAmount: bigint; lockedAt: number; status: number; failedRefund: bigint; splitRecorded: boolean },
+            { lockedAmount: bigint; lockedAt: number; status: number },
             { amount: bigint; lockedAt: number },
           ];
           const committed = commitHash !== "0x" && /[1-9a-f]/i.test(commitHash.slice(2));
@@ -726,10 +723,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             }
           }
           if (lock.status !== 0) {
-            const [[, , , finalized], [claimable, claimableAt]] = (await Promise.all([
-              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "auctionEscrowState", args: [wwd] }),
+            const [[, finalized], [claimable, claimableAt]] = (await Promise.all([
+              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getAuctionStatus", args: [wwd] }),
               n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getClaimableRefund", args: [wwd, who] }),
-            ])) as [[bigint, number, number, boolean], [bigint, number]];
+            ])) as [[boolean, boolean, bigint], [bigint, number]];
             const escrow: Record<string, unknown> = {
               lockedAmount: lock.lockedAmount.toString(),
               status: lockStatus(lock.status),

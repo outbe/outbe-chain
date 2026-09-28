@@ -5,20 +5,13 @@ pragma solidity 0.8.30;
  * @title IntexNFT1155BridgeCodec
  * @author Outbe
  * @notice Encode/decode for the `IntexNFT1155Bridge` ERC-7786 wire body.
- * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`.
- *
- *      The body migrated from a hand-rolled `abi.encodePacked` packed concat
- *      - which grew the buffer one item at a time (O(n^2) recopy) and decoded by manual offset
- *      slicing - to single-pass `abi.encode`/`abi.decode` over named structs. The body version is
- *      bumped `V1 -> V2` so any stale V1 packet fails closed via {UnsupportedBodyVersion} instead
- *      of misdecoding. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
+ * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`, single-pass `abi.encode`/`abi.decode`
+ *      over named structs. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
  *      the zero-recipient reject stay with the adapter (it owns the crosschainMint semantics).
  */
 library IntexNFT1155BridgeCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
-    /// @dev V2 marks the `abi.encodePacked` -> `abi.encode` wire change. A V1 packet now
-    ///      fails closed on {UnsupportedBodyVersion} rather than misdecoding into a wrong crosschainMint.
-    uint8 internal constant BODY_VERSION_V2 = 2;
+    uint8 internal constant BODY_VERSION_V1 = 1;
 
     /// @notice `msgType` for a single-recipient, multi-token batch (`BatchPayload`).
     uint8 internal constant SEND = 1;
@@ -49,7 +42,7 @@ library IntexNFT1155BridgeCodec {
         uint256[] amounts;
     }
 
-    /// @notice Body decoded with an unsupported `bodyVersion` byte (e.g. a stale V1 packet).
+    /// @notice Body decoded with an unsupported `bodyVersion` byte.
     /// @param got The version byte read from the payload.
     error UnsupportedBodyVersion(uint8 got);
 
@@ -80,19 +73,19 @@ library IntexNFT1155BridgeCodec {
 
     /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` - no growing buffer.
     /// @param _payload The single-recipient batch (`to`, `tokenIds`, `amounts`).
-    /// @return The wire body: `[BODY_VERSION_V2][SEND][abi.encode(_payload)]`.
+    /// @return The wire body: `[BODY_VERSION_V1][SEND][abi.encode(_payload)]`.
     function encodeBatch(BatchPayload memory _payload) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V2, SEND, abi.encode(_payload));
+        return abi.encodePacked(BODY_VERSION_V1, SEND, abi.encode(_payload));
     }
 
     /// @notice Encode a multi-recipient batch body. Single-pass `abi.encode` - no growing buffer.
     /// @param _payload The multi-recipient batch (`recipients`, `tokenIds`, `amounts`).
-    /// @return The wire body: `[BODY_VERSION_V2][SEND_MULTI][abi.encode(_payload)]`.
+    /// @return The wire body: `[BODY_VERSION_V1][SEND_MULTI][abi.encode(_payload)]`.
     function encodeMulti(MultiPayload memory _payload) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V2, SEND_MULTI, abi.encode(_payload));
+        return abi.encodePacked(BODY_VERSION_V1, SEND_MULTI, abi.encode(_payload));
     }
 
-    /// @notice Decode + validate a `SEND` body. Reverts {UnsupportedBodyVersion} on a non-V2
+    /// @notice Decode + validate a `SEND` body. Reverts {UnsupportedBodyVersion} on a non-V1
     ///         header, {MalformedBody} on a non-canonical/wrong-schema body, {ArrayLengthMismatch}
     ///         on unequal tokenId/amount arrays, and {BatchTooLarge} past the cap. Address
     ///         well-formedness is the adapter's check (it casts + crosschain-mints).
@@ -129,14 +122,14 @@ library IntexNFT1155BridgeCodec {
         if (uint256(_value) >> 160 != 0) revert MalformedAddress(_value);
     }
 
-    /// @notice Validates the leading `bodyVersion` header byte against {BODY_VERSION_V2}.
+    /// @notice Validates the leading `bodyVersion` header byte against {BODY_VERSION_V1}.
     /// @dev Enforces `_message.length >= HEADER_LEN` ({InvalidPayloadLength}) before reading the
-    ///      leading version byte, then requires it to equal {BODY_VERSION_V2}
+    ///      leading version byte, then requires it to equal {BODY_VERSION_V1}
     ///      ({UnsupportedBodyVersion}).
     /// @param _message The full inbound wire body (including the 2-byte header).
     function _assertBodyVersion(bytes calldata _message) private pure {
         if (_message.length < HEADER_LEN) revert InvalidPayloadLength(_message.length, HEADER_LEN);
         uint8 v = uint8(_message[0]);
-        if (v != BODY_VERSION_V2) revert UnsupportedBodyVersion(v);
+        if (v != BODY_VERSION_V1) revert UnsupportedBodyVersion(v);
     }
 }

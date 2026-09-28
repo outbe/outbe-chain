@@ -195,12 +195,11 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
         bucket_key: B256::repeat_byte(0x8c),
         worldwide_day: WorldwideDay::new(14),
         floor_price_minor: U256::from(10),
-        is_qualified: false,
         entry_price_minor: U256::from(11),
         reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
-    bucket_updated.is_qualified = true;
+    bucket_updated.settled_nods = 1;
 
     for (original, updated) in [
         (

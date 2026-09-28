@@ -46,21 +46,20 @@ contract EscrowAdapterLockTermsTest is Test {
         assertEq(lock.lockedAmount, LOCK, "amount");
     }
 
-    /// @dev Rate and quantity fill the lock's first word; the refund split keeps its own second word, so a lock
-    ///      written before the upgrade reads its old fields where they were.
-    function test_TheTermsSitInTheFirstWordAndLeaveTheSecondAlone() public {
+    /// @dev Amount, time, status, rate and quantity pack into a single word, so a lock is one storage write.
+    function test_TheWholeLockFitsOneWord() public {
         vm.prank(auction);
         escrow.lockFunds(DAY, bidder, LOCK, 800_000, 30);
 
         bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
-        uint256 first = uint256(vm.load(address(escrow), keccak256(abi.encode(bidder, dayMap))));
-        bytes32 second = vm.load(address(escrow), bytes32(uint256(keccak256(abi.encode(bidder, dayMap))) + 1));
+        uint256 word = uint256(vm.load(address(escrow), keccak256(abi.encode(bidder, dayMap))));
 
-        assertEq(uint128(first), LOCK, "amount in the low 16 bytes");
-        assertEq(uint8(first >> 160), uint8(IEscrowAdapter.LockStatus.Locked), "status after the timestamp");
-        assertEq(uint32(first >> 168), 800_000, "bid rate after the status");
-        assertEq(uint16(first >> 200), 30, "quantity after the bid rate");
-        assertEq(second, bytes32(0), "the split word is untouched");
+        assertEq(uint128(word), LOCK, "amount in the low 16 bytes");
+        assertEq(uint32(word >> 128), uint32(block.timestamp), "lock time after the amount");
+        assertEq(uint8(word >> 160), uint8(IEscrowAdapter.LockStatus.Locked), "status after the timestamp");
+        assertEq(uint32(word >> 168), 800_000, "bid rate after the status");
+        assertEq(uint16(word >> 200), 30, "quantity after the bid rate");
+        assertEq(word >> 216, 0, "nothing above the quantity");
     }
 
     function test_AZeroBidRateIsRejected() public {

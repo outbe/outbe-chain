@@ -425,7 +425,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         bucket_key,
         worldwide_day: day,
         floor_price_minor: nod.floor_price_minor,
-        is_qualified: false,
         entry_price_minor: U256::from(17),
         reference_currency: nod.reference_currency,
     };

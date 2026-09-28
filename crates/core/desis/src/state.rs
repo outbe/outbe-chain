@@ -169,7 +169,7 @@ impl DesisContract<'_> {
         Ok(bids)
     }
 
-    /// Drop the chain's bids for a generation supersede or post-clear cleanup.
+    /// Drop the chain's bids once the day has cleared.
     pub(crate) fn reset_chain_intake(
         &self,
         worldwide_day: WorldwideDay,

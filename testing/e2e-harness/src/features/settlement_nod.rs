@@ -1334,7 +1334,6 @@ mod tests {
             bucket_key,
             worldwide_day: day,
             floor_price_minor: U256::from(10),
-            is_qualified: true,
             entry_price_minor: U256::from(9),
             reference_currency: 840,
             settled_nods: 0,

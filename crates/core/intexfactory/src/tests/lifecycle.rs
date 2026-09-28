@@ -7,7 +7,7 @@ fn issue_enrolls_in_call_bin() {
         let f = IntexFactoryContract::new(s.clone());
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
@@ -75,7 +75,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
         f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
@@ -83,7 +83,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(11))
             .unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
@@ -91,7 +91,7 @@ fn insert_remove_call_bin_roundtrip() {
         f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(22))
             .unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
@@ -128,7 +128,7 @@ fn try_call_marks_called_when_threshold_met() {
         );
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
-            f.qualified_bin_count
+            f.call_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
@@ -592,25 +592,6 @@ mod call_sweep {
             );
             sweep_at(&s, retry);
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
-            assert_eq!(group_len(&s), 0);
-        });
-    }
-
-    /// A group deferred across the upgrade may hold a series the old sweep already
-    /// credited and stored as Expired; its load must not go back a second time.
-    #[test]
-    fn a_member_an_older_node_retired_is_not_credited_again() {
-        with_factory(|s| {
-            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-            priced_window(&s, scan_ts);
-            let (members, deadline) = called_two_member_group(&s, scan_ts);
-            let registry = outbe_intex::IntexContract::new(s.clone());
-            let mut record = registry.series.get(members[0]).unwrap().unwrap();
-            record.state = outbe_intex::IntexState::Expired as u8;
-            registry.series.update(&record).unwrap();
-
-            sweep_at(&s, due(deadline));
-            assert_eq!(unallocated(&s), U256::from(40u64) * U256::from(LOAD));
             assert_eq!(group_len(&s), 0);
         });
     }

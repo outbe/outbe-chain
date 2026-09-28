@@ -31,8 +31,6 @@ pub enum NodError {
     EntryPricesAlreadyFrozen,
     #[error("invalid nod entry-price snapshot")]
     InvalidEntryPriceSnapshot,
-    #[error("missing nod entry price for reference currency {0}")]
-    MissingEntryPrice(u16),
 
     #[error("nod is non-transferable")]
     NonTransferable,

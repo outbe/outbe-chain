@@ -55,9 +55,6 @@ contract EscrowAdapter is
     /// @notice Decimals every payment token must report.
     uint8 public constant PAYMENT_TOKEN_DECIMALS = 18;
 
-    /// @notice Canonical dead address receiving burned proceeds (the payment token has no burn()).
-    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
-
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
@@ -165,27 +162,6 @@ contract EscrowAdapter is
     /// @return The lock tag derived at allocator registration.
     function lockTag() external view returns (bytes12) {
         return _s().lockTag;
-    }
-
-    /// @notice Bid lock record for a bidder within a series. Flattened to match the original
-    ///         public-mapping getter ABI.
-    function bidLocks(uint32 worldwideDay, address bidder)
-        external
-        view
-        returns (uint128 lockedAmount, uint32 lockedAt, LockStatus status, uint128 failedRefund, bool splitRecorded)
-    {
-        BidLock storage l = _s().bidLocks[worldwideDay][bidder];
-        return (l.lockedAmount, l.lockedAt, l.status, l.failedRefund, l.splitRecorded);
-    }
-
-    /// @notice Per-series escrow state. Flattened to match the original public-mapping getter ABI.
-    function auctionEscrowState(uint32 worldwideDay)
-        external
-        view
-        returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)
-    {
-        AuctionEscrowState storage e = _s().auctionEscrowState[worldwideDay];
-        return (e.totalLocked, e.lockCount, e.finalizedAt, e.finalized);
     }
 
     // --- Admin ---
@@ -473,28 +449,21 @@ contract EscrowAdapter is
         (uint128 refund, uint32 claimableAt) = _claimable(worldwideDay, state, lock);
         if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
-        // A winner's payment already left with the day's proceeds; the rest of its lock is what is still held.
-        uint128 held = status == LockStatus.Won ? refund : lock.lockedAmount;
         uint8 version = state.assetVersion;
         delete $.bidLocks[worldwideDay][bidder];
-        state.totalLocked -= held;
+        // A winner's payment already left with the day's proceeds, so the refund is all the lock still holds.
+        state.totalLocked -= refund;
 
-        _withdrawFromCompact(version, held);
-        IERC20 token = _tokenOf(version);
+        _withdrawFromCompact(version, refund);
         if (refund > 0) {
-            token.safeTransfer(bidder, refund);
+            _tokenOf(version).safeTransfer(bidder, refund);
             emit FundsRefunded(bytes32(0), worldwideDay, bidder, refund);
-        }
-        uint128 burn = held - refund;
-        if (burn > 0) {
-            token.safeTransfer(BURN_ADDRESS, burn);
-            emit ProceedsBurned(worldwideDay, bidder, burn);
         }
     }
 
     /// @dev What a live lock is owed and from when. A winner is owed the rest of its lock at once. A bidder the
-    ///      finalized day never named lost and is owed its principal at once, or the refund portion of a split
-    ///      recorded before refunds became claims. A day that never finalized owes the principal after the delay.
+    ///      finalized day never named lost and is owed its principal at once. A day that never finalized owes the
+    ///      principal after the delay.
     function _claimable(uint32 worldwideDay, AuctionEscrowState storage state, BidLock storage lock)
         private
         view
@@ -507,7 +476,7 @@ contract EscrowAdapter is
             return (lock.lockedAmount - uint128(paid), 0);
         }
         if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_REFUND_DELAY);
-        return (lock.splitRecorded ? lock.failedRefund : lock.lockedAmount, 0);
+        return (lock.lockedAmount, 0);
     }
 
     // --- Views ---
@@ -617,9 +586,7 @@ contract EscrowAdapter is
             lockedAt: uint32(block.timestamp),
             status: LockStatus.Locked,
             bidRate: bidRate,
-            quantity: quantity,
-            failedRefund: 0,
-            splitRecorded: false
+            quantity: quantity
         });
 
         // Update series escrow stats.
