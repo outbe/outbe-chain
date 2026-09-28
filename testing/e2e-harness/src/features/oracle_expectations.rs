@@ -119,11 +119,21 @@ fn feeder_terms(world: &World) -> (U256, U256) {
     );
     let rate = sources.values().next().expect("controlled sources").0;
     assert!(!rate.is_zero());
-    let volume = sources.values().fold(U256::ZERO, |sum, (price, volume)| {
-        assert_eq!(*price, rate, "unanimous controlled price fixture");
-        assert!(!volume.is_zero(), "positive controlled source volume");
-        sum.checked_add(*volume).expect("controlled quorum volume")
-    });
+    let mut volumes: Vec<U256> = sources
+        .values()
+        .map(|(price, volume)| {
+            assert_eq!(*price, rate, "unanimous controlled price fixture");
+            assert!(!volume.is_zero(), "positive controlled source volume");
+            *volume
+        })
+        .collect();
+    volumes.sort_unstable();
+    let upper = volumes.len() / 2;
+    let volume = if volumes.len() % 2 == 1 {
+        volumes[upper]
+    } else {
+        volumes[upper - 1] + (volumes[upper] - volumes[upper - 1]) / U256::from(2u64)
+    };
     (rate, volume)
 }
 
@@ -270,7 +280,7 @@ pub(crate) fn fresh_wwd_price(world: &World, height: u64) -> U256 {
         serde_json::json!({
             "worldwide_day": lifecycle.worldwide_day, "start": start, "end": end,
             "height": height, "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
-            "seed_count": seeds.len(), "controlled_rate": rate, "controlled_quorum_volume": volume,
+            "seed_count": seeds.len(), "controlled_rate": rate, "controlled_median_volume": volume,
             "observations": observed, "expected_vwap": expected,
         })
     );
