@@ -650,6 +650,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::Confidential { .. }
+        | EnclaveRequest::LoadConfidential { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
         | EnclaveRequest::ApplyFidelityCohortOp { .. }

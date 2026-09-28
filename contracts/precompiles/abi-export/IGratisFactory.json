@@ -60,9 +60,9 @@
     ],
     "outputs": [
       {
-        "name": "pledgeNote",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "pledgeReply",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "nonpayable"
@@ -162,10 +162,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "pledgeNote",
-        "type": "bytes32",
+        "name": "pledgeReply",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

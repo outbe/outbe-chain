@@ -91,3 +91,5 @@ pub const SEALED_STATE_SCHEMA_V1: u8 = 3;
 /// payload - the only public input the client must know besides the on-chain
 /// offer public key. Value: ASCII `"outbe/tribute/offer-salt/v1"`, zero-padded.
 pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
+
+pub mod confidential;

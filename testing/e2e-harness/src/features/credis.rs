@@ -328,7 +328,8 @@ fn pledge(world: &mut World) {
     // Both the stablecoin and the live 1 USD/COEN quote use six decimals.
     assert_eq!(pledged.gratisAmount, PRINCIPAL);
     let f = world.state.credis.as_mut().expect("fixture");
-    f.pledge = pledged.pledgeNote;
+    f.pledge = outbe_tee::confidential::decrypt_pledge_reply(&f.keys.view, &pledged.pledgeReply)
+        .expect("owner pledge reply");
     f.collateral = pledged.gratisAmount;
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS - pledged.gratisAmount);
@@ -350,15 +351,34 @@ fn issue(world: &mut World) {
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
             smartAccount: f.account,
-            pledgeNote: f.pledge,
-            spendAuth: spend.into(),
+            credential: {
+                let public: U256 = eth::read_call(
+                    &url,
+                    outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+                    &eth::ITeeRegistryV1::tributeOfferPublicKeyCall {},
+                )
+                .expect("enclave offer key");
+                outbe_tee::confidential::encrypt_pledge_credential(
+                    &public.to_be_bytes(),
+                    chain_id_b256(world),
+                    f.pledge,
+                    f.account,
+                    spend,
+                )
+                .expect("pledge credential")
+                .into()
+            },
             referenceCurrency: USD,
             reservationId: f.reservation,
         },
         Some(stake),
     );
-    let mut preimage = f.pledge.to_vec();
+    let block = receipt["blockNumber"].as_str().expect("issuance block");
+    let block = u64::from_str_radix(block.trim_start_matches("0x"), 16).expect("block number");
+    let mut preimage = f.cca.as_slice().to_vec();
     preimage.extend_from_slice(f.account.as_slice());
+    preimage.extend_from_slice(f.currency.asset.as_slice());
+    preimage.extend_from_slice(&block.to_be_bytes());
     let id = U256::from_be_bytes(keccak256(preimage).0);
     assert_receipt_event(
         &receipt,
@@ -407,7 +427,6 @@ fn issued(world: &mut World) {
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
-    assert!(!p.eoaCiphertext.is_empty());
     assert_eq!(
         state.reservation,
         (

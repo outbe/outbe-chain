@@ -25,13 +25,6 @@ use crate::errors::{Result, TeeError};
 /// lifted between an account's balance and pledged slots. `FIELD_BALANCE` (tag 0)
 /// is shared and imported from [`crate::confidential`]; pledged/eoa are Gratis-local.
 const FIELD_PLEDGED: u8 = 1;
-/// Folded into the sealed-EOA nonce IKM so its nonce can never collide with an amount
-/// blob or a pledge ticket sealed under the same state key + handle.
-const FIELD_EOA: u8 = 2;
-
-/// Sealed-EOA blob: `nonce(12) || ChaCha20Poly1305(Address 20B)` = 48 bytes.
-const EOA_CT_LEN: usize = 12 + 20 + 16;
-
 /// PledgeLockTicket plaintext:
 /// `stables(32) || owner(20) || gratis(32) || asset(20) || entry(32) || iso(2) || decimals(1) || valuation(32) || created_at(8) || valid_until(8)`.
 /// Fresh-genesis format: tickets without authenticated timestamps are rejected.
@@ -166,11 +159,19 @@ fn write_amount(
 /// key delivered by `DeriveAccountKeys`). Same primitive the enclave uses, so a
 /// client reproduces the plaintext without ever touching the state key.
 pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+    if blob.len() == 112 {
+        return outbe_tee::confidential::decrypt_view(view_key, account, 0, blob)
+            .map_err(|_| TeeError::DecryptFailed);
+    }
     read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
 /// Client-side helper: decrypt an account's pledged-ledger blob with its view key.
 pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+    if blob.len() == 112 {
+        return outbe_tee::confidential::decrypt_view(view_key, account, 1, blob)
+            .map_err(|_| TeeError::DecryptFailed);
+    }
     read_amount(view_key, account, FIELD_PLEDGED, blob).map(|(_, v)| v)
 }
 
@@ -272,42 +273,6 @@ fn write_ticket(
     Ok(blob)
 }
 
-// --- Sealed EOA (hide the pledger<->bundle linkage from external observers) ---------
-
-/// Seal an EOA under the global state key into a self-contained blob the host stores on
-/// the Credis position (`nonce(12) || ct`). The nonce is derived from the unique pledge
-/// `handle` + an EOA domain tag - so it is unique per position and can never collide with
-/// that handle's ticket nonce - and stored in the blob so `open_eoa_ct` needs no handle.
-/// Written once (the position's EOA is immutable), so a fixed version is fine.
-fn seal_eoa_ct(state_key: &[u8; 32], handle: B256, owner: Address) -> Result<Vec<u8>> {
-    let mut ikm = handle.as_slice().to_vec();
-    ikm.push(FIELD_EOA);
-    let nonce = slot_nonce(state_key, &ikm, 1)?;
-    let ct = chacha20poly1305_encrypt(state_key, &nonce, owner.as_slice())?;
-    let mut blob = nonce.to_vec();
-    blob.extend_from_slice(&ct);
-    debug_assert_eq!(
-        blob.len(),
-        EOA_CT_LEN,
-        "eoa_ct blob must be {EOA_CT_LEN} bytes"
-    );
-    Ok(blob)
-}
-
-/// Open a [`seal_eoa_ct`] blob back to the plaintext EOA.
-fn open_eoa_ct(state_key: &[u8; 32], blob: &[u8]) -> Result<Address> {
-    if blob.len() != EOA_CT_LEN {
-        return Err(TeeError::DecryptFailed);
-    }
-    let mut nonce = [0u8; 12];
-    nonce.copy_from_slice(&blob[..12]);
-    let pt = chacha20poly1305_decrypt(state_key, &nonce, &blob[12..])?;
-    if pt.len() != 20 {
-        return Err(TeeError::DecryptFailed);
-    }
-    Ok(Address::from_slice(&pt))
-}
-
 // --- The op engine --------------------------------------------------------------
 
 fn base_result() -> GratisOpResult {
@@ -319,8 +284,6 @@ fn base_result() -> GratisOpResult {
         pledge_note: B256::ZERO,
         gratis_amount: U256::ZERO,
         pledge_terms: None,
-        revealed_owner: Address::ZERO,
-        eoa_ct: Vec::new(),
         event_amount: U256::ZERO,
         next_op_nonce: 0,
         fidelity: None,
@@ -370,31 +333,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         GratisOp::ConsumePledge => apply_consume_pledge(state_key, req),
         GratisOp::ReleaseToEoa => apply_release_to_eoa(state_key, req),
         GratisOp::BurnPledged => apply_burn_pledged(state_key, req),
-        GratisOp::RevealOwner => apply_reveal_owner(state_key, req),
     }
-}
-
-/// Read-only: recover the plaintext EOA that keys the confidential pledged/balance ledgers,
-/// without the EOA ever appearing in calldata or stored plaintext. `pledge_note = Some`
-/// -> the blob in `current_pledge_record` is a live `PledgeLockTicket` (credis
-/// `ConsumePledge` time, when calldata no longer carries the EOA); `None` -> the
-/// self-contained `eoa_ct` stored on the Credis position (settlement / void). No state
-/// mutation, no authorization - the on-chain Credis position is the accounting authority.
-fn apply_reveal_owner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    let owner = match req.pledge_note {
-        Some(handle) => {
-            read_ticket(state_key, handle, &req.current_pledge_record)?
-                .1
-                .owner
-        }
-        None => open_eoa_ct(state_key, &req.current_pledge_record)?,
-    };
-    if owner.is_zero() {
-        return Ok(reject("revealed owner is zero"));
-    }
-    let mut r = base_result();
-    r.revealed_owner = owner;
-    Ok(r)
 }
 
 /// Mine/Burn/Pledge/Unpledge - all modify-key gated and keyed by `req.account`.
@@ -423,7 +362,10 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 
     let mut r = base_result();
     r.event_amount = req.amount;
-    r.next_op_nonce = req.modify_auth.op_nonce.saturating_add(1);
+    r.next_op_nonce = match req.modify_auth.op_nonce.checked_add(1) {
+        Some(n) => n,
+        None => return Ok(reject("owner nonce exhausted")),
+    };
 
     match req.op {
         GratisOp::Mint => {
@@ -531,19 +473,13 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             // `new_pledge_record` stays empty -> host clears (deletes) the ticket slot.
             r.event_amount = ticket.gratis_amount;
         }
-        _ => unreachable!("apply_owner_op only handles owner ops"),
+        _ => return Ok(reject("unsupported owner operation")),
     }
     Ok(r)
 }
 
-/// requestCredis: consume a `PledgeLockTicket`, verify the spend binding to the
-/// smart account, credit the ticket amount into the EOA's OWN pledged ledger, and
-/// delete the ticket. No escrow account is involved - the collateral stays with the
-/// pledger for the whole credis term. The EOA no longer travels in calldata: the host
-/// recovers it with a prior `RevealOwner` round-trip and passes it as `req.account`; the
-/// enclave still checks it matches the ticket owner so the caller cannot consume a
-/// different account's ticket. The result carries `eoa_ct` - the ticket owner sealed under
-/// the state key - for the host to store on the Credis position (hiding the EOA<->bundle link).
+/// Internal transform after the confidential ledger resolved the pending note.
+/// The caller binds the resulting allocation to its Credis before sealing it.
 fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     let (Some(handle), Some(bundle), Some(spend_auth)) =
         (req.pledge_note, req.smart_account, req.spend_auth)
@@ -584,7 +520,6 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     r.new_pledged = write_amount(&eoa_view, ticket.owner, FIELD_PLEDGED, pver, new_pledged)?;
     // `new_pledge_record` stays empty -> host clears (deletes) the ticket slot, so it
     // can never be consumed twice (double-spend).
-    r.eoa_ct = seal_eoa_ct(state_key, handle, ticket.owner)?;
     r.gratis_amount = ticket.gratis_amount;
     r.event_amount = ticket.gratis_amount;
     // Hand credis the quote the pledger accepted so it never re-prices the loan.
@@ -592,12 +527,7 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     Ok(r)
 }
 
-/// Settlement: release `amount` of collateral from the EOA's OWN pledged ledger back
-/// to its balance (`EOA.pledged -= amount; EOA.balance += amount`). Amount-based (no
-/// ticket): the on-chain Credis position schedule is the accounting authority for the
-/// per-settlement amount; the enclave only enforces pledged-ledger sufficiency.
-/// `req.account` is the EOA the host recovered from the position's `eoa_ct` via a prior
-/// `RevealOwner` round-trip - it never appears in calldata or stored plaintext.
+/// Internal amount transform after allocation binding and limit validation.
 fn apply_release_to_eoa(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     if req.amount.is_zero() {
         return Ok(reject("amount must be positive"));
@@ -666,6 +596,10 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
         diff |= a[i] ^ b[i];
     }
     diff == 0
+}
+
+pub(crate) fn ticket_owner(key: &[u8; 32], note: B256, blob: &[u8]) -> Result<Address> {
+    read_ticket(key, note, blob).map(|(_, ticket)| ticket.owner)
 }
 
 #[cfg(test)]
@@ -1217,64 +1151,5 @@ mod tests {
             matches!(apply_op(&sk, &rc).status, GratisOpStatus::Rejected { .. }),
             "deleted ticket must not be spendable for credis"
         );
-    }
-
-    /// The EOA is recovered through the enclave both at consume (from the live ticket) and
-    /// at settlement/void (from the sealed `eoa_ct`), never from calldata.
-    #[test]
-    fn reveal_owner_roundtrips_ticket_and_eoa_ct() {
-        let sk = state_key();
-        let (handle, pledged) = mine_and_pledge(&sk, U256::from(500u64), U256::from(1000u64));
-
-        // RevealOwner on the live ticket (Some(handle)) -> the pledger EOA.
-        let mut rt = req(GratisOp::RevealOwner, Address::ZERO, U256::ZERO, 0);
-        rt.pledge_note = Some(handle);
-        rt.current_pledge_record = pledged.new_pledge_record.clone();
-        let revealed = apply_op(&sk, &rt);
-        assert!(matches!(revealed.status, GratisOpStatus::Applied));
-        assert_eq!(revealed.revealed_owner, alice());
-
-        // ConsumePledge seals the owner into a self-contained eoa_ct blob.
-        let mk = derive_modify_key(&sk, alice()).unwrap();
-        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
-        rc.current_pledge_record = pledged.new_pledge_record.clone();
-        rc.pledge_note = Some(handle);
-        rc.smart_account = Some(bundle());
-        rc.spend_auth = Some(spend);
-        let consumed = apply_op(&sk, &rc);
-        assert!(matches!(consumed.status, GratisOpStatus::Applied));
-        assert_eq!(consumed.eoa_ct.len(), EOA_CT_LEN);
-
-        // RevealOwner on the stored eoa_ct (None) -> the same EOA, with no handle needed.
-        let mut re = req(GratisOp::RevealOwner, Address::ZERO, U256::ZERO, 0);
-        re.pledge_note = None;
-        re.current_pledge_record = consumed.eoa_ct.clone();
-        let opened = apply_op(&sk, &re);
-        assert!(matches!(opened.status, GratisOpStatus::Applied));
-        assert_eq!(opened.revealed_owner, alice());
-    }
-
-    /// Same owner + different pledge note -> different sealed ciphertext (nonce
-    /// uniqueness), and a tampered blob fails AEAD integrity.
-    #[test]
-    fn eoa_ct_differs_across_positions() {
-        let sk = state_key();
-        let h1 = derive_pledge_note(&sk, alice(), U256::from(10u64), 1).unwrap();
-        let h2 = derive_pledge_note(&sk, alice(), U256::from(20u64), 2).unwrap();
-        assert_ne!(h1, h2);
-        let c1 = seal_eoa_ct(&sk, h1, alice()).unwrap();
-        let c2 = seal_eoa_ct(&sk, h2, alice()).unwrap();
-        assert_ne!(
-            c1, c2,
-            "same owner, different handle -> different ciphertext"
-        );
-        assert_eq!(open_eoa_ct(&sk, &c1).unwrap(), alice());
-        assert_eq!(open_eoa_ct(&sk, &c2).unwrap(), alice());
-
-        let mut bad = c1.clone();
-        let last = bad.len() - 1;
-        bad[last] ^= 0xff;
-        assert!(open_eoa_ct(&sk, &bad).is_err());
     }
 }

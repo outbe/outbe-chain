@@ -183,6 +183,22 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             )
             .unwrap()
         });
+        let view =
+            outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+        let note = outbe_tee::confidential::decrypt_pledge_reply(&view, &note).unwrap();
+        let credential = |spend| {
+            outbe_tee::confidential::encrypt_pledge_credential(
+                &outbe_tee_enclave::crypto::x25519_public(
+                    &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                ),
+                B256::from(U256::from(CHAIN_ID)),
+                note,
+                ACCOUNT,
+                spend,
+            )
+            .unwrap()
+            .into()
+        };
         provider.flush().unwrap();
         let mut ctx = Context::mainnet()
             .with_db(db)
@@ -256,12 +272,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         let spend = spend_auth_mac(&pledge_secret(&key, note), ACCOUNT);
         let issue = ICredisFactory::issueCredisCall {
             smartAccount: ACCOUNT,
-            pledgeNote: note,
-            spendAuth: if failure == 5 {
-                B256::ZERO
-            } else {
-                B256::from(spend)
-            },
+            credential: credential(if failure == 5 { [0; 32] } else { spend }),
             referenceCurrency: 840,
             reservationId: U256::ONE,
         };
@@ -361,7 +372,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             CREDIS_FACTORY_ADDRESS,
             stake,
             ICredisFactory::issueCredisCall {
-                spendAuth: B256::from(spend),
+                credential: credential(spend),
                 ..issue
             }
         );

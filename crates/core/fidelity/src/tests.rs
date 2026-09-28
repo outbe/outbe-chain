@@ -36,15 +36,14 @@ fn cohort_in_encrypts_and_sets_anchor() {
     with_env(|storage| {
         let c = FidelityContract::new(storage.clone());
         // No state yet: empty blob, unset anchor.
-        assert!(c.cohorts_ct_of(ALICE).unwrap().is_empty());
+        assert!(c.journal_count.read().unwrap() == 0);
         assert_eq!(c.first_qualified_start().unwrap(), 0);
 
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
 
         // Blob is now non-empty ciphertext, and the global anchor is set to the
         // first acquisition time.
-        let blob = c.cohorts_ct_of(ALICE).unwrap();
-        assert!(!blob.is_empty());
+        assert_eq!(c.journal_count.read().unwrap(), 1);
         assert_eq!(c.first_qualified_start().unwrap(), T0);
 
         // A later acquisition by a different owner does NOT move the set-once
@@ -59,7 +58,7 @@ fn zero_amount_cohort_op_is_a_noop() {
     with_env(|storage| {
         api::cohort_in(storage.clone(), ALICE, U256::ZERO, T0).unwrap();
         let c = FidelityContract::new(storage.clone());
-        assert!(c.cohorts_ct_of(ALICE).unwrap().is_empty());
+        assert!(c.journal_count.read().unwrap() == 0);
         assert_eq!(c.first_qualified_start().unwrap(), 0);
     });
 }
@@ -180,7 +179,8 @@ fn cohort_ciphertext_is_deterministic_across_executions() {
             api::cohort_in(storage.clone(), ALICE, U256::from(500u64), T0 + 10 * DAY).unwrap();
             api::cohort_out(storage.clone(), ALICE, U256::from(300u64), T0 + 20 * DAY).unwrap();
             let blob = FidelityContract::new(storage.clone())
-                .cohorts_ct_of(ALICE)
+                .journal_head
+                .read()
                 .unwrap();
             let league = api::league_at(storage.clone(), ALICE, T0 + 100 * DAY).unwrap();
             (blob, league)
@@ -188,7 +188,7 @@ fn cohort_ciphertext_is_deterministic_across_executions() {
     };
     let a = run();
     let b = run();
-    assert!(!a.0.is_empty());
+    assert_ne!(a.0, alloy_primitives::B256::ZERO);
     assert_eq!(
         a.0, b.0,
         "cohort ciphertext must be byte-identical across runs"

@@ -62,7 +62,6 @@ interface ICredis {
         uint16 referenceCurrency;
         // Pledger EOA ciphertext (not an address). The enclave recovers
         // the plaintext EOA on-chain via a RevealOwner round-trip.
-        bytes eoaCiphertext;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principal;
         /// P_out - decreases with each settlement; the position closes at zero.

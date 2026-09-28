@@ -9,14 +9,9 @@
         "internalType": "address"
       },
       {
-        "name": "pledgeNote",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "spendAuth",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "credential",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "referenceCurrency",

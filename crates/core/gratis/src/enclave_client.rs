@@ -1,71 +1,27 @@
-//! Host-side enclave client for the confidential Gratis write path.
-//!
-//! Every Gratis state transition routes through the enclave: [`crate::runtime`]
-//! reads the current ciphertext from committed storage, hands it + the op to the
-//! enclave via [`apply_gratis_op`], and stores the returned ciphertext verbatim.
-//! Mirrors `tributefactory::enclave_offer` - same determinism (canonical-hash
-//! recheck) and attestation (verify-then-discard) guarantees, and the same
-//! `tee_sidecar_unavailable` failure mode when no enclave is configured.
+//! Synchronous Gratis client over the separate confidential state journals.
+//! The shared client binds the request/response to committed heads and verifies
+//! the local enclave attestation; only ciphertext updates enter chain storage.
 
-use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::protocol::{
-    gratis_op_canonical_hash, EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult,
-};
+use outbe_primitives::error::Result;
+#[cfg(any(test, feature = "test-enclave"))]
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
-/// Run one Gratis op inside the enclave and validate the response.
-///
-/// Determinism: recompute the canonical inputs hash and reject a mismatch
-/// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the
-/// enclave key pinned from its quote (`tee_gratis_attestation_invalid`), then
-/// discard it - it is never written to state. A missing enclave is
-/// `tee_sidecar_unavailable`. All of these are `Fatal` (a node/consensus fault,
-/// not a user revert); a *business* rejection is carried in
-/// `GratisOpResult::status` and handled by the caller.
-pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::try_apply(&req) {
-        return Ok(result);
-    }
-
-    let expected_hash = gratis_op_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::ApplyGratisOp {
-            request: Box::new(req),
-        });
-        (attestation_pub, response)
+/// Execute against committed heads, recovering disposable enclave caches as needed.
+pub(crate) fn execute(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    call: outbe_tee::confidential::Call,
+) -> Result<outbe_tee::confidential::Applied> {
+    outbe_tee::confidential::execute(storage, call, |request| {
+        #[cfg(any(test, feature = "test-enclave"))]
+        {
+            test_enclave::try_confidential(request)
+        }
+        #[cfg(not(any(test, feature = "test-enclave")))]
+        {
+            let _ = request;
+            None
+        }
     })
-    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
-    let response =
-        response.map_err(|e| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {e}")))?;
-
-    let result = match response {
-        EnclaveResponse::GratisOpApplied { result } => *result,
-        EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave ApplyGratisOp error: {message}"
-            )))
-        }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
-    };
-
-    if result.inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
-    }
-    outbe_tee::verify_gratis_op_attestation(
-        &attestation_pub,
-        result.inputs_canonical_hash,
-        &result,
-        &result.attestation_tag,
-    )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_gratis_attestation_invalid: {e}")))?;
-    Ok(result)
 }
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
@@ -110,42 +66,23 @@ pub mod test_enclave {
             .expect("test enclave not installed")
     }
 
-    pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
+    pub(crate) fn try_confidential(req: &EnclaveRequest) -> Option<EnclaveResponse> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                let mut result = outbe_tee_enclave::gratis::apply_op(&key, req);
-                // Mirror the real transport's combined op: on success, apply the
-                // co-located fidelity cohort section under the INDEPENDENT
-                // fidelity key (the shared dev fidelity identity, so a folded
-                // mint writes a blob the fidelity stand-in can later read).
-                if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
-                    (&result.status, &req.fidelity)
-                {
-                    let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-                        outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
-                        outbe_tee_enclave::dev::fidelity_chain(),
-                        DEV_EPOCH,
-                    )
-                    .expect("derive dev fidelity state key");
-                    // Mirror the real transport: a failing fidelity section
-                    // rejects the WHOLE op (rejected_result), so the host reverts
-                    // and writes NEITHER ledger - not a panic.
-                    match outbe_tee_enclave::fidelity::apply_cohort_section(
+                let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
+                    outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
+                    outbe_tee_enclave::dev::fidelity_chain(),
+                    DEV_EPOCH,
+                )
+                .expect("dev fidelity key");
+                EnclaveResponse::Confidential {
+                    response: outbe_tee_enclave::confidential_ledger::dispatch(
+                        req,
+                        &key,
                         &fidelity_key,
-                        req.account,
-                        req.amount,
-                        section,
-                    ) {
-                        Ok(outcome) => result.fidelity = Some(outcome),
-                        Err(e) => {
-                            result = outbe_tee_enclave::gratis::rejected_result(
-                                format!("fidelity section failed: {e}"),
-                                result.inputs_canonical_hash,
-                            );
-                        }
-                    }
+                        &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                    ),
                 }
-                result
             })
         })
     }

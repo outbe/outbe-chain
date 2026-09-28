@@ -67,13 +67,9 @@ pub struct Position {
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// The pledger EOA sealed under the enclave state key (`nonce || ct`, produced by
-    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `smart_account`; settlement and the void recover the plaintext EOA
-    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
-    /// cohort. Never a plaintext address on-chain.
+    /// Internal per-Credis allocation handle. Omitted from public getters.
     #[attribute(order = 4)]
-    pub eoa_ct: Vec<u8>,
+    pub collateral_id: B256,
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]

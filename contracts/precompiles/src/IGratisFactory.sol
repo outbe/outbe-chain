@@ -9,7 +9,7 @@ interface IGratisFactory {
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
     event GratisPledged(
-        address indexed account, uint256 amountStables, address indexed asset, uint256 gratisAmount, bytes32 pledgeNote
+        address indexed account, uint256 amountStables, address indexed asset, uint256 gratisAmount, bytes pledgeReply
     );
 
     /// @notice Emitted when an unspent pledge is returned to the caller.
@@ -24,11 +24,11 @@ interface IGratisFactory {
     /// @param amountStables Stablecoin minor units this pledge must cover.
     /// @param asset         Stablecoin address.
     /// @param maxGratis     Slippage cap.
-    /// @return pledgeNote The confidential pledge record id. Hand it (and the
-    ///         derived pledge secret) to the CCA to request credis.
+    /// @return pledgeReply Owner-encrypted note (80 bytes). Decrypt with the Gratis
+    ///         view key; send a fresh encrypted credential to the CCA for issuance.
     function pledgeGratis(uint256 amountStables, address asset, uint256 maxGratis, bytes32 mac, uint64 opNonce)
         external
-        returns (bytes32 pledgeNote);
+        returns (bytes memory pledgeReply);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by

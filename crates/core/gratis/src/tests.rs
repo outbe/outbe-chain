@@ -215,7 +215,7 @@ fn pledge_consume_and_settle_flow() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
-        let handle = api::pledge(
+        let handle = pledge(
             storage.clone(),
             alice(),
             stables,
@@ -233,8 +233,8 @@ fn pledge_consume_and_settle_flow() {
         // the ticket is deleted; pledged_total is unchanged.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
-        let (consumed_terms, eoa_ct) =
-            api::consume_pledge(storage.clone(), handle, smart_account(), spend).unwrap();
+        let (consumed_terms, collateral_id) =
+            consume(storage.clone(), handle, smart_account(), spend).unwrap();
         assert_eq!(
             consumed_terms,
             terms(stables, amount),
@@ -242,21 +242,22 @@ fn pledge_consume_and_settle_flow() {
         );
         assert_eq!(view_pledged(storage.clone(), alice()), amount);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
-        // The sealed EOA opens back to alice (the plaintext never left the enclave).
-        assert!(!eoa_ct.is_empty());
-        assert_eq!(
-            api::reveal_owner(storage.clone(), &eoa_ct).unwrap(),
-            alice()
-        );
-
         // Re-consuming the now-deleted ticket is rejected.
-        assert!(api::consume_pledge(storage.clone(), handle, smart_account(), spend).is_err());
+        assert!(consume(storage.clone(), handle, smart_account(), spend).is_err());
 
         // Ten settlements: each releases 1/10 from alice's pledged ledger back to
         // her balance.
         let per = amount / U256::from(10u64);
         for _ in 0..10 {
-            api::release_to_eoa(storage.clone(), alice(), per).unwrap();
+            collateral(
+                storage.clone(),
+                handle,
+                collateral_id,
+                per,
+                view_pledged(storage.clone(), alice()),
+                api::CollateralAction::Return,
+            )
+            .unwrap();
         }
         assert_eq!(view_balance(storage.clone(), alice()), amount);
         assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
@@ -265,7 +266,15 @@ fn pledge_consume_and_settle_flow() {
             U256::ZERO
         );
         // A further release rejected - pledged ledger is empty.
-        assert!(api::release_to_eoa(storage.clone(), alice(), per).is_err());
+        assert!(collateral(
+            storage.clone(),
+            handle,
+            collateral_id,
+            per,
+            view_pledged(storage.clone(), alice()),
+            api::CollateralAction::Return
+        )
+        .is_err());
     });
 }
 
@@ -282,7 +291,7 @@ fn burn_pledged_reduces_supply_and_pledged() {
         )
         .unwrap();
         let stables = U256::from(500u64);
-        let handle = api::pledge(
+        let handle = pledge(
             storage.clone(),
             alice(),
             stables,
@@ -292,15 +301,31 @@ fn burn_pledged_reduces_supply_and_pledged() {
         .unwrap();
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
-        api::consume_pledge(storage.clone(), handle, smart_account(), spend).unwrap();
+        let (_, collateral_id) = consume(storage.clone(), handle, smart_account(), spend).unwrap();
 
         // Release across 3 settlements (300), leaving 700 outstanding, then burn it.
         let per = amount / U256::from(10u64);
         for _ in 0..3 {
-            api::release_to_eoa(storage.clone(), alice(), per).unwrap();
+            collateral(
+                storage.clone(),
+                handle,
+                collateral_id,
+                per,
+                view_pledged(storage.clone(), alice()),
+                api::CollateralAction::Return,
+            )
+            .unwrap();
         }
         let outstanding = U256::from(700u64);
-        let burned = api::burn_pledged(storage.clone(), alice(), outstanding).unwrap();
+        let burned = collateral(
+            storage.clone(),
+            handle,
+            collateral_id,
+            outstanding,
+            outstanding,
+            api::CollateralAction::Burn,
+        )
+        .unwrap();
         assert_eq!(burned, outstanding);
         assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         // total_supply drops by the burned collateral; the 300 released stays liquid.
@@ -328,7 +353,7 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         )
         .unwrap();
         let stables = U256::from(500u64);
-        let handle = api::pledge(
+        let handle = pledge(
             storage.clone(),
             alice(),
             stables,
@@ -357,7 +382,7 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         // The deleted ticket can no longer be consumed for credis.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), smart_account());
-        assert!(api::consume_pledge(storage.clone(), handle, smart_account(), spend).is_err());
+        assert!(consume(storage.clone(), handle, smart_account(), spend).is_err());
     });
 }
 
@@ -387,7 +412,7 @@ fn pledge_validity_preserves_expired_cancellation_and_prevents_replay() {
             )
             .unwrap();
             let accepted_terms = terms(stables, amount);
-            let note = api::pledge(
+            let note = pledge(
                 storage.clone(),
                 alice(),
                 stables,
@@ -396,20 +421,20 @@ fn pledge_validity_preserves_expired_cancellation_and_prevents_replay() {
             )
             .unwrap();
             let gratis = crate::Gratis::new(storage.clone());
-            let ticket = gratis.pledge_ticket_ct_of(note).unwrap();
-            let balance = api::balance_ct(storage.clone(), alice()).unwrap();
+            let ticket = gratis.journal_head.read().unwrap();
+            let balance = view_balance(storage.clone(), alice());
             let mk = derive_modify_key(&test_enclave::state_key(), alice()).unwrap();
             let spend = spend_auth_mac(&pledge_secret(&mk, note), smart_account());
             storage.set_block_timestamp(now).unwrap();
-            let result = api::consume_pledge(storage.clone(), note, smart_account(), spend);
+            let result = consume(storage.clone(), note, smart_account(), spend);
             assert_eq!(api::total_supply(storage.clone()).unwrap(), amount);
             assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
             assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
-            assert_eq!(api::balance_ct(storage.clone(), alice()).unwrap(), balance);
+            assert_eq!(view_balance(storage.clone(), alice()), balance);
 
             if let Some(reason) = rejected {
                 assert!(result.unwrap_err().to_string().contains(reason));
-                assert_eq!(gratis.pledge_ticket_ct_of(note).unwrap(), ticket);
+                assert_eq!(gratis.journal_head.read().unwrap(), ticket);
                 assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
                 // Cancellation remains possible even when the consume clock is invalid/expired.
                 assert_eq!(
@@ -449,8 +474,7 @@ fn pledge_validity_preserves_expired_cancellation_and_prevents_replay() {
                 )
                 .is_err());
             }
-            assert!(gratis.pledge_ticket_ct_of(note).unwrap().is_empty());
-            assert!(api::consume_pledge(storage.clone(), note, smart_account(), spend).is_err());
+            assert!(consume(storage.clone(), note, smart_account(), spend).is_err());
         });
     }
 }
@@ -470,7 +494,7 @@ fn pledge_rejects_unrepresentable_timestamps_without_locking_value() {
         let before = api::balance_ct(storage.clone(), alice()).unwrap();
         for now in [U256::from(u64::MAX), U256::from(u64::MAX) + U256::ONE] {
             storage.set_block_timestamp(now).unwrap();
-            let error = api::pledge(
+            let error = pledge(
                 storage.clone(),
                 alice(),
                 stables,
@@ -574,7 +598,8 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("fidelity section failed"),
+            err.to_string()
+                .contains("fidelity section must use journal state"),
             "expected a fidelity-section rejection, got: {err}"
         );
 
@@ -583,4 +608,305 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
         assert_eq!(api::total_supply(storage.clone()).unwrap(), U256::ZERO);
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
     });
+}
+
+fn pledge(
+    storage: StorageHandle<'_>,
+    owner: Address,
+    amount: U256,
+    terms: api::PledgeTerms,
+    auth: ModifyAuth,
+) -> outbe_primitives::error::Result<B256> {
+    let reply = api::pledge(storage, owner, amount, terms, auth)?;
+    let view = derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    Ok(outbe_tee::confidential::decrypt_pledge_reply(&view, &reply).unwrap())
+}
+fn consume(
+    storage: StorageHandle<'_>,
+    note: B256,
+    account: Address,
+    spend: [u8; 32],
+) -> outbe_primitives::error::Result<(api::PledgeTerms, B256)> {
+    let credential = outbe_tee::confidential::encrypt_pledge_credential(
+        &outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::CREDENTIAL_SECRET),
+        chain_b256(),
+        note,
+        account,
+        spend,
+    )
+    .unwrap();
+    api::consume_pledge(storage, U256::from_be_bytes(note.0), credential, account)
+}
+fn collateral(
+    storage: StorageHandle<'_>,
+    note: B256,
+    id: B256,
+    amount: U256,
+    expected_remaining: U256,
+    action: api::CollateralAction,
+) -> outbe_primitives::error::Result<U256> {
+    api::apply_collateral(
+        storage,
+        api::CollateralAuthorization {
+            credis_id: U256::from_be_bytes(note.0),
+            collateral_id: id,
+            amount,
+            expected_remaining,
+            action,
+        },
+        0,
+    )
+}
+
+#[test]
+fn allocations_bind_credis_cap_returns_and_reject_replay_after_restart() {
+    with_env(|storage| {
+        let total = U256::from(1000);
+        api::mint(
+            storage.clone(),
+            alice(),
+            total,
+            auth(GratisOp::Mint, alice(), total, 0),
+        )
+        .unwrap();
+        let allocate = |amount: u64, nonce| {
+            let amount = U256::from(amount);
+            let note = pledge(
+                storage.clone(),
+                alice(),
+                amount,
+                terms(amount, amount),
+                auth(GratisOp::Pledge, alice(), amount, nonce),
+            )
+            .unwrap();
+            let key = derive_modify_key(&test_enclave::state_key(), alice()).unwrap();
+            let (_, id) = consume(
+                storage.clone(),
+                note,
+                smart_account(),
+                spend_auth_mac(&pledge_secret(&key, note), smart_account()),
+            )
+            .unwrap();
+            (note, id)
+        };
+        let (a, aid) = allocate(100, 1);
+        let (b, bid) = allocate(900, 2);
+        assert_eq!(view_pledged(storage.clone(), alice()), total);
+        let before = crate::Gratis::new(storage.clone())
+            .journal_head
+            .read()
+            .unwrap();
+        assert!(collateral(
+            storage.clone(),
+            a,
+            bid,
+            U256::from(20),
+            U256::from(900),
+            api::CollateralAction::Return
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("binding"));
+        assert!(collateral(
+            storage.clone(),
+            a,
+            aid,
+            U256::from(150),
+            U256::from(100),
+            api::CollateralAction::Return
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("allocation exceeded"));
+        assert_eq!(
+            crate::Gratis::new(storage.clone())
+                .journal_head
+                .read()
+                .unwrap(),
+            before
+        );
+        let alice_before = api::balance_ct(storage.clone(), alice()).unwrap();
+        let other_before = api::balance_ct(storage.clone(), smart_account()).unwrap();
+        collateral(
+            storage.clone(),
+            a,
+            aid,
+            U256::from(20),
+            U256::from(100),
+            api::CollateralAction::Return,
+        )
+        .unwrap();
+        assert!(collateral(
+            storage.clone(),
+            a,
+            aid,
+            U256::from(20),
+            U256::from(100),
+            api::CollateralAction::Return
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("stale"));
+        // Every account's view changes with the global root, including accounts
+        // with no state. Ciphertext comparison cannot identify the updated source.
+        assert_ne!(
+            api::balance_ct(storage.clone(), alice()).unwrap(),
+            alice_before
+        );
+        assert_ne!(
+            api::balance_ct(storage.clone(), smart_account()).unwrap(),
+            other_before
+        );
+        assert_eq!(other_before.len(), alice_before.len());
+        collateral(
+            storage.clone(),
+            a,
+            aid,
+            U256::from(80),
+            U256::from(80),
+            api::CollateralAction::Return,
+        )
+        .unwrap();
+        outbe_tee_enclave::confidential_ledger::clear_cache();
+        assert!(collateral(
+            storage.clone(),
+            a,
+            aid,
+            U256::ONE,
+            U256::ZERO,
+            api::CollateralAction::Return
+        )
+        .is_err());
+        assert_eq!(view_balance(storage.clone(), alice()), U256::from(100));
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::from(900));
+        collateral(
+            storage.clone(),
+            b,
+            bid,
+            U256::from(900),
+            U256::from(900),
+            api::CollateralAction::Burn,
+        )
+        .unwrap();
+        assert_eq!(api::total_supply(storage.clone()).unwrap(), U256::from(100));
+        assert_eq!(view_pledged(storage, alice()), U256::ZERO);
+    });
+}
+
+#[test]
+fn reverted_candidate_and_stale_response_cannot_change_committed_state() {
+    with_env(|storage| {
+        use outbe_tee::confidential::{head, persist, Call, Domain};
+        let amount = U256::from(100);
+        let request = || {
+            outbe_tee_enclave::confidential_ledger::empty_request(
+                GratisOp::Mint,
+                chain_b256(),
+                alice(),
+                amount,
+            )
+        };
+        let mut input = request();
+        input.modify_auth = auth(GratisOp::Mint, alice(), amount, 0);
+        let prepared =
+            crate::enclave_client::execute(&storage, Call::Gratis(Box::new(input))).unwrap();
+        let original = head(&storage, Domain::Gratis).unwrap();
+        let result: outbe_primitives::error::Result<()> = storage.with_checkpoint(|| {
+            api::mint(
+                storage.clone(),
+                alice(),
+                amount,
+                auth(GratisOp::Mint, alice(), amount, 0),
+            )?;
+            assert_eq!(view_balance(storage.clone(), alice()), amount);
+            Err(outbe_primitives::error::PrecompileError::Revert(
+                "later token call failed".into(),
+            ))
+        });
+        assert!(result.is_err());
+        assert_eq!(head(&storage, Domain::Gratis).unwrap(), original);
+        assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
+        // A different transaction from the same prior head must have different
+        // ciphertext/AEAD key material, even though its journal index is reused.
+        api::mint(
+            storage.clone(),
+            alice(),
+            U256::from(200),
+            auth(GratisOp::Mint, alice(), U256::from(200), 0),
+        )
+        .unwrap();
+        assert!(persist(&storage, &prepared.updates[0]).is_err());
+        let committed = crate::Gratis::new(storage.clone())
+            .journal_records
+            .get_bytes(&0)
+            .read()
+            .unwrap();
+        assert_ne!(committed, prepared.updates[0].record);
+        assert_eq!(view_balance(storage, alice()), U256::from(200));
+    });
+}
+
+#[test]
+fn collateral_storage_access_trace_is_independent_of_source() {
+    use outbe_tee::confidential::{CollateralAction, CollateralAuthorization};
+    let run = |owner: Address, action| {
+        test_enclave::install();
+        outbe_tee_enclave::confidential_ledger::clear_cache();
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let id = StorageHandle::enter(&mut provider, |storage| {
+            let amount = U256::from(100);
+            api::mint(
+                storage.clone(),
+                owner,
+                amount,
+                auth(GratisOp::Mint, owner, amount, 0),
+            )
+            .unwrap();
+            let note = pledge(
+                storage.clone(),
+                owner,
+                amount,
+                terms(amount, amount),
+                auth(GratisOp::Pledge, owner, amount, 1),
+            )
+            .unwrap();
+            let key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+            let spend = spend_auth_mac(&pledge_secret(&key, note), smart_account());
+            let credential = outbe_tee::confidential::encrypt_pledge_credential(
+                &outbe_tee_enclave::crypto::x25519_public(
+                    &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                ),
+                chain_b256(),
+                note,
+                smart_account(),
+                spend,
+            )
+            .unwrap();
+            api::consume_pledge(storage, U256::ONE, credential, smart_account())
+                .unwrap()
+                .1
+        });
+        provider.enable_storage_trace();
+        StorageHandle::enter(&mut provider, |storage| {
+            api::apply_collateral(
+                storage,
+                CollateralAuthorization {
+                    credis_id: U256::ONE,
+                    collateral_id: id,
+                    action,
+                    amount: U256::from(20),
+                    expected_remaining: U256::from(100),
+                },
+                0,
+            )
+            .unwrap();
+        });
+        provider.storage_trace().to_vec()
+    };
+    for action in [CollateralAction::Return, CollateralAction::Burn] {
+        assert_eq!(
+            run(alice(), action),
+            run(Address::repeat_byte(0x77), action)
+        );
+    }
 }

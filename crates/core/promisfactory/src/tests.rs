@@ -302,10 +302,8 @@ fn mine_gratis_rejects_insufficient_balance() {
             "got: {err}"
         );
 
-        // No gratis minted (no ciphertext ever written), promis untouched.
+        // No Gratis minted; its root-bound view decrypts to zero. Promis is unchanged.
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(100u64));
-        assert!(outbe_gratis::api::balance_ct(storage.clone(), alice())
-            .unwrap()
-            .is_empty());
+        assert_eq!(gratis_view_balance(&storage, alice()), U256::ZERO);
     });
 }

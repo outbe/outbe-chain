@@ -285,62 +285,25 @@ pub(in crate::transport) fn dispatch_with_initialization(
                 attestation_tag,
             }
         }
-        EnclaveRequest::ApplyGratisOp { request } => {
-            // Derive the resident Gratis state key from the same DKG group
-            // signature as the offer key - identical on every enclave, so the
-            // re-encrypted state is byte-identical (consensus determinism).
+        wire @ (EnclaveRequest::Confidential { .. } | EnclaveRequest::LoadConfidential { .. }) => {
             let Some(derived) = offer_key.get() else {
-                return EnclaveResponse::Error {
-                    message: "ApplyGratisOp: no resident group key (DKG not complete)".to_string(),
-                };
+                return EnclaveResponse::Error { message: "confidential state: DKG not complete".into() };
             };
-            let state_key =
-                match crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        return EnclaveResponse::Error {
-                            message: e.to_string(),
-                        };
-                    }
-                };
-            let mut result = crate::gratis::apply_op(&state_key, &request);
-            // Co-located Fidelity cohort section: applied atomically with the
-            // Gratis op under its own independent key domain. A failing section
-            // rejects the WHOLE op - the host writes neither ledger.
-            if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
-                (&result.status, &request.fidelity)
-            {
-                let fidelity_outcome =
-                    crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
-                        .and_then(|fidelity_key| {
-                            crate::fidelity::apply_cohort_section(
-                                &fidelity_key,
-                                request.account,
-                                request.amount,
-                                section,
-                            )
-                        });
-                match fidelity_outcome {
-                    Ok(outcome) => result.fidelity = Some(outcome),
-                    Err(e) => {
-                        result = crate::gratis::rejected_result(
-                            format!("fidelity section failed: {e}"),
-                            result.inputs_canonical_hash,
-                        );
-                    }
+            let keys_result = crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)
+                .and_then(|g| crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0).map(|f| (g, f)));
+            let (g, f) = match keys_result { Ok(keys) => keys, Err(e) => return EnclaveResponse::Error { message: e.to_string() } };
+            let mut response = crate::confidential_ledger::dispatch(&wire, &g, &f, derived.secret());
+            if let outbe_tee::confidential::Response::Applied(result) = &mut response {
+                match outbe_tee::confidential::attestation_preimage(result) {
+                    Ok(bytes) => result.attestation = keys.sign_attestation(&bytes).to_vec(),
+                    Err(e) => return EnclaveResponse::Error { message: e.to_string() },
                 }
             }
-            // Sign (inputs_canonical_hash || result) with the attestation key so the
-            // host can prove the result came from this attested enclave.
-            let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
-                result.inputs_canonical_hash,
-                &result,
-            );
-            result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-            EnclaveResponse::GratisOpApplied {
-                result: Box::new(result),
-            }
+            EnclaveResponse::Confidential { response }
         }
+        EnclaveRequest::ApplyGratisOp { .. } => EnclaveResponse::Error {
+            message: "raw Gratis operations are disabled; use confidential state".into(),
+        },
         EnclaveRequest::ApplyFidelityCohortOp { request } => {
             // Standalone cohort mutation over the independent Fidelity key
             // domain. Consensus path, re-executed by every validator.

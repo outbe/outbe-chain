@@ -5,7 +5,7 @@
 //! day count, and even that is evaluated lazily at settlement rather than
 //! accrued per block.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -33,8 +33,8 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 pub struct OpenPositionParams {
     pub smart_account: Address,
     pub cca: Address,
-    /// Sealed pledger EOA, opaque here.
-    pub eoa_ct: Vec<u8>,
+    /// Internal allocation handle; source resolution stays inside the enclave.
+    pub collateral_id: B256,
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
@@ -86,8 +86,8 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Sealed pledger EOA - the caller opens it to key the confidential ledgers.
-    pub eoa_ct: Vec<u8>,
+    /// Internal allocation handle for the authorized forfeiture.
+    pub collateral_id: B256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -176,7 +176,7 @@ impl CredisContract<'_> {
                 asset: params.asset,
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                eoa_ct: params.eoa_ct,
+                collateral_id: params.collateral_id,
                 principal: params.principal,
                 outstanding: params.principal,
                 collateral: params.collateral,
@@ -418,7 +418,7 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                eoa_ct: position.eoa_ct,
+                collateral_id: position.collateral_id,
             })
         })
     }

@@ -2,7 +2,7 @@
 //! movement + Fidelity bookkeeping lives in [`crate::runtime`]. Writes are
 //! authorized by the caller's Gratis modify key (`mac` + `opNonce`).
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent, SolInterface};
 
 use outbe_gratis::api::ModifyAuth;
@@ -47,8 +47,8 @@ pub fn dispatch(
                         c.maxGratis,
                         auth,
                     )?;
-                    emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
-                    Ok(handle)
+                    emit_pledged(&storage, sender, &c, gratis_amount, handle.clone())?;
+                    Ok(handle.into())
                 }),
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
                     let auth = ModifyAuth {
@@ -85,7 +85,7 @@ fn emit_pledged(
     account: Address,
     call: &IGratisFactory::pledgeGratisCall,
     gratis_amount: U256,
-    pledge_note: B256,
+    pledge_reply: Vec<u8>,
 ) -> Result<()> {
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
@@ -94,7 +94,7 @@ fn emit_pledged(
             amountStables: call.amountStables,
             asset: call.asset,
             gratisAmount: gratis_amount,
-            pledgeNote: pledge_note,
+            pledgeReply: pledge_reply.into(),
         }),
     )
 }

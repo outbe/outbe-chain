@@ -83,31 +83,33 @@ pub fn pledge_gratis(
     asset: Address,
     max_gratis: U256,
     auth: ModifyAuth,
-) -> Result<(B256, U256)> {
-    if stables_amount.is_zero() {
-        return Err(GratisFactoryError::InvalidAmount.into());
-    }
-    let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
-    let block_timestamp = storage.timestamp()?.to::<u64>();
-    let valuation_price = previous_half_open_8hours_vwap(
-        storage.clone(),
-        AddressPair::new_coen_to(issuance_currency),
-        block_timestamp,
-    )?
-    .filter(|price| !price.is_zero())
-    .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
-    let (gratis_amount, entry_price) =
-        checked_quote(stables_amount, asset_decimals, valuation_price)?;
-    let terms = PledgeTerms {
-        stables_amount,
-        gratis_amount,
-        asset,
-        entry_price,
-        issuance_currency,
-        asset_decimals,
-        valuation_price,
-    };
-    pledge_priced(storage, caller, terms, max_gratis, auth)
+) -> Result<(Vec<u8>, U256)> {
+    storage.with_checkpoint(|| {
+        if stables_amount.is_zero() {
+            return Err(GratisFactoryError::InvalidAmount.into());
+        }
+        let (issuance_currency, asset_decimals) = asset_metadata(&storage, asset)?;
+        let block_timestamp = storage.timestamp()?.to::<u64>();
+        let valuation_price = previous_half_open_8hours_vwap(
+            storage.clone(),
+            AddressPair::new_coen_to(issuance_currency),
+            block_timestamp,
+        )?
+        .filter(|price| !price.is_zero())
+        .ok_or(GratisFactoryError::PledgePriceUnavailable)?;
+        let (gratis_amount, entry_price) =
+            checked_quote(stables_amount, asset_decimals, valuation_price)?;
+        let terms = PledgeTerms {
+            stables_amount,
+            gratis_amount,
+            asset,
+            entry_price,
+            issuance_currency,
+            asset_decimals,
+            valuation_price,
+        };
+        pledge_priced(storage.clone(), caller, terms, max_gratis, auth)
+    })
 }
 
 /// Commit a fully quoted pledge after applying the transaction's slippage cap.
@@ -117,23 +119,35 @@ pub(super) fn pledge_priced(
     terms: PledgeTerms,
     max_gratis: U256,
     auth: ModifyAuth,
-) -> Result<(B256, U256)> {
-    let gratis_amount = terms.gratis_amount;
-    if gratis_amount > max_gratis {
-        return Err(GratisFactoryError::GratisCapExceeded.into());
-    }
-    // Fold a read-only league probe into the pledge round-trip (no separate
-    // fidelity call): the pledge op returns the caller's current league.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, terms.stables_amount, terms, auth, section)?;
-    // todo implement correct fidelity eligibility check on `outcome.league`
-    if outcome.league == u16::MAX {
-        return Err(GratisFactoryError::FidelityNotEligible.into());
-    }
-    Ok((handle, gratis_amount))
+) -> Result<(Vec<u8>, U256)> {
+    storage.with_checkpoint(|| {
+        let gratis_amount = terms.gratis_amount;
+        if gratis_amount > max_gratis {
+            return Err(GratisFactoryError::GratisCapExceeded.into());
+        }
+        // Fold a read-only league probe into the pledge round-trip (no separate
+        // fidelity call): the pledge op returns the caller's current league.
+        let now = storage.timestamp()?.to::<u64>();
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            caller,
+            FidelityCohortOp::Probe,
+            now,
+        )?;
+        let (handle, outcome) = gratis::pledge_with_fidelity(
+            storage.clone(),
+            caller,
+            terms.stables_amount,
+            terms,
+            auth,
+            section,
+        )?;
+        // todo implement correct fidelity eligibility check on `outcome.league`
+        if outcome.league == u16::MAX {
+            return Err(GratisFactoryError::FidelityNotEligible.into());
+        }
+        Ok((handle, gratis_amount))
+    })
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
@@ -146,7 +160,9 @@ pub fn unpledge_gratis(
     pledge_note: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_note, auth)
+    storage.with_checkpoint(|| {
+        gratis::unpledge(storage.clone(), caller, amount_stables, pledge_note, auth)
+    })
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
@@ -158,14 +174,20 @@ pub fn mint(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    // Fold the acquisition cohort into the gratis mint round-trip; persist the
-    // returned fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::In, now)?;
-    let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
-    Ok(())
+    storage.with_checkpoint(|| {
+        // Fold the acquisition cohort into the gratis mint round-trip; persist the
+        // returned fidelity blob.
+        let now = storage.timestamp()?.to::<u64>();
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            account,
+            FidelityCohortOp::In,
+            now,
+        )?;
+        let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
+        outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
+        Ok(())
+    })
 }
 
 pub fn mine_coen(
@@ -174,27 +196,33 @@ pub fn mine_coen(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    let native_amount = checked_protocol_to_native(amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+    storage.with_checkpoint(|| {
+        let native_amount = checked_protocol_to_native(amount)
+            .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
 
-    // Fold the sale cohort into the gratis burn round-trip; persist the returned
-    // fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::Out, now)?;
-    let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
+        // Fold the sale cohort into the gratis burn round-trip; persist the returned
+        // fidelity blob.
+        let now = storage.timestamp()?.to::<u64>();
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            account,
+            FidelityCohortOp::Out,
+            now,
+        )?;
+        let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
+        outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
 
-    // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
-    storage.increase_balance(account, native_amount)?;
+        // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
+        storage.increase_balance(account, native_amount)?;
 
-    storage.emit_event(
-        GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::CoenMined {
-            sender: account,
-            amount: native_amount,
-        }),
-    )?;
+        storage.emit_event(
+            GRATIS_FACTORY_ADDRESS,
+            SolEvent::encode_log_data(&IGratisFactory::CoenMined {
+                sender: account,
+                amount: native_amount,
+            }),
+        )?;
 
-    Ok(native_amount)
+        Ok(native_amount)
+    })
 }

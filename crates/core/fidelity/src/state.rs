@@ -6,22 +6,11 @@
 //! receipt, and RCFI/league orchestration live in [`crate::runtime`]; the
 //! cross-crate surface is [`crate::api`].
 
-use alloy_primitives::Address;
 use outbe_primitives::error::Result;
 
 use crate::schema::FidelityContract;
 
 impl FidelityContract<'_> {
-    /// Encrypted cohort blob for `account` (`version(8) || AEAD-ct`); empty if the
-    /// account has never held a cohort.
-    pub fn cohorts_ct_of(&self, account: Address) -> Result<Vec<u8>> {
-        self.cohorts_ct.get_bytes(&account).read()
-    }
-
-    pub(crate) fn write_cohorts_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
-        self.cohorts_ct.get_bytes(&account).write(blob)
-    }
-
     /// Earliest qualified_start across all accounts (0 = none qualified yet).
     pub fn first_qualified_start(&self) -> Result<u64> {
         self.first_qualified_start.read()

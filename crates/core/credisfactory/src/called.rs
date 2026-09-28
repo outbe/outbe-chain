@@ -41,8 +41,8 @@ pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 
 /// Max positions voided per daily run, far below [`MAX_CREDIS_DAILY_VISITS`]
 /// because a void is orders of magnitude more expensive than a call:
-/// it makes two blocking TEE enclave round-trips (`reveal_owner` then
-/// `burn_pledged_with_fidelity`) on a process-global connection.
+/// it performs a synchronous confidential collateral/Fidelity update on the
+/// enclave connection (plus journal recovery pages after a cache miss).
 ///
 /// A correlated mass-void is the *expected* shape of a call event, not a tail
 /// case - a sustained breach calls every position in a currency at once, so 14

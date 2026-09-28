@@ -95,7 +95,7 @@ pub fn pledge(
     amount_stables: U256,
     terms: PledgeTerms,
     auth: ModifyAuth,
-) -> Result<B256> {
+) -> Result<Vec<u8>> {
     runtime::pledge(storage, caller, amount_stables, terms, auth)
 }
 
@@ -110,7 +110,7 @@ pub fn pledge_with_fidelity(
     terms: PledgeTerms,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
-) -> Result<(B256, FidelityOpOutcome)> {
+) -> Result<(Vec<u8>, FidelityOpOutcome)> {
     runtime::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, fidelity)
 }
 
@@ -127,51 +127,20 @@ pub fn unpledge(
     runtime::unpledge(storage, caller, amount_stables, pledge_note, auth)
 }
 
-// --- Credis-driven ---
+pub use outbe_tee::confidential::{CollateralAction, CollateralAuthorization};
 
-/// requestCredis: consume `pledge_note`'s ticket for `smart_account` (authorized by
-/// `spend_auth`), crediting the collateral into the pledger's OWN pledged ledger and
-/// deleting the ticket. The pledger EOA is not passed in calldata - the enclave recovers
-/// it from the ticket. Returns `(terms, eoa_ct)`: the loan terms quoted when the pledge
-/// was made (stables amount, asset, entry rate and the gratis collateral), plus the
-/// sealed EOA the caller stores on the Credis position (later opened via
-/// [`reveal_owner`]).
 pub fn consume_pledge(
     storage: StorageHandle<'_>,
-    pledge_note: B256,
+    credis_id: U256,
+    credential: Vec<u8>,
     smart_account: Address,
-    spend_auth: [u8; 32],
-) -> Result<(PledgeTerms, Vec<u8>)> {
-    runtime::consume_pledge(storage, pledge_note, smart_account, spend_auth)
+) -> Result<(PledgeTerms, B256)> {
+    runtime::consume_pledge(storage, credis_id, credential, smart_account)
 }
-
-/// Decrypt a position's stored `eoa_ct` blob back to the pledger EOA (read-only, via the
-/// enclave). The caller uses the returned address to key the confidential ledgers at
-/// settlement / void without the EOA ever appearing on-chain.
-pub fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<Address> {
-    runtime::reveal_owner(storage, eoa_ct)
-}
-
-/// Settlement: release `amount` of collateral from `eoa`'s own pledged ledger back
-/// to its balance. Returns the released amount.
-pub fn release_to_eoa(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
-    runtime::release_to_eoa(storage, eoa, amount)
-}
-
-/// Credis expiry: burn `amount` of collateral from `eoa`'s own pledged ledger
-/// (reduces `total_supply`). Returns the burned amount.
-pub fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
-    runtime::burn_pledged(storage, eoa, amount)
-}
-
-/// Credis expiry burn AND a co-located fidelity cohort sale for `eoa` in ONE
-/// round-trip. Returns `(burned_amount, fidelity_outcome)` for the caller to
-/// persist via `outbe_fidelity::api::apply_fidelity_outcome`.
-pub fn burn_pledged_with_fidelity(
+pub fn apply_collateral(
     storage: StorageHandle<'_>,
-    eoa: Address,
-    amount: U256,
-    fidelity: FidelityOpSection,
-) -> Result<(U256, FidelityOpOutcome)> {
-    runtime::burn_pledged_with_fidelity(storage, eoa, amount, fidelity)
+    authorization: CollateralAuthorization,
+    fidelity_anchor: u64,
+) -> Result<U256> {
+    runtime::apply_collateral(storage, authorization, fidelity_anchor)
 }

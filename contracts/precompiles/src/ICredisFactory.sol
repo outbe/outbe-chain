@@ -5,12 +5,9 @@ pragma solidity ^0.8.30;
 interface ICredisFactory {
     event CredisIssued(address indexed smartAccount, address indexed cca, uint256 amount);
 
-    /// @notice Open a credis position against a confidential Gratis pledge. Called by
-    ///         the CCA, which presents `pledgeNote` (the public id returned by
-    ///         `pledgeGratis`) and `spendAuth` = HMAC(pledgeSecret,
-    ///         "credis-bind" || smartAccount), where the pledger EOA derived
-    ///         `pledgeSecret` from its modify key + the pledge note off-chain. The
-    ///         pledge-lock ticket is consumed once and bound to `smartAccount`.
+    /// @notice Open a Credis against a fresh encrypted pledge credential.
+    ///         The enclave verifies its network, smart account and spend authorization,
+    ///         consumes the note once, and binds collateral to the new Credis ID.
     ///         The disbursed amount and the asset are NOT calldata: both were sealed
     ///         into the ticket at `pledgeGratis` time, so the loan is issued at the
     ///         price the pledger accepted. `msg.sender` is recorded on the position
@@ -38,12 +35,11 @@ interface ICredisFactory {
     ///        The daily breach scan reads that same currency's series. The anchor
     ///        is independent of spot and the pledge entry price, even when the
     ///        reference and issuance currencies match. It does not denominate the position.
-    /// @return positionId Derived from `pledgeNote` and `smartAccount`.
+    /// @return positionId keccak256(CCA || smartAccount || asset || execution block).
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function issueCredis(
         address smartAccount,
-        bytes32 pledgeNote,
-        bytes32 spendAuth,
+        bytes calldata credential,
         uint16 referenceCurrency,
         uint256 reservationId
     ) external payable returns (uint256 positionId, uint256 amountStables);
