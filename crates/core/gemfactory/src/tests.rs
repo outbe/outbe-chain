@@ -185,7 +185,7 @@ fn note_for_quoted_cost(
 ) -> (U256, Vec<u8>) {
     let (gem_id, cost) = StorageHandle::enter(provider, |storage| {
         let gem_id = build(&storage);
-        let (_, cost) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
+        let (_, cost, _) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
         (gem_id, cost)
     });
     let proof = note_proof(provider, asset, payer, cost.to::<u128>());
@@ -494,7 +494,7 @@ fn gem_paid_off_the_quote(
         )
         .unwrap();
         seed_qualifying_day(&storage, gem_id);
-        let (_, cost) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        let (_, cost, _) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
         (gem_id, cost)
     });
     let proof = note_proof(&mut provider, STABLE, ALICE, adjust(cost).to::<u128>());
@@ -580,6 +580,7 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
         let call = crate::precompile::IGemFactory::settleGemCall {
             gemId: gem_id,
             asset: STABLE,
+            snapshotId: U256::ZERO,
         };
         let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
         assert!(err_msg(res).contains("unexpected amount"));
@@ -605,7 +606,7 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
         .unwrap();
         seed_qualifying_day(storage, gem_id);
 
-        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR, U256::ZERO);
         assert!(err_msg(res).contains("does not match"));
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
@@ -973,8 +974,8 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
     });
     let quoted = StorageHandle::enter(&mut provider, |storage| {
         // Both rails quote, and neither quote moves anything.
-        let (ref_iso, ref_amount) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
-        let (iss_iso, iss_amount) =
+        let (ref_iso, ref_amount, _) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        let (iss_iso, iss_amount, _) =
             runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
         assert_eq!(ref_iso, 840);
         assert_eq!(iss_iso, 978);
@@ -985,6 +986,61 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
     });
 
     assert_eq!(settled_event(&provider).amountPaid, quoted);
+}
+
+#[test]
+fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let (gem_id, quoted) = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        seed_day_vwap(&storage, 840, usd_rate);
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, gem_id);
+        let (_, _, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        (gem_id, quoted)
+    });
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+
+    provider.set_timestamp(U256::from(cutoff + 3_599));
+    StorageHandle::enter(&mut provider, |storage| {
+        let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, quoted);
+        assert!(err_msg(res).contains("unexpected amount"));
+    });
+
+    provider.set_timestamp(U256::from(cutoff + 3_600));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, quoted);
+        assert_eq!(
+            err_msg(res),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::StaleVwapSnapshot {
+                        authorized: quoted,
+                        required,
+                    }
+                )
+            )
+        );
+        let reference = runtime::settle_gem(&storage, ALICE, gem_id, STABLE, quoted);
+        assert!(err_msg(reference).contains("unexpected amount"));
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
 }
 
 #[test]
@@ -1002,7 +1058,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             840,
         )
         .unwrap();
-        let (_, before) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
+        let (_, before, _) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
             .unwrap()
             .unwrap();
@@ -1013,8 +1069,8 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
                 U256::from(4u64) * six_decimal_unit(),
             )
             .unwrap();
-        let (_, after) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
-        let (_, reference) = runtime::quote_settlement(storage, gem_id, STABLE).unwrap();
+        let (_, after, _) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
+        let (_, reference, _) = runtime::quote_settlement(storage, gem_id, STABLE).unwrap();
         assert_eq!(after, before);
         assert_eq!(after, reference / U256::from(2u64));
     });

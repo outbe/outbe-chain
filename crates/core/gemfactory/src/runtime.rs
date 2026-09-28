@@ -282,15 +282,18 @@ pub fn issue_merchant_gem(
 }
 
 /// Settles a gem paying its cost from `caller` in `asset` by direct ERC20 transfer.
+/// An issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
     settle(storage, gem_id, |item| {
         let currency = accept_payment_asset(storage, asset, item)?;
-        let (amount_paid, _) = cost_in_token(storage, item, asset, currency)?;
+        let (amount_paid, snapshot) = cost_in_token(storage, item, asset, currency)?;
+        require_snapshot(snapshot, snapshot_id)?;
         deposit_payment(storage, caller, asset, amount_paid)?;
         Ok((settlement_currency(item, currency), amount_paid))
     })
@@ -506,6 +509,18 @@ fn cost_in_token(
     Ok((settlement_units(item, rate, asset_decimals)?, snapshot))
 }
 
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(GemFactoryError::StaleVwapSnapshot {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
+}
+
 /// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
 fn window_coen_rate(
     storage: &StorageHandle<'_>,
@@ -574,16 +589,21 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
-/// What settling `gem_id` with `asset` costs, and in which currency.
+/// What settling `gem_id` with `asset` costs, in which currency, and the VWAP
+/// snapshot an issuance-currency payment must name (zero on the reference rail).
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     gem_id: U256,
     asset: Address,
-) -> Result<(u16, U256)> {
+) -> Result<(u16, U256, U256)> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let currency = accept_payment_asset(storage, asset, &item)?;
-    let (cost, _) = cost_in_token(storage, &item, asset, currency)?;
-    Ok((settlement_currency(&item, currency), cost))
+    let (cost, snapshot) = cost_in_token(storage, &item, asset, currency)?;
+    Ok((
+        settlement_currency(&item, currency),
+        cost,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+    ))
 }
 
 /// The full terms of a Gem Factory position.
