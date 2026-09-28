@@ -217,6 +217,7 @@ pub fn dispatch(
                         sender,
                         c.amount,
                         c.asset,
+                        c.snapshotId,
                     )
                 }),
                 settleIntexWithPayNote(c) => mutate_void(c, caller, |sender, c| {
@@ -230,7 +231,7 @@ pub fn dispatch(
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, amount) = runtime::quote_settlement(
+                    let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.paymentToken,
@@ -239,6 +240,7 @@ pub fn dispatch(
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
                         payableUnits: amount,
+                        snapshotId: snapshot_id,
                     })
                 }),
                 isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {

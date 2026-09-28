@@ -124,7 +124,7 @@ fn settlement_quote_prices_an_accepted_token() {
         (18, U256::from(1_000_000_000_000_000_000u64)),
     ] {
         with_payment_token(1, 840, decimals, |s| {
-            let (_, cost) =
+            let (_, cost, _) =
                 runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
             assert_eq!(cost, expected, "payment token decimals {decimals}");
         });
@@ -317,9 +317,16 @@ fn with_erc20_series<R>(
 #[test]
 fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
     with_erc20_series(word(1), |s| {
-        let err =
-            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(2), payment_token())
-                .unwrap_err();
+        let err = runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::from(2),
+            payment_token(),
+            U256::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("unexpected amount"), "{err}");
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
@@ -328,9 +335,16 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
 #[test]
 fn erc20_settle_refuses_a_token_answering_false() {
     with_erc20_series(word(0), |s| {
-        let err =
-            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(2), payment_token())
-                .unwrap_err();
+        let err = runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::from(2),
+            payment_token(),
+            U256::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("token call failed"), "{err}");
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
@@ -340,9 +354,16 @@ fn erc20_settle_refuses_a_token_answering_false() {
 fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
     with_erc20_series(word(1), |s| {
         let foreign = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
-        assert!(
-            runtime::settle_intex(&s, sid(7), owner(), owner(), U256::from(1), foreign).is_err()
-        );
+        assert!(runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::from(1),
+            foreign,
+            U256::ZERO,
+        )
+        .is_err());
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }
@@ -356,6 +377,7 @@ fn only_the_paynote_settle_pays_for_proof_verification() {
         intexOwner: owner(),
         amount: U256::ONE,
         asset: payment_token(),
+        snapshotId: U256::ZERO,
     }
     .abi_encode();
     let paynote = IIntexFactory::settleIntexWithPayNoteCall {

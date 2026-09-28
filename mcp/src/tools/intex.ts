@@ -304,7 +304,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       abi: FACTORY_ABI,
       functionName: "quoteSettlement",
       args: [series, token, units],
-    })) as [number, bigint];
+    })) as [number, bigint, bigint];
     return { settlementCurrency: Number(settlementCurrency), payableUnits };
   }
 

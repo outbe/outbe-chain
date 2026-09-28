@@ -747,7 +747,8 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer.
+/// Settle paying the cost from `settler` in `asset` by direct ERC20 transfer. An
+/// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -755,12 +756,26 @@ pub fn settle_intex(
     settler: Address,
     amount: U256,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
     settle(storage, series_id, intex_owner, settler, amount, |series| {
         let currency = accept_payment_token(storage, asset, series)?;
-        let (cost, _) = cost_in_token(storage, series, asset, currency, amount)?;
+        let (cost, snapshot) = cost_in_token(storage, series, asset, currency, amount)?;
+        require_snapshot(snapshot, snapshot_id)?;
         deposit_payment(storage, settler, asset, cost)
     })
+}
+
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(IntexFactoryError::StaleVwapSnapshot {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
 }
 
 /// Settle paying the cost by spending a PayNote owned by `settler`.
@@ -973,23 +988,28 @@ pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> 
     is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
 }
 
-/// What settling `amount` units of `series_id` with `payment_token` costs, and
-/// which of the series' two currencies that token settles on. Priced exactly as
-/// `settleIntex` charges it. Rejects a token the series does not accept.
+/// What settling `amount` units of `series_id` with `payment_token` costs, which
+/// of the series' two currencies that token settles on, and the VWAP snapshot an
+/// issuance-currency payment must name (zero on the reference rail). Priced exactly
+/// as `settleIntex` charges it. Rejects a token the series does not accept.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     payment_token: Address,
     amount: U256,
-) -> Result<(u16, U256)> {
+) -> Result<(u16, U256, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     let currency = accept_payment_token(storage, payment_token, &series)?;
     let settlement_currency = match currency {
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let (cost, _) = cost_in_token(storage, &series, payment_token, currency, amount)?;
-    Ok((settlement_currency, cost))
+    let (cost, snapshot) = cost_in_token(storage, &series, payment_token, currency, amount)?;
+    Ok((
+        settlement_currency,
+        cost,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+    ))
 }
 
 /// Which of the series' two currencies a payment token is denominated in.

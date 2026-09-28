@@ -302,12 +302,17 @@ fn a_single_message_day_is_chunk_zero_of_one() {
 /// Issue a series whose issuance currency differs from its reference, with a
 /// payment token reporting `iso` and 18 decimals and a registered vault.
 fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
-    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(2),
+    );
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
@@ -348,7 +353,8 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -369,7 +375,8 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             .record_utc_day_vwap(day, EUR_PAIR_ID, U256::from(4u64) * COEN_ISO_RATE_SCALE)
             .unwrap();
 
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -386,7 +393,8 @@ fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_333u64));
     });
 }
@@ -452,7 +460,52 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
 fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
+    });
+}
+
+#[test]
+fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        seed_qualifying_day(&s);
+        let (_, _, quoted) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let settle = |snapshot: U256| {
+            runtime::settle_intex(
+                &s,
+                sid(7),
+                owner(),
+                owner(),
+                U256::ONE,
+                payment_token(),
+                snapshot,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+
+        let current = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
+        let previous = outbe_oracle::api::get_vwap_snapshot_id(
+            current.cutoff() - 1,
+            &outbe_oracle::api::DEFAULT_VWAP_POLICY,
+        )
+        .unwrap();
+        let stale = settle(previous.to_u256());
+        assert!(stale.contains("is stale"), "{stale}");
+        assert!(!settle(quoted).contains("is stale"));
+
+        oracle.config_vwap_policy_version.write(2).unwrap();
+        assert!(settle(quoted).contains("is stale"));
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }

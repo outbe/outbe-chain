@@ -16,9 +16,12 @@ interface IIntexFactory {
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
-    ///        series' currencies. The issuance currency converts through COEN and
-    ///        needs fresh rates.
-    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset) external;
+    ///        series' currencies. The issuance currency converts through COEN at
+    ///        the trailing VWAP snapshot required at this block.
+    /// @param snapshotId The snapshot `quoteSettlement` returned; an issuance-currency
+    ///        payment naming any other snapshot reverts. Ignored on the reference rail.
+    function settleIntex(bytes14 seriesId, address intexOwner, uint256 amount, address asset, uint256 snapshotId)
+        external;
 
     /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
     /// @dev Moves no tokens: the underlying assets reached the reserve vault when
@@ -26,7 +29,8 @@ interface IIntexFactory {
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and spend exactly the settlement cost. The
-    ///        issuance currency converts through COEN at the last closed UTC day's rate.
+    ///        issuance currency converts through COEN at the trailing VWAP snapshot
+    ///        required at this block.
     function settleIntexWithPayNote(bytes14 seriesId, address intexOwner, uint256 amount, bytes calldata payNoteProof)
         external;
 
@@ -36,10 +40,12 @@ interface IIntexFactory {
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on the
+    ///         reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits);
+        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
 
     /// @notice Derived from finalized daily VWAPs on every call, never stored.
     function isSeriesQualified(bytes14 seriesId) external view returns (bool);
