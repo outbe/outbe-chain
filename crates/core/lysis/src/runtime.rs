@@ -105,7 +105,6 @@ fn lysis_inner(
                 owner: action.owner,
                 worldwide_day: action.worldwide_day,
                 league_id: action.league_id,
-                floor_price_minor: action.floor_price_minor,
                 gratis_load_minor: action.gratis_load_minor,
                 entry_price_minor: action.entry_price_minor,
                 issuance_currency: action.issuance_currency,

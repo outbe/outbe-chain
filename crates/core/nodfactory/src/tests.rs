@@ -82,7 +82,6 @@ fn params(owner: Address) -> NodIssueParams {
         gratis_load_minor: U256::from(1_000),
         worldwide_day: WorldwideDay::new(20_241_220),
         league_id: 1,
-        floor_price_minor: U256::from(540),
         entry_price_minor: U256::from(500_000),
         issuance_currency: 840,
         reference_currency: 840,
@@ -431,7 +430,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
 
     let bucket_key = NodContract::bucket_key(
         first.worldwide_day,
-        first.floor_price_minor,
+        NodContract::floor_price_minor(first.entry_price_minor).unwrap(),
         first.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
@@ -588,7 +587,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .is_none());
     let bucket_key = NodContract::bucket_key(
         input.worldwide_day,
-        input.floor_price_minor,
+        NodContract::floor_price_minor(input.entry_price_minor).unwrap(),
         input.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);

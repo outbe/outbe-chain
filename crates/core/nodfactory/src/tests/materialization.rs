@@ -22,7 +22,8 @@ fn profile() -> NodMaterializationProfileV1 {
 fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let worldwide_day = WorldwideDay::new(materialization_wwd);
-    let floor_price_minor = U256::from(500);
+    let entry_price_minor = U256::from(500_000);
+    let floor_price_minor = NodContract::floor_price_minor(entry_price_minor).unwrap();
     let tribute_id =
         WwdEntityId::from_day_and_digest(worldwide_day, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
@@ -35,7 +36,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         league_id: 1,
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
-        entry_price_minor: U256::from(500_000),
+        entry_price_minor,
         settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,

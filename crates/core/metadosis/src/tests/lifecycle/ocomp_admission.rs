@@ -356,7 +356,6 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
                     gratis_load_minor: U256::from(1),
                     worldwide_day: wwd,
                     league_id: 1,
-                    floor_price_minor: U256::from(1),
                     entry_price_minor: U256::from(1),
                     issuance_currency: 840,
                     reference_currency: 840,
