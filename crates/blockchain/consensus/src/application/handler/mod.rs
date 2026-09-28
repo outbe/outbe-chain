@@ -560,6 +560,10 @@ mod parent_proof;
 pub(crate) use parent_proof::parent_round;
 use parent_proof::{finalized_parent_attestation_from_phase1_system_tx, ParentProofLookup};
 
+/// Test-only byzantine proposer for e2e scenarios.
+#[cfg(feature = "test-protocol-overrides")]
+mod byzantine_hook;
+
 mod proposal;
 use super::{ancestry, ingress};
 #[cfg(test)]

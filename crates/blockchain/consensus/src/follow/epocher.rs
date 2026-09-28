@@ -11,7 +11,7 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use commonware_consensus::types::{Epoch, EpochInfo, Epocher, Height};
@@ -69,6 +69,22 @@ impl FollowerEpocher {
         }
     }
 
+    // A poisoned lock is recovered: every mutation is a single `insert` after
+    // all checks pass, so a panicking holder cannot leave a partial update.
+    fn read(&self) -> RwLockReadGuard<'_, ObservedBoundaries> {
+        match self.inner.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn write(&self) -> RwLockWriteGuard<'_, ObservedBoundaries> {
+        match self.inner.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Record an authenticated activating boundary. Exact replay is idempotent;
     /// conflicts, jumps, and activations outside the validator grace window fail.
     pub fn observe_boundary(
@@ -78,7 +94,7 @@ impl FollowerEpocher {
     ) -> Result<(), BoundaryObservationError> {
         let epoch = epoch.get();
         let observed = height.get();
-        let mut inner = self.inner.write().expect("follower epocher lock poisoned");
+        let mut inner = self.write();
         if inner.length == 0 {
             return Err(BoundaryObservationError::ZeroEpochLength);
         }
@@ -124,7 +140,7 @@ impl FollowerEpocher {
 
     /// Highest height that can still belong to the latest observed epoch.
     pub fn supported_ceiling(&self) -> Option<Height> {
-        let inner = self.inner.read().expect("follower epocher lock poisoned");
+        let inner = self.read();
         let (_, activation) = inner.activations.last_key_value()?;
         Some(Height::new(
             activation
@@ -135,9 +151,7 @@ impl FollowerEpocher {
 
     /// Actual activation carrier for a known epoch (epoch zero is block 1).
     pub fn activation_height(&self, epoch: Epoch) -> Option<Height> {
-        self.inner
-            .read()
-            .expect("follower epocher lock poisoned")
+        self.read()
             .activations
             .get(&epoch.get())
             .copied()
@@ -146,7 +160,7 @@ impl FollowerEpocher {
 
     /// Inclusive height window in which the next activation may occur.
     pub fn next_boundary_window(&self, epoch: Epoch) -> Option<(Height, Height)> {
-        let inner = self.inner.read().expect("follower epocher lock poisoned");
+        let inner = self.read();
         let activation = *inner.activations.get(&epoch.get())?;
         let earliest = activation.checked_add(inner.length)?;
         let latest = earliest.checked_add(inner.activation_grace)?;
@@ -155,7 +169,7 @@ impl FollowerEpocher {
 
     /// `(first, last)` height bounds for an observed epoch.
     fn bounds(&self, epoch: Epoch) -> Option<(Height, Height)> {
-        let inner = self.inner.read().expect("follower epocher lock poisoned");
+        let inner = self.read();
         let e = epoch.get();
         let activation = *inner.activations.get(&e)?;
         let first = if e == 0 { 0 } else { activation };
@@ -173,7 +187,7 @@ impl FollowerEpocher {
 impl Epocher for FollowerEpocher {
     fn containing(&self, height: Height) -> Option<EpochInfo> {
         let h = height.get();
-        let inner = self.inner.read().expect("follower epocher lock poisoned");
+        let inner = self.read();
         let (&epoch, _) = inner
             .activations
             .iter()

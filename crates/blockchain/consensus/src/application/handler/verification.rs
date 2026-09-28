@@ -20,6 +20,7 @@ use crate::committee_provider::CommitteeProvider;
 use crate::config::VERIFY_RESOLUTION_TIMEOUT;
 use crate::digest::Digest;
 use crate::dkg_manager::AncestryReader;
+use crate::dkg_manager::ArtifactAdmissionError;
 use crate::dkg_manager::BoundaryRequirement;
 
 use crate::finalization::state::FinalizationViewAccess;
@@ -59,8 +60,6 @@ use commonware_utils::channel::oneshot;
 
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::projection::ProjectionCheckpoint;
-
-use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use outbe_primitives::OutbeExecutionData;
@@ -125,7 +124,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
     committee_provider: &CommitteeProvider,
     dkg_manager: &crate::dkg_manager::Mailbox,
     ancestry: &impl AncestryReader,
-) -> Result<(), String> {
+) -> Result<(), ArtifactAdmissionError> {
     // Finalized-follower rule: a share-less verifier (a TEE full-node, no
     // `proposer_evm_address`) does NOT validate live proposals - it follows
     // FINALIZED blocks, whose threshold certificate is verified by the reporter
@@ -138,7 +137,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
     if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }
-    validate_rewards_beneficiary(block)?;
+    validate_rewards_beneficiary(block).map_err(ArtifactAdmissionError::Rejected)?;
     validate_system_tx_leader_binding_for_activation(
         block,
         round,
@@ -147,82 +146,20 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
         ocomp_lifecycle_activation,
         certificate_scheme_provider,
         committee_provider,
-    )?;
+    )
+    .map_err(ArtifactAdmissionError::Rejected)?;
 
-    let expected_boundary = dkg_manager.pending_boundary_artifact(round.epoch()).await;
-    let artifact = extract_header_artifact_from_block(block)?;
-
-    match dkg_manager
-        .resolve_boundary(parent_block, expected_boundary.as_ref(), ancestry)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        BoundaryRequirement::NoPending => {}
-        BoundaryRequirement::AlreadyCommitted => {
-            if matches!(artifact, Some(ConsensusHeaderArtifact::BoundaryOutcome(_))) {
-                crate::metrics::record_dkg_boundary_duplicate_rejected();
-                return Err(
-                    "duplicate DKG BoundaryOutcome after parent ancestry already committed it"
-                        .to_string(),
-                );
-            }
-            crate::metrics::record_dkg_boundary_requirement(
-                crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
-            );
-            return Ok(());
-        }
-        BoundaryRequirement::MustEmit => {
-            let Some(expected_boundary) = expected_boundary else {
-                return Err(
-                    "boundary requirement requested emission without pending artifact".to_string(),
-                );
-            };
-
-            let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) = artifact else {
-                return Err("block omitted pending DKG BoundaryOutcome".to_string());
-            };
-            if boundary != expected_boundary {
-                return Err("block BoundaryOutcome does not match pending DKG boundary".to_string());
-            }
-            return dkg_manager
-                .verify_pending_boundary_artifact(round.epoch(), &boundary)
-                .await
-                .map_err(|error| error.to_string());
-        }
+    let artifact =
+        extract_header_artifact_from_block(block).map_err(ArtifactAdmissionError::Rejected)?;
+    let requirement = dkg_manager
+        .admit_header_artifact(parent_block, round.epoch(), artifact.as_ref(), ancestry)
+        .await?;
+    if requirement == BoundaryRequirement::AlreadyCommitted {
+        crate::metrics::record_dkg_boundary_requirement(
+            crate::metrics::DkgBoundaryDecision::AlreadyCommitted,
+        );
     }
-
-    let Some(artifact) = artifact else {
-        return Ok(());
-    };
-
-    match artifact {
-        ConsensusHeaderArtifact::BoundaryOutcome(_) => {
-            crate::metrics::record_dkg_boundary_duplicate_rejected();
-            Err("block carried DKG BoundaryOutcome without pending boundary".to_string())
-        }
-        ConsensusHeaderArtifact::DealerLog(bytes) => {
-            dkg_manager
-                .verify_dealer_log(round.epoch(), bytes.to_vec())
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        }
-        ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome } => {
-            // Path A committee pre-announce, emitted during E-1 after the DKG
-            // completes. Validate its carried outcome against this node's OWN
-            // reconstructed DKG output for the incoming epoch - fail-closed if this
-            // node has no pending boundary to compare against, so a forged
-            // pre-announce cannot ride a finalized block.
-            dkg_manager
-                .verify_preannounce_outcome(
-                    commonware_consensus::types::Epoch::new(epoch),
-                    outcome.as_ref(),
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        }
-    }
+    Ok(())
 }
 
 impl ApplicationShared {
@@ -477,9 +414,7 @@ impl ApplicationShared {
         )
         .await
         {
-            if error.contains("DKG boundary ancestry unavailable")
-                || error.contains("DKG boundary ancestry scan exceeded")
-            {
+            if error.is_unavailable() {
                 crate::metrics::record_dkg_boundary_unavailable(
                     crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
                 );
