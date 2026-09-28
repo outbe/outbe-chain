@@ -30,7 +30,9 @@ of truth, the controller only forwards owner calls to them.
 
 - `initialize(icaRouter, validatorAnnounce, domains[], isms[], hooks[])` — one-shot. Caller must be the current
   owner of the Outbe ISM (the deployer that staged `transferOwnership` to the
-  controller). The controller `acceptOwnership()`s the ISM (it is Ownable2Step),
+  controller). The controller `acceptOwnership()`s the Outbe ISM (it is Ownable2Step),
+  dispatches `acceptOwnership()` to every remote ISM through its ICA (so `fund()` must
+  come first),
   verifies it already owns `icaRouter`, and stores the table.
 - `fund()` payable — tops up the balance that pays IGP fees for ICA dispatches.
 - `sync()` — permissionless. Mirrors the active Outbe validator set into every ISM:
@@ -83,7 +85,7 @@ itself, so a fake self-signed checkpoint is indistinguishable from a real one.
 | `set_validators_and_threshold(set, t)`   | full rotation: `callRemote` to every remote ISM, then the local setter; one checkpoint |
 | `call_remote(domain, calls[])`           | generic ICA call on a remote chain (e.g. `acceptOwnership()` on a remote ISM) |
 | `call_local(to, value, data)`            | generic owner call on Outbe (IGP, ProtocolFee, ProxyAdmin, router …)   |
-| `add_domain(domain, ism, hook)` / `remove_domain(domain)` | connect / disconnect a remote chain; the local domain is fixed at `initialize` |
+| `add_domain(domain, ism, hook)` / `remove_domain(domain)` | connect / disconnect a remote chain (adding dispatches `acceptOwnership()` to the new ISM); the local domain is fixed at `initialize` |
 
 Remote dispatch quotes `quoteGasPayment(domain)` on the router and pays it from
 the controller's balance; an insufficient balance reverts before anything is sent.
@@ -97,7 +99,7 @@ the controller's balance; an insufficient balance reverts before anything is sen
    controller's ICA computed on the remote router; the ISM transfer is two-step
    and stays *pending* until accepted) → `initialize(icaRouter, validatorAnnounce,
    domains, isms, hooks)` from the deployer key (still `owner()` of the Outbe ISM).
-   Each step is idempotent and can be run on its own.
-3. `fund()`.
-4. `call_remote(domain, [ism.acceptOwnership()])` per remote chain.
-5. Test rotation; verify `validatorsAndThreshold` changed on the remote ISM.
+   Each step is idempotent and can be run on its own. `fund()` the controller
+   before this step: `initialize` dispatches `acceptOwnership()` to every remote
+   ISM through the ICA and pays the IGP quote for each.
+3. Test rotation; verify `validatorsAndThreshold` changed on the remote ISM.

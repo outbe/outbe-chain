@@ -127,7 +127,7 @@ impl Attester {
             );
         }
         let Some(bucket) = self.announced_bucket(&provider).await? else {
-            warn!(validator = %self.validator, "validator has not announced a checkpoint location");
+            warn!(validator = %self.validator, "validator's hyperlane signer has not announced a checkpoint location");
             return Ok(());
         };
 
@@ -162,12 +162,30 @@ impl Attester {
         Ok(())
     }
 
-    /// Public-read base URL of the validator's bucket from its latest
-    /// announcement on Outbe, or `None` when it never announced.
+    /// Public-read base URL of the validator's bucket from the latest
+    /// announcement of its Hyperlane signer on Outbe, or `None` when it never
+    /// announced. The agent announces with its own key, which is the
+    /// registered `hyperlaneSigner` (the validator address when none is set).
     async fn announced_bucket<P: alloy_provider::Provider>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
+        let output = client::eth_call(
+            provider,
+            HYPERLANE_CONTROLLER_ADDRESS,
+            IHyperlaneController::hyperlaneSignerCall {
+                validator: self.validator,
+            }
+            .abi_encode(),
+            BlockId::latest(),
+        )
+        .await
+        .with_context(|| "hyperlane hyperlaneSigner() failed")?;
+        let mut signer = IHyperlaneController::hyperlaneSignerCall::abi_decode_returns(&output)
+            .with_context(|| "hyperlane hyperlaneSigner() decode failed")?;
+        if signer == Address::ZERO {
+            signer = self.validator;
+        }
         let output = client::eth_call(
             provider,
             HYPERLANE_CONTROLLER_ADDRESS,
@@ -182,7 +200,7 @@ impl Attester {
             provider,
             announce,
             IValidatorAnnounce::getAnnouncedStorageLocationsCall {
-                validators: vec![self.validator],
+                validators: vec![signer],
             }
             .abi_encode(),
             BlockId::latest(),

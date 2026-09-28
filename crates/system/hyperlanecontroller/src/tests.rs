@@ -58,7 +58,19 @@ fn provider() -> HashMapStorageProvider {
 
 /// Deployer still owns the local ISM, controller is its pending owner and
 /// already owns the ICA router: the state right after `mise run owner:transfer`.
+/// The router quotes a zero fee so `initialize` can dispatch the remote
+/// `acceptOwnership()` calls without a balance.
 fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
+    p.stub_sub_call_at_selector(
+        ica_router(),
+        IInterchainAccountRouter::quoteGasPaymentCall::SELECTOR,
+        Bytes::from(U256::ZERO.abi_encode()),
+    );
+    p.stub_sub_call_at_selector(
+        ica_router(),
+        IInterchainAccountRouter::callRemoteCall::SELECTOR,
+        Bytes::from(B256::repeat_byte(0xaa).abi_encode()),
+    );
     p.stub_sub_call_at_selector(
         local_ism(),
         IOwnable::ownerCall::SELECTOR,
@@ -168,6 +180,18 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
             .count(),
         3
     );
+    // acceptOwnership() dispatched to the two remote ISMs, not the local one.
+    let accepts: Vec<_> = p
+        .get_events(HYPERLANE_CONTROLLER_ADDRESS)
+        .iter()
+        .filter(|log| log.topics()[0] == IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH)
+        .map(|log| {
+            IHyperlaneController::RemoteCallDispatched::decode_log_data(log)
+                .unwrap()
+                .domain
+        })
+        .collect();
+    assert_eq!(accepts, vec![SEPOLIA, BSC]);
     assert_eq!(
         *t.last().unwrap(),
         IHyperlaneController::Initialized::SIGNATURE_HASH

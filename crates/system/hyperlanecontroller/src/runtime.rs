@@ -47,8 +47,10 @@ impl HyperlaneControllerContract<'_> {
     // ----------------------------------------------------------------------
 
     /// One-shot bootstrap: accepts the pending ownership of the local ISM,
-    /// verifies the ICA router is already owned by the controller, and stores
-    /// it plus the whole `domain -> ISM` table.
+    /// verifies the ICA router is already owned by the controller, stores it
+    /// plus the whole `domain -> ISM` table, and dispatches `acceptOwnership()`
+    /// to every remote ISM through the Interchain Account (the controller must
+    /// be funded first: each dispatch pays the IGP quote).
     ///
     /// Only the current owner of the local ISM (the deployer that staged
     /// `transferOwnership` to this precompile) may call it.
@@ -104,6 +106,9 @@ impl HyperlaneControllerContract<'_> {
             self.validator_announce.write(validator_announce)?;
             for ((domain, ism), hook) in domains.iter().zip(isms).zip(hooks) {
                 self.write_domain(*domain, *ism, *hook)?;
+                if *domain != local {
+                    self.accept_remote_ism(*domain, *ism)?;
+                }
             }
             self.emit(IHyperlaneController::Initialized {
                 icaRouter: ica_router,
@@ -212,7 +217,27 @@ impl HyperlaneControllerContract<'_> {
         self.require_initialized()?;
         self.require_remote_domain(domain)?;
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.write_domain(domain, ism, hook))
+        storage.with_checkpoint(|| {
+            self.write_domain(domain, ism, hook)?;
+            self.accept_remote_ism(domain, ism)?;
+            Ok(())
+        })
+    }
+
+    /// Accepts the pending ownership of a remote ISM from the Interchain
+    /// Account: `callRemote(domain, [ism.acceptOwnership()])`.
+    fn accept_remote_ism(&mut self, domain: u32, ism: Address) -> Result<()> {
+        self.dispatch_remote(
+            domain,
+            &[RemoteCall {
+                to: ism,
+                value: U256::ZERO,
+                data: IStorageMultisigIsm::acceptOwnershipCall {}
+                    .abi_encode()
+                    .into(),
+            }],
+        )?;
+        Ok(())
     }
 
     /// Disconnects a remote chain from validator synchronisation.
