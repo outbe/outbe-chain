@@ -7,11 +7,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_oracle::api::get_utc_day_vwap_for_iso;
+use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
@@ -108,7 +107,8 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified or called Nod's known cost directly in ERC20 base units.
+/// Pays a qualified or called Nod's known cost directly in ERC20 base units. An
+/// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -116,15 +116,20 @@ pub fn settle_nod(
     caller: Address,
     nod_id: WwdEntityId,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
-    settle(storage, scope, parent, nod_id, |terms, entry_price| {
+    let quote = |terms: &SettlementTerms, entry_price: U256| {
         let currency = accept_payment_asset(
             storage,
             asset,
             terms.issuance_currency,
             terms.reference_currency,
         )?;
-        let cost = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        let (cost, snapshot) = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        require_snapshot(snapshot, snapshot_id)?;
+        Ok(cost)
+    };
+    settle(storage, scope, parent, nod_id, quote, |_, _, cost| {
         if !cost.is_zero() {
             let before = token_balance(storage, asset)?;
             checked_token_call(
@@ -168,9 +173,14 @@ pub fn settle_nod_with_paynote(
     nod_id: WwdEntityId,
     paynote_proof: &[u8],
 ) -> Result<()> {
-    settle(storage, scope, parent, nod_id, |terms, entry_price| {
-        discharge_cost(storage, terms, entry_price, paynote_proof)
-    })
+    settle(
+        storage,
+        scope,
+        parent,
+        nod_id,
+        |_, _| Ok(()),
+        |terms, entry_price, ()| discharge_cost(storage, terms, entry_price, paynote_proof),
+    )
 }
 
 /// Currency pair and load a settlement charges against. Copied off the item
@@ -182,12 +192,15 @@ struct SettlementTerms {
     gratis_load_minor: U256,
 }
 
-fn settle(
+/// `quote` prices and authorizes the payment before any state changes; `pay`
+/// then moves it after the transition, inside the same checkpoint.
+fn settle<Q>(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     nod_id: WwdEntityId,
-    pay: impl FnOnce(&SettlementTerms, U256) -> Result<PaidCost>,
+    quote: impl FnOnce(&SettlementTerms, U256) -> Result<Q>,
+    pay: impl FnOnce(&SettlementTerms, U256, Q) -> Result<PaidCost>,
 ) -> Result<()> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if item.body().is_settled {
@@ -204,19 +217,20 @@ fn settle(
         }
         _ => {}
     }
+    let owner = item.body().owner;
+    let terms = SettlementTerms {
+        owner_reference: owner,
+        issuance_currency: item.body().issuance_currency,
+        reference_currency: item.body().reference_currency,
+        gratis_load_minor: item.body().gratis_load_minor,
+    };
+    let entry_price = bucket.body().entry_price_minor;
+    let quoted = quote(&terms, entry_price)?;
     storage.clone().with_checkpoint(|| {
-        let owner = item.body().owner;
-        let terms = SettlementTerms {
-            owner_reference: owner,
-            issuance_currency: item.body().issuance_currency,
-            reference_currency: item.body().reference_currency,
-            gratis_load_minor: item.body().gratis_load_minor,
-        };
-        let entry_price = bucket.body().entry_price_minor;
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::settle_nod(storage, scope, item, bucket)?;
-        let paid = pay(&terms, entry_price)?;
+        let paid = pay(&terms, entry_price, quoted)?;
         emit_event(
             storage,
             INodFactory::NodPaid {
@@ -358,7 +372,7 @@ fn discharge_cost(
         terms.issuance_currency,
         terms.reference_currency,
     )?;
-    let cost = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
+    let (cost, _) = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
     if claim.spend_amount != cost {
         return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
@@ -413,41 +427,52 @@ fn accept_payment_asset(
     Err(NodFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
-/// COEN price of `iso_code` from the last closed UTC day.
-fn day_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now));
-    get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
-        .ok_or_else(|| NodFactoryError::OracleUnavailable.into())
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(NodFactoryError::VwapSnapshotMismatch {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
 }
 
-/// Cost of one Nod in `asset`'s minor units. The issuance rail folds the COEN
-/// cross rate of the last closed UTC day into the same fraction, so the whole
-/// thing is floored once.
+/// Cost of one Nod in `asset`'s minor units and, on the issuance rail, the VWAP
+/// snapshot both COEN legs came from. The cross rate is folded into the same
+/// fraction, so the whole thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     terms: &SettlementTerms,
     entry_price_minor: U256,
     asset: Address,
     currency: PaymentCurrency,
-) -> Result<U256> {
+) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let rate = match currency {
-        PaymentCurrency::Reference => None,
+    let (rate, snapshot) = match currency {
+        PaymentCurrency::Reference => (None, None),
         PaymentCurrency::Issuance => {
-            // One timestamp, so both legs come from the same closed day.
-            let now = storage.timestamp()?.to::<u64>();
-            Some((
-                day_coen_rate(storage, terms.issuance_currency, now)?,
-                day_coen_rate(storage, terms.reference_currency, now)?,
-            ))
+            let fx = settlement_fx_rates(
+                storage.clone(),
+                terms.issuance_currency,
+                terms.reference_currency,
+            )?
+            .ok_or(NodFactoryError::OracleUnavailable)?;
+            let rate = (
+                fx.issuance_currency_vwap_minor,
+                fx.reference_currency_vwap_minor,
+            );
+            (Some(rate), Some(fx.snapshot))
         }
     };
-    settlement_units(
+    let cost = settlement_units(
         entry_price_minor,
         terms.gratis_load_minor,
         rate,
         asset_decimals,
-    )
+    )?;
+    Ok((cost, snapshot))
 }
 
 /// The Nod's cost in the settlement asset's minor units, floored once.
@@ -496,14 +521,15 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
-/// What settling `nod_id` with `asset` costs, and in which currency.
+/// What settling `nod_id` with `asset` costs, in which currency, and the VWAP
+/// snapshot an issuance-currency payment must name (zero on the reference rail).
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     nod_id: WwdEntityId,
     asset: Address,
-) -> Result<(u16, U256)> {
+) -> Result<(u16, U256, U256)> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     let terms = SettlementTerms {
         owner_reference: item.body().owner,
@@ -521,15 +547,17 @@ pub fn quote_settlement(
         PaymentCurrency::Reference => terms.reference_currency,
         PaymentCurrency::Issuance => terms.issuance_currency,
     };
+    let (cost, snapshot) = cost_in_token(
+        storage,
+        &terms,
+        bucket.body().entry_price_minor,
+        asset,
+        currency,
+    )?;
     Ok((
         settlement_currency,
-        cost_in_token(
-            storage,
-            &terms,
-            bucket.body().entry_price_minor,
-            asset,
-            currency,
-        )?,
+        cost,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
     ))
 }
 

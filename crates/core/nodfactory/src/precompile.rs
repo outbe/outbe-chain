@@ -57,6 +57,7 @@ pub fn dispatch(
                     sender,
                     WwdEntityId::from(c.nodId),
                     c.asset,
+                    c.snapshotId,
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),
@@ -71,7 +72,7 @@ pub fn dispatch(
                 Ok(INodFactory::settleNodWithPayNoteReturn {})
             }),
             quoteSettlement(c) => view(c, |c| {
-                let (settlement_currency, amount) = runtime::quote_settlement(
+                let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
                     &storage,
                     scope,
                     parent,
@@ -81,6 +82,7 @@ pub fn dispatch(
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     payableUnits: amount,
+                    snapshotId: snapshot_id,
                 })
             }),
             mineGratis(c) => mutate(c, caller, |sender, c| {

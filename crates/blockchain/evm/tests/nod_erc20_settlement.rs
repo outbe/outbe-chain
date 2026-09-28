@@ -189,6 +189,7 @@ impl World {
         );
         assert_eq!(quote.settlementCurrency, 840);
         assert_eq!(quote.payableUnits, cost);
+        assert_eq!(quote.snapshotId, U256::ZERO);
         world.ok(
             owner,
             ASSET,
@@ -277,6 +278,7 @@ impl World {
             INodFactory::settleNodCall {
                 nodId: self.nod.to_u256(),
                 asset: ASSET,
+                snapshotId: U256::ZERO,
             },
             false,
         )

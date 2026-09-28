@@ -1,5 +1,6 @@
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
+use crate::window::{active_vwap_policy, get_vwap_snapshot_id, VwapSnapshotId};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent, SolInterface};
 use outbe_primitives::address_pair::AddressPair;
@@ -227,11 +228,23 @@ pub fn dispatch(
                 let now = oracle.storage.timestamp()?.to::<u64>();
                 oracle.calculate_vwap_lookback(pair, now, 86400)
             }),
-            getFourHourVwap(c) => view(c, |c| {
-                let pair = oracle.require_pair_from(c.base, c.quote)?;
+            getVwapPolicy(_) => metadata::<IOracle::getVwapPolicyCall>(|| {
+                let policy = active_vwap_policy();
+                Ok(IOracle::getVwapPolicyReturn {
+                    policyVersion: policy.policy_version,
+                    vwapLookbackSeconds: policy.vwap_lookback_seconds,
+                    vwapUpdateIntervalSeconds: policy.vwap_update_interval_seconds,
+                })
+            }),
+            getVwapSnapshotId(_) => metadata::<IOracle::getVwapSnapshotIdCall>(|| {
                 let now = oracle.storage.timestamp()?.to::<u64>();
+                Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
+            }),
+            getFinalizedWindowVwap(c) => view(c, |c| {
+                let pair = oracle.require_pair(AddressPair::new_coen_to(c.currency))?;
+                let snapshot = VwapSnapshotId::from_u256(c.snapshotId)?;
                 oracle
-                    .four_hour_vwap(pair, now)?
+                    .finalized_window_vwap(pair, snapshot)?
                     .ok_or_else(|| OracleError::NoVwapData.into())
             }),
             getWorldwideDayVwap(c) => view(c, |c| {

@@ -85,11 +85,13 @@ impl Factory {
                 intexOwner: OWNER,
                 amount: U256::from(UNITS),
                 asset: ASSET,
+                snapshotId: U256::ZERO,
             }
             .abi_encode(),
             Factory::Gem => IGemFactory::settleGemCall {
                 gemId: gem_id,
                 asset: ASSET,
+                snapshotId: U256::ZERO,
             }
             .abi_encode(),
         }

@@ -52,7 +52,7 @@ pub fn dispatch(
                 runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId, c.asset)
+                runtime::settle_gem(&storage, sender, c.gemId, c.asset, c.snapshotId)
             }),
             settleGemWithPayNote(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem_with_paynote(&storage, sender, c.gemId, &c.payNoteProof)
@@ -73,11 +73,12 @@ pub fn dispatch(
             }),
 
             quoteSettlement(c) => metadata::<IGemFactory::quoteSettlementCall>(|| {
-                let (settlement_currency, amount) =
+                let (settlement_currency, amount, snapshot_id) =
                     runtime::quote_settlement(&storage, c.gemId, c.asset)?;
                 Ok(IGemFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     payableUnits: amount,
+                    snapshotId: snapshot_id,
                 })
             }),
 

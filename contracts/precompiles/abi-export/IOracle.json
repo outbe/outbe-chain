@@ -339,17 +339,17 @@
   },
   {
     "type": "function",
-    "name": "getFourHourVwap",
+    "name": "getFinalizedWindowVwap",
     "inputs": [
       {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
       },
       {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
+        "name": "snapshotId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -945,6 +945,42 @@
     "outputs": [
       {
         "name": "vwap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVwapPolicy",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "policyVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "vwapLookbackSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "vwapUpdateIntervalSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVwapSnapshotId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "snapshotId",
         "type": "uint256",
         "internalType": "uint256"
       }

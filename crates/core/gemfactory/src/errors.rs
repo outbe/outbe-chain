@@ -60,6 +60,12 @@ pub enum GemFactoryError {
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
 
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    VwapSnapshotMismatch {
+        authorized: alloy_primitives::U256,
+        required: alloy_primitives::U256,
+    },
+
     #[error("invalid owner")]
     InvalidOwner,
 

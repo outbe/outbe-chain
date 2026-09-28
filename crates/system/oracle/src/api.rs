@@ -10,6 +10,9 @@ use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
+pub use crate::window::{
+    active_vwap_policy, get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY,
+};
 
 use alloy_primitives::{Address, U256};
 
@@ -116,35 +119,59 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-/// Rolling four-hour VWAP in the pair's registered scale, capped by the
-/// configured lookback. An empty window returns `None`; other errors propagate.
-pub fn four_hour_vwap(
-    storage: StorageHandle,
-    pair: AddressPair,
-    end_date: u64,
-) -> Result<Option<U256>> {
-    let oracle = OracleContract::new(storage);
-    oracle.four_hour_vwap(pair, end_date)
+/// Snapshot required at the current block under the active policy.
+pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
+    let now = storage.timestamp()?.to::<u64>();
+    get_vwap_snapshot_id(now, &active_vwap_policy())
 }
 
-/// Previous half-open eight-hour VWAP as canonical `issuanceCurrencyVwapMinor`
-/// (scale 1e6, so 1.0 = 10^6).
-///
-/// The period implementation is pending; currently returns `None`.
-///
-/// | current_timestamp, UTC | Returned period value  |
-/// | --- | --- |
-/// | 00:00 <= time < 08:00 | Previous day's 16:00-24:00 |
-/// | 08:00 <= time < 16:00 | Same day's 00:00-08:00 |
-/// | 16:00 <= time < 24:00 | Same day's 08:00-16:00 |
-pub fn previous_half_open_8hours_vwap(
+/// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
+/// six-decimal scale. `None` when the pair is unregistered or the window holds no
+/// positive price; an open or malformed snapshot is an error.
+pub fn get_finalized_window_vwap(
     storage: StorageHandle,
-    pair: AddressPair,
-    current_timestamp: u64,
+    iso_code: u16,
+    snapshot: VwapSnapshotId,
 ) -> Result<Option<U256>> {
-    // TODO implement logic
-    _ = (storage, pair, current_timestamp);
-    Ok(None)
+    let oracle = OracleContract::new(storage);
+    let pair = AddressPair::new_coen_to(iso_code);
+    if oracle.pair_index_of(pair)? == 0 {
+        return Ok(None);
+    }
+    oracle.finalized_window_vwap(pair, snapshot)
+}
+
+/// Both COEN legs of a cross-currency settlement, read from the one trailing
+/// snapshot required at the current block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SettlementFxRates {
+    pub snapshot: VwapSnapshotId,
+    pub issuance_currency_vwap_minor: U256,
+    pub reference_currency_vwap_minor: U256,
+}
+
+/// `None` while either leg lacks a finalized positive price in that window.
+pub fn settlement_fx_rates(
+    storage: StorageHandle,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> Result<Option<SettlementFxRates>> {
+    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let Some(issuance_currency_vwap_minor) =
+        get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
+    else {
+        return Ok(None);
+    };
+    let Some(reference_currency_vwap_minor) =
+        get_finalized_window_vwap(storage, reference_currency, snapshot)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(SettlementFxRates {
+        snapshot,
+        issuance_currency_vwap_minor,
+        reference_currency_vwap_minor,
+    }))
 }
 
 /// Reference currencies available for pricing through a storage-only caller.

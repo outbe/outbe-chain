@@ -15,14 +15,18 @@ interface IGemFactory {
     /// @dev Approve GemFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the Reserve through VaultRouter.
     /// @param asset Settlement asset the gem accepts.
-    function settleGem(uint256 gemId, address asset) external;
+    /// @param snapshotId The trailing VWAP snapshot `quoteSettlement` returned; an
+    ///        issuance-currency payment naming any other snapshot reverts. Ignored
+    ///        on the reference rail.
+    function settleGem(uint256 gemId, address asset, uint256 snapshotId) external;
     /// @notice Settle a gem by spending a PayNote for its cost. Any caller may
     ///         pay; the gem stays with its owner.
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
     ///        owner, carry a settlement asset the gem accepts, and spend exactly
-    ///        the cost.
+    ///        the cost. The proof names no VWAP snapshot: an issuance-currency note
+    ///        must spend what `quoteSettlement` returns at the executing block.
     function settleGemWithPayNote(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. Authorized
@@ -43,10 +47,12 @@ interface IGemFactory {
     ///         gem does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `asset`'s own minor units.
+    /// @return snapshotId Trailing VWAP snapshot the amount converts at; zero on
+    ///         the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 gemId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 payableUnits);
+        returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
     /// @notice Number of GemPositions owned by `owner`.
