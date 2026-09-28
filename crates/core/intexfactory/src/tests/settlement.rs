@@ -597,6 +597,57 @@ fn mine_promis_rejects_missing_series() {
     });
 }
 
+/// A mining that fails after any of its writes leaves the sequence, the units and every
+/// event as they were, so the same nonce and the same paid units can be tried again.
+#[test]
+fn a_mining_that_fails_after_any_write_changes_nothing() {
+    use crate::sol_ext::IERC1155;
+
+    let mut failures = 0;
+    for failure_at in 0..16 {
+        let mut storage = factory_provider();
+        storage.stub_sub_call_at_selector(
+            crate::constants::INTEX_NFT1155_ADDRESS,
+            IERC1155::balanceOfCall::SELECTOR,
+            word(1),
+        );
+        let nonce = StorageHandle::enter(&mut storage, |s| {
+            select_prod_profile(&s);
+            runtime::issue(&s, sample(7)).unwrap();
+            let promis_amount = outbe_intex::api::read_series(&s, sid(7))
+                .unwrap()
+                .promis_load_minor;
+            (0u64..)
+                .find(|nonce| {
+                    runtime::validate_pow(owner(), promis_amount, sid(7), 0, *nonce).is_ok()
+                })
+                .unwrap()
+        });
+        let slots = storage.storage.clone();
+        let events = storage.get_ordered_events().to_vec();
+
+        storage.fail_after_mutation_at(failure_at);
+        let mined = StorageHandle::enter(&mut storage, |s| {
+            runtime::mine_promis(&s, sid(7), owner(), U256::ONE, nonce, no_auth())
+        });
+        if mined.is_ok() {
+            continue;
+        }
+        failures += 1;
+        assert_eq!(
+            storage.storage, slots,
+            "a write survived failure {failure_at}"
+        );
+        assert_eq!(storage.get_ordered_events(), events, "failure {failure_at}");
+        let seq = StorageHandle::enter(&mut storage, |s| {
+            IntexFactoryContract::new(s).read_mine_seq(sid(7), owner())
+        })
+        .unwrap();
+        assert_eq!(seq, 0, "failure {failure_at}");
+    }
+    assert!(failures > 0);
+}
+
 /// The view hands a reader the disjoint classes, so nobody has to redo the arithmetic
 /// against the separate ledgers.
 #[test]
