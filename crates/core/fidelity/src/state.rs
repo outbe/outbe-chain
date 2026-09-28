@@ -1,10 +1,8 @@
 //! Low-level storage access for the Fidelity module.
 //!
-//! CRUD over the encrypted cohort blob and the plaintext
-//! `first_qualified_start` anchor. Ciphertext is read/written verbatim - this
-//! layer never decrypts. Building enclave requests, applying the returned
-//! receipt, and RCFI/league orchestration live in [`crate::runtime`]; the
-//! cross-crate surface is [`crate::api`].
+//! Access to the plaintext `first_qualified_start` anchor. The shared confidential
+//! journal stores encrypted cohort changes. Enclave requests and RCFI/league
+//! orchestration live in [`crate::runtime`]; the cross-crate surface is [`crate::api`].
 
 use outbe_primitives::error::Result;
 

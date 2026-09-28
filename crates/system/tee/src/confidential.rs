@@ -6,7 +6,7 @@ use outbe_primitives::{
     addresses::{FIDELITY_ADDRESS, GRATIS_ADDRESS},
     error::{PrecompileError, Result},
     storage::{
-        types::{Mapping, Slot, StorageBytes},
+        types::{Mapping, Slot, StorageBytes, StorageKey},
         StorageHandle,
     },
 };
@@ -111,7 +111,8 @@ pub struct Page {
 }
 
 pub const RECORD_BYTES: usize = 4096;
-pub const PAGE_RECORDS: u64 = 16;
+// Leave room for the Postcard envelope and Noise tag under the 64 KiB frame cap.
+pub const PAGE_RECORDS: u64 = 15;
 pub fn advance(head: Head, record: &[u8]) -> Option<Head> {
     let mut bytes = head.hash.as_slice().to_vec();
     bytes.extend_from_slice(record);
@@ -216,17 +217,31 @@ pub fn execute(
                 }
                 last_progress = Some((domain, after));
                 let (address, base) = layout(domain);
-                let roots: Mapping<u64, B256> =
-                    Mapping::new(U256::from(base + 3), address, storage.clone());
-                if roots.read(&after.count)? != after.hash {
+                let root = storage
+                    .sload_for_cache(address, after.count.mapping_slot(U256::from(base + 3)))?;
+                if B256::from(root) != after.hash {
                     after = Head::default();
                 }
-                let journal: Mapping<u64, StorageBytes<'_>> =
-                    Mapping::new(U256::from(base + 2), address, storage.clone());
                 let end = after.count.saturating_add(PAGE_RECORDS).min(target.count);
                 let mut records = Vec::new();
                 for index in after.count..end {
-                    records.push(journal.get_bytes(&index).read()?);
+                    let slot = index.mapping_slot(U256::from(base + 2));
+                    // Fixed-size Solidity bytes: validate the length before reading
+                    // exactly 128 data words. Recovery is local cache maintenance,
+                    // so these reads must not affect gas or EVM access warmth.
+                    if storage.sload_for_cache(address, slot)? != U256::from(RECORD_BYTES * 2 + 1) {
+                        return Err(fault("invalid journal record size"));
+                    }
+                    let data = U256::from_be_bytes(keccak256(slot.to_be_bytes::<32>()).0);
+                    let mut record = Vec::with_capacity(RECORD_BYTES);
+                    for word in 0..RECORD_BYTES / 32 {
+                        record.extend_from_slice(
+                            &storage
+                                .sload_for_cache(address, data + U256::from(word))?
+                                .to_be_bytes::<32>(),
+                        );
+                    }
+                    records.push(record);
                 }
                 let page = Page {
                     chain_id: request.chain_id,

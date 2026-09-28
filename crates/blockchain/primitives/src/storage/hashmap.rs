@@ -527,6 +527,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             .unwrap_or(U256::ZERO))
     }
 
+    fn sload_for_cache(&mut self, address: Address, key: U256) -> Result<U256> {
+        #[cfg(feature = "bench-utils")]
+        self.trace_storage(address, key, StorageTraceKind::Read);
+        Ok(self
+            .storage
+            .get(&(address, key))
+            .copied()
+            .unwrap_or(U256::ZERO))
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if self.meter_storage_gas {
             self.deduct_gas(SSTORE_RESET)?;

@@ -249,6 +249,10 @@ where
         Ok(U256::ZERO)
     }
 
+    fn sload_for_cache(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.sload(address, key)
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         self.pending.entry(address).or_default().insert(key, value);
         Ok(())

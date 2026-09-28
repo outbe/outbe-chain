@@ -337,9 +337,9 @@ pub enum FidelityCohortOp {
     Probe,
 }
 
-/// Co-located Fidelity input riding in a [`GratisOpRequest`]. The host reads the
-/// account's current cohort blob from committed storage and forwards it
-/// verbatim; account + amount are the Gratis op's own fields.
+/// Co-located Fidelity input riding in a [`GratisOpRequest`]. Account + amount
+/// are the Gratis op's own fields; the confidential ledger resolves cohorts inside
+/// the enclave and supplies the blob to the internal economics engine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityOpSection {
     pub op: FidelityCohortOp,
@@ -349,8 +349,8 @@ pub struct FidelityOpSection {
     /// Plaintext global `first_qualified_start` scalar (league ceiling anchor);
     /// `0` before any account has qualified.
     pub first_qualified_start: u64,
-    /// Current cohort-ledger blob (`version(8 BE) || ciphertext`); empty when the
-    /// account has no cohort state yet.
+    /// Internal engine input (`version(8 BE) || ciphertext`). Confidential
+    /// requests leave this empty; only the enclave supplies materialized state.
     pub current_blob: Vec<u8>,
 }
 
@@ -595,12 +595,6 @@ pub struct FidelityQueryResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
-    Confidential {
-        request: Box<crate::confidential::Request>,
-    },
-    LoadConfidential {
-        page: crate::confidential::Page,
-    },
     /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
     GetQuote {
@@ -896,6 +890,12 @@ pub enum EnclaveRequest {
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     },
+    Confidential {
+        request: Box<crate::confidential::Request>,
+    },
+    LoadConfidential {
+        page: crate::confidential::Page,
+    },
 }
 
 impl EnclaveRequest {
@@ -1153,9 +1153,6 @@ pub fn tribute_offer_attestation_preimage(
 /// Responses returned from the enclave to the node.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveResponse {
-    Confidential {
-        response: crate::confidential::Response,
-    },
     /// SGX quote bundle. Carries the enclave public keys in cleartext plus the
     /// `report_data` that binds them: the host recomputes
     /// `keccak256(noise_static_pub || recipient_x25519_pub || attestation_pub)`
@@ -1375,6 +1372,9 @@ pub enum EnclaveResponse {
     },
     GramineDirectDevOnboardingArtifactIngestedV1 {
         tribute_offer_public: [u8; 32],
+    },
+    Confidential {
+        response: crate::confidential::Response,
     },
 }
 

@@ -60,7 +60,7 @@ pub fn snapshot_leagues(
 // --- Folded-op helpers (co-located cohort ops inside a gratis round-trip) ---
 
 /// Build the fidelity cohort section to fold into a co-located gratis op
-/// (reads `account`'s current cohort blob + the global anchor from storage).
+/// (reads the global anchor; the enclave resolves the account's cohorts).
 /// `In` for an acquisition, `Out` for a sale, `Probe` for a read-only league.
 pub fn cohort_section(
     storage: StorageHandle<'_>,
@@ -71,9 +71,9 @@ pub fn cohort_section(
     FidelityContract::new(storage).cohort_section(account, op, timestamp)
 }
 
-/// Persist the fidelity outcome returned by a folded gratis op (writes the new
-/// cohort ciphertext and, on first acquisition, the global anchor). A probe
-/// outcome is a no-op.
+/// Persist the global anchor returned by a folded gratis op on first acquisition.
+/// The same operation has already persisted the encrypted Fidelity journal update.
+/// A probe outcome is a no-op.
 pub fn apply_fidelity_outcome(
     storage: StorageHandle<'_>,
     account: Address,

@@ -87,8 +87,8 @@ pub fn burn_with_fidelity(
 
 /// Pledge the gratis that covers `terms.stables_amount` from `caller` into a new
 /// pending `PledgeLockTicket`, sealing `terms` alongside it. `amount_stables` is the
-/// MAC-bound figure and must equal `terms.stables_amount`. Returns the pledge note
-/// to present at `requestCredis`.
+/// MAC-bound figure and must equal `terms.stables_amount`. Returns an owner-encrypted
+/// pledge reply, which the owner opens to construct a fresh issuance credential.
 pub fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -100,7 +100,7 @@ pub fn pledge(
 }
 
 /// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
-/// Returns `(pledge_note, fidelity_outcome)`; the outcome's `league` is the
+/// Returns `(pledge_reply, fidelity_outcome)`; the outcome's `league` is the
 /// caller's current league for the eligibility gate (nothing to persist - a
 /// probe never mutates cohorts).
 pub fn pledge_with_fidelity(

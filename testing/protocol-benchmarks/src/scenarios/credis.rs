@@ -242,8 +242,13 @@ impl BenchmarkScenario for CredisScenario {
         Ok(PreparedCredis {
             provider,
             credential: outbe_tee::confidential::encrypt_pledge_credential(
-                &outbe_tee_enclave::crypto::x25519_public(&outbe_tee_enclave::dev::CREDENTIAL_SECRET),
-                chain_identity(), pledge_note, ALICE, spend_auth,
+                &outbe_tee_enclave::crypto::x25519_public(
+                    &outbe_tee_enclave::dev::CREDENTIAL_SECRET,
+                ),
+                chain_identity(),
+                pledge_note,
+                ALICE,
+                spend_auth,
             )?,
             reservation_id,
         })

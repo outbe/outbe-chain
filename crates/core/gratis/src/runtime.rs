@@ -31,10 +31,8 @@ fn chain_id_b256(storage: &StorageHandle<'_>) -> Result<B256> {
     Ok(B256::from(U256::from(storage.chain_id()?)))
 }
 
-/// A placeholder authorization for the credis-driven ops (`ConsumePledge`,
-/// `ReleaseToEoa`, `BurnPledged`), which are gated by the pledge-ticket state /
-/// spend-auth binding and the on-chain Credis position schedule rather than a modify
-/// key.
+/// Empty authorization used while building a request; owner operations replace
+/// it with their supplied modify authorization before execution.
 fn no_auth() -> ModifyAuth {
     ModifyAuth {
         mac: [0u8; 32],
@@ -204,8 +202,8 @@ pub(crate) fn burn_with_fidelity(
 /// `PledgeLockTicket`, sealing the loan terms alongside it. The gratis leaves the
 /// liquid balance but is NOT yet credited to the pledged ledger (that happens at
 /// `consume_pledge`). `amount_stables` is the MAC-bound figure; the gratis actually
-/// debited comes from `terms`. Returns the pledge note the CCA later presents at
-/// `requestCredis`.
+/// debited comes from `terms`. Returns an owner-encrypted pledge reply used to
+/// construct a fresh issuance credential.
 fn pledge_impl(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -256,7 +254,7 @@ pub(crate) fn pledge(
 }
 
 /// Pledge and carry a co-located fidelity **probe** (read-only league) in the
-/// same round-trip; returns the pledge note + the caller's league outcome for
+/// same round-trip; returns the encrypted pledge reply + the caller's league outcome for
 /// the eligibility gate.
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,

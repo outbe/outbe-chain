@@ -23,8 +23,8 @@ impl FidelityContract<'_> {
         Ok(self.storage.timestamp()?.to::<u64>())
     }
 
-    /// Build the cohort op section from committed storage (current blob + the
-    /// plaintext global anchor), for folding into a co-located gratis op.
+    /// Build the cohort op section with the committed global anchor, for folding
+    /// into a co-located Gratis operation. Cohort lookup stays inside the enclave.
     pub fn cohort_section(
         &self,
         _account: Address,
@@ -39,10 +39,9 @@ impl FidelityContract<'_> {
         })
     }
 
-    /// Persist a cohort outcome (from a folded gratis op or the standalone
-    /// path): store the new ciphertext and, on the account's first acquisition,
-    /// anchor the global `first_qualified_start` (set-once). A probe outcome
-    /// (empty blob, no init) is a no-op.
+    /// Initialize the global qualification anchor from a completed cohort update.
+    /// Its encrypted journal record is already persisted by the enclave client.
+    /// A probe has no anchor update.
     pub fn apply_outcome(&self, _account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
         if let Some(ts) = outcome.qualified_start_initialized {
             self.init_first_qualified_start(ts)?;
@@ -87,8 +86,8 @@ impl FidelityContract<'_> {
         self.run_cohort_op(account, amount, FidelityCohortOp::Out, timestamp)
     }
 
-    /// Batch league snapshot: read each owner's cohort blob and ask the enclave
-    /// for one plaintext league per owner (in `owners` order).
+    /// Batch league snapshot: the enclave resolves cohorts internally and returns
+    /// one plaintext league per owner (in `owners` order).
     pub fn snapshot_leagues(
         &self,
         timestamp: u64,

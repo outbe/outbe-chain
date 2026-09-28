@@ -296,6 +296,15 @@ pub trait PrecompileStorageProvider {
     /// Performs an SLOAD operation (persistent storage read).
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
 
+    /// Read authoritative state solely to rebuild a disposable execution cache.
+    /// Must neither charge transaction gas nor change EVM access warmth. Normal
+    /// execution reads must use `sload`; cache warmth cannot affect consensus.
+    fn sload_for_cache(&mut self, _address: Address, _key: U256) -> Result<U256> {
+        Err(crate::error::PrecompileError::Fatal(
+            "cache recovery reads are unavailable".into(),
+        ))
+    }
+
     /// Performs a TLOAD operation (transient storage read).
     fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
 

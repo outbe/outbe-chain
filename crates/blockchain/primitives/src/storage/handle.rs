@@ -170,6 +170,11 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| provider.sload(address, key))
     }
 
+    /// Rebuild a disposable cache without changing transaction gas or access warmth.
+    pub fn sload_for_cache(&self, address: Address, key: U256) -> Result<U256> {
+        self.with_provider(|provider| provider.sload_for_cache(address, key))
+    }
+
     pub fn tload(&self, address: Address, key: U256) -> Result<U256> {
         self.with_provider(|provider| provider.tload(address, key))
     }

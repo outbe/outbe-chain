@@ -185,9 +185,13 @@ fn decode_delta(
         .try_into()
         .map_err(|_| "invalid record")?;
     let len = u32::from_be_bytes(prefix) as usize;
-    serde_json::from_slice::<(B256, Delta)>(plain.get(4..4usize.checked_add(len).ok_or("invalid record length")?).ok_or("invalid record length")?)
-        .map(|(_, delta)| delta)
-        .map_err(|e| e.to_string())
+    serde_json::from_slice::<(B256, Delta)>(
+        plain
+            .get(4..4usize.checked_add(len).ok_or("invalid record length")?)
+            .ok_or("invalid record length")?,
+    )
+    .map(|(_, delta)| delta)
+    .map_err(|e| e.to_string())
 }
 fn materialize(
     cache: &mut Cache,
@@ -286,13 +290,20 @@ fn execute(
                 .entry(cache_key(key, page.chain_id, page.domain))
                 .or_default();
             let mut end = page.after;
-            for record in &page.records { end = advance(end, record).ok_or("journal exhausted")?; }
-            if cache.head == end { return Ok(Response::Loaded); }
+            for record in &page.records {
+                end = advance(end, record).ok_or("journal exhausted")?;
+            }
+            if cache.head == end {
+                return Ok(Response::Loaded);
+            }
             if page.after == Head::default() {
                 *cache = Cache::default();
             }
             if cache.head != page.after {
-                return Ok(Response::Missing { domain: page.domain, after: cache.head });
+                return Ok(Response::Missing {
+                    domain: page.domain,
+                    after: cache.head,
+                });
             }
             let loaded = (|| {
                 for record in &page.records {
@@ -725,6 +736,114 @@ pub fn clear_cache() {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn recovery_retries_restart_and_authenticate_pages() {
+        use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+        clear_cache();
+        let chain = B256::from(U256::ONE);
+        let gkey = [0x31; 32];
+        let fkey = [0x32; 32];
+        let account = Address::repeat_byte(0x33);
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut updates = Vec::new();
+            let mut cursor = Head::default();
+            for nonce in 1..=PAGE_RECORDS + 1 {
+                let update = encode_delta(
+                    &gkey,
+                    chain,
+                    Domain::Gratis,
+                    cursor,
+                    B256::ZERO,
+                    &Delta::Gratis {
+                        account,
+                        state: Account {
+                            nonce,
+                            ..Account::default()
+                        },
+                        ticket: None,
+                        allocation: None,
+                    },
+                )
+                .unwrap();
+                outbe_tee::confidential::persist(&storage, &update).unwrap();
+                cursor = advance(cursor, &update.record).unwrap();
+                updates.push(update);
+            }
+            let mut restarted = false;
+            let applied = outbe_tee::confidential::execute(
+                &storage,
+                Call::GratisView { account, field: 2 },
+                |wire| {
+                    // Lose the cache between pages, as a reconnect to a new enclave
+                    // connection can do. Duplicate delivery must also be harmless.
+                    if let EnclaveRequest::LoadConfidential { page } = wire {
+                        if page.after.count > 0 && !restarted {
+                            clear_cache();
+                            restarted = true;
+                        }
+                    }
+                    let response = dispatch(wire, &gkey, &fkey, &[0; 32]);
+                    if response == Response::Loaded {
+                        assert_eq!(dispatch(wire, &gkey, &fkey, &[0; 32]), Response::Loaded);
+                    }
+                    Some(EnclaveResponse::Confidential { response })
+                },
+            )
+            .unwrap();
+            assert!(restarted);
+            assert!(
+                matches!(applied.value, Value::View { nonce, .. } if nonce == PAGE_RECORDS + 1)
+            );
+
+            // Authentication covers the chain, domain and preceding head, and
+            // a rejected page must not leave partially materialized state.
+            for invalid in 0..4 {
+                let mut page = Page {
+                    chain_id: chain,
+                    domain: Domain::Gratis,
+                    after: Head::default(),
+                    records: vec![updates[0].record.clone(), updates[1].record.clone()],
+                };
+                match invalid {
+                    0 => page.records[1][100] ^= 1,
+                    1 => page.records.swap(0, 1),
+                    2 => page.domain = Domain::Fidelity,
+                    _ => page.chain_id = B256::repeat_byte(0x34),
+                }
+                assert!(matches!(
+                    dispatch(
+                        &EnclaveRequest::LoadConfidential { page },
+                        &gkey,
+                        &fkey,
+                        &[0; 32]
+                    ),
+                    Response::Rejected { .. }
+                ));
+            }
+            let page = Page {
+                chain_id: chain,
+                domain: Domain::Gratis,
+                after: Head::default(),
+                records: updates
+                    .into_iter()
+                    .take(PAGE_RECORDS as usize)
+                    .map(|u| u.record)
+                    .collect(),
+            };
+            assert_eq!(
+                dispatch(
+                    &EnclaveRequest::LoadConfidential { page },
+                    &gkey,
+                    &fkey,
+                    &[0; 32]
+                ),
+                Response::Loaded
+            );
+        });
+    }
 
     /// Measures source lookup/sealing separately from EVM storage and SGX entry.
     #[test]
