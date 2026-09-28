@@ -806,7 +806,7 @@ fn settle(
                 return Err(IntexFactoryError::DeadlineExpired.into());
             }
         }
-        IntexState::Issued | IntexState::Qualified if is_qualified(storage, &series)? => {}
+        IntexState::Issued if is_qualified(storage, &series)? => {}
         _ => return Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 

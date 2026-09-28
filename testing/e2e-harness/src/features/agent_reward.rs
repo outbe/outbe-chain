@@ -577,7 +577,7 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
         .expect("input slot quantity")
     };
     // Oracle schema slots 58/59 are UTC-day VWAP values/watermark;
-    // Gem profile is slot 42 (the preceding record spans multiple slots).
+    // Gem profile is slot 34 (the preceding record spans multiple slots).
     let day: u32 = word(outbe_primitives::addresses::ORACLE_ADDRESS, 59)
         .try_into()
         .expect("UTC date key");
@@ -597,7 +597,7 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
     )
     .expect("independent closed UTC-day claim price");
     assert!(!price.is_zero());
-    let profile: u8 = word(addresses::GEM_ADDR, 42)
+    let profile: u8 = word(addresses::GEM_ADDR, 34)
         .try_into()
         .expect("Gem profile byte");
     let chain_id: U256 = serde_json::from_value(

@@ -131,7 +131,6 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             bucket_key: B256::repeat_byte(0x8f),
             worldwide_day: WorldwideDay::new(14),
             floor_price_minor: U256::from(10),
-            is_qualified: false,
             entry_price_minor: U256::from(11),
             reference_currency: 840,
         }),
@@ -286,7 +285,6 @@ fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
         bucket_key: B256::repeat_byte(0xff),
         worldwide_day: day,
         floor_price_minor: U256::MAX,
-        is_qualified: true,
         entry_price_minor: U256::MAX,
         reference_currency: u16::MAX,
     }
