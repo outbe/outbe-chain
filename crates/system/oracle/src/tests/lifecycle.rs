@@ -190,6 +190,33 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
     });
 }
 #[test]
+fn run_tally_skips_a_snapshot_older_than_the_last_one() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::from_addresses(COEN, USDT);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(100, &[(pair, fixed18(40), fixed18(1))])
+            .unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, native_coen(100));
+        oracle
+            .submit_vote(validator, &[(COEN, USDT, fixed18(50), fixed18(1000))])
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle.get_exchange_rate_data(COEN, USDT).unwrap(),
+            (fixed18(50), 2, 24)
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
+    });
+}
+
+#[test]
 fn run_tally_accepts_a_single_validator_as_the_validator_median() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());

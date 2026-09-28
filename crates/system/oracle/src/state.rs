@@ -493,6 +493,14 @@ impl OracleContract<'_> {
         Ok(required_volume <= self.snapshot_volume_capacity(timestamp, pair, rate)?)
     }
 
+    /// Whether a snapshot at `timestamp` keeps snapshot times non-decreasing,
+    /// which range reads and the hourly cells rely on.
+    pub(crate) fn snapshot_timestamp_in_order(&self, timestamp: u64) -> Result<bool> {
+        let idx = self.snapshot_write_idx.read()?;
+        Ok(idx <= self.snapshot_oldest_idx.read()?
+            || timestamp >= self.snapshot_timestamp.read(&(idx - 1))?)
+    }
+
     /// Writes a price snapshot with rates/volumes for the given pairs.
     ///
     /// Each entry is (registered pair, rate, volume). The snapshot is appended at
@@ -521,10 +529,7 @@ impl OracleContract<'_> {
         let next_snapshot_idx = idx
             .checked_add(1)
             .ok_or(OracleError::SnapshotWriteIndexOverflow)?;
-        // Range reads and the hourly cells both rely on non-decreasing timestamps.
-        if idx > self.snapshot_oldest_idx.read()?
-            && timestamp < self.snapshot_timestamp.read(&(idx - 1))?
-        {
+        if !self.snapshot_timestamp_in_order(timestamp)? {
             return Err(OracleError::SnapshotOutOfOrder.into());
         }
         let next_ocomp_version = self.next_ocomp_state_version()?;
