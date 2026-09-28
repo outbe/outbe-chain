@@ -74,6 +74,10 @@ pub enum OracleError {
     WorldwideDayVwapSnapshotNotFound,
     #[error("no finalized VWAP for that UTC day")]
     NoFinalizedUtcDayVwap,
+    #[error("unsupported trailing VWAP policy")]
+    InvalidVwapPolicy,
+    #[error("malformed or unfinalized VWAP snapshot id")]
+    InvalidVwapSnapshot,
 
     // -- reference currencies -----------------------------------------------
     #[error("iso_code {iso_code} is not a registered reference currency")]
@@ -177,6 +181,8 @@ impl From<OracleError> for PrecompileError {
             | InvalidVwapRange
             | WorldwideDayVwapSnapshotNotFound
             | NoFinalizedUtcDayVwap
+            | InvalidVwapPolicy
+            | InvalidVwapSnapshot
             | NotReferenceCurrency { .. }
             | NoPolicyRate { .. }
             | SlashWindowValidatorSetExceedsCap { .. }

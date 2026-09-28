@@ -158,6 +158,9 @@ tee:
 #     min_valid_per_window: "0"
 #     slash_fraction: "0"
 #     lookback_duration: 86400
+#     vwap_lookback_seconds: 28800
+#     vwap_update_interval_seconds: 3600
+#     vwap_policy_version: 1
 #   pairs:
 #     - base: COEN
 #       quote: "840"

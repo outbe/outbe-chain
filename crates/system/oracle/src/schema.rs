@@ -276,4 +276,9 @@ pub struct OracleContract {
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+
+    // === Trailing VWAP policy (slots 81-83), written once at genesis ===
+    pub config_vwap_lookback_seconds: Slot<u64>,
+    pub config_vwap_update_interval_seconds: Slot<u64>,
+    pub config_vwap_policy_version: Slot<u32>,
 }

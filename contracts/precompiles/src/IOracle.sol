@@ -196,6 +196,24 @@ interface IOracle {
     /// @dev Like getDayVwap, the lookback is capped by the configured lookback duration.
     function getFourHourVwap(address base, address quote) external view returns (uint256 vwap);
 
+    /// @notice Returns the trailing VWAP policy used for settlement and pledge pricing.
+    function getVwapPolicy()
+        external
+        view
+        returns (uint32 version, uint64 lookbackSeconds, uint64 updateIntervalSeconds);
+
+    /// @notice Returns the trailing VWAP snapshot required at the current block.
+    /// @dev Packs the policy version, lookback, update interval and window cutoff.
+    function getVwapSnapshotId() external view returns (uint256 snapshotId);
+
+    /// @notice Returns the finalized VWAP over a trailing snapshot window.
+    /// @dev Reverts for a malformed or not yet closed snapshot and for a window
+    ///      without observations.
+    function getFinalizedWindowVwap(address base, address quote, uint256 snapshotId)
+        external
+        view
+        returns (uint256 vwap);
+
     /// @notice Returns the finalized VWAP for a full UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
     ///        is not yet finalized or had no oracle data for the pair. For the

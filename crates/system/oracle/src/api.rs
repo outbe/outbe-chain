@@ -10,6 +10,7 @@ use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
+pub use crate::window::{get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY};
 
 use alloy_primitives::{Address, U256};
 
@@ -150,6 +151,27 @@ pub fn four_hour_vwap(
 ) -> Result<Option<U256>> {
     let oracle = OracleContract::new(storage);
     oracle.four_hour_vwap(pair, end_date)
+}
+
+/// The trusted trailing VWAP policy written at genesis.
+pub fn active_vwap_policy(storage: StorageHandle) -> Result<VwapPolicy> {
+    OracleContract::new(storage).active_vwap_policy()
+}
+
+/// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
+/// six-decimal scale. `None` when the pair is unregistered or the window holds
+/// no observation.
+pub fn get_finalized_window_vwap(
+    storage: StorageHandle,
+    iso_code: u16,
+    snapshot: VwapSnapshotId,
+) -> Result<Option<U256>> {
+    let oracle = OracleContract::new(storage);
+    let pair = AddressPair::new_coen_to(iso_code);
+    if oracle.pair_index_of(pair)? == 0 {
+        return Ok(None);
+    }
+    oracle.finalized_window_vwap(pair, snapshot)
 }
 
 /// Previous half-open eight-hour VWAP, scaled by `SCALE_1E18` (1.0 = 10^18).

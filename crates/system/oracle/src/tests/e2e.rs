@@ -154,6 +154,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
             lookback_duration: 172_800,                                    // 2 days
+            vwap_policy: crate::window::DEFAULT_VWAP_POLICY,
             pairs: vec![(COEN, usd()), (usd(), ETH), (BTC, USDT)],
             initial_rates: vec![(COEN, usd(), coen_iso(1)), (usd(), ETH, fixed18(2000))],
             feeder_delegations: vec![
@@ -804,6 +805,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         min_valid_per_window: U256::from(50_000_000_000_000_000u128),
         slash_fraction: U256::ZERO,
         lookback_duration: 86400,
+        vwap_policy: crate::window::DEFAULT_VWAP_POLICY,
     };
 
     let exported = {
@@ -1415,6 +1417,71 @@ fn get_four_hour_vwap_precompile_rejects_an_empty_window() {
             oracle.calculate_vwap(pair, now - 86400, now).unwrap(),
             coen_iso(100)
         );
+    });
+}
+
+#[test]
+fn trailing_vwap_views_select_and_read_the_current_snapshot() {
+    use crate::precompile::{dispatch, IOracle};
+    use alloy_sol_types::SolCall;
+
+    let hour = 3_600;
+    let now = ATOMIC_DAY_START + 10 * hour + 37 * 60;
+    with_storage_at(now, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        crate::genesis::init_from_genesis(
+            &mut oracle,
+            &crate::genesis::OracleGenesisConfig::default_config(),
+        )
+        .unwrap();
+        oracle
+            .write_snapshot(
+                ATOMIC_DAY_START + 4 * hour,
+                &[(AddressPair::new_coen_to(840), coen_iso(2), coen_iso(1))],
+            )
+            .unwrap();
+        let call = |data: Vec<u8>| dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO);
+
+        let policy = IOracle::getVwapPolicyCall::abi_decode_returns(
+            &call(IOracle::getVwapPolicyCall {}.abi_encode()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                policy.version,
+                policy.lookbackSeconds,
+                policy.updateIntervalSeconds
+            ),
+            (1, 28_800, 3_600)
+        );
+
+        let snapshot_id = IOracle::getVwapSnapshotIdCall::abi_decode_returns(
+            &call(IOracle::getVwapSnapshotIdCall {}.abi_encode()).unwrap(),
+        )
+        .unwrap();
+        let snapshot = crate::window::VwapSnapshotId::from_u256(snapshot_id).unwrap();
+        assert_eq!(snapshot.cutoff(), ATOMIC_DAY_START + 10 * hour);
+
+        let read = |snapshot_id: U256| {
+            call(
+                IOracle::getFinalizedWindowVwapCall {
+                    base: COEN,
+                    quote: usd(),
+                    snapshotId: snapshot_id,
+                }
+                .abi_encode(),
+            )
+        };
+        assert_eq!(
+            IOracle::getFinalizedWindowVwapCall::abi_decode_returns(&read(snapshot_id).unwrap())
+                .unwrap(),
+            coen_iso(2)
+        );
+        let next =
+            crate::window::get_vwap_snapshot_id(now + hour, &crate::window::DEFAULT_VWAP_POLICY)
+                .unwrap();
+        assert!(read(next.to_u256()).is_err());
+        assert!(read(snapshot_id + U256::ONE).is_err());
     });
 }
 

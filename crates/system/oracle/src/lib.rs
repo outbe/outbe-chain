@@ -22,3 +22,4 @@ pub use openings::{
 #[cfg(test)]
 mod tests;
 pub mod types;
+pub mod window;

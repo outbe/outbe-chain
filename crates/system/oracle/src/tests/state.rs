@@ -1612,6 +1612,178 @@ fn genesis_seeds_the_usd_policy_rate() {
 }
 
 #[test]
+fn genesis_writes_the_trailing_vwap_policy_to_slots_81_through_83() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        crate::genesis::init_from_genesis(
+            &mut oracle,
+            &crate::genesis::OracleGenesisConfig::default_config(),
+        )
+        .unwrap();
+        for (slot, value) in [(81u64, 28_800u64), (82, 3_600), (83, 1)] {
+            assert_eq!(
+                storage.sload(ORACLE_ADDRESS, U256::from(slot)).unwrap(),
+                U256::from(value)
+            );
+        }
+        assert_eq!(
+            oracle.active_vwap_policy().unwrap(),
+            crate::window::DEFAULT_VWAP_POLICY
+        );
+    });
+}
+
+#[test]
+fn genesis_rejects_an_unsupported_trailing_vwap_policy_without_writes() {
+    use crate::window::{VwapPolicy, DEFAULT_VWAP_POLICY};
+
+    for vwap_policy in [
+        VwapPolicy {
+            lookback_seconds: 0,
+            ..DEFAULT_VWAP_POLICY
+        },
+        VwapPolicy {
+            update_interval_seconds: 7_000,
+            ..DEFAULT_VWAP_POLICY
+        },
+    ] {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let config = crate::genesis::OracleGenesisConfig {
+                vwap_policy,
+                ..crate::genesis::OracleGenesisConfig::default_config()
+            };
+            assert!(crate::genesis::init_from_genesis(&mut oracle, &config).is_err());
+            assert!(!oracle.config_is_initialized.read().unwrap());
+            assert_eq!(oracle.config_vwap_lookback_seconds.read().unwrap(), 0);
+        });
+    }
+}
+
+fn default_snapshot_at(timestamp: u64) -> crate::window::VwapSnapshotId {
+    crate::window::get_vwap_snapshot_id(timestamp, &crate::window::DEFAULT_VWAP_POLICY).unwrap()
+}
+
+#[test]
+fn finalized_window_vwap_weights_whole_window_volume() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour + 37 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(day + 3 * hour + 5, &[(pair, coen_iso(1), coen_iso(1))])
+            .unwrap();
+        oracle
+            .write_snapshot(day + 7 * hour + 5, &[(pair, coen_iso(3), coen_iso(9))])
+            .unwrap();
+
+        let snapshot = default_snapshot_at(day + 10 * hour + 37 * 60);
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, snapshot).unwrap(),
+            Some(U256::from(2_800_000u64))
+        );
+    });
+}
+
+#[test]
+fn finalized_window_vwap_is_half_open_and_counts_overlapping_hours_once() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 11 * hour, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        for (ts, price) in [
+            (day + 2 * hour, 10),
+            (day + 3 * hour + 60, 20),
+            (day + 9 * hour + 60, 30),
+            (day + 10 * hour, 40),
+        ] {
+            oracle
+                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .unwrap();
+        }
+
+        let at_ten = default_snapshot_at(day + 10 * hour);
+        let at_eleven = default_snapshot_at(day + 11 * hour);
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, at_ten).unwrap(),
+            Some(coen_iso(20))
+        );
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, at_eleven).unwrap(),
+            Some(coen_iso(30))
+        );
+    });
+}
+
+#[test]
+fn finalized_window_vwap_rejects_an_open_window_and_reports_an_empty_one() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour + 59 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+
+        let open = default_snapshot_at(day + 11 * hour);
+        assert!(oracle.finalized_window_vwap(pair, open).is_err());
+        let closed = default_snapshot_at(day + 10 * hour);
+        assert_eq!(oracle.finalized_window_vwap(pair, closed).unwrap(), None);
+        assert_eq!(
+            crate::api::get_finalized_window_vwap(storage.clone(), 978, closed).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn a_policy_change_leaves_an_old_snapshot_readable_and_unchanged() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 10 * hour + 30 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        crate::genesis::init_from_genesis(
+            &mut oracle,
+            &crate::genesis::OracleGenesisConfig::default_config(),
+        )
+        .unwrap();
+        let pair = AddressPair::new_coen_to(840);
+        for (ts, price) in [(day + 3 * hour, 10), (day + 5 * hour, 40)] {
+            oracle
+                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .unwrap();
+        }
+        let now = day + 10 * hour + 30 * 60;
+        let before =
+            crate::window::get_vwap_snapshot_id(now, &oracle.active_vwap_policy().unwrap())
+                .unwrap();
+        let price_before = oracle.finalized_window_vwap(pair, before).unwrap();
+
+        oracle.config_vwap_lookback_seconds.write(21_600).unwrap();
+        oracle.config_vwap_policy_version.write(2).unwrap();
+        let after = crate::window::get_vwap_snapshot_id(now, &oracle.active_vwap_policy().unwrap())
+            .unwrap();
+
+        assert_ne!(after, before);
+        assert_eq!(after.start(), day + 4 * hour);
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, after).unwrap(),
+            Some(coen_iso(40))
+        );
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, before).unwrap(),
+            price_before
+        );
+        assert_eq!(price_before, Some(coen_iso(25)));
+    });
+}
+
+#[test]
 fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
