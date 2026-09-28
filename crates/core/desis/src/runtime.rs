@@ -651,20 +651,18 @@ fn emit_inbound_ignored(
     })
 }
 
-/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`; a
-/// higher `generation` supersedes that chain's prior bids. Batches may arrive in any order over the
-/// unordered bridge, so completeness is tracked by a per-(chain, generation) bitmap of `batch_index`;
-/// the chain finalizes once its BIDS_DONE marker and every batch have arrived (see
-/// `try_finalize_chain`). A redelivered batch (its bit already set) is an idempotent no-op, so the
-/// transport may safely re-deliver. A batch of a generation a later relay superseded, or for a day this
-/// chain never briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
-#[allow(clippy::too_many_arguments)]
+/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`.
+/// Batches may arrive in any order over the unordered bridge, so completeness is tracked by a
+/// per-chain bitmap of `batch_index`; the chain finalizes once its BIDS_DONE marker and every batch
+/// have arrived (see `try_finalize_chain`). The first batch fixes the chain's `total_batches` and
+/// every later one must agree. A redelivered batch (its bit already set) is an idempotent no-op, so
+/// the transport may safely re-deliver. A batch past clearing, or for a day this chain never
+/// briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
     worldwide_day: WorldwideDay,
     src_chain_id: u32,
-    generation: u32,
     batch_index: u16,
     total_batches: u16,
     bids: Vec<BidData>,
@@ -717,36 +715,23 @@ pub fn process_bids_batch(
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
-    let last_gen = contract.chain_last_generation.read(&chain_key)?;
-    if generation < last_gen {
-        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
-    }
-
-    if generation > last_gen {
-        // New generation supersedes: drop the chain's bids and reset its completeness tracking
-        // (including a stale marker and the done flag).
-        contract.reset_chain_intake(worldwide_day, src_chain_id)?;
-        contract
-            .chain_last_generation
-            .write(&chain_key, generation)?;
+    // All of a chain's batches must agree on total_batches, else a bad peer could set an
+    // out-of-range bit and false-complete the set with a real batch missing.
+    let stored_total = contract.chain_total_batches.read(&chain_key)?;
+    if stored_total == 0 {
         contract
             .chain_total_batches
             .write(&chain_key, u32::from(total_batches))?;
-    }
-
-    // All batches of a generation must agree on total_batches and stay in range, else a bad peer could set an
-    // out-of-range bit and false-complete the set with a real batch missing.
-    let stored_total = contract.chain_total_batches.read(&chain_key)?;
-    if u32::from(total_batches) != stored_total || u32::from(batch_index) >= stored_total {
+    } else if u32::from(total_batches) != stored_total {
         return Err(PrecompileError::Revert(
-            "processBidsBatch: batch total/index mismatch for generation".into(),
+            "processBidsBatch: batch total mismatch".into(),
         ));
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);
     let mask = contract.chain_arrived_mask.read(&chain_key)?;
     if !(mask & bit).is_zero() {
-        // This batch of the current generation was already applied; redelivery is idempotent.
+        // This batch was already applied; redelivery is idempotent.
         return Ok(());
     }
 
@@ -759,16 +744,15 @@ pub fn process_bids_batch(
 }
 
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
-/// `total_bids` bids for this day/generation. Stage/generation semantics mirror `process_bids_batch`;
-/// a marker whose generation is ahead of the chain's batches reverts so the transport redelivers it
-/// once the batches have arrived. A marker the generation already recorded is a no-op when it agrees
-/// and is acknowledged with `InboundIgnored` when it does not: the first marker stands.
+/// `total_bids` bids for this day. Stage semantics mirror `process_bids_batch`; a marker may land
+/// before the batches it counts, which finalize the chain as they arrive. A marker the chain already
+/// recorded is a no-op when it agrees and is acknowledged with `InboundIgnored` when it does not: the
+/// first marker stands.
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
     caller: Address,
     worldwide_day: WorldwideDay,
     src_chain_id: u32,
-    relay_generation: u32,
     total_batches: u16,
     total_bids: u32,
 ) -> Result<()> {
@@ -802,16 +786,6 @@ pub fn process_bids_done(
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
-    let last_gen = contract.chain_last_generation.read(&chain_key)?;
-    if relay_generation < last_gen {
-        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
-    }
-    if relay_generation > last_gen {
-        return Err(PrecompileError::Revert(
-            "processBidsDone: marker generation ahead of its batches".into(),
-        ));
-    }
-
     let recorded_batches = contract.chain_done_batches.read(&chain_key)?;
     if recorded_batches != 0 {
         let same = recorded_batches == u32::from(total_batches)

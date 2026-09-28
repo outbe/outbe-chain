@@ -178,12 +178,12 @@ impl GemContract<'_> {
     ) -> Result<()> {
         let bin_id = Self::price_to_bin(call_price_minor)?;
         let scoped = Self::scoped(reference_currency, bin_id);
-        let count = self.qualified_bin_count.read(&scoped)?;
-        self.qualified_bin_gems.write(
+        let count = self.call_bin_count.read(&scoped)?;
+        self.call_bin_gems.write(
             &Self::bin_index_key(reference_currency, bin_id, count),
             gem_id,
         )?;
-        self.qualified_bin_count.write(&scoped, count + 1)?;
+        self.call_bin_count.write(&scoped, count + 1)?;
         tree_math::add(&CallBins(self, reference_currency), bin_id)?;
         Ok(())
     }
@@ -197,14 +197,14 @@ impl GemContract<'_> {
     ) -> Result<()> {
         let bin_id = Self::price_to_bin(call_price_minor)?;
         let scoped = Self::scoped(reference_currency, bin_id);
-        let count = self.qualified_bin_count.read(&scoped)?;
+        let count = self.call_bin_count.read(&scoped)?;
         if count == 0 {
             return Ok(());
         }
         let mut found: Option<u32> = None;
         for i in 0..count {
             if self
-                .qualified_bin_gems
+                .call_bin_gems
                 .read(&Self::bin_index_key(reference_currency, bin_id, i))?
                 == gem_id
             {
@@ -218,14 +218,14 @@ impl GemContract<'_> {
         let last = count - 1;
         let last_key = Self::bin_index_key(reference_currency, bin_id, last);
         if idx != last {
-            let last_id = self.qualified_bin_gems.read(&last_key)?;
-            self.qualified_bin_gems.write(
+            let last_id = self.call_bin_gems.read(&last_key)?;
+            self.call_bin_gems.write(
                 &Self::bin_index_key(reference_currency, bin_id, idx),
                 last_id,
             )?;
         }
-        self.qualified_bin_gems.clear(&last_key)?;
-        self.qualified_bin_count.write(&scoped, last)?;
+        self.call_bin_gems.clear(&last_key)?;
+        self.call_bin_count.write(&scoped, last)?;
         if last == 0 {
             tree_math::remove(&CallBins(self, reference_currency), bin_id)?;
         }
@@ -239,15 +239,13 @@ impl GemContract<'_> {
         bin_id: u32,
     ) -> Result<Vec<U256>> {
         let count = self
-            .qualified_bin_count
+            .call_bin_count
             .read(&Self::scoped(reference_currency, bin_id))?;
         let mut gems = Vec::with_capacity(count as usize);
         for i in 0..count {
-            let id = self.qualified_bin_gems.read(&Self::bin_index_key(
-                reference_currency,
-                bin_id,
-                i,
-            ))?;
+            let id =
+                self.call_bin_gems
+                    .read(&Self::bin_index_key(reference_currency, bin_id, i))?;
             if !id.is_zero() {
                 gems.push(id);
             }
@@ -255,7 +253,7 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    /// `Issued | Qualified -> Called`: stamps the call and moves the gem to the expiry queue.
+    /// `Issued -> Called`: stamps the call and moves the gem to the expiry queue.
     pub(crate) fn mark_called(&mut self, gem_id: U256, called_at: u64) -> Result<()> {
         let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if !is_callable(item.state) {
@@ -466,34 +464,34 @@ pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, p
 
 impl BinTreeStorage for CallBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.0.qualified_bin_tree_root.read(&self.1)
+        self.0.call_bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.0.qualified_bin_tree_root.write(&self.1, value)
+        self.0.call_bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
         self.0
-            .qualified_bin_tree_mid
+            .call_bin_tree_mid
             .read(&GemContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .qualified_bin_tree_mid
+            .call_bin_tree_mid
             .write(&GemContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
         self.0
-            .qualified_bin_tree_leaf
+            .call_bin_tree_leaf
             .read(&GemContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
         self.0
-            .qualified_bin_tree_leaf
+            .call_bin_tree_leaf
             .write(&GemContract::scoped(self.1, key), value)
     }
 }
 
-/// Issued and Qualified gems wait in the bin index for a call.
+/// Issued gems wait in the bin index for a call.
 fn is_callable(state: u8) -> bool {
-    state == GemState::Issued as u8 || state == GemState::Qualified as u8
+    state == GemState::Issued as u8
 }

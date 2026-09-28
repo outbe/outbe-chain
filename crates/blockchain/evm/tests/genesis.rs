@@ -21,8 +21,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
+use outbe_gem::{GemContract, GemState};
+use outbe_intexfactory::IntexFactoryContract;
+use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
@@ -558,4 +561,58 @@ fn block0_and_block1_do_not_require_parent_accounting() {
         "block 1 must not run CertifiedParentAccounting; the V2 contract \
          starts Phase 1 at block N >= 2"
     );
+}
+
+fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, address: Address) {
+    let entry = alloc_entry(genesis, &alloy_primitives::hex::encode(address));
+    for (key, value) in entry["storage"].as_object().expect("seeded storage") {
+        let value = value.as_str().expect("storage value is a hex string");
+        provider.storage.insert(
+            (address, key.parse().expect("storage key")),
+            value.parse().expect("storage value"),
+        );
+    }
+}
+
+/// The seeder writes raw slots; this reads them back through the schemas that own them.
+#[test]
+fn seeded_profiles_and_gems_read_back_through_their_schemas() {
+    const SEED: &str = r#"{
+      "intex_factory": { "profile": "dev" },
+      "gem_profile": { "profile": "prod" },
+      "gems": [
+        { "owner": "0x5555555555555555555555555555555555555555",
+          "promis_load": "1000000",
+          "issued_at": 1700000000 }
+      ]
+    }"#;
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+    let mut provider = HashMapStorageProvider::new(512_215);
+    load_seeded_storage(&mut provider, &genesis, GEM_ADDRESS);
+    load_seeded_storage(&mut provider, &genesis, INTEX_FACTORY_ADDRESS);
+
+    let owner = Address::repeat_byte(0x55);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            IntexFactoryContract::new(storage.clone())
+                .config_profile
+                .read()
+                .unwrap(),
+            outbe_intexfactory::config::PROFILE_DEV
+        );
+        let gem = GemContract::new(storage);
+        assert_eq!(
+            gem.config_profile.read().unwrap(),
+            outbe_gem::config::PROFILE_PROD
+        );
+        assert_eq!(gem.total_supply().unwrap(), 1);
+        assert_eq!(gem.balance_of(owner).unwrap(), 1);
+        let gem_id = gem.token_of_owner_by_index(owner, 0).unwrap();
+        assert_eq!(gem.token_by_index(0).unwrap(), gem_id);
+        let item = gem.get_gem(gem_id).unwrap().expect("seeded gem record");
+        assert_eq!(item.owner, owner);
+        assert_eq!(item.state, GemState::Settled as u8);
+        assert_eq!(item.settled_at, 1_700_000_000);
+    });
 }

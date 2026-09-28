@@ -21,7 +21,7 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 /// Interface ID probed by `OriginRouter.wire` - `type(IDesis).interfaceId` of the
 /// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
 /// (XOR of its 4 function selectors).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xf7, 0x8d, 0x15, 0x19];
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0x8c, 0xcd, 0x62, 0xc9];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -45,7 +45,6 @@ pub fn dispatch(
                     sender,
                     c.worldwideDay.into(),
                     c.srcChainId,
-                    c.relayGeneration,
                     c.batchIndex,
                     c.totalBatches,
                     bids,
@@ -57,7 +56,6 @@ pub fn dispatch(
                     sender,
                     c.worldwideDay.into(),
                     c.srcChainId,
-                    c.relayGeneration,
                     c.totalBatches,
                     c.totalBids,
                 )

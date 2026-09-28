@@ -1254,7 +1254,7 @@ fn unsettled_series_expired(world: &mut World) {
             target_router,
             &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
         );
-        if parked.is_some_and(|mark| mark != 0) {
+        if parked.is_some_and(|called_at| called_at != 0) {
             eth::send_call(
                 &target_url,
                 target_router,
@@ -1276,7 +1276,7 @@ fn unsettled_series_expired(world: &mut World) {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "series {series} never read Expired on the {label}: {:?}; the mark parked \
+                    "series {series} never read Expired on the {label}: {:?}; the call time parked \
                      on the target router reads {:?}",
                     venue_probes::series_state(at, collection, series),
                     eth::read_call(

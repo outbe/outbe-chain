@@ -9,8 +9,6 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_intex::IntexState;
-
 use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
@@ -167,12 +165,6 @@ fn expire_group(
     for &series_id in &group.members {
         // Per member: a shared checkpoint would roll the whole group's credit back.
         let returned = storage.with_checkpoint(|| {
-            // Stored by a node that still wrote the terminal state; its load went back then.
-            if outbe_intex::api::read_series(storage, series_id)?.lifecycle_state()?
-                == IntexState::Expired
-            {
-                return Ok(U256::ZERO);
-            }
             let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
             let returned = forfeited
                 .promis_load_minor

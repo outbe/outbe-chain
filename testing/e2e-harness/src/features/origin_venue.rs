@@ -181,7 +181,7 @@ fn jump_committee_past_window(world: &mut World, target_stage: u8) {
     let schedule = eth::read_call(
         &side.url,
         side.auction,
-        &IVenueSchedule::auctionsCall {
+        &IVenueSchedule::getAuctionInfoCall {
             worldwideDay: settled_day(world),
         },
     )

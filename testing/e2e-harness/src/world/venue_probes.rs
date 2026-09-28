@@ -47,9 +47,10 @@ sol! {
         struct AuctionResult {
             uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedIntexLoadedPromis;
         }
-        function auctions(uint32 worldwideDay)
-            external view
-            returns (uint8 worldwideDayState, AuctionSchedule memory schedule, AuctionParams memory params, AuctionResult memory result);
+        struct AuctionData {
+            uint8 worldwideDayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;
+        }
+        function getAuctionInfo(uint32 worldwideDay) external view returns (AuctionData memory);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -163,7 +164,7 @@ pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> S
     match eth::read_call(
         url,
         venue,
-        &IVenueSchedule::auctionsCall {
+        &IVenueSchedule::getAuctionInfoCall {
             worldwideDay: worldwide_day,
         },
     ) {
@@ -366,7 +367,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
                 Some(6) => "issuance instructions".to_owned(),
                 Some(7) => "refund instructions".to_owned(),
                 Some(8) => "mark called".to_owned(),
-                Some(9) => "mark qualified".to_owned(),
+                Some(10) => "bids remaining".to_owned(),
                 Some(11) => "daily vwap".to_owned(),
                 Some(other) => format!("message type {other}"),
                 None => "unreadable message type".to_owned(),
@@ -570,7 +571,6 @@ sol! {
         uint32 issuedAt;
         uint32 calledAt;
         uint32 totalSupply;
-        uint8 status;
         uint8 state;
         uint32 worldwideDay;
     }
@@ -582,7 +582,7 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
-        function parkedMark(bytes14 seriesId) external view returns (uint8);
+        function parkedMark(bytes14 seriesId) external view returns (uint32);
         function applyParkedMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }

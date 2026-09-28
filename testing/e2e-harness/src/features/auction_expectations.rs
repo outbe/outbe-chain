@@ -14,8 +14,8 @@ use crate::world::{bidders::Bidder, venue_probes, World};
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IBidSettlement {
-        function bidLocks(uint32 worldwideDay, address bidder) external view returns (
-            uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded);
+        struct BidLock { uint128 lockedAmount; uint32 lockedAt; uint8 status; uint32 bidRate; uint16 quantity; }
+        function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
     }
 }
 
@@ -230,7 +230,7 @@ pub(super) fn assert_clearing(
             let auction = eth::read_call_at(
                 url,
                 side.auction,
-                &IVenueSchedule::auctionsCall { worldwideDay: day },
+                &IVenueSchedule::getAuctionInfoCall { worldwideDay: day },
                 input_height,
             )
             .expect("auction input terms");
@@ -294,7 +294,7 @@ pub(super) fn assert_clearing(
             let auction = eth::read_call_at(
                 url,
                 side.auction,
-                &IVenueSchedule::auctionsCall { worldwideDay: day },
+                &IVenueSchedule::getAuctionInfoCall { worldwideDay: day },
                 height,
             )
             .expect("final venue result");
@@ -347,7 +347,7 @@ pub(super) fn assert_clearing(
                 let lock = eth::read_call_at(
                     url,
                     side.escrow,
-                    &IBidSettlement::bidLocksCall {
+                    &IBidSettlement::getBidLockCall {
                         worldwideDay: day,
                         bidder,
                     },
@@ -356,8 +356,6 @@ pub(super) fn assert_clearing(
                 .expect("settled bid lock");
                 assert_eq!(lock.lockedAmount, 0, "claimed lock deleted");
                 assert_eq!(lock.status, 0, "claimed lock deleted");
-                assert_eq!(lock.failedRefund, 0);
-                assert!(!lock.splitRecorded);
                 let refund = logs(
                     url,
                     side.escrow,

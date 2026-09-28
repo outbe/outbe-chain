@@ -275,7 +275,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
             bucket_key,
             worldwide_day: day,
             floor_price_minor: U256::from(10),
-            is_qualified: true,
             entry_price_minor: U256::from(9),
             reference_currency: 978,
         })

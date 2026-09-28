@@ -67,7 +67,6 @@ fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
         bucket_key: bucket_key_for(bucket_id),
         worldwide_day: bucket_id.worldwide_day(),
         floor_price_minor: U256::MAX,
-        is_qualified: false,
         entry_price_minor: U256::ZERO,
         reference_currency: 978,
     }
@@ -327,13 +326,11 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             bucket_key: B256::ZERO,
             worldwide_day: WorldwideDay::new(0),
             floor_price_minor: U256::ZERO,
-            is_qualified: false,
             entry_price_minor: U256::ZERO,
             reference_currency: 0,
         },
         NodBucketState {
             floor_price_minor: U256::MAX,
-            is_qualified: true,
             entry_price_minor: U256::MAX,
             reference_currency: u16::MAX,
             ..bucket(bucket_id(
@@ -347,7 +344,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         assert_eq!(decoded.bucket_key, body.bucket_key);
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
-        assert_eq!(decoded.is_qualified, body.is_qualified);
         assert_eq!(decoded.entry_price_minor, body.entry_price_minor);
         assert_eq!(decoded.reference_currency, body.reference_currency);
     }
@@ -958,7 +954,6 @@ fn paid_entitlement_projects_reopens_and_keeps_owner_membership() {
     let id = bucket_id(item.bucket_key, item.worldwide_day);
     let mut bucket = bucket(id);
     bucket.bucket_key = item.bucket_key;
-    bucket.is_qualified = true;
     let mut session = repository
         .projection_session(&[item.nod_id], &[id])
         .unwrap();

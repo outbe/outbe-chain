@@ -62,10 +62,8 @@ pub(crate) fn token_uri(
     ];
     if called {
         traits.push(Trait::date("Called At", called_at));
-        if deadline != u64::MAX {
-            rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
-            traits.push(Trait::date("Settlement Deadline", deadline));
-        }
+        rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
+        traits.push(Trait::date("Settlement Deadline", deadline));
     }
 
     let title = TOKEN_NAME.to_ascii_uppercase();

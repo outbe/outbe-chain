@@ -27,8 +27,8 @@ message NodItemBody {
   uint32 league_id = 5;
   bytes floor_price_minor = 6;
   bytes bucket_key = 7;
-  // Fixed reference-currency cost at six-decimal precision, not asset atomic units.
-  bytes settlement_cost_minor = 8;
+  reserved 8;
+  reserved "settlement_cost_minor";
   uint32 issuance_currency = 9;
   uint32 reference_currency = 10;
   uint64 issued_at = 11;
@@ -39,9 +39,8 @@ message NodBucketBody {
   bytes bucket_key = 1;
   uint32 worldwide_day = 2;
   bytes floor_price_minor = 3;
-  bool is_qualified = 4;
-  reserved 5;
-  reserved "total_nods";
+  reserved 4, 5;
+  reserved "is_qualified", "total_nods";
   bytes entry_price_minor = 6;
   uint32 reference_currency = 7;
   uint64 settled_nods = 8;

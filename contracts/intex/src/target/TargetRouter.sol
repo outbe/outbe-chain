@@ -20,7 +20,6 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
-    ParkedMark,
     BidsRelayProgress,
     ParkedIssuance,
     ParkedProceeds,
@@ -44,7 +43,7 @@ contract TargetRouter is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
+    /// @notice Max BIDS_BATCH count per day's relay; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
     /// @notice Destination chainId of Outbe - the sole peer for every outbound send and the only accepted source.
@@ -171,9 +170,9 @@ contract TargetRouter is
         return _ts().issuanceChunksApplied[worldwideDay] & (1 << chunkIndex) != 0;
     }
 
-    /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
-    function parkedMark(bytes14 seriesId) external view returns (uint8) {
-        return _ts().parkedMarks[seriesId].msgType;
+    /// @notice Call time of the Called mark waiting for `seriesId` to land here (0 = none).
+    function parkedMark(bytes14 seriesId) external view returns (uint32 calledAt) {
+        return _ts().parkedMarks[seriesId];
     }
 
     // --- Admin ---
@@ -299,9 +298,9 @@ contract TargetRouter is
 
     /// @notice Relay the day's revealed bids in chunked BIDS_BATCH sends, resuming where the last round
     ///         stopped.
-    /// @dev The first round freezes the span and the generation - reveals are closed by then, so a bid's
-    ///      chunk never moves - and every chunk carries `batchIndex`/`totalBatches` for the unordered
-    ///      bridge. The marker goes with the last chunk; no bids -> one empty batch (0 of 1).
+    /// @dev The first round freezes the span - reveals are closed by then, so a bid's chunk never moves - and
+    ///      every chunk carries `batchIndex`/`totalBatches` for the unordered bridge. The marker goes with the
+    ///      last chunk; no bids -> one empty batch (0 of 1).
     function _relayBids(uint32 worldwideDay) internal {
         TargetRouterStorage storage $ = _ts();
         BidsRelayProgress storage progress = $.bidsRelay[worldwideDay];
@@ -309,17 +308,13 @@ contract TargetRouter is
 
         uint256 bidsCount = $.auction.revealedBidsCount(worldwideDay);
         uint16 totalBatches = progress.totalBatches;
-        uint32 generation;
         if (totalBatches == 0) {
             uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
             totalBatches = bidsCount == 0 ? 1 : SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
-            // The receiver tracks batch arrival in a 256-bit mask, so it rejects any generation with more
-            // than 256 batches. Fail here instead of sending a doomed generation it drops batch by batch.
+            // The receiver tracks batch arrival in a 256-bit mask, so it rejects any relay with more than
+            // 256 batches. Fail here instead of sending a doomed relay it drops batch by batch.
             if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
             progress.totalBatches = totalBatches;
-            generation = ++$.bidsRelayGeneration[worldwideDay];
-        } else {
-            generation = $.bidsRelayGeneration[worldwideDay];
         }
 
         uint16 batch = progress.nextBatch;
@@ -329,7 +324,7 @@ contract TargetRouter is
                 ? IntexGas.RELAY_CHUNK_GAS + IntexGas.RELAY_MARKER_GAS
                 : IntexGas.RELAY_CHUNK_GAS;
             if (gasleft() <= need) break;
-            _sendBidsChunk(worldwideDay, generation, batch, totalBatches, bidsCount);
+            _sendBidsChunk(worldwideDay, batch, totalBatches, bidsCount);
             ++batch;
         }
         progress.nextBatch = batch;
@@ -342,18 +337,12 @@ contract TargetRouter is
         progress.done = true;
         // Completeness marker in the same round as the last chunk, so it can never outrun a lost sibling.
         // slither-disable-next-line reentrancy-eth
-        _sendBidsDone(worldwideDay, generation, totalBatches, SafeCast.toUint32(bidsCount));
+        _sendBidsDone(worldwideDay, totalBatches, SafeCast.toUint32(bidsCount));
         emit BidsRelayComplete(worldwideDay, totalBatches);
     }
 
     /// @dev Read and send one chunk: only the bids it carries are pulled from the auction.
-    function _sendBidsChunk(
-        uint32 worldwideDay,
-        uint32 generation,
-        uint16 batchIndex,
-        uint16 totalBatches,
-        uint256 bidsCount
-    ) private {
+    function _sendBidsChunk(uint32 worldwideDay, uint16 batchIndex, uint16 totalBatches, uint256 bidsCount) private {
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
         uint256 offset = uint256(batchIndex) * maxChunk;
         uint256 chunkLen = bidsCount > offset ? bidsCount - offset : 0;
@@ -373,17 +362,14 @@ contract TargetRouter is
             }
         }
 
-        _sendOneBidsBatch(worldwideDay, generation, batchIndex, totalBatches, bidderAddresses, packedBids);
+        _sendOneBidsBatch(worldwideDay, batchIndex, totalBatches, bidderAddresses, packedBids);
     }
 
-    /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day/generation. Carries this chain's chainId
+    /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day. Carries this chain's chainId
     ///      as its source, cross-checked by the receiver against the authenticated source.
-    function _sendBidsDone(uint32 worldwideDay, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
-        internal
-    {
-        bytes memory message = BridgeMsgCodec.encodeBidsDone(
-            worldwideDay, uint32(block.chainid), relayGeneration, totalBatches, totalBids
-        );
+    function _sendBidsDone(uint32 worldwideDay, uint16 totalBatches, uint32 totalBids) internal {
+        bytes memory message =
+            BridgeMsgCodec.encodeBidsDone(worldwideDay, uint32(block.chainid), totalBatches, totalBids);
         bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_DONE);
         emit BidsDoneSent(sendId, worldwideDay, totalBatches, totalBids);
     }
@@ -392,14 +378,13 @@ contract TargetRouter is
     ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float.
     function _sendOneBidsBatch(
         uint32 worldwideDay,
-        uint32 relayGeneration,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] memory bidderAddresses,
         uint256[] memory packedBids
     ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            worldwideDay, uint32(block.chainid), relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
+            worldwideDay, uint32(block.chainid), batchIndex, totalBatches, bidderAddresses, packedBids
         );
         sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
@@ -430,18 +415,15 @@ contract TargetRouter is
     }
 
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
-    ///         series still will not take it, leaving the slot in place. A slot holding anything but a Called
-    ///         mark is cleared without effect.
+    ///         series still will not take it, leaving the slot in place.
     /// @param seriesId Series whose slotted mark to apply.
     function applyParkedMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        ParkedMark memory waiting = $.parkedMarks[seriesId];
-        uint8 msgType = waiting.msgType;
-        if (msgType == 0) revert NoParkedMark(seriesId);
+        uint32 calledAt = $.parkedMarks[seriesId];
+        if (calledAt == 0) revert NoParkedMark(seriesId);
         delete $.parkedMarks[seriesId];
-        if (msgType != BridgeMsgCodec.MSG_MARK_CALLED) return;
-        $.intex.markCalled(seriesId, waiting.calledAt);
-        emit ParkedMarkApplied(seriesId, msgType);
+        $.intex.markCalled(seriesId, calledAt);
+        emit ParkedMarkApplied(seriesId);
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.

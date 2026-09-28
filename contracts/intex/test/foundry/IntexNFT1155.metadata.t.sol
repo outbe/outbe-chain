@@ -268,11 +268,9 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(token.uri(0xdead), token.contractURI());
     }
 
-    function test_uri_LegacySettledRecord_FallsBackToCollection() public view {
-        // Pre-upgrade shape: status was written without the identity copy (issuedAt == 0).
-        IIntexNFT1155.SeriesData memory legacy;
-        legacy.status = IIntexNFT1155.IntexStatus.Settled;
-        assertEq(IntexMetadata.tokenURI(legacy), token.contractURI());
+    function test_tokenURI_SettledClassWithoutRecord_FallsBackToCollection() public view {
+        IIntexNFT1155.SeriesData memory missing;
+        assertEq(IntexMetadata.tokenURI(missing, true), token.contractURI());
     }
 
     /// @dev A currency the oracle has no letters for keeps its digits in the id.
@@ -283,7 +281,7 @@ contract IntexNFT1155MetadataTest is Test {
         data.issuanceCurrency = 949;
         data.referenceCurrency = 840;
         data.issuedAt = 1;
-        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data));
+        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
         _assertContains(json, "\"name\":\"Intex 20260622-949-U\",");
     }
 
@@ -317,13 +315,13 @@ contract IntexNFT1155MetadataTest is Test {
         data.entryPriceMinor = 12e6; // whole units render without a decimal point
         data.floorPriceMinor = 1; // smallest representable six-decimal value
         data.callPriceMinor = 1_234; // 0.001234 on the six-decimal wire
-        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data));
+        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":12,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.000001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.001234,\"display_type\":\"number\"}");
 
         data.entryPriceMinor = 0;
-        json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data));
+        json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0,\"display_type\":\"number\"}");
     }
 }
