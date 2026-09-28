@@ -45,13 +45,8 @@ interface IHyperlaneController {
     /// key) submits its latest signed checkpoint for `domain`. The signature is
     /// recovered over the Hyperlane digest and must match the validator's
     /// Hyperlane signer; only a higher `index` than the recorded one is accepted.
-    function submitCheckpoint(
-        uint32 domain,
-        bytes32 root,
-        uint32 index,
-        bytes32 messageId,
-        bytes calldata signature
-    ) external;
+    function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
+        external;
 
     /// Tops up the balance that pays Interchain Account dispatch fees (IGP quote).
     function fund() external payable;

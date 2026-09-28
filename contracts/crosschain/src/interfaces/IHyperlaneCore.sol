@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 
 /**
  * @dev Minimal Hyperlane core interfaces used by the Outbe hyperlanecontroller precompile, vendored locally like
- * {IHyperlane}. Only the owner-side subset is declared; selectors match @hyperlane-xyz/core 11.3.1.
+ * {IHyperlane}. Only the owner-side subset is declared; selectors match Hyperlane core (hyperlane-xyz/core) 11.3.1.
  */
 interface IInterchainAccountRouter {
     struct Call {
