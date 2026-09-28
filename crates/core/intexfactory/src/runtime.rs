@@ -1047,39 +1047,42 @@ pub fn mine_promis(
     let next_seq = seq
         .checked_add(1)
         .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
-    factory.write_mine_seq(series_id, owner, next_seq)?;
+    // The sequence moves only together with the burn and the mint.
+    storage.clone().with_checkpoint(|| {
+        factory.write_mine_seq(series_id, owner, next_seq)?;
 
-    // Burn Settled from owner on the NFT.
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::burnSettledCall {
-            owner,
-            seriesId: series_id.into(),
-            amount,
-        }
-        .abi_encode()
-        .into(),
-    )?;
+        // Burn Settled from owner on the NFT.
+        storage.call(
+            INTEX_NFT1155_ADDRESS,
+            U256::ZERO,
+            IIntexNFT1155::burnSettledCall {
+                owner,
+                seriesId: series_id.into(),
+                amount,
+            }
+            .abi_encode()
+            .into(),
+        )?;
 
-    let exercised = u32::try_from(amount)
-        .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
-    outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
+        let exercised = u32::try_from(amount)
+            .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
+        outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
 
-    // Promis is confidential: the mint runs inside the enclave, authorized by the
-    // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
-    outbe_promisfactory::api::mint(storage.clone(), owner, promis_amount, auth)?;
+        // Promis is confidential: the mint runs inside the enclave, authorized by the
+        // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
+        outbe_promisfactory::api::mint(storage.clone(), owner, promis_amount, auth)?;
 
-    emit_event(
-        storage,
-        crate::precompile::IIntexFactory::PromisMined {
-            seriesId: series_id.into(),
-            owner,
-            amount,
-            promisAmount: promis_amount,
-        },
-    )?;
-    Ok(promis_amount)
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::PromisMined {
+                seriesId: series_id.into(),
+                owner,
+                amount,
+                promisAmount: promis_amount,
+            },
+        )?;
+        Ok(promis_amount)
+    })
 }
 
 /// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
