@@ -8937,6 +8937,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-hyperlane-attester"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "outbe-hyperlanecontroller"
 version = "0.1.0"
 dependencies = [

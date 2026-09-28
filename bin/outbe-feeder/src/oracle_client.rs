@@ -16,7 +16,7 @@ use crate::abi::{IOracle, IValidatorSet};
 use crate::config::AccountConfig;
 
 /// Oracle precompile address (0xEE05).
-pub const ORACLE_ADDRESS: Address =
+const ORACLE_ADDRESS: Address =
     alloy_primitives::address!("0x000000000000000000000000000000000000EE05");
 /// Validator set precompile address (0xEE00).
 const VALIDATOR_SET_ADDRESS: Address =
@@ -62,7 +62,7 @@ pub async fn get_vote_head(rpc_endpoint: &str) -> Result<VoteHead> {
     })
 }
 
-/// Submits `calldata` to the precompile `to` as a signed EIP-1559 transaction.
+/// Submits an oracle vote as a signed EIP-1559 transaction.
 ///
 /// Uses a pre-created wallet (from `create_wallet`) to avoid re-parsing the
 /// private key on every submission.
@@ -70,7 +70,6 @@ pub async fn submit_vote(
     rpc_endpoint: &str,
     wallet: &EthereumWallet,
     chain_id: u64,
-    to: Address,
     calldata: &[u8],
     gasless_oracle_vote: bool,
 ) -> Result<B256> {
@@ -81,7 +80,7 @@ pub async fn submit_vote(
 
     // Build transaction with explicit chain_id
     let tx = TransactionRequest::default()
-        .to(to)
+        .to(ORACLE_ADDRESS)
         .input(Bytes::copy_from_slice(calldata).into())
         .gas_limit(1_000_000);
     let mut tx = tx;
@@ -271,7 +270,7 @@ async fn check_validator_status<P: Provider>(
     Ok(())
 }
 
-pub(crate) async fn eth_call<P: Provider>(
+async fn eth_call<P: Provider>(
     provider: &P,
     to: Address,
     calldata: Vec<u8>,

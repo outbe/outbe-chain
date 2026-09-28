@@ -73,6 +73,7 @@ members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
+    "bin/outbe-hyperlane-attester",
     "bin/outbe-ocomp",
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
