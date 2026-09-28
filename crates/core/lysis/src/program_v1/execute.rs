@@ -11,7 +11,6 @@ use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
-use crate::constants::calc_floor_price;
 
 use super::types::{
     ContributorActionV1, FidelityPhaseV1, LeagueFractionV1, NodActionV1, ProgramErrorV1,
@@ -210,7 +209,11 @@ impl ProgramExecutionV1 {
         });
 
         let floor_price_minor =
-            calc_floor_price(tribute.tribute_price_minor.max(entry_price_minor));
+            NodContract::floor_price_minor(entry_price_minor).ok_or_else(|| {
+                ProgramErrorV1::Arithmetic {
+                    message: format!("Nod floor overflow at {ordinal}"),
+                }
+            })?;
         let first_league = self.first_leagues[ordinal];
         self.observations.push(SemanticObservationV1::Fidelity {
             ordinal,

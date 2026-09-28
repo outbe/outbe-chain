@@ -420,6 +420,13 @@ impl<'storage> NodContract<'storage> {
         self.storage.clone()
     }
 
+    /// A Nod floor derives from its entry alone, rounded down once; `None` only on overflow.
+    pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
+        entry_price_minor
+            .checked_mul(U256::from(100 + crate::constants::FLOOR_RATE_PCT))
+            .map(|scaled| scaled / U256::from(100u64))
+    }
+
     /// Computes the bucket key from
     /// `(worldwide_day, floor_price_minor, reference_currency)`.
     ///
