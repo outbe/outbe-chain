@@ -272,7 +272,7 @@ pub struct OracleContract {
 
     // === Hourly VWAP aggregates (slots 78-80) ===
     // A ring of 24 cells per pair keyed by UTC hour of day; `hourly_vwap_hour`
-    // names the hour a cell holds, so a cell labelled with another hour is empty.
+    // names the hour a cell holds; it holds nothing for any other hour.
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,

@@ -1174,8 +1174,7 @@ fn a_position_reports_its_full_terms() {
 fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage_paying(Some(rate), STABLE, ALICE, |storage, proof| {
-        // EUR trades live but the closed day left it unpriced, so the pivot has
-        // no rate to convert through.
+        // EUR trades live, but the window it converts at holds no euro price.
         let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
         outbe_oracle::api::set_exchange_rate(
@@ -1202,15 +1201,6 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
         )
         .unwrap();
         seed_qualifying_day(storage, gem_id);
-        outbe_oracle::api::set_exchange_rate(
-            storage.clone(),
-            Address::ZERO,
-            outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
-        )
-        .unwrap();
 
         let error = runtime::settle_gem_with_paynote(storage, ALICE, gem_id, proof).unwrap_err();
 

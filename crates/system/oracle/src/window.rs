@@ -48,7 +48,8 @@ impl VwapPolicy {
     pub fn validate(&self) -> Result<()> {
         let interval = self.vwap_update_interval_seconds;
         let lookback = self.vwap_lookback_seconds;
-        let supported = interval > 0
+        let supported = self.policy_version > 0
+            && interval > 0
             && lookback > 0
             && SECONDS_PER_DAY.is_multiple_of(interval)
             && lookback.is_multiple_of(interval)
@@ -176,6 +177,10 @@ mod tests {
             policy(28_800, 7_000),
             policy(30_000, HOUR),
             policy(MAX_SNAPSHOT_RETENTION_SECONDS + HOUR, HOUR),
+            VwapPolicy {
+                policy_version: 0,
+                ..DEFAULT_VWAP_POLICY
+            },
         ] {
             assert!(get_vwap_snapshot_id(DAY, &bad).is_err(), "{bad:?}");
         }

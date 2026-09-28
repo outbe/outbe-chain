@@ -126,8 +126,8 @@ pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
 }
 
 /// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
-/// six-decimal scale. `None` when the pair is unregistered or the window holds
-/// no observation.
+/// six-decimal scale. `None` when the pair is unregistered or the window holds no
+/// positive price; an open or malformed snapshot is an error.
 pub fn get_finalized_window_vwap(
     storage: StorageHandle,
     iso_code: u16,
