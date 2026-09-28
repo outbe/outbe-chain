@@ -1014,15 +1014,22 @@ fn a_start_with_the_minimum_commit_window_opens() {
 }
 
 /// Brief with `brief`, tick at `start`, and report the day's stage, the unallocated
-/// pool and whether the late-start cancellation was emitted.
+/// pool and whether the late-start cancellation was emitted. Without `router` every
+/// message the start sends fails.
 #[cfg(not(feature = "e2e-test"))]
-fn start_at(start: u64, brief: impl FnOnce(&StorageHandle)) -> (AuctionStage, U256, bool) {
+fn start_at(
+    start: u64,
+    router: bool,
+    brief: impl FnOnce(&StorageHandle),
+) -> (AuctionStage, U256, bool) {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(start));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    if router {
+        storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    }
     let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
         brief(&s);
         seed_rate(&s, start, ENTRY_PRICE);
@@ -1048,7 +1055,7 @@ fn start_at(start: u64, brief: impl FnOnce(&StorageHandle)) -> (AuctionStage, U2
 #[cfg(not(feature = "e2e-test"))]
 fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit() {
     let start = LAST_START + 1;
-    let outcome = start_at(start, |s| {
+    let outcome = start_at(start, true, |s| {
         brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
     });
     assert_eq!(
@@ -1057,23 +1064,49 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
     );
 }
 
+/// A late day goes out as a red START, so a router that cannot take it keeps the
+/// day briefed for the next tick instead of cancelling it unannounced.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
+    let start = LAST_START + 1;
+    let outcome = start_at(start, false, |s| {
+        brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
+    });
+    assert_eq!(outcome, (AuctionStage::Briefed, U256::ZERO, false));
+}
+
+#[cfg(not(feature = "e2e-test"))]
+fn ocomp_brief_at_now(s: &StorageHandle) {
+    crate::ocomp_limits::apply_request_desis_limit(
+        s.clone(),
+        B256::repeat_byte(0x41),
+        WORLDWIDE_DAY,
+        U256::from(10 * LOAD_MINOR),
+        NOW,
+        true,
+    )
+    .expect("strict request brief");
+}
+
 /// An OCOMP brief carries its request time, so a quorum that lands hours into the day
 /// still anchors to its midnight, and the start measures what is left of the window.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_late_ocomp_brief_cancels_its_day() {
-    let outcome = start_at(ANCHOR + 9 * 3600, |s| {
-        crate::ocomp_limits::apply_request_desis_limit(
-            s.clone(),
-            B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(10 * LOAD_MINOR),
-            &frozen_entry_prices(),
-            NOW,
-            true,
-        )
-        .expect("strict request brief");
-    });
+    let outcome = start_at(ANCHOR + 9 * 3600, true, ocomp_brief_at_now);
+    assert_eq!(
+        outcome,
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
+    );
+}
+
+/// A day that never started is still a late start past its whole issuance window, so
+/// its targets hear of it; only a started day is retired as overdue.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_brief_past_the_issuance_window_is_still_a_late_start() {
+    let outcome = start_at(ANCHOR + 3 * 86_400, true, ocomp_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)

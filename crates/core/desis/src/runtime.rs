@@ -387,7 +387,8 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
             AuctionStage::Cleared | AuctionStage::Cancelled => {
                 return contract.remove_sched_active(worldwide_day);
             }
-            _ if now >= issuance_end => {
+            // A day that never started is retired by its start, which announces it.
+            _ if stage != AuctionStage::Briefed && now >= issuance_end => {
                 contract.emit(IDesis::AuctionOverdue {
                     worldwideDay: worldwide_day.into(),
                 })?;
@@ -435,9 +436,8 @@ enum StartOutcome {
     Retired,
 }
 
-/// Dispatch the START message for a briefed day: a red, unpriced or sub-unit day is born
-/// cancelled, a day left with less than the minimum commit window is cancelled unstarted,
-/// otherwise it starts green.
+/// Dispatch the START message for a briefed day: a red, unpriced, sub-unit or late day is
+/// born cancelled, otherwise it starts green.
 #[allow(clippy::too_many_arguments)]
 fn start_auction(
     storage: &StorageHandle<'_>,
@@ -471,7 +471,8 @@ fn start_auction(
     let red = contract.brief_green.read(&worldwide_day)? == 0;
     let desis_limit_minor = contract.pending_desis_limit_minor.read(&worldwide_day)?;
     let below_one_unit = desis_limit_minor < U256::from(config.promis_load_minor);
-    if unpriced || red || below_one_unit {
+    let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
+    if unpriced || red || below_one_unit || late {
         send_stage_start(
             storage,
             worldwide_day,
@@ -492,23 +493,19 @@ fn start_auction(
             contract.emit(IDesis::AuctionCancelledRedDay {
                 worldwideDay: worldwide_day.into(),
             })?;
-        } else {
+        } else if below_one_unit {
             contract.emit(IDesis::AuctionCancelledBelowOneUnit {
                 worldwideDay: worldwide_day.into(),
                 desisLimitMinor: desis_limit_minor,
                 promisLoadMinor: config.promis_load_minor,
             })?;
             refund_unused_desis_limit(storage, contract, worldwide_day)?;
+        } else {
+            contract.emit(IDesis::AuctionCancelledLateStart {
+                worldwideDay: worldwide_day.into(),
+            })?;
+            refund_unused_desis_limit(storage, contract, worldwide_day)?;
         }
-        contract.remove_sched_active(worldwide_day)?;
-        return Ok(StartOutcome::Retired);
-    }
-    if commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS {
-        contract.emit(IDesis::AuctionCancelledLateStart {
-            worldwideDay: worldwide_day.into(),
-        })?;
-        contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-        refund_unused_desis_limit(storage, contract, worldwide_day)?;
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
