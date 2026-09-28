@@ -1,10 +1,11 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
 //! and UTC-day finalization, and the OCOMP projection profile.
 
-use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
+use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR, VWAP_HOUR_SECONDS};
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
+use crate::state::hourly_vwap_cell;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
@@ -311,13 +312,65 @@ impl OracleContract<'_> {
         let complete_days_end = end_time - end_time % SECONDS_PER_DAY;
         let mut total = VwapAccumulator::default();
         if first_full_day < complete_days_end {
-            self.add_raw_snapshots(pair, start_time, first_full_day, &mut total)?;
+            self.add_sub_day_span(pair, start_time, first_full_day, &mut total)?;
             self.add_daily_aggregates(pair, first_full_day, complete_days_end, &mut total)?;
-            self.add_raw_snapshots(pair, complete_days_end, end_time, &mut total)?;
+            self.add_sub_day_span(pair, complete_days_end, end_time, &mut total)?;
         } else {
-            self.add_raw_snapshots(pair, start_time, end_time, &mut total)?;
+            self.add_sub_day_span(pair, start_time, end_time, &mut total)?;
         }
         Ok(total.finish())
+    }
+
+    /// Whole hours come from the hourly cells; partial hours and hours whose cell
+    /// was already reused are read from raw snapshots.
+    fn add_sub_day_span(
+        &self,
+        pair: AddressPair,
+        start_time: u64,
+        end_time: u64,
+        total: &mut VwapAccumulator,
+    ) -> Result<()> {
+        let first_hour = start_time
+            .checked_next_multiple_of(VWAP_HOUR_SECONDS)
+            .ok_or(OracleError::InvalidVwapRange)?;
+        let last_hour = end_time - end_time % VWAP_HOUR_SECONDS;
+        if first_hour >= last_hour {
+            return self.add_raw_snapshots(pair, start_time, end_time, total);
+        }
+        self.add_raw_snapshots(pair, start_time, first_hour, total)?;
+        let mut hour = first_hour;
+        while hour < last_hour {
+            let next = hour + VWAP_HOUR_SECONDS;
+            if !self.add_hourly_aggregate(pair, hour, total)? {
+                self.add_raw_snapshots(pair, hour, next, total)?;
+            }
+            hour = next;
+        }
+        self.add_raw_snapshots(pair, last_hour, end_time, total)
+    }
+
+    fn add_hourly_aggregate(
+        &self,
+        pair: AddressPair,
+        hour_start: u64,
+        total: &mut VwapAccumulator,
+    ) -> Result<bool> {
+        let cell = hourly_vwap_cell(hour_start);
+        if self.hourly_vwap_hour.get_nested(&pair).read(&cell)? != hour_start {
+            return Ok(false);
+        }
+        let volume = self.hourly_vol_sum.get_nested(&pair).read(&cell)?;
+        if !volume.is_zero() {
+            let pv = self.hourly_pv_sum.get_nested(&pair).read(&cell)?;
+            total.add(
+                pair,
+                pv,
+                volume,
+                "hourly sum accumulation",
+                "hourly volume sum",
+            )?;
+        }
+        Ok(true)
     }
 
     fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {

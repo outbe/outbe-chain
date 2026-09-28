@@ -810,6 +810,54 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
     });
 }
 
+#[test]
+fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+
+        let day = ATOMIC_DAY_START;
+        let hour = 3_600;
+        let gap = (day + 5 * hour)..(day + 8 * hour);
+        let mut samples = Vec::new();
+        let mut ts = day - 30 * hour + 17;
+        let mut i = 0u64;
+        while ts < day + 20 * hour {
+            if !gap.contains(&ts) {
+                let sample = (ts, coen_iso(100 + i % 17), coen_iso(1 + i % 5));
+                oracle
+                    .write_snapshot(ts, &[(pair, sample.1, sample.2)])
+                    .unwrap();
+                samples.push(sample);
+            }
+            ts += 1_337;
+            i += 1;
+        }
+
+        for (start, end) in [
+            (day + 10 * hour, day + 18 * hour),
+            (day + 10 * hour + 1_020, day + 13 * hour + 2_460),
+            (day + 3 * hour + 300, day + 3 * hour + 3_000),
+            (day + 4 * hour, day + 9 * hour),
+            (day - 26 * hour, day + 5 * hour + 1),
+            (day - 30 * hour, day + 20 * hour),
+        ] {
+            let (pv, volume) = samples
+                .iter()
+                .filter(|(ts, _, _)| (start..end).contains(ts))
+                .fold((U256::ZERO, U256::ZERO), |(pv, v), (_, price, vol)| {
+                    (pv + price * vol, v + vol)
+                });
+            assert_eq!(
+                oracle.calculate_vwap(pair, start, end).unwrap(),
+                pv / volume,
+                "window [{start}, {end})"
+            );
+        }
+    });
+}
+
 /// The bulk calculators skip pairs that hold no samples, but a rejected argument
 /// is not "no data" - it has to reach the caller instead of being absorbed into
 /// the empty-result path.

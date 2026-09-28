@@ -1099,7 +1099,7 @@ fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating()
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
         let day = 1_780_012_800u64;
-        let start = day + 11 * 60 * 60;
+        let start = day + 11 * 60 * 60 + 600;
         let end = day + 86_400 + 12 * 60 * 60;
         oracle
             .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])

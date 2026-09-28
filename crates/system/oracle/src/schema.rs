@@ -269,4 +269,11 @@ pub struct OracleContract {
     #[slot(76)]
     pub(crate) utc_month_vwap_max: Mapping<u32, Mapping<PairIndex, U256>>,
     pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
+
+    // === Hourly VWAP aggregates (slots 78-80) ===
+    // A ring of 24 cells per pair keyed by UTC hour of day; `hourly_vwap_hour`
+    // names the hour a cell holds, so a cell labelled with another hour is empty.
+    pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
+    pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 }

@@ -11,7 +11,10 @@ use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::constants::{reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENTION_SECONDS};
+use crate::constants::{
+    reciprocal_scale, zero_volume_weight, HOURLY_VWAP_CELLS, MAX_SNAPSHOT_RETENTION_SECONDS,
+    VWAP_HOUR_SECONDS,
+};
 use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};
 
@@ -47,6 +50,11 @@ fn add_vwap_aggregate(
         vol_sum.write(&day, previous_volume.saturating_add(volume))?;
     }
     Ok(())
+}
+
+/// Ring cell holding the hour that starts at `hour_start`.
+pub(crate) fn hourly_vwap_cell(hour_start: u64) -> u64 {
+    (hour_start / VWAP_HOUR_SECONDS) % HOURLY_VWAP_CELLS
 }
 
 /// `(exists, bases, quotes, rates, volumes)` - pending aggregate vote.
@@ -533,6 +541,7 @@ impl OracleContract<'_> {
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
         let seconds_since_midnight = timestamp % 86_400;
+        let hour_start = timestamp - (timestamp % VWAP_HOUR_SECONDS);
         for (pair, rate, volume) in entries {
             let vol = if volume.is_zero() {
                 zero_volume_weight(*pair)
@@ -556,6 +565,7 @@ impl OracleContract<'_> {
                 &day_vol,
                 ("daily sum accumulation", "daily volume sum"),
             )?;
+            self.accumulate_hourly_vwap(*pair, hour_start, pv, vol)?;
 
             if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
                 let suffix_pv = self.wwd_suffix_pv_sum.get_nested(pair);
@@ -589,6 +599,33 @@ impl OracleContract<'_> {
         self.evict_old_snapshots(timestamp)?;
 
         self.commit_ocomp_state_version(next_ocomp_version)
+    }
+
+    fn accumulate_hourly_vwap(
+        &self,
+        pair: AddressPair,
+        hour_start: u64,
+        pv: U256,
+        volume: U256,
+    ) -> Result<()> {
+        let cell = hourly_vwap_cell(hour_start);
+        let hours = self.hourly_vwap_hour.get_nested(&pair);
+        let pv_sum = self.hourly_pv_sum.get_nested(&pair);
+        let vol_sum = self.hourly_vol_sum.get_nested(&pair);
+        if hours.read(&cell)? != hour_start {
+            hours.write(&cell, hour_start)?;
+            pv_sum.write(&cell, pv)?;
+            return vol_sum.write(&cell, volume);
+        }
+        add_vwap_aggregate(
+            pair,
+            cell,
+            pv,
+            volume,
+            &pv_sum,
+            &vol_sum,
+            ("hourly sum accumulation", "hourly volume sum"),
+        )
     }
 
     /// Evicts snapshots older than the retention window.
