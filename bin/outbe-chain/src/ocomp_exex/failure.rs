@@ -3,9 +3,9 @@ use super::OcompExExExitV1;
 
 use alloy_primitives::B256;
 
-use eyre::bail;
+use eyre::{bail, WrapErr as _};
 
-use futures::StreamExt as _;
+use futures::{FutureExt as _, StreamExt as _};
 
 use metrics::gauge;
 
@@ -160,7 +160,17 @@ pub(super) fn publish_finished_height(
         .send(ExExEvent::FinishedHeight(
             (checkpoint.block_number, checkpoint.block_hash).into(),
         ))
-        .map_err(|_| eyre::eyre!("OCOMP FinishedHeight consumer is unavailable"))
+        .wrap_err("OCOMP FinishedHeight consumer is unavailable")
+}
+
+pub(super) fn finished_height_consumer_closed_during_shutdown(
+    error: &eyre::Report,
+    shutdown: &reth_ethereum::tasks::shutdown::Shutdown,
+) -> bool {
+    error
+        .downcast_ref::<tokio::sync::mpsc::error::SendError<ExExEvent>>()
+        .is_some()
+        && shutdown.clone().now_or_never().is_some()
 }
 
 pub(super) fn persist_fatal_evidence(

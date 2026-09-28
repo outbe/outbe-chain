@@ -21,6 +21,8 @@ fs.mounts = [
   { uri = "file:{{ gramine.runtimedir() }}", path = "/lib" },
 {% if remote_attestation == 'dcap' %}
   { uri = "file:{{ qvl_host_dir }}", path = "/qvl" },
+{% endif %}
+{% if has_network_descriptor == '1' %}
   { uri = "file:{{ network_descriptor }}", path = "{{ network_descriptor }}" },
 {% endif %}
   { uri = "file:{{ arch_libdir }}", path = "{{ arch_libdir }}" },
@@ -60,10 +62,12 @@ sgx.trusted_files = [
   "file:{{ arch_libdir }}/",
   "file:/usr/{{ arch_libdir }}/",
 {% if remote_attestation == 'dcap' %}
-  "file:{{ network_descriptor }}",
   "file:{{ qvl_host_dir }}/libsgx_dcap_quoteverify.so.1",
   "file:{{ qvl_host_dir }}/libstdc++.so.6",
   "file:{{ qvl_host_dir }}/libgcc_s.so.1",
+{% endif %}
+{% if has_network_descriptor == '1' %}
+  "file:{{ network_descriptor }}",
 {% endif %}
 ]
 

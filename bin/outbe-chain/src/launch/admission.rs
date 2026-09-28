@@ -143,6 +143,10 @@ fn local_tee_rejection_message(
         LocalTeeRuntimeRejectionV1::ValidatorJailed => {
             "validator is jailed; complete ordinary unjail and then run tee join".to_owned()
         }
+        LocalTeeRuntimeRejectionV1::RetiredEnclave => {
+            "enclave upgrade deadline reached; complete tee upgrade before restarting TEE work"
+                .to_owned()
+        }
         LocalTeeRuntimeRejectionV1::Expired { valid_until } => {
             format!("finalized TEE lease expired at {valid_until}; stop node and run tee join")
         }
@@ -338,12 +342,43 @@ where
         + Sync
         + 'static,
 {
+    let mut retired_at = 0;
     let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return Ok(None),
             _ = interval.tick() => {}
+        }
+        if gate.is_armed()
+            && provider
+                .finalized_block_num_hash()?
+                .is_some_and(|head| head.number > 0)
+        {
+            let status =
+                outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+                    &provider,
+                    chain_id,
+                    genesis_hash,
+                )?;
+            if status.retirement_height > retired_at {
+                let activation_height = status.retirement_height;
+                let response = outbe_tee::try_with_enclave(|session| {
+                    session.request(
+                        &outbe_tee::protocol::EnclaveRequest::RetireRemoteSessionsV1 {
+                            activation_height,
+                        },
+                    )
+                })
+                .ok_or_else(|| {
+                    eyre::eyre!("TEE client unavailable during remote session retirement")
+                })??;
+                if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
+                {
+                    eyre::bail!("enclave did not acknowledge remote session retirement");
+                }
+                retired_at = activation_height;
+            }
         }
         match read_gated_finalized_local_tee_admission(
             &provider,

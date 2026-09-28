@@ -15,6 +15,10 @@ pub enum VoteError {
     NotPending,
     #[error("proposal voting window is closed")]
     VotingClosed,
+    #[error("voting window must be in 1..={maximum} blocks, got {actual}")]
+    InvalidVotingWindow { actual: u64, maximum: u64 },
+    #[error("proposal voting deadline overflows block height")]
+    VotingDeadlineOverflow,
     #[error("validator has already voted on proposal")]
     AlreadyVoted,
     #[error("too many pending proposals")]

@@ -448,6 +448,7 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 })?;
             (
                 AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    transition_key_ready_proof: None,
                     intent,
                     dev_attestation_public: attestation_ed25519,
                     dev_signature: enclave_signature,
@@ -464,6 +465,7 @@ pub fn build_local_tee_bootstrap_submission_v2(
                 .map_err(|error| eyre::eyre!("development OST3 intent signing failed: {error}"))?;
             (
                 AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    transition_key_ready_proof: None,
                     intent,
                     dev_attestation_public: attestation_ed25519,
                     dev_signature: enclave_signature,

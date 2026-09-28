@@ -83,6 +83,8 @@ interface ITeeRegistryV1 {
     event TeePolicyActivatedV1(
         uint256 indexed proposalId, bytes32 indexed policyHash, uint64 policyVersion, uint64 activationHeight
     );
+    event EnclaveUpgradeMissedV1(uint256 indexed proposalId, address indexed validator,
+        uint64 activationHeight, bytes32 requiredMrenclave, uint256 slashedAmount);
 
     function isBootstrapped() external view returns (bool);
     function tributeOfferPublicKey() external view returns (uint256);
@@ -91,6 +93,8 @@ interface ITeeRegistryV1 {
     function tributeOfferEpoch() external view returns (uint256);
     function activePolicyV1() external view returns (bytes memory);
     function stagedSuccessorPolicyV1() external view returns (bool exists, uint256 proposalId, bytes memory policy);
+    function enclaveUpgradeV1() external view returns (uint256 proposalId, uint64 activationHeight,
+        bytes32 mrenclave, bytes32 successorPolicyHash, bytes32 predecessorPolicyHash);
 
     function registerEnclave(
         bytes calldata evidence,
@@ -116,6 +120,15 @@ interface ITeeRegistryV1 {
         bytes calldata nodeSignature,
         bytes calldata enclaveSignature
     ) external returns (bool);
+
+    event EnclaveUpgradePreparedV1(bytes32 indexed nodeIdHash, bytes32 indexed contextHash,
+        bytes32 indexed bindingId, uint64 validUntil, uint64 nonce);
+    event EnclaveUpgradeCancelledV1(bytes32 indexed nodeIdHash, bytes32 indexed contextHash);
+    function prepareEnclaveUpgrade(bytes calldata evidence, bytes calldata nodeSignature,
+        bytes calldata enclaveSignature) external returns (bool);
+    function cancelEnclaveUpgrade(bytes32 nodeIdHash, bytes32 expectedContextHash) external;
+    function pendingEnclaveUpgrade(bytes32 nodeIdHash) external view returns (
+        bytes32 contextHash, uint64 validUntil, bytes32 sourceBindingId, bytes32 targetHash, uint64 nonce);
 
     function validatorEnclaveBinding(address validator) external view returns (NodeEnclaveBindingV1View memory);
 

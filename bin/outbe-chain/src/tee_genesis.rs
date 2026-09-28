@@ -26,6 +26,13 @@ pub(crate) struct TeeCli {
 enum TeeCommand {
     /// Bind a seeded genesis to one canonical block-1 TEE policy.
     Genesis(TeeGenesisArgs),
+    /// Derive the release-measured finality trust root from an existing genesis.
+    NetworkDescriptor {
+        #[arg(long)]
+        genesis: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -75,7 +82,59 @@ pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
     let cli = TeeCli::parse_from(tee_arguments);
     match cli.command {
         TeeCommand::Genesis(args) => generate_genesis(&args),
+        TeeCommand::NetworkDescriptor { genesis, output } => {
+            write_network_descriptor(&genesis, &output)
+        }
     }
+}
+
+fn write_network_descriptor(genesis: &Path, output: &Path) -> eyre::Result<()> {
+    use outbe_primitives::tee_attestation_v1::{
+        NetworkBindingV1, TeePolicyScheduleV1, TrustedNetworkDescriptorV1,
+    };
+    let seeded =
+        outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_genesis_path(
+            genesis,
+        )
+        .map_err(|e| eyre::eyre!(e))?;
+    let json: serde_json::Value = serde_json::from_slice(&fs::read(genesis)?)?;
+    let encoded = json
+        .pointer("/config/teeAttestationV1/policySchedule")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("genesis is missing its fixed TEE policy schedule"))?;
+    let schedule =
+        TeePolicyScheduleV1::decode_canonical(&hex::decode(encoded.trim_start_matches("0x"))?)
+            .map_err(|e| eyre::eyre!("genesis policy: {e}"))?;
+    ensure!(
+        schedule.chain_id == alloy_primitives::U256::from(seeded.chain_id).to_be_bytes::<32>()
+            && schedule.genesis_hash == seeded.genesis_hash,
+        "TEE policy does not match the actual genesis hash"
+    );
+    let mode = schedule
+        .entries
+        .first()
+        .ok_or_else(|| eyre::eyre!("genesis has no initial policy"))?
+        .policy
+        .attestation_mode;
+    let descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: schedule.chain_id,
+            genesis_hash: seeded.genesis_hash,
+            attestation_mode: mode,
+        },
+        genesis_consensus_keys: seeded.genesis_consensus_keys,
+    };
+    let bytes = descriptor
+        .encode_canonical()
+        .map_err(|e| eyre::eyre!("network descriptor: {e}"))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    println!("network descriptor written: {}", output.display());
+    Ok(())
 }
 
 fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {

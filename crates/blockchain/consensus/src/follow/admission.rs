@@ -51,6 +51,19 @@ impl CommitteeChain {
         policy: AdmissionPolicy,
     ) -> Result<Admission> {
         let certified = finalization.proposal.round.epoch();
+        self.verify_finalization(certified, finalization)?;
+        self.admit_authenticated_header(certified, extra_data, policy)
+    }
+
+    /// Apply a header authenticated by a verified descendant certificate and
+    /// a consecutive parent-hash chain. The caller must verify that proof
+    /// before invoking this method.
+    pub(crate) fn admit_authenticated_header(
+        &mut self,
+        certified: Epoch,
+        extra_data: &[u8],
+        policy: AdmissionPolicy,
+    ) -> Result<Admission> {
         if let AdmissionPolicy::Routed { routed_epoch } = policy {
             ensure!(
                 certified == routed_epoch
@@ -60,7 +73,6 @@ impl CommitteeChain {
                 routed_epoch.get()
             );
         }
-        self.verify_finalization(certified, finalization)?;
         let artifact = decode_outbe_block_artifacts(extra_data)
             .map_err(|error| eyre!("failed to decode authenticated block artifacts: {error:?}"))?
             .consensus_header_artifact;

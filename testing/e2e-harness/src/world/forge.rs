@@ -53,6 +53,23 @@ pub(crate) fn run_with_ctor(
     for (key, value) in env {
         cmd.env(key, value);
     }
+    // Foundry's broadcast, cache and compiler output are all generated data.
+    // Keep them per project in this run's writable directory: stale files in
+    // the source tree may belong to an earlier sudo or sandbox invocation.
+    let project = dir.file_name().ok_or_else(|| {
+        eyre!(
+            "Forge project path has no final component: {}",
+            dir.display()
+        )
+    })?;
+    let output = crate::env::environment()
+        .data_dir
+        .join("forge")
+        .join(project);
+    std::fs::create_dir_all(&output)?;
+    cmd.env("FOUNDRY_BROADCAST", output.join("broadcast"))
+        .env("FOUNDRY_CACHE_PATH", output.join("cache"))
+        .env("FOUNDRY_OUT", output.join("out"));
     if !ctor.is_empty() {
         cmd.arg("--constructor-args").args(ctor);
     }

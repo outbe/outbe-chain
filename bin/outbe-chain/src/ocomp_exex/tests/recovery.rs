@@ -215,6 +215,43 @@ fn restart_reannounces_durable_closure_without_advancing_and_detects_lost_consum
 }
 
 #[test]
+fn finished_height_consumer_loss_is_graceful_only_during_shutdown() {
+    let checkpoint = ProjectionCheckpoint {
+        block_number: 38,
+        block_hash: B256::repeat_byte(0x38),
+    };
+    let (events, receiver) = tokio::sync::mpsc::unbounded_channel();
+    drop(receiver);
+    let error = publish_finished_height(&events, checkpoint).unwrap_err();
+
+    let (stop, shutdown) = reth_ethereum::tasks::shutdown::signal();
+    assert!(!finished_height_consumer_closed_during_shutdown(
+        &error, &shutdown
+    ));
+    stop.fire();
+    assert!(finished_height_consumer_closed_during_shutdown(
+        &error, &shutdown
+    ));
+    assert!(!finished_height_consumer_closed_during_shutdown(
+        &eyre::eyre!("unrelated finalized reader failure"),
+        &shutdown,
+    ));
+}
+
+#[tokio::test]
+async fn shutdown_handoff_keeps_reth_exex_alive_until_node_teardown() {
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            wait_for_node_teardown()
+        )
+        .await
+        .is_err(),
+        "OCOMP must not complete the Reth ExEx future during shutdown"
+    );
+}
+
+#[test]
 fn retention_unavailability_and_quarantine_retry_without_a_fatal_node_exit() {
     let unavailable = classify_retention_reconciliation(
         Err(

@@ -88,6 +88,8 @@ pub enum KeyPolicy {
     MrSigner = 1,
     /// EGETKEY bound to MRENCLAVE - strict, per-build (no update survival).
     MrEnclaveStrict = 2,
+    /// Direct EGETKEY bound to both measurements. Parameters live in TSGX1.
+    MrEnclaveAndSigner = 3,
 }
 
 impl KeyPolicy {
@@ -96,6 +98,7 @@ impl KeyPolicy {
             0 => Ok(KeyPolicy::Mock),
             1 => Ok(KeyPolicy::MrSigner),
             2 => Ok(KeyPolicy::MrEnclaveStrict),
+            3 => Ok(KeyPolicy::MrEnclaveAndSigner),
             other => Err(TeeError::SealedBlobBadKeyPolicy(other)),
         }
     }

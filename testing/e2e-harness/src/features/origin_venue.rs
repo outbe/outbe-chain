@@ -231,6 +231,14 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
     let home = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     loop {
+        if venue.is_target_chain {
+            let now = eth::latest_block_timestamp(&home)
+                .expect("read committee timestamp before syncing target venue");
+            world
+                .target_chain
+                .sync_clock_to(now)
+                .expect("sync target venue clock before checking its stage");
+        }
         let stage = eth::read_call(
             &url,
             venue.auction,
@@ -248,11 +256,6 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
             "day {worldwide_day} stalled at venue stage {stage} short of {target_stage} on {}",
             venue.url
         );
-        if venue.is_target_chain {
-            if let Some(now) = eth::latest_block_timestamp(&home) {
-                let _ = world.target_chain.sync_clock_to(now);
-            }
-        }
         sleep(Duration::from_secs(2));
     }
 }

@@ -10,7 +10,7 @@ build = "build.rs"
 default = []
 snapshot-integration = []
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
-e2e-test = ["outbe-evm/e2e-test"]
+e2e-test = ["outbe-evm/e2e-test", "outbe-consensus/e2e-byzantine-preannounce"]
 test-protocol-overrides = [
     "outbe-chain-constants/test-protocol-overrides",
     "outbe-consensus/test-protocol-overrides",

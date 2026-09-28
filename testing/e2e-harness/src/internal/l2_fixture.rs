@@ -290,7 +290,7 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
         }
     })
     .join()
-    .expect("e2e proof generation thread");
+    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     // Proving is serialized by Barretenberg's process-global prover, so the
     // capacity population's wall time is dominated by this step; report it.
     eprintln!(

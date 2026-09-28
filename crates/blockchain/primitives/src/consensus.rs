@@ -377,7 +377,9 @@ struct BridgeState {
 /// `finalization.encode() || block.encode()` from exactly these two fields.
 #[derive(Clone, Debug)]
 pub struct FinalizedBlockBytes {
-    /// `commonware_codec::Encode` bytes of the `Finalization` certificate.
+    /// `commonware_codec::Encode` bytes of the direct `Finalization` certificate.
+    /// Empty for indirectly finalized ancestors; getFinalization must reject
+    /// that case while getFinalityProof can supply an authenticated descendant.
     pub finalization: Bytes,
     /// `commonware_codec::Encode` bytes of the finalized `ConsensusBlock`.
     pub block: Bytes,

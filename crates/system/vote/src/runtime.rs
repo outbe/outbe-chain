@@ -80,6 +80,65 @@ impl Vote<'_> {
         attached_value: U256,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
+        // Preserve the legacy calculation, including saturation, during replay.
+        let deadline = current_height
+            .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
+        self.create_proposal_with_deadline(
+            proposer,
+            target_module,
+            payload,
+            current_height,
+            attached_value,
+            deadline,
+            registry,
+        )
+    }
+
+    /// Creates a proposal with an immutable, author-selected voting duration.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_proposal_with_voting_window(
+        &mut self,
+        proposer: Address,
+        target_module: Address,
+        payload: &str,
+        current_height: u64,
+        attached_value: U256,
+        voting_window_blocks: u64,
+        registry: &VoteTargetRegistry,
+    ) -> Result<U256> {
+        let maximum = outbe_chain_constants::get_governance_voting_window_blocks();
+        if voting_window_blocks == 0 || voting_window_blocks > maximum {
+            return Err(VoteError::InvalidVotingWindow {
+                actual: voting_window_blocks,
+                maximum,
+            }
+            .into());
+        }
+        let deadline = current_height
+            .checked_add(voting_window_blocks)
+            .ok_or(VoteError::VotingDeadlineOverflow)?;
+        self.create_proposal_with_deadline(
+            proposer,
+            target_module,
+            payload,
+            current_height,
+            attached_value,
+            deadline,
+            registry,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_proposal_with_deadline(
+        &mut self,
+        proposer: Address,
+        target_module: Address,
+        payload: &str,
+        current_height: u64,
+        attached_value: U256,
+        voting_deadline: u64,
+        registry: &VoteTargetRegistry,
+    ) -> Result<U256> {
         let chain_id = self.storage.chain_id()?;
         let target = registry.lookup(target_module)?;
         let admission = target.admission();
@@ -142,8 +201,6 @@ impl Vote<'_> {
             target_context,
         )?;
 
-        let voting_deadline = current_height
-            .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let proposal_id = self.write_proposal(

@@ -42,6 +42,10 @@ if [[ "${REMOTE_ATTESTATION}" == dcap && ! -f "${NETWORK_DESCRIPTOR}" ]]; then
   echo "test entrypoint: DCAP requires ${NETWORK_DESCRIPTOR}" >&2
   exit 2
 fi
+HAS_NETWORK_DESCRIPTOR=0
+if [[ -f "${NETWORK_DESCRIPTOR}" ]]; then
+  HAS_NETWORK_DESCRIPTOR=1
+fi
 
 gramine-manifest \
   -Dlog_level="${GRAMINE_LOG_LEVEL:-error}" \
@@ -51,6 +55,7 @@ gramine-manifest \
   -Dremote_attestation="${REMOTE_ATTESTATION}" \
   -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
+  -Dhas_network_descriptor="${HAS_NETWORK_DESCRIPTOR}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 

@@ -10,6 +10,16 @@ use serde_json::Value;
 
 /// Abstraction over JSON-RPC transport for testability.
 pub trait Rpc {
+    fn upgrade_key_v1(
+        &self,
+        context: &[u8],
+        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev: bool,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
+        let _ = (context, proof, legacy_direct_dev);
+        async { Err(eyre::eyre!("upgrade-key RPC unsupported")) }
+    }
+
     fn eth_call(
         &self,
         to: Address,
@@ -76,6 +86,12 @@ pub trait Rpc {
             let _ = height;
             Err(eyre::eyre!("outbe finalization RPC is unsupported"))
         }
+    }
+    fn outbe_get_finality_proof(
+        &self,
+        height: u64,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send {
+        self.outbe_get_finalization(height)
     }
     fn eth_get_proof(
         &self,
@@ -402,6 +418,26 @@ impl Rpc for RpcClient {
             .await
     }
 
+    async fn upgrade_key_v1(
+        &self,
+        context: &[u8],
+        proof: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+        legacy_direct_dev: bool,
+    ) -> Result<Vec<u8>> {
+        let result = self
+            .call_rpc(
+                "outbe_upgradeKeyV1",
+                serde_json::json!([
+                    alloy_primitives::Bytes::copy_from_slice(context),
+                    proof,
+                    legacy_direct_dev
+                ]),
+            )
+            .await?;
+        let bytes: alloy_primitives::Bytes = serde_json::from_value(result)?;
+        Ok(bytes.to_vec())
+    }
+
     async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
             self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
@@ -435,6 +471,22 @@ impl Rpc for RpcClient {
     async fn outbe_get_finalization(&self, height: u64) -> Result<Value> {
         self.call_rpc("outbe_getFinalization", serde_json::json!([height]))
             .await
+    }
+
+    async fn outbe_get_finality_proof(&self, height: u64) -> Result<Value> {
+        match self
+            .call_rpc("rudis_getFinalityProof", serde_json::json!([height]))
+            .await
+        {
+            Ok(proof) => Ok(proof),
+            Err(error)
+                if error.to_string().contains("-32601")
+                    || error.to_string().contains("Method not found") =>
+            {
+                self.outbe_get_finalization(height).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn eth_get_proof(
@@ -581,6 +633,8 @@ pub mod mock {
         pub consensus_status: Result<Value>,
         pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
+        pub finalized_block: Result<Value>,
+        pub proof_fn: Option<Box<dyn Fn(u64) -> Result<Value> + Send + Sync>>,
         pub block_by_number: Result<Value>,
         pub vrf_seed: Result<Value>,
         pub emission_info: Result<Value>,
@@ -604,6 +658,8 @@ pub mod mock {
                 consensus_status: Err(eyre::eyre!("not mocked")),
                 epoch_info: Err(eyre::eyre!("not mocked")),
                 latest_block: Err(eyre::eyre!("not mocked")),
+                finalized_block: Err(eyre::eyre!("not mocked")),
+                proof_fn: None,
                 block_by_number: Err(eyre::eyre!("not mocked")),
                 vrf_seed: Err(eyre::eyre!("not mocked")),
                 emission_info: Err(eyre::eyre!("not mocked")),
@@ -677,6 +733,14 @@ pub mod mock {
         }
         async fn eth_get_latest_block(&self) -> Result<Value> {
             clone_result(&self.latest_block)
+        }
+        async fn eth_get_finalized_block(&self) -> Result<Value> {
+            clone_result(&self.finalized_block)
+        }
+        async fn eth_get_proof(&self, _: Address, _: &[String], block: u64) -> Result<Value> {
+            self.proof_fn
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("proof not mocked"))?(block)
         }
         async fn outbe_get_vrf_seed(&self) -> Result<Value> {
             clone_result(&self.vrf_seed)

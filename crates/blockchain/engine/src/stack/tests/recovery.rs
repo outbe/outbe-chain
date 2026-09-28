@@ -1,4 +1,5 @@
 use super::*;
+use crate::stack::recovery::anchor::validate_certified_follower_recovery_record;
 
 #[test]
 fn recover_application_finalized_round_returns_none_at_genesis_height() {
@@ -196,6 +197,74 @@ fn certified_follower_recovery_anchor_requires_matching_verified_records() {
     .unwrap_err()
     .to_string();
     assert!(error.contains("local archived block reports height 359, expected 358"));
+}
+
+#[test]
+fn certified_follower_recovers_executed_ancestor_without_inventing_a_certificate() {
+    let parent = recovery_block(358);
+    let mut raw = Block::default();
+    raw.header.number = 359;
+    raw.header.parent_hash = parent.block_hash();
+    let child =
+        ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw.map_header(OutbeHeader::new)));
+    let round = Round::new(Epoch::new(0), View::new(29));
+    let (schemes, finalization) = recovery_finalization_fixture(&child, round);
+    let proof = outbe_consensus::follow::upstream::AncestorFinalityProof {
+        certified: outbe_consensus::follow::CertifiedFinalizedBlock {
+            finalization,
+            block: child,
+        },
+        ancestors: vec![parent.clone()],
+    };
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(500, 0);
+    let recovered = validate_ancestor_follower_recovery_record(
+        358,
+        parent.block_hash(),
+        None,
+        &parent,
+        &proof,
+        &schemes,
+        &epocher,
+    )
+    .unwrap();
+    assert_eq!(recovered.checkpoint.block_number, 358);
+    assert_eq!(recovered.checkpoint.block_hash, parent.block_hash());
+    assert!(recovered.finalization.is_none());
+    assert!(validate_ancestor_follower_recovery_record(
+        358,
+        B256::ZERO,
+        None,
+        &parent,
+        &proof,
+        &schemes,
+        &epocher
+    )
+    .is_err());
+    let mut forged = proof.clone();
+    let (_, wrong_signature) = recovery_finalization_fixture(&parent, round);
+    forged.certified.finalization.certificate = wrong_signature.certificate;
+    assert!(validate_ancestor_follower_recovery_record(
+        358,
+        parent.block_hash(),
+        None,
+        &parent,
+        &forged,
+        &schemes,
+        &epocher
+    )
+    .is_err());
+    let mut omitted = proof;
+    omitted.ancestors.clear();
+    assert!(validate_ancestor_follower_recovery_record(
+        358,
+        parent.block_hash(),
+        None,
+        &parent,
+        &omitted,
+        &schemes,
+        &epocher
+    )
+    .is_err());
 }
 
 fn recovered_reth_readback(

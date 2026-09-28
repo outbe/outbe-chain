@@ -610,7 +610,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn paynote_capacity_runs_in_the_full_suite_with_an_overridable_timeout() {
+    fn paynote_main_and_capacity_have_separate_tags_and_timeouts() {
         let feature = Feature::parse_path(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("features/gem.feature"),
             cucumber::gherkin::GherkinEnv::default(),
@@ -623,13 +623,23 @@ mod tests {
             .collect();
         assert_eq!(scenarios.len(), 1);
         let scenario = scenarios[0];
+        let main_scenarios: Vec<_> = feature
+            .scenarios
+            .iter()
+            .filter(|s| has_tag(&feature, s, "paynote-main"))
+            .collect();
+        assert_eq!(main_scenarios.len(), 1);
+        let main_scenario = main_scenarios[0];
+        assert!(!has_tag(&feature, main_scenario, "paynote-capacity"));
         let mut env = Environment {
             validators: 4,
             all: true,
             ..Environment::default()
         };
         assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_eq!(decide(&feature, main_scenario, &env), Decision::Run);
         assert_eq!(scenario_timeout_secs(&feature, scenario, &env), 21_600);
+        assert_eq!(scenario_timeout_secs(&feature, main_scenario, &env), 3_600);
         let ordinary = feature
             .scenarios
             .iter()
@@ -639,6 +649,8 @@ mod tests {
         if cfg!(feature = "ocomp-integration") {
             assert_eq!(unmet(&feature, scenario, &env), None);
             assert_registered_steps(&feature, scenario);
+            assert_eq!(unmet(&feature, main_scenario, &env), None);
+            assert_registered_steps(&feature, main_scenario);
         } else {
             assert!(unmet(&feature, scenario, &env)
                 .expect("build requirement")
@@ -647,6 +659,10 @@ mod tests {
         for seconds in [60, 3_600, 30_000] {
             env.scenario_timeout_secs = Some(seconds);
             assert_eq!(scenario_timeout_secs(&feature, scenario, &env), seconds);
+            assert_eq!(
+                scenario_timeout_secs(&feature, main_scenario, &env),
+                seconds
+            );
             assert_eq!(scenario_timeout_secs(&feature, ordinary, &env), seconds);
         }
     }

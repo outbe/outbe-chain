@@ -79,6 +79,7 @@ impl FidelityContract<'_> {
             amount,
             section,
         };
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         let result = enclave_client::apply_cohort_op(req)?;
         self.apply_outcome(account, &result.outcome)
     }
@@ -117,6 +118,7 @@ impl FidelityContract<'_> {
             first_qualified_start: self.first_qualified_start()?,
             entries,
         };
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         Ok(enclave_client::snapshot_leagues(req)?
             .into_iter()
             .map(|e| (e.owner, e.league))
@@ -169,6 +171,7 @@ impl FidelityContract<'_> {
             expiry,
             owner_sig,
         };
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
         enclave_client::query_index(req)
     }
 

@@ -89,6 +89,14 @@ impl ReplacementCandidateEnclaveV1 {
         self.client.request(request)
     }
 
+    pub fn ingest_upgrade_key_v1(
+        &mut self,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        artifact: &[u8],
+    ) -> Result<crate::protocol::EnclaveResponse, TransportError> {
+        self.client.transfer_upgrade_key_v1(proof, artifact, false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ingest_finalized_admission_v1(
         &mut self,
@@ -158,6 +166,43 @@ impl ReplacementCandidateEnclaveV1 {
     ) -> Result<[u8; 64], TransportError> {
         self.client.sign_registration_intent_dev_v1(intent)
     }
+
+    pub fn generate_transition_evidence_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<AttestationEvidenceV1, TransportError> {
+        let bytes = intent.encode_canonical().map_err(codec_error)?;
+        let response = self.client.request(
+            &crate::protocol::EnclaveRequest::GenerateTransitionEvidenceDevV1 { intent: bytes },
+        )?;
+        let crate::protocol::EnclaveResponse::TransitionEvidenceDevV1 { evidence } = response
+        else {
+            return Err(TransportError::UnexpectedResponse);
+        };
+        let evidence = AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
+        let AttestationEvidenceV1::GramineDirectDev(dev) = &evidence else {
+            return Err(TransportError::UnexpectedResponse);
+        };
+        if &dev.intent != intent || !intent.verify_enclave_signature(&dev.dev_signature) {
+            return Err(TransportError::Attestation(
+                "DirectDev transition response differs from request".into(),
+            ));
+        }
+        let proof = evidence
+            .transition_key_ready_proof()
+            .ok_or_else(|| TransportError::Attestation("missing key-ready proof".into()))?;
+        proof
+            .verify_for_transition(intent, proof.resident_offer_public)
+            .map_err(codec_error)?;
+        if proof.candidate_manifest_hash
+            != self.manifest().authorization_hash().map_err(codec_error)?
+        {
+            return Err(TransportError::Attestation(
+                "transition proof targets another manifest".into(),
+            ));
+        }
+        Ok(evidence)
+    }
 }
 
 /// Stage one fresh enclave under the already committed NodeHost identity
@@ -212,9 +257,12 @@ pub fn persist_replacement_candidate_submission(
             &value.intent
         }
         AttestationEvidenceV1::GramineDirectDev(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave
+            if is_candidate_promotion_operation(value.intent.operation)
                 && &value.dev_signature == enclave_signature =>
         {
+            if value.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement {
+                validate_direct_dev_transition_proof(&candidate.manifest, value)?;
+            }
             &value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
@@ -285,6 +333,40 @@ pub fn load_replacement_candidate_submission(
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     validate_durable_replacement_submission(&candidate.manifest, &submission)?;
     Ok(Some(submission))
+}
+
+/// Discard an expired, unexecuted transition before preparing fresh evidence.
+/// The caller must verify the finalized binding still points to the source.
+#[doc(hidden)]
+pub fn clear_expired_transition_submission_v1(
+    node_data_dir: &Path,
+    expected_intent: B256,
+    finalized_timestamp: u64,
+) -> Result<(), TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    if !path_exists(&paths.replacement_submission)? {
+        return Ok(());
+    }
+    let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
+    let submission = read_replacement_submission(&paths.replacement_submission)?;
+    let intent = validate_durable_replacement_submission(&candidate.manifest, &submission)?;
+    if intent.operation != AttestationOperationV1::TransitionEnclaveMeasurement
+        || intent.intent_hash().map_err(codec_error)? != expected_intent
+        || intent.requested_valid_until > finalized_timestamp
+    {
+        return Err(TransportError::Codec(
+            "transition is not the exact expired submission".into(),
+        ));
+    }
+    remove_file_if_exists(&paths.replacement_relay)?;
+    File::open(&paths.root)?.sync_all()?;
+    remove_file_if_exists(&paths.replacement_submission)?;
+    File::open(&paths.root)?.sync_all()?;
+    Ok(())
 }
 
 /// Persist the exact signed transaction before the first relay attempt. The
@@ -677,9 +759,12 @@ pub(super) fn validate_durable_replacement_submission(
             value.intent
         }
         AttestationEvidenceV1::GramineDirectDev(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave
+            if is_candidate_promotion_operation(value.intent.operation)
                 && value.dev_signature == submission.enclave_signature =>
         {
+            if value.intent.operation == AttestationOperationV1::TransitionEnclaveMeasurement {
+                validate_direct_dev_transition_proof(manifest, &value)?;
+            }
             value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
@@ -718,6 +803,25 @@ fn validate_candidate_key_ready_proof(
     if proof.candidate_manifest_hash != expected_manifest_hash {
         return Err(TransportError::Codec(
             "transition key-ready proof targets another durable candidate manifest".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_direct_dev_transition_proof(
+    manifest: &EnclaveInitializationManifestV1,
+    evidence: &outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1,
+) -> Result<(), TransportError> {
+    let proof = evidence
+        .transition_key_ready_proof
+        .as_ref()
+        .ok_or_else(|| TransportError::Codec("transition proof missing".into()))?;
+    proof
+        .verify_for_transition(&evidence.intent, proof.resident_offer_public)
+        .map_err(codec_error)?;
+    if proof.candidate_manifest_hash != manifest.authorization_hash().map_err(codec_error)? {
+        return Err(TransportError::Codec(
+            "transition proof targets another candidate".into(),
         ));
     }
     Ok(())

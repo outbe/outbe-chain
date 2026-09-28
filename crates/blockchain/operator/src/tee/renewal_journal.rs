@@ -665,6 +665,7 @@ mod tests {
         let node_signature = sign_node_intent(&node_signer, intent_hash);
         let signature = signer.sign(intent_hash.as_slice()).to_bytes();
         let evidence_value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            transition_key_ready_proof: None,
             intent: intent.clone(),
             dev_attestation_public: intent.attestation_ed25519,
             dev_signature: signature,

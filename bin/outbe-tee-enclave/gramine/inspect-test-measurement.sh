@@ -22,6 +22,7 @@ gramine-manifest \
   -Dremote_attestation=dcap \
   -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
+  -Dhas_network_descriptor=1 \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 gramine-sgx-sign \

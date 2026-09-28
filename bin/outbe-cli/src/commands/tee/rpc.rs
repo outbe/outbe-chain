@@ -2,6 +2,7 @@ use crate::abi;
 
 use crate::rpc::Rpc;
 
+use alloy_primitives::keccak256;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
@@ -15,6 +16,49 @@ use outbe_operator::rpc::FinalityRpc;
 use outbe_operator::rpc::RenewalRpc;
 
 pub(super) struct CliFinalityRpc<'a, R>(pub(super) &'a R);
+
+/// Read every context field from one finalized RPC block tag.
+pub(super) async fn refresh_call_context(
+    rpc: &(impl Rpc + Sync),
+    height: Option<u64>,
+) -> Result<()> {
+    use outbe_tee::call_context::{EnclaveCallContextV1, EnclaveContextKindV1};
+    let block = match height {
+        Some(height) => rpc.eth_get_block_by_number(height).await?,
+        None => rpc.eth_get_finalized_block().await?,
+    };
+    let number = json_hex_u64_field(&block, "number")?;
+    let timestamp = json_hex_u64_field(&block, "timestamp")?;
+    let tag = format!("0x{number:x}");
+    let selector = keccak256(b"getActiveVersion()");
+    let bytes = rpc
+        .eth_call_at(
+            outbe_primitives::addresses::UPDATE_ADDRESS,
+            &selector[..4],
+            &tag,
+        )
+        .await?;
+    let version = U256::abi_decode(&bytes)?;
+    eyre::ensure!(
+        version <= U256::from(u32::MAX),
+        "active protocol version overflow"
+    );
+    let genesis = rpc.eth_get_block_by_number(0).await?;
+    let genesis_hash: B256 = genesis
+        .get("hash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("genesis RPC block has no hash"))?
+        .parse()?;
+    outbe_tee::call_context::set_snapshot(EnclaveCallContextV1 {
+        kind: EnclaveContextKindV1::Snapshot,
+        chain_id: rpc.eth_chain_id().await?,
+        genesis_hash,
+        block_number: number,
+        block_timestamp: timestamp,
+        protocol_version: version.to(),
+    })
+    .map_err(eyre::Report::msg)
+}
 
 impl<R: Rpc + Sync> FinalityRpc for CliFinalityRpc<'_, R> {
     async fn transaction_receipt(

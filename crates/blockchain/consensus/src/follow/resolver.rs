@@ -40,7 +40,7 @@ use futures::StreamExt as _;
 use tracing::{debug, warn};
 
 use crate::digest::Digest;
-use crate::follow::upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource};
+use crate::follow::upstream::{FinalizedSource, LocalBlockSource};
 use crate::follow::{FollowerEpocher, SharedCommitteeChain};
 
 /// The marshal backfill key type for outbe blocks (commitment = block digest).
@@ -159,9 +159,9 @@ async fn resolve_one<F, L>(
                 // The annotation carries the block's height; fetch that height's
                 // finalized block and verify its digest matches the requested
                 // commitment (the marshal re-checks too).
-                match upstream.get_finalization(height).await {
-                    Some(CertifiedFinalizedBlock { block, .. })
-                        if block.digest() == *commitment =>
+                match upstream.get_block(height).await {
+                    Some(block)
+                        if block.number() == height.get() && block.digest() == *commitment =>
                     {
                         block.encode()
                     }
@@ -183,25 +183,54 @@ async fn resolve_one<F, L>(
                 return;
             }
         }
-        Key::Finalized { height } => match upstream.get_finalization(*height).await {
-            Some(certified) => {
-                if let Err(error) = super::engine::authenticate_live_finalized(
-                    &chain, &epocher, *height, &certified,
-                ) {
-                    warn!(%key, %error, "failed to authenticate follower finalized delivery; dropping fetch");
-                    return;
-                }
-                // Wire format the marshal expects for a `Finalized` delivery: the
-                // finalization certificate immediately followed by the block.
-                let mut buf = certified.finalization.encode().to_vec();
-                buf.extend_from_slice(certified.block.encode().as_ref());
-                buf.into()
-            }
-            None => {
-                debug!(%key, "upstream did not have requested finalization; dropping fetch");
+        Key::Finalized { height } => {
+            let Some(proof) = upstream.get_finality_proof(*height).await else {
+                debug!(%key, "upstream did not have finality proof; dropping fetch");
+                return;
+            };
+            if let Err(error) =
+                super::engine::authenticate_ancestor_proof(&chain, &epocher, *height, &proof)
+            {
+                warn!(%key, %error, "failed to authenticate follower finality proof; dropping fetch");
                 return;
             }
-        },
+            let certified = &proof.certified;
+            let mut buf = certified.finalization.encode().to_vec();
+            buf.extend_from_slice(certified.block.encode().as_ref());
+            if proof.ancestors.is_empty() {
+                buf.into()
+            } else {
+                let anchor_height = Height::new(certified.block.number());
+                let delivery = Delivery {
+                    key: Key::Finalized {
+                        height: anchor_height,
+                    },
+                    subscribers: NonEmptyVec::new((
+                        Annotation::Finalized(handler::Finalized::ByHeight {
+                            height: anchor_height,
+                        }),
+                        span.clone(),
+                    )),
+                };
+                if !matches!(handler.deliver(delivery, buf.into()).await, Ok(true)) {
+                    return;
+                }
+                for block in proof.ancestors.iter().rev() {
+                    let height = Height::new(block.number());
+                    let delivery = Delivery {
+                        key: Key::Block(block.digest()),
+                        subscribers: NonEmptyVec::new((
+                            Annotation::Finalized(handler::Finalized::ByHeight { height }),
+                            span.clone(),
+                        )),
+                    };
+                    if !matches!(handler.deliver(delivery, block.encode()).await, Ok(true)) {
+                        return;
+                    }
+                }
+                return;
+            }
+        }
         Key::Notarized { .. } => {
             debug!(%key, "ignoring notarized backfill request (follower)");
             return;
@@ -229,7 +258,7 @@ async fn resolve_one<F, L>(
 
 /// The block height a `Request::Block` annotation pins, if any. Height-bound
 /// annotations (`Certified { height }`, `Finalized(ByHeight { height })`) map a
-/// block-commitment request to an upstream `getFinalization(height)`. Round-bound
+/// block-commitment request to an upstream `getConsensusBlock(height)`. Round-bound
 /// annotations carry no height and return `None`.
 fn block_request_height(annotation: &Annotation) -> Option<Height> {
     match annotation {

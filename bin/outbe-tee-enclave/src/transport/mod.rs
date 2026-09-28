@@ -39,10 +39,7 @@ use crate::onboarding_upload::{
     OnboardingArtifactUploadSessionV1,
 };
 use crate::process::process_tribute_offer_batch;
-use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    KeyPolicy, SealHeader, SEAL_FORMAT,
-};
+use crate::seal::{EnclaveBootConfig, KeyPolicy, SealHeader, SEAL_FORMAT};
 
 mod dispatch;
 mod offer_key;
@@ -64,7 +61,22 @@ pub use session::{serve_connection, serve_connection_with, EnclaveTransportStrea
 #[cfg(feature = "mock")]
 pub use session::{serve_connection_for_network_test, serve_connection_with_synthetic_dcap};
 
-pub(crate) use offer_key::{sealing_key, write_once_0600};
+pub(crate) use offer_key::write_once_0600;
+
+/// Select the hardware sealing key, or the fixed development key in mock runs.
+pub(crate) fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
+    if let Ok(key) = crate::gramine::sealing_key_256(true) {
+        return Some((key, KeyPolicy::MrSigner));
+    }
+    #[cfg(any(test, feature = "mock"))]
+    {
+        Some((crate::seal::MOCK_SEALING_KEY, KeyPolicy::Mock))
+    }
+    #[cfg(not(any(test, feature = "mock")))]
+    {
+        None
+    }
+}
 
 use dispatch::attestation::validate_generated_quote_binding;
 

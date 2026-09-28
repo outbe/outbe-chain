@@ -254,6 +254,7 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
     let mut dkg = DkgSessionStore::new();
     let mut dcap_verification = DcapVerificationSessionV1::default();
     let mut onboarding_upload = OnboardingArtifactUploadSessionV1::default();
+    let mut call_stream = outbe_tee::call_context::StreamContext::default();
     // Seal the DKG-derived offer key + share once installed (Seam F). Tracked
     // per-connection so we attempt the write-once seal at most once here.
 
@@ -261,6 +262,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
     // Remote traffic is checked both before and after every blocking read, so a
     // frame arriving at or after the exclusive lease deadline is never decoded.
     loop {
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;
@@ -291,6 +297,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
             }
             Err(error) => return Err(error),
         };
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;
@@ -298,13 +309,17 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
         let n = noise
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
-        let req = decode_request(&pt[..n])?;
+        let call = outbe_tee::codec::decode_call(&pt[..n])?;
+        call_stream.accept(&call.request, call.ctx)?;
+        let _call_context = outbe_tee::call_context::ContextScope::enter(call.ctx);
+        let req = call.request;
         let req_label = req.label();
         let req_class = crate::initialization::request_class_label(&req);
         let req_started = std::time::SystemTime::now();
         let is_onboarding_upload_request = matches!(
             req,
-            EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+            EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
+                | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
                 | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
                 | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
                 | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
@@ -404,7 +419,8 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
                     }
                 }
             }
-            request @ (EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+            request @ (EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
+            | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
             | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
             | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
             | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }) => {
@@ -467,6 +483,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
             crate::telemetry::format_request_log(ts, req_label, peer, outcome, dur_ms)
         );
 
+        if let Some(session) = remote_session {
+            initialization
+                .ensure_remote_admission_current(session)
+                .map_err(TransportError::Handshake)?;
+        }
         session_authority
             .ensure_live()
             .map_err(|message| TransportError::Handshake(message.to_string()))?;
