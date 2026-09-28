@@ -60,10 +60,16 @@ fn population(count: u32) -> Population {
 }
 
 fn population_for(materialization_wwd: u32, count: u32) -> Population {
+    population_of(
+        (0..count)
+            .map(|ordinal| action_for(materialization_wwd, ordinal))
+            .collect(),
+    )
+}
+
+fn population_of(actions: Vec<NodActionV1>) -> Population {
     let limits = poc_schema_limits();
-    let actions = (0..count)
-        .map(|ordinal| action_for(materialization_wwd, ordinal))
-        .collect::<Vec<_>>();
+    let count = u32::try_from(actions.len()).unwrap();
     let encoded = actions
         .iter()
         .map(|action| action.encode_canonical_record(&limits).unwrap())
@@ -479,6 +485,32 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
             .len(),
         1
     );
+}
+
+#[test]
+fn a_certified_floor_its_entry_does_not_give_is_rejected_before_any_write() {
+    let mut actions = (0..8)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    let tampered = &mut actions[3];
+    tampered.floor_price_minor = U256::from(3_240_000);
+    tampered.bucket_key = NodContract::bucket_key(
+        WorldwideDay::new(MATERIALIZATION_WWD),
+        tampered.floor_price_minor,
+        tampered.reference_currency,
+    );
+    let population = population_of(actions);
+    let mut world = World::new();
+    seed_generation(&mut world, &population);
+    let before = world.provider.storage.clone();
+
+    let error = apply(&mut world, &batch(&population, 0, 8)).unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::InvalidMaterializationProof.to_string()
+    ));
+    assert_eq!(world.provider.storage, before);
 }
 
 #[test]
