@@ -1438,7 +1438,7 @@ mod tests {
             base: format!("{:#x}", alloy_primitives::Address::ZERO),
             quote: format!("{:#x}", alloy_primitives::Address::repeat_byte(9)),
             rate: "1000000".into(),
-            volume: "3000000000".into(),
+            volume: "1000000000".into(),
             oracle_block: 21,
             oracle_timestamp: 100,
             finalized_height: 22,
@@ -1473,7 +1473,7 @@ mod tests {
             .collect::<Vec<_>>();
         let reads = cohort.members.iter().map(|member| serde_json::json!({
             "port": member.port, "finalized": 22, "checkpoint": checkpoint,
-            "rate": alloy_primitives::U256::from(1_000_000), "volume": alloy_primitives::U256::from(3_000_000_000u64),
+            "rate": alloy_primitives::U256::from(1_000_000), "volume": alloy_primitives::U256::from(1_000_000_000u64),
             "oracle_block": 21, "oracle_timestamp": 100, "finalized_timestamp": 102,
         })).collect::<Vec<_>>();
         let proof = serde_json::json!({
