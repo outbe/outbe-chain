@@ -449,8 +449,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             args: [tokenId],
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
-          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id is
-          // hashed and carries no deadline - that position is already settled.
+          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id
+          // carries no deadline - that position is already settled.
           if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
           try {
@@ -705,7 +705,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           ])) as [
             Hex,
             boolean,
-            { lockedAmount: bigint; lockedAt: number; status: number; failedRefund: bigint; splitRecorded: boolean },
+            { lockedAmount: bigint; lockedAt: number; status: number },
             { amount: bigint; lockedAt: number },
           ];
           const committed = commitHash !== "0x" && /[1-9a-f]/i.test(commitHash.slice(2));
@@ -723,10 +723,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             }
           }
           if (lock.status !== 0) {
-            const [[, , , finalized], [claimable, claimableAt]] = (await Promise.all([
-              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "auctionEscrowState", args: [wwd] }),
+            const [[, finalized], [claimable, claimableAt]] = (await Promise.all([
+              n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getAuctionStatus", args: [wwd] }),
               n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getClaimableRefund", args: [wwd, who] }),
-            ])) as [[bigint, number, number, boolean], [bigint, number]];
+            ])) as [[boolean, boolean, bigint], [bigint, number]];
             const escrow: Record<string, unknown> = {
               lockedAmount: lock.lockedAmount.toString(),
               status: lockStatus(lock.status),

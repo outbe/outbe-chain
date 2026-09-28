@@ -214,16 +214,6 @@
               "name": "quantity",
               "type": "uint16",
               "internalType": "uint16"
-            },
-            {
-              "name": "failedRefund",
-              "type": "uint128",
-              "internalType": "uint128"
-            },
-            {
-              "name": "splitRecorded",
-              "type": "bool",
-              "internalType": "bool"
             }
           ]
         }
@@ -652,31 +642,6 @@
           "indexed": true,
           "internalType": "bytes32"
         },
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ProceedsBurned",
-      "inputs": [
         {
           "name": "worldwideDay",
           "type": "uint32",

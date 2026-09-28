@@ -109,7 +109,7 @@ contract MarkBatchWireTest is CrossChainTest {
         );
 
         assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "the known series applied");
-        assertEq(bnbRouter.parkedMark(EUR_SERIES), BridgeMsgCodec.MSG_MARK_CALLED, "only the missing one waits");
+        assertEq(bnbRouter.parkedMark(EUR_SERIES), uint32(block.timestamp), "only the missing one waits");
         assertEq(bnbRouter.parkedMark(USD_SERIES), 0, "the applied one has no slot");
     }
 
