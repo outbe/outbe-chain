@@ -41,7 +41,8 @@ impl CredisState {
 ///
 /// Every term - both currency codes included - is sealed at opening and never
 /// changes afterwards; only `outstanding`, `collateral_locked`,
-/// `last_settled_at`, `called_at` and `state` move over the position's life.
+/// `interest_paid`, `last_settled_at`, `called_at` and `state` move over the
+/// position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = smart_account)]
 pub struct Position {
@@ -162,6 +163,12 @@ pub struct Position {
     /// Immutable. `call_price` is this value times 1.64.
     #[attribute(order = 21)]
     pub call_anchor_price: U256,
+
+    /// Lifetime interest collected, in the asset's minor units. The sum of
+    /// successful settlement interest deltas. Unpaid interest is left out,
+    /// including when the remainder is voided.
+    #[attribute(order = 22)]
+    pub interest_paid: U256,
 }
 
 impl Position {
