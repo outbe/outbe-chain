@@ -40,10 +40,6 @@ pub enum IntexFactoryError {
     FxRateStale(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,
-    #[error("no contributors recorded for series {0}")]
-    NoContributors(u32),
-    #[error("no in-flight distribution for series {0}")]
-    NoDistribution(u32),
     #[error("distribution payout math overflow for series {0}")]
     DistributionOverflow(u32),
     #[error("no open certified payout round for day {0}")]

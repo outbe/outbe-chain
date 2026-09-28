@@ -246,17 +246,12 @@ fn add_awaiting_job(
         intent.activation_preconditions.nod.wwd = day.value();
         intent.activation_preconditions.contributors.worldwide_day = day.value();
         intent.activation_preconditions.metadosis.wwd = day.value();
-        for price in &mut intent.frozen_metadosis_values.auction_entry_prices {
-            price.source_day = day.value();
-        }
         receipt.wwd = day.value();
-        receipt.auction_entry_prices = intent.frozen_metadosis_values.auction_entry_prices.clone();
         receipt.desis_brief_hash = Some(
             desis_request_brief_hash(
                 receipt.protocol_bundle_hash,
                 receipt.wwd,
                 receipt.desis_limit_minor,
-                &receipt.auction_entry_prices,
                 receipt.logical_anchor,
             )
             .unwrap(),

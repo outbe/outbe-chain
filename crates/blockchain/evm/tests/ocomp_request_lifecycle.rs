@@ -806,12 +806,10 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
                 .unwrap(),
             0
         );
-        assert_eq!(
-            IntexContract::new(storage.clone())
-                .contributor_count
-                .read(&prepared.wwd)
-                .unwrap(),
-            0
+        assert!(
+            outbe_intex::api::certified_contributor_generation(&storage, prepared.wwd)
+                .unwrap()
+                .is_none()
         );
         let tribute = TributeContract::new(storage);
         assert_eq!(tribute.total_supply().unwrap(), 1);

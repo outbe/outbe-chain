@@ -56,9 +56,9 @@ use outbe_ocomp_protocol::input::{
     InputManifestV1,
 };
 use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1, DayType,
-    FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
-    NodTargetPreconditionV1, ReferenceEntryPriceV1, TributeInputBindingV1,
+    ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
+    JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+    TributeInputBindingV1,
 };
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 use outbe_ocomp_protocol::opening::{
@@ -1652,12 +1652,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             day_gratis_limit_minor: U256::from(20),
             lysis_limit_minor: plan.lysis_limit_minor,
             desis_limit_minor,
-            auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-                entry_price_minor: U256::from(95),
-                source: AuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: 6,
-            }],
             request_limit_split_receipt_hash: B256::repeat_byte(0x45),
         },
         logical_evaluation_height: manifest.checkpoint.finalized_block_number,

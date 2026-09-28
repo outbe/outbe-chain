@@ -472,25 +472,17 @@ mod tests {
                 eligible_nominal_total: input.eligible_nominal_total,
             })
         );
-        let (series_exists, legacy_contributors, target) =
-            StorageHandle::enter(&mut provider, |storage| {
-                (
-                    api::series_exists(&storage, test_sid(input.precondition.worldwide_day))
-                        .unwrap(),
-                    api::read_contributors(
-                        &storage,
-                        WorldwideDay::new(input.precondition.worldwide_day),
-                    )
-                    .unwrap(),
-                    api::ocomp_contributor_target_projection(
-                        &storage,
-                        WorldwideDay::new(input.precondition.worldwide_day),
-                    )
-                    .unwrap(),
+        let (series_exists, target) = StorageHandle::enter(&mut provider, |storage| {
+            (
+                api::series_exists(&storage, test_sid(input.precondition.worldwide_day)).unwrap(),
+                api::ocomp_contributor_target_projection(
+                    &storage,
+                    WorldwideDay::new(input.precondition.worldwide_day),
                 )
-            });
+                .unwrap(),
+            )
+        });
         assert!(!series_exists);
-        assert!(legacy_contributors.is_empty());
         assert_eq!(target.expected_series_version, 1);
         assert_eq!(target.contributor_count, input.contributor_count);
         assert_eq!(target.contributor_total, input.eligible_nominal_total);
@@ -585,24 +577,10 @@ mod tests {
     }
 
     #[test]
-    fn certified_generation_blocks_legacy_contributors_but_allows_later_series_creation() {
+    fn certified_generation_allows_later_series_creation() {
         let mut provider = ActivationTestProvider::new();
         let value = input(20_260_731, 29);
         provider.run(&value).unwrap();
-        let state = provider.inner.storage.clone();
-        let events = provider.inner.get_ordered_events().to_vec();
-
-        let legacy_contributors = [(Address::repeat_byte(7), U256::from(75_000_000_u128))];
-        let record_result = StorageHandle::enter(&mut provider, |storage| {
-            api::record_contributors(
-                &storage,
-                WorldwideDay::new(value.precondition.worldwide_day),
-                &legacy_contributors,
-            )
-        });
-        assert!(record_result.is_err());
-        assert_eq!(provider.inner.storage, state);
-        assert_eq!(provider.inner.get_ordered_events(), events);
 
         StorageHandle::enter(&mut provider, |storage| {
             api::create_series(
@@ -629,12 +607,6 @@ mod tests {
             assert!(
                 api::series_exists(&storage, test_sid(value.precondition.worldwide_day)).unwrap()
             );
-            assert!(api::read_contributors(
-                &storage,
-                WorldwideDay::new(value.precondition.worldwide_day)
-            )
-            .unwrap()
-            .is_empty());
             assert_eq!(
                 api::certified_contributor_generation(
                     &storage,

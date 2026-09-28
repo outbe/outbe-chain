@@ -2,8 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     activation::ActivationCallCoreV1,
     intent::{
-        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, ReferenceEntryPriceV1,
-        TributeInputBindingV1,
+        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     receipts::EffectBindingV1,
     result::ExactCountsV1,
@@ -18,7 +17,6 @@ pub(super) struct RequestLimitSplitApplyV1 {
     pub day_limit: U256,
     pub lysis_limit_minor: U256,
     pub desis_limit_minor: U256,
-    pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }
 
