@@ -278,24 +278,49 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     }
 }
 
-/// reth22-2: three-way bind of the EIP-161 preservation contract. Every
-/// *stateful* dispatch-registered precompile (`outbe_precompile_addresses`)
-/// must be preserved across state-root computation by EITHER the executor's
-/// runtime `0xEF` marker list (`OUTBE_RUNTIME_MARKER_ADDRESSES`) OR genesis
-/// `0xEF` bytecode seeded by `scripts/seed_genesis.py`. reth22-1 unified the
-/// marker list into one const and pinned marker superset-of stateful-dispatch; this test
-/// binds the genesis seed list as the third source of truth so a precompile
-/// that is neither marked nor seeded fails loudly instead of silently pruning.
+/// The seeder writes the Nod FIFO bounds as raw slots; read them back through the schema.
+#[test]
+fn seeded_nod_fifo_reads_back_through_the_schema() {
+    use outbe_primitives::addresses::NOD_ADDRESS;
+
+    let (_tmp, genesis, _raw) = run_seed_genesis(
+        FIXTURE_GENESIS,
+        FIXTURE_SEED,
+        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
+    );
+    let entry = alloc_entry(&genesis, &alloy_primitives::hex::encode(NOD_ADDRESS));
+    let mut provider = HashMapStorageProvider::new(1);
+    for (key, value) in entry["storage"].as_object().expect("seeded Nod storage") {
+        provider.storage.insert(
+            (NOD_ADDRESS, key.parse().expect("storage key")),
+            value
+                .as_str()
+                .expect("hex value")
+                .parse()
+                .expect("storage value"),
+        );
+    }
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = outbe_nod::NodContract::new(storage);
+        assert_eq!(nod.ocomp_materialization_head_sequence.read().unwrap(), 1);
+        assert_eq!(nod.ocomp_materialization_tail_sequence.read().unwrap(), 1);
+    });
+}
+
+/// Cross-checks all sources of the EIP-161 preservation contract. Every
+/// stateful dispatch-registered precompile must survive state-root computation
+/// through either the executor's runtime `0xEF` marker list or genesis `0xEF`
+/// bytecode seeded by `scripts/seed_genesis.py`. This binds route registration,
+/// runtime preservation, and genesis seeding so an uncovered precompile fails
+/// loudly instead of losing its storage.
 ///
-/// The two stateless verifiers and the storage-free debug adapter are skipped:
-/// they own no EVM storage to preserve, matching the `MARKER_EXEMPT` rationale
-/// in the executor's `marker_list_covers_stateful_precompiles` unit test.
+/// The two stateless verifiers are skipped: they own no EVM storage to
+/// preserve, matching the `MARKER_EXEMPT` rationale in the executor's
+/// `marker_list_covers_stateful_precompiles` unit test.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_primitives::addresses::{
-        DEBUG_SUBCALL_PRECOMPILE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
-    };
+    use outbe_primitives::addresses::{ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -305,11 +330,8 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
 
     // These routes own no storage, so neither runtime markers nor genesis code
     // need to cover them.
-    let storage_free: [alloy_primitives::Address; 3] = [
-        ZKPROOF_POSEIDON_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
-        DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
-    ];
+    let storage_free: [alloy_primitives::Address; 2] =
+        [ZKPROOF_POSEIDON_ADDRESS, ZKPROOF_GROTH16_ADDRESS];
 
     let mut checked = 0usize;
     for addr in outbe_evm::precompiles::outbe_precompile_addresses() {
@@ -339,12 +361,10 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     );
 }
 
-/// reth22-2 focused companion: `ZEROFEE_ADDRESS` is the one address the
-/// reth22-1 marker test (`marker_list_covers_stateful_precompiles`) exempts
-/// from the marker list "on the grounds it is genesis-seeded". This verifies
-/// that exemption is real: the seeder must actually write `0xEF` code at
-/// `ZEROFEE_ADDRESS`, otherwise the marker exemption would silently lose its
-/// storage.
+/// `ZEROFEE_ADDRESS` is exempt from the runtime marker list because genesis is
+/// responsible for preserving it. This verifies that the seeder actually
+/// writes `0xEF` code at that address; otherwise the exemption would silently
+/// discard its storage.
 #[test]
 fn zerofee_precompile_is_genesis_seeded_with_marker_bytecode() {
     use outbe_primitives::addresses::ZEROFEE_ADDRESS;

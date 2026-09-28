@@ -652,9 +652,6 @@ impl MetadosisContract<'_> {
     ) -> Result<()> {
         let mut registry = outbe_ocompregistry::OcompRegistry::new(self.storage.clone());
         if registry.active_authority(schema_limits)?.is_none() {
-            #[cfg(any(test, feature = "test-utils"))]
-            return Ok(());
-            #[cfg(not(any(test, feature = "test-utils")))]
             return Err(storage_corruption_message(
                 "terminal OCOMP WWD has no active Registry authority",
             ));

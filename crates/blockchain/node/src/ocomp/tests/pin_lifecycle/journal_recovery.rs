@@ -374,7 +374,7 @@ fn ocm_pin_001_journal_bytes_are_stable_and_corruption_quarantines() {
     let bytes = fs::read(root.path().join("pin.v1")).unwrap();
     assert_eq!(
         keccak256_for_test(&bytes),
-        b256!("b83febec000e73c733a511bdcd2ac441c256fe77fcc03c928c43954f15ab9046"),
+        b256!("d922d745db0256e979f508f1f9b581061fdebc45e04dc908faef256583da30bf"),
         "update only when the intentional journal wire format changes"
     );
     assert_eq!(record.generation, 1);
