@@ -842,6 +842,10 @@ fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
             (day + 4 * hour, day + 9 * hour),
             (day - 26 * hour, day + 5 * hour + 1),
             (day - 30 * hour, day + 20 * hour),
+            (day - 5 * hour, day + 3 * hour),
+            (day - 5 * hour + 77, day + 3 * hour - 5),
+            (day - 26 * hour, day - 2 * hour),
+            (day - 30 * hour + 900, day - hour),
         ] {
             let (pv, volume) = samples
                 .iter()
@@ -913,6 +917,29 @@ fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
                 );
             }
         }
+    });
+}
+
+#[test]
+fn a_snapshot_cannot_precede_the_previous_one() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let ts = ATOMIC_DAY_START + 5 * 3_600;
+        let entry = [(pair, coen_iso(10), coen_iso(1))];
+        oracle.write_snapshot(ts, &entry).unwrap();
+        oracle.write_snapshot(ts, &entry).unwrap();
+
+        let err = oracle.write_snapshot(ts - 1, &entry).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::OracleError::SnapshotOutOfOrder
+            )
+            .to_string()
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 2);
     });
 }
 
@@ -1801,6 +1828,37 @@ fn finalized_window_vwap_never_falls_back_to_an_earlier_window() {
                 .finalized_window_vwap(pair, default_snapshot_at(day + 11 * hour))
                 .unwrap(),
             None
+        );
+    });
+}
+
+#[test]
+fn finalized_window_vwap_spans_midnight() {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    with_storage_at(day + 3 * hour + 1_800, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        for (ts, price) in [
+            (day - 6 * hour, 1_000),
+            (day - 4 * hour, 10),
+            (day + hour, 40),
+            (day + 3 * hour, 1_000),
+        ] {
+            oracle
+                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .unwrap();
+        }
+
+        let snapshot = default_snapshot_at(day + 3 * hour + 1_800);
+        assert_eq!(
+            (snapshot.start(), snapshot.cutoff()),
+            (day - 5 * hour, day + 3 * hour)
+        );
+        assert_eq!(
+            oracle.finalized_window_vwap(pair, snapshot).unwrap(),
+            Some(coen_iso(25))
         );
     });
 }

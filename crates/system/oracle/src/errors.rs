@@ -142,6 +142,8 @@ pub enum OracleError {
     SnapshotWriteIndexOverflow,
     #[error("Oracle S-curve write index overflow")]
     ScurveWriteIndexOverflow,
+    #[error("snapshot timestamp precedes the previous snapshot")]
+    SnapshotOutOfOrder,
     #[error("No rate for pair {pair}")]
     NoRateForPair { pair: AddressPair },
 }
@@ -183,6 +185,7 @@ impl From<OracleError> for PrecompileError {
             | NoFinalizedUtcDayVwap
             | InvalidVwapPolicy
             | InvalidVwapSnapshot
+            | SnapshotOutOfOrder
             | NotReferenceCurrency { .. }
             | NoPolicyRate { .. }
             | SlashWindowValidatorSetExceedsCap { .. }

@@ -331,16 +331,17 @@ impl OracleContract<'_> {
         if first_hour >= last_hour {
             return self.add_raw_snapshots(pair, start_time, end_time, total);
         }
-        self.add_raw_snapshots(pair, start_time, first_hour, total)?;
+        // Consecutive hours without a usable cell share one raw scan.
+        let mut raw_from = start_time;
         let mut hour = first_hour;
         while hour < last_hour {
-            let next = hour + VWAP_HOUR_SECONDS;
-            if !self.add_hourly_aggregate(pair, hour, total)? {
-                self.add_raw_snapshots(pair, hour, next, total)?;
+            if self.add_hourly_aggregate(pair, hour, total)? {
+                self.add_raw_snapshots(pair, raw_from, hour, total)?;
+                raw_from = hour + VWAP_HOUR_SECONDS;
             }
-            hour = next;
+            hour += VWAP_HOUR_SECONDS;
         }
-        self.add_raw_snapshots(pair, last_hour, end_time, total)
+        self.add_raw_snapshots(pair, raw_from, end_time, total)
     }
 
     /// Whether the hour's cell accounts for it. Snapshots are written in time

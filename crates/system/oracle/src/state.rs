@@ -521,6 +521,12 @@ impl OracleContract<'_> {
         let next_snapshot_idx = idx
             .checked_add(1)
             .ok_or(OracleError::SnapshotWriteIndexOverflow)?;
+        // Range reads and the hourly cells both rely on non-decreasing timestamps.
+        if idx > self.snapshot_oldest_idx.read()?
+            && timestamp < self.snapshot_timestamp.read(&(idx - 1))?
+        {
+            return Err(OracleError::SnapshotOutOfOrder.into());
+        }
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.snapshot_timestamp.write(&idx, timestamp)?;
