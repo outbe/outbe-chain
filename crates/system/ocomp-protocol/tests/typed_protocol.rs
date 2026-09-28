@@ -202,12 +202,6 @@ fn intent() -> JobIntentV1 {
             day_gratis_limit_minor: U256::ZERO,
             lysis_limit_minor: U256::ZERO,
             desis_limit_minor: U256::ZERO,
-            auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-                reference_currency: 840,
-                entry_price_minor: U256::ZERO,
-                source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-                source_day: 6,
-            }],
             request_limit_split_receipt_hash: hash(113),
         },
         logical_evaluation_height: 100,
@@ -954,12 +948,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         fidelity_league_snapshot_root: hash(41),
         oracle_wwd_pair_entries_observed: 0,
         active_scurve_entries_observed: 0,
-        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-            reference_currency: 840,
-            entry_price_minor: U256::ZERO,
-            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: 6,
-        }],
         oracle_state_version: 1,
         fidelity_opening_upper_bound: 0,
         oracle_opening_upper_bound: 0,
@@ -1099,12 +1087,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
-        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-            reference_currency: 840,
-            entry_price_minor: U256::ZERO,
-            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: 6,
-        }],
         logical_anchor: 10,
     };
     let carry_over_receipt = CarryOverReceiptV1 {
@@ -1701,12 +1683,6 @@ fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::from(1),
-        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-            reference_currency: 840,
-            entry_price_minor: U256::from(2),
-            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: 6,
-        }],
         logical_anchor: 10,
     };
     credited_headroom.encode_canonical(&LIMITS).unwrap();
@@ -1747,12 +1723,6 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         destination: LimitSplitDestination::DesisAuction,
         desis_brief_hash: Some(hash(113)),
         carry_over_credit: U256::ZERO,
-        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-            reference_currency: 840,
-            entry_price_minor: U256::from(2),
-            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: 6,
-        }],
         logical_anchor: 10,
     };
     green_split.encode_canonical(&LIMITS).unwrap();
@@ -1923,61 +1893,27 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
     let protocol_bundle_hash = hash(41);
     let wwd = 7_u32;
     let desis_limit_minor = U256::from(6);
-    let prices = |price: u64, currency: u16| {
-        vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-            reference_currency: currency,
-            entry_price_minor: U256::from(price),
-            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
-            source_day: 6,
-        }]
-    };
-    let entry_prices = prices(2, 840);
     let logical_anchor = 10_u64;
 
-    let digest = desis_request_brief_hash(
-        protocol_bundle_hash,
-        wwd,
-        desis_limit_minor,
-        &entry_prices,
-        logical_anchor,
-    )
-    .unwrap();
+    let digest =
+        desis_request_brief_hash(protocol_bundle_hash, wwd, desis_limit_minor, logical_anchor)
+            .unwrap();
     let mut preimage = Vec::new();
     preimage.extend_from_slice(protocol_bundle_hash.as_slice());
     preimage.extend_from_slice(&wwd.to_be_bytes());
     preimage.extend_from_slice(&desis_limit_minor.to_be_bytes::<32>());
-    preimage.extend_from_slice(&1_u16.to_be_bytes());
-    preimage.extend_from_slice(&840_u16.to_be_bytes());
-    preimage.extend_from_slice(&U256::from(2).to_be_bytes::<32>());
-    preimage.push(outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap as u8);
-    preimage.extend_from_slice(&6_u32.to_be_bytes());
     preimage.extend_from_slice(&logical_anchor.to_be_bytes());
     assert_eq!(
         digest,
         hash_framed(HashDomain::DesisRequestBrief, &preimage).unwrap()
     );
 
-    // Every frozen field moves the digest, the price table included - its length,
-    // its prices and which currency each belongs to.
-    let two_rows = {
-        let mut rows = prices(2, 840);
-        rows.extend(prices(3, 978));
-        rows
-    };
     for changed in [
-        desis_request_brief_hash(
-            hash(42),
-            wwd,
-            desis_limit_minor,
-            &entry_prices,
-            logical_anchor,
-        )
-        .unwrap(),
+        desis_request_brief_hash(hash(42), wwd, desis_limit_minor, logical_anchor).unwrap(),
         desis_request_brief_hash(
             protocol_bundle_hash,
             wwd + 1,
             desis_limit_minor,
-            &entry_prices,
             logical_anchor,
         )
         .unwrap(),
@@ -1985,7 +1921,6 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
             protocol_bundle_hash,
             wwd,
             desis_limit_minor + U256::from(1),
-            &entry_prices,
             logical_anchor,
         )
         .unwrap(),
@@ -1993,31 +1928,6 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
             protocol_bundle_hash,
             wwd,
             desis_limit_minor,
-            &prices(3, 840),
-            logical_anchor,
-        )
-        .unwrap(),
-        desis_request_brief_hash(
-            protocol_bundle_hash,
-            wwd,
-            desis_limit_minor,
-            &prices(2, 978),
-            logical_anchor,
-        )
-        .unwrap(),
-        desis_request_brief_hash(
-            protocol_bundle_hash,
-            wwd,
-            desis_limit_minor,
-            &two_rows,
-            logical_anchor,
-        )
-        .unwrap(),
-        desis_request_brief_hash(
-            protocol_bundle_hash,
-            wwd,
-            desis_limit_minor,
-            &entry_prices,
             logical_anchor + 1,
         )
         .unwrap(),

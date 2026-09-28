@@ -2,11 +2,10 @@
 
 use alloy_primitives::{Bytes, B256};
 use outbe_metadosis::test_support::{
-    ActivationCorruption, ActivationScenario, EmergencyFailScenario, ForkInstallScenario,
+    ActivationCorruption, ActivationScenario, ForkInstallScenario,
 };
-use outbe_metadosis::{OcompForkInstallClassification, WwdMembership, WwdStatus};
+use outbe_metadosis::OcompForkInstallClassification;
 use outbe_ocomp_protocol::receipts::ActivationOutcome;
-use outbe_primitives::time::WorldwideDay;
 
 #[test]
 fn activation_scenario_executes_the_production_command_and_exposes_a_typed_outcome() {
@@ -68,17 +67,4 @@ fn named_corruption_is_a_precondition_and_failed_submission_rolls_back() {
 
     assert!(scenario.submit_q_forming_vote().is_err());
     assert_eq!(scenario.checkpoint(), corrupted_precondition);
-}
-
-#[test]
-fn emergency_fail_scenario_executes_the_commit_owned_command() {
-    let wwd = WorldwideDay::new(2026_0731);
-    let mut scenario = EmergencyFailScenario::forming(wwd, 42, 17).unwrap();
-
-    scenario.fail().unwrap();
-    scenario.fail().unwrap();
-
-    let observation = scenario.observation().unwrap();
-    assert_eq!(observation.status, WwdStatus::Failed);
-    assert_eq!(observation.membership, WwdMembership::Closed);
 }

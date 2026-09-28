@@ -2,7 +2,7 @@ use super::*;
 
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_ocomp_protocol::{
-    intent::{AuctionEntryPriceSource, DayType, ReferenceEntryPriceV1},
+    intent::DayType,
     receipts::{desis_request_brief_hash, LimitSplitDestination},
 };
 use outbe_primitives::error::PrecompileError;
@@ -10,16 +10,6 @@ use outbe_primitives::error::PrecompileError;
 use crate::ocomp_limits::{
     apply_auction_brief, apply_fresh_request_limit_effect, RequestLimitEffect, RequestLimitSplit,
 };
-
-/// The day's frozen price table: one dollar row, as a single-currency day carries.
-fn entry_prices() -> Vec<ReferenceEntryPriceV1> {
-    vec![ReferenceEntryPriceV1 {
-        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
-        entry_price_minor: U256::from(2),
-        source: AuctionEntryPriceSource::LastClosedDayVwap,
-        source_day: 20_251_231,
-    }]
-}
 
 #[test]
 fn request_limit_split_is_exact_at_zero_max_and_rejects_over_limit() {
@@ -139,7 +129,6 @@ fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
             day_limit: U256::from(100),
             lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -161,7 +150,6 @@ fn green_request_commits_the_exact_desis_limit_and_canonical_receipt() {
                     request.protocol_bundle_hash,
                     request.wwd,
                     U256::from(60),
-                    &request.auction_entry_prices,
                     request.logical_anchor,
                 )
                 .unwrap()
@@ -200,7 +188,6 @@ fn red_request_briefs_nothing_and_credits_the_exact_desis_limit() {
             day_limit: U256::from(100),
             lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -248,7 +235,6 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             day_limit: U256::from(100),
             lysis_limit_minor: U256::from(40),
             nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -292,7 +278,6 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             day_limit: U256::from(20),
             lysis_limit_minor: U256::from(10),
             nominal_total: U256::from(20),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -314,47 +299,6 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
 }
 
 #[test]
-fn an_unpriced_day_commits_a_canonical_empty_price_table() {
-    with_storage(|storage| {
-        let request = RequestLimitEffect {
-            protocol_bundle_hash: B256::repeat_byte(0x41),
-            wwd: 20_260_109,
-            pending_nonce: 1,
-            day_type: DayType::Green,
-            day_limit: U256::from(100),
-            lysis_limit_minor: U256::from(40),
-            nominal_total: U256::from(100),
-            auction_entry_prices: Vec::new(),
-            logical_anchor: 1_699_920_005,
-        };
-
-        let receipt = apply_fresh_request_limit_effect(storage.clone(), request.clone())
-            .expect("an unpriced day still commits its limit split");
-        // The brief waits for the Lysis deadline; drive it here.
-        apply_auction_brief(storage.clone(), &receipt).expect("the auction briefs");
-        assert!(receipt.auction_entry_prices.is_empty());
-        // The brief hash writes the table length first, so an empty table commits as
-        // length zero rather than as a special case.
-        assert_eq!(
-            receipt.desis_brief_hash,
-            Some(
-                desis_request_brief_hash(
-                    request.protocol_bundle_hash,
-                    request.wwd,
-                    receipt.desis_limit_minor,
-                    &[],
-                    request.logical_anchor,
-                )
-                .unwrap()
-            )
-        );
-        receipt
-            .validate_semantics()
-            .expect("the empty table is a canonical request receipt");
-    });
-}
-
-#[test]
 fn a_weak_day_credits_the_headroom_it_never_briefed() {
     with_storage(|storage| {
         let request = RequestLimitEffect {
@@ -365,7 +309,6 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
             day_limit: U256::from(1_000),
             lysis_limit_minor: U256::from(32),
             nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -408,7 +351,6 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
             day_limit: U256::from(1_000),
             lysis_limit_minor: U256::from(4),
             nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -445,7 +387,6 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
             day_limit: U256::from(1_000),
             lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
@@ -491,7 +432,6 @@ fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
             day_limit: U256::from(1_000),
             lysis_limit_minor: U256::from(320),
             nominal_total: U256::from(5_000),
-            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 

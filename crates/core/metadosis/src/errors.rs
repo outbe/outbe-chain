@@ -114,6 +114,13 @@ pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
     encoded_rejection(OCOMP_ACTIVATION_REJECTED_SELECTOR, code)
 }
 
+/// Rejects an EVM call mode that cannot execute a result-vote command.
+/// The adapter uses this before opening a mutation frame, preserving the same
+/// domain error encoding as the command's own defensive validation.
+pub fn result_vote_call_mode_rejection() -> PrecompileError {
+    result_vote_rejection(vote_rejection_code::CALL_MODE)
+}
+
 pub(crate) fn result_vote_rejection(code: u16) -> PrecompileError {
     encoded_rejection(OCOMP_RESULT_VOTE_REJECTED_SELECTOR, code)
 }

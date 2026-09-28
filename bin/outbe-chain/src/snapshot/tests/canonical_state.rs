@@ -545,7 +545,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             day_gratis_limit_minor: U256::from(10),
             lysis_limit_minor: U256::from(10),
             desis_limit_minor: U256::ZERO,
-            auction_entry_prices: Vec::new(),
             request_limit_split_receipt_hash: hash,
         },
         logical_evaluation_height: 90,
@@ -677,7 +676,7 @@ fn stored_job(intent_id: B256, encoded: &[u8]) -> HashMapStorageProvider {
         // Metadosis slots directly or imports its private schema.
         let slot = intent_storage_key(intent_id)
             .unwrap()
-            .mapping_slot(U256::from(21));
+            .mapping_slot(U256::from(20));
         StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
             .write(encoded)
             .unwrap();

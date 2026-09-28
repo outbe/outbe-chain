@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
-    intent::{DayType, ReferenceEntryPriceV1},
+    intent::DayType,
     receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},
 };
 use outbe_primitives::{
@@ -20,7 +20,6 @@ pub(crate) struct RequestLimitEffect {
     pub day_limit: U256,
     pub lysis_limit_minor: U256,
     pub nominal_total: U256,
-    pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }
 
@@ -160,7 +159,6 @@ pub(crate) fn apply_auction_brief(
             receipt.protocol_bundle_hash,
             receipt.wwd.into(),
             receipt.desis_limit_minor,
-            &receipt.auction_entry_prices,
             receipt.logical_anchor,
             green,
         )?;
@@ -186,7 +184,6 @@ fn expected_receipt(
             request.protocol_bundle_hash,
             request.wwd,
             desis_limit_minor,
-            &request.auction_entry_prices,
             request.logical_anchor,
         )
         .map_err(protocol_error_to_revert)?,
@@ -202,7 +199,6 @@ fn expected_receipt(
         destination,
         desis_brief_hash,
         carry_over_credit,
-        auction_entry_prices: request.auction_entry_prices.clone(),
         logical_anchor: request.logical_anchor,
     };
     receipt

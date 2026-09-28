@@ -4,8 +4,6 @@ use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
-#[cfg(any(test, feature = "test-utils"))]
-use outbe_ocomp_protocol::OCB1_HEADER_LEN;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
     intent::{
@@ -470,66 +468,17 @@ fn encode_activation_return(
 }
 
 impl MetadosisContract<'_> {
-    /// Installs the immutable protocol bundle exactly once. Voting membership
-    /// comes only from each job's pinned ValidatorSet snapshot. The former
-    /// committee storage field stays reserved and must remain zero.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn initialize_ocomp_activation_authority(
-        &mut self,
-        bundle: &ProtocolBundleV1,
-        limits: &SchemaLimits,
-    ) -> PrecompileResult<()> {
-        (|| {
-            let profile = self.read_ocomp_request_profile(limits)?.ok_or_else(|| {
-                storage_corruption_message("OCOMP request profile is not initialized")
-            })?;
-            validate_activation_authority(&profile, bundle, limits)?;
-            if !self.ocomp_result_committee_snapshot.is_empty()? {
-                return Err(storage_corruption_message(
-                    "reserved OCOMP committee slot is non-zero",
-                ));
-            }
-
-            match self.read_ocomp_activation_authority(limits)? {
-                Some(existing) if existing.bundle == *bundle => Ok(()),
-                Some(_) => Err(storage_corruption_message(
-                    "OCOMP activation authority is immutable",
-                )),
-                None => {
-                    self.ocomp_active_protocol_bundle
-                        .write(&bundle.encode_canonical(limits).map_err(protocol_error)?)?;
-                    if self.read_ocomp_activation_authority(limits)?
-                        != Some(OcompActivationAuthorityV1 {
-                            bundle: bundle.clone(),
-                        })
-                    {
-                        return Err(storage_corruption_message(
-                            "OCOMP activation authority write/read mismatch",
-                        ));
-                    }
-                    Ok(())
-                }
-            }
-        })()
-    }
-
     pub fn read_ocomp_activation_authority(
         &self,
         limits: &SchemaLimits,
     ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
-        if let Some(authority) = outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
-            .active_authority(limits)?
-        {
-            return Ok(Some(OcompActivationAuthorityV1 {
-                bundle: authority.protocol_bundle,
-            }));
-        }
-        #[cfg(any(test, feature = "test-utils"))]
-        {
-            self.read_legacy_ocomp_activation_authority(limits)
-        }
-        #[cfg(not(any(test, feature = "test-utils")))]
-        Ok(None)
+        Ok(
+            outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
+                .active_authority(limits)?
+                .map(|authority| OcompActivationAuthorityV1 {
+                    bundle: authority.protocol_bundle,
+                }),
+        )
     }
 
     pub(crate) fn read_ocomp_activation_authority_for_bundle(
@@ -537,61 +486,13 @@ impl MetadosisContract<'_> {
         bundle_hash: B256,
         limits: &SchemaLimits,
     ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
-        if let Some(authority) = outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
-            .authority_by_bundle_hash(bundle_hash, limits)?
-        {
-            return Ok(Some(OcompActivationAuthorityV1 {
-                bundle: authority.protocol_bundle,
-            }));
-        }
-        #[cfg(any(test, feature = "test-utils"))]
-        {
-            let legacy = self.read_legacy_ocomp_activation_authority(limits)?;
-            Ok(legacy.filter(|authority| {
-                authority
-                    .bundle
-                    .protocol_bundle_hash(limits)
-                    .is_ok_and(|hash| hash == bundle_hash)
-            }))
-        }
-        #[cfg(not(any(test, feature = "test-utils")))]
-        Ok(None)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    fn read_legacy_ocomp_activation_authority(
-        &self,
-        limits: &SchemaLimits,
-    ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
-        let bundle_len = self.ocomp_active_protocol_bundle.len()?;
-        if !self.ocomp_result_committee_snapshot.is_empty()? {
-            return Err(storage_corruption_message(
-                "reserved OCOMP committee slot is non-zero",
-            ));
-        }
-        if bundle_len == 0 {
-            return Ok(None);
-        }
-        let max = limits
-            .codec
-            .max_body_bytes
-            .checked_add(OCB1_HEADER_LEN)
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP activation authority byte cap overflow")
-            })?;
-        if bundle_len > max {
-            return Err(storage_corruption_message(
-                "OCOMP activation authority exceeds byte cap",
-            ));
-        }
-        let bundle =
-            ProtocolBundleV1::decode_canonical(&self.ocomp_active_protocol_bundle.read()?, limits)
-                .map_err(protocol_error)?;
-        let profile = self.read_ocomp_request_profile(limits)?.ok_or_else(|| {
-            storage_corruption_message("OCOMP activation authority has no request profile")
-        })?;
-        validate_activation_authority(&profile, &bundle, limits)?;
-        Ok(Some(OcompActivationAuthorityV1 { bundle }))
+        Ok(
+            outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
+                .authority_by_bundle_hash(bundle_hash, limits)?
+                .map(|authority| OcompActivationAuthorityV1 {
+                    bundle: authority.protocol_bundle,
+                }),
+        )
     }
 }
 

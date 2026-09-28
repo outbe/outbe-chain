@@ -55,9 +55,6 @@ impl TryFrom<u8> for WwdStatus {
             status::OFFERING => Ok(Self::Offering),
             status::WAITING => Ok(Self::Waiting),
             status::READY => Ok(Self::Ready),
-            status::RESERVED_IN_PROGRESS => Err(storage_corruption_message(
-                "Metadosis WWD status tag 5 is reserved and cannot be persisted",
-            )),
             status::COMPLETED => Ok(Self::Completed),
             status::FAILED => Ok(Self::Failed),
             status::OFFCHAIN_PENDING => Ok(Self::OffchainPending),

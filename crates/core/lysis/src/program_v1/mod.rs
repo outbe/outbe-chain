@@ -13,7 +13,6 @@ pub mod result;
 mod types;
 
 pub use execute::execute;
-pub(crate) use execute::{checked_nominal_step, prepare};
 #[cfg(test)]
 pub(crate) use execute::{compute_fraction_hash_map, validate_required_gratis};
 pub use types::{

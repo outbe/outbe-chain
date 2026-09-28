@@ -66,7 +66,6 @@ fn close_completed_response_window(
 }
 
 /// Retire the completed fixture's V1 through the production Registry lifecycle.
-/// Clear the fixture-only authority copy so it cannot hide the missing V1.
 fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
     use outbe_ocompregistry::{OcompProtocolAuthorityV1, OcompRegistry, OcompSuccessorV1};
 
@@ -86,15 +85,6 @@ fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
         };
         let height = storage.block_number().unwrap();
         let mut registry = OcompRegistry::new(storage);
-        registry
-            .initialize_genesis_authority(
-                &initial,
-                B256::repeat_byte(0x99),
-                height,
-                height,
-                &fixture.limits,
-            )
-            .unwrap();
         let mut successor = initial.clone();
         successor.protocol_bundle.protocol_version += 1;
         successor.protocol_bundle.request_semantics_version += 1;
@@ -132,10 +122,6 @@ fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
         assert!(!registry
             .try_retire_predecessor(promotion_height, &fixture.limits)
             .unwrap());
-        MetadosisContract::new(storage)
-            .ocomp_active_protocol_bundle
-            .clear()
-            .unwrap();
         registry.retention_until.read(&bundle_hash).unwrap()
     });
     fixture.provider.set_block_number(retirement_height);
@@ -255,44 +241,6 @@ fn completed_vote_after_authority_retirement_still_obeys_exclusive_deadline() {
         &error
     ));
     assert_eq!(fixture.rollback_snapshot(), after_close);
-}
-
-#[test]
-fn subquorum_vote_without_activation_authority_remains_fatal_and_atomic() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
-    StorageHandle::enter(&mut fixture.provider, |storage| {
-        MetadosisContract::new(storage)
-            .ocomp_active_protocol_bundle
-            .clear()
-            .unwrap();
-    });
-    let before = fixture.rollback_snapshot();
-    // Repeating one of the two existing votes does not form quorum.
-    let vote = fixture.signed_result_vote(0);
-    assert!(
-        matches!(submit_vote_result(&mut fixture, &vote, 20), Err(PrecompileError::Fatal(message))
-        if message == "OCOMP activation authority is not installed")
-    );
-    assert_eq!(fixture.rollback_snapshot(), before);
-    assert_open_job_after_activation_rejection(&mut fixture);
-}
-
-#[test]
-fn first_quorum_without_activation_authority_remains_fatal_and_atomic() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
-    StorageHandle::enter(&mut fixture.provider, |storage| {
-        MetadosisContract::new(storage)
-            .ocomp_active_protocol_bundle
-            .clear()
-            .unwrap();
-    });
-    let before = fixture.rollback_snapshot();
-    assert!(
-        matches!(fixture.apply(), Err(PrecompileError::Fatal(message))
-        if message == "OCOMP activation authority is not installed")
-    );
-    assert_eq!(fixture.rollback_snapshot(), before);
-    assert_open_job_after_activation_rejection(&mut fixture);
 }
 
 fn transition_validator_to_status_for_test(
