@@ -107,9 +107,8 @@ impl TriggerHandler {
     }
 }
 
-/// Briefs arrive on the hourly protocol cadence, and a brief only becomes a live
-/// auction on this tick: a slower cadence would spend the commit window
-/// `preflight_brief` reserved on waiting for the start.
+/// A brief only becomes a live auction on this tick: a slower cadence would spend
+/// the commit window on waiting for the start.
 ///
 /// An e2e day is minutes long, so it advances faster still.
 #[cfg(not(feature = "e2e-test"))]
