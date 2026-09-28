@@ -687,8 +687,8 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
         }
     }
 
-    // An out-of-order snapshot is skipped rather than failing the block.
-    if !snapshot_entries.is_empty() && oracle.snapshot_timestamp_in_order(timestamp)? {
+    // Write price snapshot
+    if !snapshot_entries.is_empty() {
         oracle.write_snapshot(timestamp, &snapshot_entries)?;
     }
 
