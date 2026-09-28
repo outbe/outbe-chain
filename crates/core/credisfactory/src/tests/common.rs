@@ -130,7 +130,7 @@ pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> (B256, U
     (handle, reservation_id)
 }
 
-/// Seal a known FP18 quote independently of the unimplemented Oracle period
+/// Seal a known Minor6 quote independently of the unimplemented Oracle period
 /// helper. These tests exercise Credis consumption, not Oracle observation policy.
 pub fn pledge_fixture(
     storage: StorageHandle<'_>,
@@ -140,7 +140,7 @@ pub fn pledge_fixture(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> outbe_primitives::error::Result<(B256, U256)> {
-    let valuation_price = U256::from(2) * outbe_primitives::units::SCALE_1E18;
+    let valuation_price = oracle_rate();
     let (gratis_amount, entry_price) =
         outbe_primitives::math::scaled_math::checked_quote(principal, 6, valuation_price)?;
     assert!(gratis_amount <= max_gratis);
