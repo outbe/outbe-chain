@@ -28,8 +28,6 @@
 //! validates and stores it. This is the same `Handler`/`Receiver` pair the
 //! marshal `start` consumes, obtained from [`handler::init`].
 
-use std::sync::{Arc, Mutex};
-
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Key};
@@ -43,7 +41,7 @@ use tracing::{debug, warn};
 
 use crate::digest::Digest;
 use crate::follow::upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource};
-use crate::follow::{CommitteeChain, FollowerEpocher};
+use crate::follow::{FollowerEpocher, SharedCommitteeChain};
 
 /// The marshal backfill key type for outbe blocks (commitment = block digest).
 pub(super) type ResolverKey = Key<Digest>;
@@ -68,7 +66,7 @@ pub(super) struct ResolverActor<E, F, L> {
     /// Shared committee-chaining verifier. A finalized fetch is independently
     /// authenticated before any pre-announce or boundary observation is applied;
     /// the marshal then verifies the same certificate again on delivery.
-    chain: Arc<Mutex<CommitteeChain>>,
+    chain: SharedCommitteeChain,
     /// Shared authenticated height-to-epoch map used by the marshal.
     epocher: FollowerEpocher,
     rx: FetchRx,
@@ -80,7 +78,7 @@ pub(super) fn init<E, F, L>(
     handler: handler::Handler<Digest>,
     upstream: F,
     local: L,
-    chain: Arc<Mutex<CommitteeChain>>,
+    chain: SharedCommitteeChain,
     epocher: FollowerEpocher,
 ) -> (ResolverActor<E, F, L>, FollowResolver) {
     let (tx, rx) = futures::channel::mpsc::unbounded();
@@ -138,7 +136,7 @@ async fn resolve_one<F, L>(
     mut handler: handler::Handler<Digest>,
     upstream: F,
     local: L,
-    chain: Arc<Mutex<CommitteeChain>>,
+    chain: SharedCommitteeChain,
     epocher: FollowerEpocher,
 ) where
     F: FinalizedSource,

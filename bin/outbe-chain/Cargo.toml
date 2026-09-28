@@ -13,6 +13,7 @@ test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
 e2e-test = ["outbe-evm/e2e-test"]
 test-protocol-overrides = [
     "outbe-chain-constants/test-protocol-overrides",
+    "outbe-consensus/test-protocol-overrides",
     "outbe-ocomp/test-protocol-overrides",
 ]
 
