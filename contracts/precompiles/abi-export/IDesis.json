@@ -228,6 +228,19 @@
   },
   {
     "type": "event",
+    "name": "AuctionCancelledLateStart",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "AuctionCancelledRedDay",
     "inputs": [
       {

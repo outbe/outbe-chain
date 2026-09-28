@@ -289,12 +289,31 @@ fn a_single_message_day_is_chunk_zero_of_one() {
 /// Issue a series whose issuance currency differs from its reference, with a
 /// payment token reporting `iso` and 18 decimals and a registered vault.
 fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
-    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    let mut storage = dual_currency_series(iso);
+    StorageHandle::enter(&mut storage, f)
+}
+
+/// A payment token that accepts `transferFrom` but never credits the factory, so a
+/// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
+fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
+    use crate::sol_ext::IERC20;
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::transferFromCall::SELECTOR, word(1));
+}
+
+/// The storage behind [`with_dual_currency_series`], for tests that move the clock.
+fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
+    use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(2),
+    );
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
@@ -314,8 +333,8 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
             ..sample(7)
         };
         runtime::issue(&s, params).unwrap();
-        f(s)
-    })
+    });
+    storage
 }
 
 /// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
@@ -335,7 +354,30 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
+    });
+}
+
+#[test]
+fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
+        oracle
+            .record_utc_day_vwap(day, EUR_PAIR_ID, U256::from(4u64) * COEN_ISO_RATE_SCALE)
+            .unwrap();
+
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -352,7 +394,8 @@ fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_333u64));
     });
 }
@@ -377,7 +420,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
 }
 
 #[test]
-fn a_rate_the_closed_day_never_priced_cannot_be_settled_in() {
+fn a_rate_the_window_never_priced_cannot_be_settled_in() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(
@@ -386,7 +429,7 @@ fn a_rate_the_closed_day_never_priced_cannot_be_settled_in() {
             PAIR_ID,
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
-        // The euro trades live, but the day it converts at closed without it.
+        // The euro trades live, but the window it converts at holds no euro price.
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
@@ -402,7 +445,12 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE);
-        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX);
+        write_day_rate(
+            &oracle,
+            EUR_ISO,
+            EUR_PAIR_ID,
+            U256::MAX / COEN_ISO_RATE_SCALE,
+        );
 
         let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
@@ -413,7 +461,188 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
 fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
-        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
+    });
+}
+
+#[test]
+fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
+    let mut storage = dual_currency_series(EUR_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
+    let quote = |storage: &mut HashMapStorageProvider| {
+        StorageHandle::enter(storage, |s| {
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
+        })
+    };
+    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
+        StorageHandle::enter(storage, |s| {
+            runtime::settle_intex(
+                &s,
+                sid(7),
+                owner(),
+                owner(),
+                U256::ONE,
+                payment_token(),
+                snapshot,
+            )
+            .unwrap_err()
+            .to_string()
+        })
+    };
+    StorageHandle::enter(&mut storage, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+        seed_qualifying_day(&s);
+    });
+    let (_, amount, quoted) = quote(&mut storage);
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    let reached_payment = outbe_primitives::error::PrecompileError::from(
+        crate::errors::IntexFactoryError::SettlementAmountMismatch,
+    )
+    .to_string();
+
+    storage.set_timestamp(U256::from(cutoff + 3_599));
+    assert_eq!(settle(&mut storage, quoted), reached_payment);
+
+    storage.set_timestamp(U256::from(cutoff + 3_600));
+    let (_, next_amount, required) = quote(&mut storage);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    assert_eq!(
+        settle(&mut storage, quoted),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: quoted,
+                required,
+            }
+        )
+        .to_string()
+    );
+    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
+        cutoff + 3_600,
+        &outbe_oracle::api::VwapPolicy {
+            policy_version: 2,
+            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        settle(&mut storage, other_policy.to_u256()),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: other_policy.to_u256(),
+                required,
+            }
+        )
+        .to_string()
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+    });
+}
+
+#[test]
+fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
+    let mut storage = dual_currency_series(EUR_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
+    let quote = |storage: &mut HashMapStorageProvider| {
+        StorageHandle::enter(storage, |s| {
+            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE)
+                .unwrap()
+                .2
+        })
+    };
+    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
+        StorageHandle::enter(storage, |s| {
+            runtime::settle_intex(
+                &s,
+                sid(7),
+                owner(),
+                owner(),
+                U256::ONE,
+                payment_token(),
+                snapshot,
+            )
+            .unwrap_err()
+            .to_string()
+        })
+    };
+    StorageHandle::enter(&mut storage, |s| {
+        let oracle = OracleContract::new(s.clone());
+        write_day_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+        );
+        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
+    });
+    let quoted = quote(&mut storage);
+    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff()
+        + 3_600;
+    StorageHandle::enter(&mut storage, |s| {
+        let notice = outbe_intex::api::read_series(&s, sid(7))
+            .unwrap()
+            .call_notice_period_seconds;
+        outbe_intex::api::mark_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+    });
+
+    storage.set_timestamp(U256::from(deadline));
+    let required = quote(&mut storage);
+    assert_eq!(
+        settle(&mut storage, quoted),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+                authorized: quoted,
+                required,
+            }
+        )
+        .to_string()
+    );
+
+    storage.set_timestamp(U256::from(deadline + 1));
+    assert_eq!(
+        settle(&mut storage, required),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::DeadlineExpired
+        )
+        .to_string()
+    );
+}
+
+#[test]
+fn a_reference_payment_ignores_the_snapshot_it_names() {
+    let mut storage = dual_currency_series(REFERENCE_ISO as u64);
+    stub_token_that_never_credits(&mut storage);
+    StorageHandle::enter(&mut storage, |s| {
+        seed_qualifying_day(&s);
+        let err = runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            owner(),
+            U256::ONE,
+            payment_token(),
+            U256::from(7u64),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementAmountMismatch
+            )
+            .to_string()
+        );
     });
 }

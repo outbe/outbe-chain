@@ -74,6 +74,10 @@ pub enum OracleError {
     WorldwideDayVwapSnapshotNotFound,
     #[error("no finalized VWAP for that UTC day")]
     NoFinalizedUtcDayVwap,
+    #[error("unsupported trailing VWAP policy")]
+    InvalidVwapPolicy,
+    #[error("malformed or unfinalized VWAP snapshot id")]
+    InvalidVwapSnapshot,
 
     // -- reference currencies -----------------------------------------------
     #[error("iso_code {iso_code} is not a registered reference currency")]
@@ -138,6 +142,8 @@ pub enum OracleError {
     SnapshotWriteIndexOverflow,
     #[error("Oracle S-curve write index overflow")]
     ScurveWriteIndexOverflow,
+    #[error("snapshot timestamp precedes the previous snapshot")]
+    SnapshotOutOfOrder,
     #[error("No rate for pair {pair}")]
     NoRateForPair { pair: AddressPair },
 }
@@ -177,6 +183,9 @@ impl From<OracleError> for PrecompileError {
             | InvalidVwapRange
             | WorldwideDayVwapSnapshotNotFound
             | NoFinalizedUtcDayVwap
+            | InvalidVwapPolicy
+            | InvalidVwapSnapshot
+            | SnapshotOutOfOrder
             | NotReferenceCurrency { .. }
             | NoPolicyRate { .. }
             | SlashWindowValidatorSetExceedsCap { .. }

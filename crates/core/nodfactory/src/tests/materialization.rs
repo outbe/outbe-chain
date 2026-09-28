@@ -22,7 +22,8 @@ fn profile() -> NodMaterializationProfileV1 {
 fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let worldwide_day = WorldwideDay::new(materialization_wwd);
-    let floor_price_minor = U256::from(500);
+    let entry_price_minor = U256::from(500_000);
+    let floor_price_minor = NodContract::floor_price_minor(entry_price_minor).unwrap();
     let tribute_id =
         WwdEntityId::from_day_and_digest(worldwide_day, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
@@ -35,7 +36,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         league_id: 1,
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
-        entry_price_minor: U256::from(500_000),
+        entry_price_minor,
         settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
@@ -59,10 +60,16 @@ fn population(count: u32) -> Population {
 }
 
 fn population_for(materialization_wwd: u32, count: u32) -> Population {
+    population_of(
+        (0..count)
+            .map(|ordinal| action_for(materialization_wwd, ordinal))
+            .collect(),
+    )
+}
+
+fn population_of(actions: Vec<NodActionV1>) -> Population {
     let limits = poc_schema_limits();
-    let actions = (0..count)
-        .map(|ordinal| action_for(materialization_wwd, ordinal))
-        .collect::<Vec<_>>();
+    let count = u32::try_from(actions.len()).unwrap();
     let encoded = actions
         .iter()
         .map(|action| action.encode_canonical_record(&limits).unwrap())
@@ -478,6 +485,32 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
             .len(),
         1
     );
+}
+
+#[test]
+fn a_certified_floor_its_entry_does_not_give_is_rejected_before_any_write() {
+    let mut actions = (0..8)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    let tampered = &mut actions[3];
+    tampered.floor_price_minor = U256::from(3_240_000);
+    tampered.bucket_key = NodContract::bucket_key(
+        WorldwideDay::new(MATERIALIZATION_WWD),
+        tampered.floor_price_minor,
+        tampered.reference_currency,
+    );
+    let population = population_of(actions);
+    let mut world = World::new();
+    seed_generation(&mut world, &population);
+    let before = world.provider.storage.clone();
+
+    let error = apply(&mut world, &batch(&population, 0, 8)).unwrap_err();
+    assert!(matches!(
+        error,
+        PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::InvalidMaterializationProof.to_string()
+    ));
+    assert_eq!(world.provider.storage, before);
 }
 
 #[test]

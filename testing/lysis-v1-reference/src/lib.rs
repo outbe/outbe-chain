@@ -560,9 +560,13 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             "entry_price": entry_price.to_string(),
         }));
 
-        let tribute_price = decimal(&tribute.tribute_price)?;
-        let base_price = tribute_price.max(entry_price.clone());
-        let floor_price = wrap_u256(base_price * 108_u16) / 100_u8;
+        // Validated as input; the floor derives from the entry price alone.
+        decimal(&tribute.tribute_price)?;
+        let marked_up = &entry_price * 108_u16;
+        if marked_up >= u256_modulus() {
+            return Err(ReferenceFailure::new("ARITHMETIC"));
+        }
+        let floor_price = marked_up / 100_u8;
         let second = tribute
             .f2
             .ok_or_else(|| ReferenceFailure::ordinal("FIDELITY_SECOND_UNAVAILABLE", ordinal))?;

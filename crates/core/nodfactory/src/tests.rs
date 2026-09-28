@@ -82,7 +82,6 @@ fn params(owner: Address) -> NodIssueParams {
         gratis_load_minor: U256::from(1_000),
         worldwide_day: WorldwideDay::new(20_241_220),
         league_id: 1,
-        floor_price_minor: U256::from(540),
         entry_price_minor: U256::from(500_000),
         issuance_currency: 840,
         reference_currency: 840,
@@ -127,6 +126,21 @@ fn nod_pow_binds_owner_and_zero_sequence() {
         runtime::compute_pow_hash(nod_id, owner, solved),
         runtime::compute_pow_hash(nod_id, other, solved)
     );
+}
+
+/// One observation at `rate` in the last second of the current trailing window.
+fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
+    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .write_snapshot(
+            snapshot.cutoff() - 1,
+            &[(
+                outbe_oracle::api::AddressPair::new_coen_to(iso_code),
+                rate,
+                U256::from(SIX_DECIMALS),
+            )],
+        )
+        .unwrap();
 }
 
 struct World {
@@ -265,8 +279,8 @@ impl World {
         });
     }
 
-    /// Prices `COEN/<iso>` at `rate` live and for the last closed UTC day, which
-    /// is the one settlement converts at.
+    /// Prices `COEN/<iso>` at `rate` live, for the last closed UTC day and inside
+    /// the trailing VWAP window settlement converts at.
     fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
         self.publish_coen_spot(iso_code, rate);
         self.enter(|storage, _, _| {
@@ -280,6 +294,7 @@ impl World {
             outbe_oracle::schema::OracleContract::new(storage.clone())
                 .record_utc_day_vwap(day, index, rate)
                 .unwrap();
+            seed_window_vwap(&storage, iso_code, rate);
         });
     }
 
@@ -431,7 +446,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
 
     let bucket_key = NodContract::bucket_key(
         first.worldwide_day,
-        first.floor_price_minor,
+        NodContract::floor_price_minor(first.entry_price_minor).unwrap(),
         first.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
@@ -588,7 +603,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .is_none());
     let bucket_key = NodContract::bucket_key(
         input.worldwide_day,
-        input.floor_price_minor,
+        NodContract::floor_price_minor(input.entry_price_minor).unwrap(),
         input.reference_currency,
     );
     let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
@@ -670,6 +685,32 @@ const EUR_ASSET: Address = Address::new([0x72; 20]);
 const SIX_DECIMALS: u64 = 1_000_000;
 
 #[test]
+fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
+    // 100 USD = entry 2.00 x load 50; R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
+    let rate = Some((U256::from(1_800_000), U256::from(2_000_000)));
+    for (decimals, expected) in [
+        (6, U256::from(90_000_000u64)),
+        (8, U256::from(9_000_000_000u64)),
+        (
+            18,
+            U256::from(90u64) * U256::from(10u64).pow(U256::from(18)),
+        ),
+    ] {
+        assert_eq!(
+            crate::runtime::settlement_units(
+                U256::from(2_000_000),
+                U256::from(50_000_000),
+                rate,
+                decimals
+            )
+            .unwrap(),
+            expected,
+            "{decimals} decimals"
+        );
+    }
+}
+
+#[test]
 fn settlement_minimum_precedes_asset_and_currency_conversion() {
     let price = U256::from(19);
     let load = U256::from(25_629);
@@ -729,7 +770,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
             api::quote_settlement(&storage, scope, parent, nod_id, NOTE_ASSET)
         })
         .unwrap();
-    assert_eq!(quote, (840, U256::ONE));
+    assert_eq!(quote, (840, U256::ONE, U256::ZERO));
 
     world.provider.stub_sub_call_at_selector(
         NOTE_ASSET,
@@ -744,7 +785,15 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
     // A transfer with no received funds must fail, even for a dust obligation.
     let error = world
         .enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, input.owner, nod_id, NOTE_ASSET)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                NOTE_ASSET,
+                U256::ZERO,
+            )
         })
         .unwrap_err();
     assert_eq!(
@@ -1632,7 +1681,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     world.register_reference_currency_asset(NOTE_ASSET);
     let settle = |world: &mut World, caller, asset| {
         world.enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, caller, nod_id, asset)
+            api::settle_nod(&storage, scope, parent, caller, nod_id, asset, U256::ZERO)
         })
     };
     let stranger = Address::repeat_byte(0x92);
@@ -1726,7 +1775,15 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
         world.set_timestamp(timestamp);
         let error = world
             .enter(|storage, scope, parent| {
-                api::settle_nod(&storage, scope, parent, input.owner, nod_id, foreign)
+                api::settle_nod(
+                    &storage,
+                    scope,
+                    parent,
+                    input.owner,
+                    nod_id,
+                    foreign,
+                    U256::ZERO,
+                )
             })
             .unwrap_err();
         assert_eq!(
@@ -1795,9 +1852,9 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
 
     let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage, scope, parent| {
-        let (ref_iso, ref_amount) =
+        let (ref_iso, ref_amount, _) =
             api::quote_settlement(&storage, scope, parent, nod_id, NOTE_ASSET).unwrap();
-        let (iss_iso, iss_amount) =
+        let (iss_iso, iss_amount, _) =
             api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET).unwrap();
         (ref_iso, ref_amount, iss_iso, iss_amount)
     });
@@ -1810,6 +1867,197 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
     world.settle(nod_id, input.owner, &proof).unwrap();
     assert_eq!(paid_event(&world).amountCovered, iss_amount);
+}
+
+#[test]
+fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa8));
+    let nod_id = world.issue(&input);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+
+    let quoted = world.enter(|storage, scope, parent| {
+        use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+        let day = previous_date_key(timestamp_to_date_key(
+            storage.timestamp().unwrap().to::<u64>(),
+        ));
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
+            .unwrap()
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .record_utc_day_vwap(day, index, U256::from(4 * SIX_DECIMALS))
+            .unwrap();
+        api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+            .unwrap()
+            .1
+    });
+    assert_eq!(quoted, U256::from(cost_of(&input) / 2));
+}
+
+/// Pays `asset` by ERC20 against a fixed balance stub: a payment that clears the
+/// snapshot check stops at the balance delta instead.
+fn settle_erc20(
+    world: &mut World,
+    nod_id: WwdEntityId,
+    owner: Address,
+    asset: Address,
+    snapshot: U256,
+) -> Result<(), PrecompileError> {
+    for (selector, ret) in [
+        (
+            IERC20::transferFromCall::SELECTOR,
+            IERC20::transferFromCall::abi_encode_returns(&true),
+        ),
+        (
+            IERC20::approveCall::SELECTOR,
+            IERC20::approveCall::abi_encode_returns(&true),
+        ),
+        (
+            IERC20::balanceOfCall::SELECTOR,
+            IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO),
+        ),
+    ] {
+        world
+            .provider
+            .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
+    }
+    world.enter(|storage, scope, parent| {
+        api::settle_nod(&storage, scope, parent, owner, nod_id, asset, snapshot)
+    })
+}
+
+#[test]
+fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xa9));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(NOTE_ASSET, 840);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let quote = |world: &mut World| {
+        world
+            .enter(|storage, scope, parent| {
+                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+            })
+            .unwrap()
+    };
+    let (_, amount, quoted) = quote(&mut world);
+    let snapshot = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
+    let mismatch = PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string();
+
+    world.set_timestamp(snapshot.cutoff() + 3_599);
+    let same_hour = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
+    assert_eq!(same_hour.unwrap_err().to_string(), mismatch);
+
+    world.set_timestamp(snapshot.cutoff() + 3_600);
+    let (_, next_amount, next) = quote(&mut world);
+    assert_eq!(next_amount, amount, "the next window holds the same price");
+    let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
+    assert_eq!(
+        stale.unwrap_err().to_string(),
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+            authorized: quoted,
+            required: next,
+        })
+        .to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
+
+    let reference = settle_erc20(&mut world, nod_id, input.owner, NOTE_ASSET, quoted);
+    assert_eq!(reference.unwrap_err().to_string(), mismatch);
+}
+
+#[test]
+fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xab));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let quote = |world: &mut World| {
+        world
+            .enter(|storage, scope, parent| {
+                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+            })
+            .unwrap()
+    };
+    let (_, _, quoted) = quote(&mut world);
+    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff()
+        + 3_600;
+    world.mark_called(nod_id, deadline - u64::from(CALL_NOTICE_PERIOD));
+
+    world.set_timestamp(deadline);
+    let (_, _, required) = quote(&mut world);
+    let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
+    assert_eq!(
+        stale.unwrap_err().to_string(),
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+            authorized: quoted,
+            required,
+        })
+        .to_string()
+    );
+
+    world.set_timestamp(deadline + 1);
+    let late = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, required);
+    assert_eq!(
+        late.unwrap_err().to_string(),
+        PrecompileError::from(NodFactoryError::CallDeadlineExpired).to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
+}
+
+#[test]
+fn a_snapshot_of_another_policy_is_rejected() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xaa));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    let (_, _, quoted) = world
+        .enter(|storage, scope, parent| {
+            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+        })
+        .unwrap();
+    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff();
+    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
+        cutoff,
+        &outbe_oracle::api::VwapPolicy {
+            policy_version: 2,
+            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
+        },
+    )
+    .unwrap();
+
+    let error = settle_erc20(
+        &mut world,
+        nod_id,
+        input.owner,
+        EUR_ASSET,
+        other_policy.to_u256(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+            authorized: other_policy.to_u256(),
+            required: quoted,
+        })
+        .to_string()
+    );
+    assert!(!is_settled(&mut world, nod_id));
 }
 
 #[test]
@@ -1848,7 +2096,15 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     // Admission and conversion ran; the fixed balance stub cannot show a delta.
     let error = world
         .enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, input.owner, nod_id, EUR_ASSET)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                EUR_ASSET,
+                quoted.2,
+            )
         })
         .unwrap_err();
     assert_eq!(
@@ -1883,7 +2139,15 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     );
     let erc20_error = world
         .enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, input.owner, nod_id, NOTE_ASSET)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                NOTE_ASSET,
+                U256::ZERO,
+            )
         })
         .unwrap_err();
     assert_eq!(
@@ -1895,24 +2159,31 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
 }
 
 #[test]
-fn issuance_rail_rejects_a_leg_the_closed_day_never_priced() {
+fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa5));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    // The euro trades live, but the day it converts at closed without it.
+    // The euro trades live, but the window it converts at holds no euro price.
     world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
     let spend = cost_of(&input) / 2;
-    let (proof, _) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
+    let (proof, nullifier) = world.fund_note(EUR_ASSET, input.owner, spend, spend);
 
     let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
-    assert!(
-        error.to_string().contains("oracle nominal unavailable"),
-        "unexpected error: {error}"
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
+    assert!(
+        !world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap())
+    );
+
+    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.settle(nod_id, input.owner, &proof).unwrap();
+    assert!(is_settled(&mut world, nod_id));
 }
 
 #[test]

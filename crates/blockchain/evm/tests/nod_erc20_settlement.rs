@@ -156,15 +156,15 @@ impl World {
                 gratis_load_minor: U256::from(GRATIS_LOAD),
                 worldwide_day: WorldwideDay::new(20_241_220),
                 league_id: 1,
-                floor_price_minor: U256::ONE,
                 entry_price_minor: cost * U256::from(1_000),
                 issuance_currency: 840,
                 reference_currency: 840,
             };
             let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
-            let bucket =
-                NodContract::bucket_key(params.worldwide_day, params.floor_price_minor, 840);
-            qualify(&storage, bucket, params.floor_price_minor, 840);
+            let floor_price_minor =
+                NodContract::floor_price_minor(params.entry_price_minor).unwrap();
+            let bucket = NodContract::bucket_key(params.worldwide_day, floor_price_minor, 840);
+            qualify(&storage, bucket, floor_price_minor, 840);
             nod
         });
         provider.flush().unwrap();
@@ -189,6 +189,7 @@ impl World {
         );
         assert_eq!(quote.settlementCurrency, 840);
         assert_eq!(quote.payableUnits, cost);
+        assert_eq!(quote.snapshotId, U256::ZERO);
         world.ok(
             owner,
             ASSET,
@@ -277,6 +278,7 @@ impl World {
             INodFactory::settleNodCall {
                 nodId: self.nod.to_u256(),
                 asset: ASSET,
+                snapshotId: U256::ZERO,
             },
             false,
         )

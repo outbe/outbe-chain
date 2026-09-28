@@ -24,6 +24,9 @@ pub const BIN_STEP_BP: u16 = 25;
 /// gem/intex's 128, one rung up the same ladder.
 pub const CALL_RATE_PCT: u16 = 256;
 
+/// Floor markup percent: `floor = entry x (100 + FLOOR_RATE_PCT) / 100`, the rate gem and intex use.
+pub const FLOOR_RATE_PCT: u16 = 8;
+
 /// Seconds in a day. The call terms a bucket seals are second-encoded, the way
 /// gem's record stores them; the daily scan divides them back into day counts.
 pub const SECS_PER_DAY: u32 = 24 * 3600;

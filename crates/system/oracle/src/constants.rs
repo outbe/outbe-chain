@@ -13,16 +13,19 @@ pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300u64, 0, 0, 0
 /// qualification hooks. The raw Oracle query ABI intentionally remains historical.
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 60 * 60;
 
-/// Maximum number of snapshots to retain (approximately 1 year at 2-block vote
-/// period with 12-second blocks: ~1.3M snapshots).
+/// Raw snapshots older than this are no longer readable.
 pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
+
+/// Width of one hourly VWAP aggregate cell.
+pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
+
+/// Hourly cells kept per pair; a cell is reused for the same hour a day later.
+pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
 /// single block. Normal operation finalizes exactly one day per UTC-midnight
 /// rollover; this cap only bounds catch-up after a long gap (cold start or
-/// extended downtime). Days older than the cap stay unfinalized - their source
-/// aggregates are evicted past `MAX_SNAPSHOT_RETENTION_SECONDS` anyway, so they
-/// could not be recomputed regardless.
+/// extended downtime). Days older than the cap stay unfinalized.
 pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 
 /// ISO 4217 code the day-type pair is quoted in.

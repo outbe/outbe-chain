@@ -50,8 +50,9 @@ pub fn settle_gem(
     caller: Address,
     gem_id: U256,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
-    runtime::settle_gem(storage, caller, gem_id, asset)
+    runtime::settle_gem(storage, caller, gem_id, asset, snapshot_id)
 }
 
 pub fn settle_gem_with_paynote(
