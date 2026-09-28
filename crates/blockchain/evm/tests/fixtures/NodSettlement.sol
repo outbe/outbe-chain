@@ -39,7 +39,7 @@ contract NodSettlement {
         if (mode == 6) assembly { mstore(0, 2) return(0, 32) }
         if (mode == 8) return true;
         if (mode == 5 && msg.sender == FACTORY) {
-            (bool ok,) = FACTORY.call(abi.encodeWithSignature("settleNod(uint256,address)", nodId, ASSET));
+            (bool ok,) = FACTORY.call(abi.encodeWithSignature("settleNod(uint256,address,uint256)", nodId, ASSET, uint256(0)));
             require(!ok, "REENTERED_SETTLEMENT");
             callbackRejected = true;
         }

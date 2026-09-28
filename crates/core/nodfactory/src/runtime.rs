@@ -105,7 +105,8 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// Pays a qualified or called Nod's known cost directly in ERC20 base units.
+/// Pays a qualified or called Nod's known cost directly in ERC20 base units. An
+/// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -113,6 +114,7 @@ pub fn settle_nod(
     caller: Address,
     nod_id: WwdEntityId,
     asset: Address,
+    snapshot_id: U256,
 ) -> Result<()> {
     settle(storage, scope, parent, nod_id, |terms, entry_price| {
         let currency = accept_payment_asset(
@@ -121,7 +123,8 @@ pub fn settle_nod(
             terms.issuance_currency,
             terms.reference_currency,
         )?;
-        let (cost, _) = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        let (cost, snapshot) = cost_in_token(storage, terms, entry_price, asset, currency)?;
+        require_snapshot(snapshot, snapshot_id)?;
         if !cost.is_zero() {
             let before = token_balance(storage, asset)?;
             checked_token_call(
@@ -410,6 +413,18 @@ fn accept_payment_asset(
     Err(NodFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
+/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
+fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
+    match required.map(VwapSnapshotId::to_u256) {
+        Some(required) if required != authorized => Err(NodFactoryError::StaleVwapSnapshot {
+            authorized,
+            required,
+        }
+        .into()),
+        _ => Ok(()),
+    }
+}
+
 /// COEN price of `iso_code` over the trailing VWAP window of `snapshot`.
 fn window_coen_rate(
     storage: &StorageHandle<'_>,
@@ -497,14 +512,15 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
-/// What settling `nod_id` with `asset` costs, and in which currency.
+/// What settling `nod_id` with `asset` costs, in which currency, and the VWAP
+/// snapshot an issuance-currency payment must name (zero on the reference rail).
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     nod_id: WwdEntityId,
     asset: Address,
-) -> Result<(u16, U256)> {
+) -> Result<(u16, U256, U256)> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     let terms = SettlementTerms {
         owner_reference: item.body().owner,
@@ -522,14 +538,18 @@ pub fn quote_settlement(
         PaymentCurrency::Reference => terms.reference_currency,
         PaymentCurrency::Issuance => terms.issuance_currency,
     };
-    let (cost, _) = cost_in_token(
+    let (cost, snapshot) = cost_in_token(
         storage,
         &terms,
         bucket.body().entry_price_minor,
         asset,
         currency,
     )?;
-    Ok((settlement_currency, cost))
+    Ok((
+        settlement_currency,
+        cost,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+    ))
 }
 
 /// PoW gate for `mine_gratis`. The preimage is

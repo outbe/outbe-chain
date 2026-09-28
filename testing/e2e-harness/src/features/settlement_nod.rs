@@ -104,6 +104,7 @@ fn third_party_settles_and_mines(world: &mut World) {
     let pay = eth::INodFactory::settleNodCall {
         nodId: id.to_u256(),
         asset,
+        snapshotId: U256::ZERO,
     };
     // Capture compressed-entity prestate before submitting the mutation. These
     // live observations are finalized checkpoints, not historical eth_call reads.

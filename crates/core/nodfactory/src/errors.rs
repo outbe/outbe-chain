@@ -52,6 +52,9 @@ pub enum NodFactoryError {
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
 
+    #[error("VWAP snapshot {authorized:#x} is stale; settlement requires {required:#x}")]
+    StaleVwapSnapshot { authorized: U256, required: U256 },
+
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
 
