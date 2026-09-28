@@ -14,9 +14,7 @@ pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{
-    block::BlockRuntimeContext, error::Result, storage::StorageHandle, time::previous_date_key,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
 /// Bounded Oracle projection captured before the terminal OCOMP request.
 ///
