@@ -1,4 +1,18 @@
 use crate::*;
+use std::sync::OnceLock;
+
+/// Keep the process alive until the native primary DB destructor has returned.
+struct OffchainRocksDbExitGuard(Arc<OnceLock<outbe_offchain_storage::RocksDbCloseWaiter>>);
+
+impl Drop for OffchainRocksDbExitGuard {
+    fn drop(&mut self) {
+        if let Some(waiter) = self.0.get() {
+            while !waiter.wait_timeout(Duration::from_secs(5)) {
+                tracing::warn!("waiting for offchain RocksDB to finish closing");
+            }
+        }
+    }
+}
 
 /// Run the main node (Reth execution + Commonware consensus).
 pub(crate) fn run_node() -> eyre::Result<()> {
@@ -279,6 +293,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
     let process_shutdown = outbe_node::shutdown::NodeShutdown::default();
     let launcher_shutdown = process_shutdown.clone();
+    let offchain_close = OffchainRocksDbExitGuard(Arc::new(OnceLock::new()));
+    let offchain_close_registration = Arc::clone(&offchain_close.0);
     // Preserve the pool overrides normally applied by Reth's default CLI runner.
     let runtime_config = match &cli.command {
         reth_ethereum::cli::interface::Commands::Node(command) => {
@@ -706,6 +722,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         })
         .await
         .wrap_err("offchain-data startup validation worker failed")??;
+        if let Some(waiter) = prepared_projection.rocksdb_close_waiter() {
+            offchain_close_registration
+                .set(waiter)
+                .map_err(|_| eyre::eyre!("offchain RocksDB close barrier was registered twice"))?;
+        }
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
@@ -1432,6 +1453,9 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     })
     .wrap_err("execution node failed");
 
+    // Reth's engine OS thread can release the last offchain DB owner only after
+    // its graceful termination acknowledgement and the Tokio runtime drain.
+    drop(offchain_close);
     process_shutdown.finish(command_result)
 }
 
@@ -1443,4 +1467,32 @@ pub(crate) fn ocomp_job_available_for_calculation(
         outbe_ocomp_protocol::state::OcompJobStatus::VotingOpen
             | outbe_ocomp_protocol::state::OcompJobStatus::Completed
     )
+}
+
+#[cfg(test)]
+mod offchain_close_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn node_exit_guard_waits_for_native_rocksdb_close() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("offchain");
+        let storage = outbe_offchain_storage::RocksDbStorage::open(&path).unwrap();
+        let guard = OffchainRocksDbExitGuard(Arc::new(OnceLock::new()));
+        guard.0.set(storage.close_waiter()).ok().unwrap();
+        let (exited, exit_observed) = mpsc::channel();
+        let closing = thread::spawn(move || {
+            drop(guard);
+            exited.send(()).unwrap();
+        });
+
+        assert!(exit_observed
+            .recv_timeout(Duration::from_millis(50))
+            .is_err());
+        drop(storage);
+        exit_observed.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(outbe_offchain_storage::RocksDbStorage::open(&path).unwrap());
+        closing.join().unwrap();
+    }
 }

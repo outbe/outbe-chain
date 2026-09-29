@@ -3,13 +3,23 @@
 use std::sync::Arc;
 
 use crate::{
-    MongoStorage, MongoWriterLease, RocksDbReader, RocksDbStorage, StorageBackend, StorageConfig,
-    StorageError, StorageReaderHandle, StorageWriterHandle,
+    MongoStorage, MongoWriterLease, RocksDbCloseWaiter, RocksDbReader, RocksDbStorage,
+    StorageBackend, StorageConfig, StorageError, StorageReaderHandle, StorageWriterHandle,
 };
 
 /// Keeps the writer's backend-specific ownership alive through node shutdown.
 pub struct StorageOwnershipGuard {
     _inner: Ownership,
+}
+
+impl StorageOwnershipGuard {
+    /// A native close barrier exists only for the process-owned RocksDB writer.
+    pub fn rocksdb_close_waiter(&self) -> Option<RocksDbCloseWaiter> {
+        match &self._inner {
+            Ownership::Mongo { .. } => None,
+            Ownership::Rocks { _storage } => Some(_storage.close_waiter()),
+        }
+    }
 }
 
 enum Ownership {

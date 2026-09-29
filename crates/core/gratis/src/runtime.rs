@@ -379,7 +379,7 @@ fn reveal_owner_inner(
     );
     req.current_pledge_record = blob.to_vec();
     req.pledge_note = handle;
-    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     Ok(result.revealed_owner)

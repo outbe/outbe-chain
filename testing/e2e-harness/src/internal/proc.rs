@@ -39,7 +39,7 @@ const SENSITIVE_ARG_FLAGS: &[&str] = &["--private-key", "--p2p-secret-key-hex", 
 /// How long a node/enclave gets to exit on SIGTERM before it is killed. Reth
 /// closes its database well inside this; the ceiling only bounds teardown when
 /// a process is wedged.
-const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Preserve a command's diagnostic shape without emitting secret argument
 /// values into CI logs, evidence capture, or agent transcripts.
@@ -170,18 +170,23 @@ impl ChildGuard {
             .wrap_err_with(|| format!("SIGKILL owned child {}", self.label))
     }
 
-    /// Observe a previously signalled fault without discarding wait errors.
-    pub(crate) fn reap_fault(&mut self, timeout: Duration) -> Result<ExitStatus> {
+    /// Reap a previously signalled child without sending another signal.
+    pub(crate) fn wait_for_exit(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
             if let Some(status) = self.exit_status()? {
                 return Ok(status);
             }
             if std::time::Instant::now() >= deadline {
-                bail!("owned child {} did not exit after fault", self.label);
+                bail!("owned child {} did not exit after signal", self.label);
             }
             sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Observe a previously signalled fault without discarding wait errors.
+    pub(crate) fn reap_fault(&mut self, timeout: Duration) -> Result<ExitStatus> {
+        self.wait_for_exit(timeout)
     }
 
     /// Inject an abrupt fault into this live owned child and observe its exit.

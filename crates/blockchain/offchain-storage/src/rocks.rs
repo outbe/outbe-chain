@@ -3,6 +3,8 @@
 use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
+    sync::{Arc, Condvar, Mutex},
+    time::Duration,
 };
 
 use rocksdb::{Direction, ErrorKind, IteratorMode, Options, WriteBatch, WriteOptions, DB};
@@ -21,6 +23,49 @@ const PROBE_KEY: &[u8] = b"\0outbe-write-probe";
 /// Sole process-owned durable projection writer. Its DB lifetime owns the primary lock.
 pub struct RocksDbStorage {
     db: DB,
+    // Rust drops fields in declaration order. Notify only after DB::drop returns.
+    close_signal: RocksDbCloseSignal,
+}
+
+#[derive(Default)]
+struct RocksDbCloseState {
+    closed: Mutex<bool>,
+    changed: Condvar,
+}
+
+struct RocksDbCloseSignal(Arc<RocksDbCloseState>);
+
+impl Drop for RocksDbCloseSignal {
+    fn drop(&mut self) {
+        let mut closed = self
+            .0
+            .closed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *closed = true;
+        self.0.changed.notify_all();
+    }
+}
+
+/// Waits for the native DB destructor to finish, without retaining the DB.
+#[derive(Clone)]
+pub struct RocksDbCloseWaiter(Arc<RocksDbCloseState>);
+
+impl RocksDbCloseWaiter {
+    /// Returns false on timeout; callers must keep waiting before process exit.
+    pub fn wait_timeout(&self, timeout: Duration) -> bool {
+        let closed = self
+            .0
+            .closed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let (closed, _) = self
+            .0
+            .changed
+            .wait_timeout_while(closed, timeout, |closed| !*closed)
+            .unwrap_or_else(|error| error.into_inner());
+        *closed
+    }
 }
 
 /// One secondary view. It deliberately exposes no catch-up or write capability.
@@ -65,7 +110,15 @@ impl RocksDbStorage {
                     .map_err(map_error)?;
             }
         }
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            close_signal: RocksDbCloseSignal(Arc::new(RocksDbCloseState::default())),
+        })
+    }
+
+    /// Observe completion of this primary's native destructor at node shutdown.
+    pub fn close_waiter(&self) -> RocksDbCloseWaiter {
+        RocksDbCloseWaiter(Arc::clone(&self.close_signal.0))
     }
 }
 
@@ -321,6 +374,25 @@ fn map_error(error: rocksdb::Error) -> StorageError {
 mod tests {
     use super::*;
     use crate::Value;
+
+    #[test]
+    fn close_waiter_signals_after_primary_lock_is_released() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("primary");
+        let writer = RocksDbStorage::open(&primary).unwrap();
+        let waiter = writer.close_waiter();
+        let (release, released) = std::sync::mpsc::channel();
+        let close = std::thread::spawn(move || {
+            released.recv().unwrap();
+            drop(writer);
+        });
+
+        assert!(!waiter.wait_timeout(Duration::from_millis(50)));
+        release.send(()).unwrap();
+        assert!(waiter.wait_timeout(Duration::from_secs(5)));
+        drop(RocksDbStorage::open(&primary).unwrap());
+        close.join().unwrap();
+    }
 
     #[test]
     fn secondary_survives_primary_flush_compaction_and_deletion() {

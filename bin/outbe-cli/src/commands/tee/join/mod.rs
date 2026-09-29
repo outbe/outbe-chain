@@ -340,7 +340,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                 let committed = load_committed_enclave_manifest_v1(node_data_dir)
                     .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
                 match connect_committed_node_host_enclave(enclave_socket, node_data_dir) {
-                    Ok(client) => (JoinEnclave::Committed(client), committed),
+                    Ok(client) => (JoinEnclave::Committed(Box::new(client)), committed),
                     Err(committed_error) if finalized.binding.is_some() => {
                         let candidate = outbe_tee::prepare_node_host_enclave_replacement_candidate(
                             enclave_socket,
@@ -380,7 +380,7 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
                 })?;
                 let manifest = load_committed_enclave_manifest_v1(node_data_dir)
                     .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
-                (JoinEnclave::Committed(client), manifest)
+                (JoinEnclave::Committed(Box::new(client)), manifest)
             };
             if manifest.network_binding() != policy.network_binding() || manifest.node_id != node_id
             {

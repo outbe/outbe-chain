@@ -51,19 +51,20 @@ fn register_inbox_network(world: &mut World) {
             .as_ref(),
         public.as_slice()
     );
+    let owner = super::l2_registration::operator_address(world, &operator_key(world));
     let payload = serde_json::json!({
         "operation": "register",
         "chainId": L2_CHAIN_ID,
-        "l1Address": format!("{inbox:#x}"),
+        "l1Address": format!("{owner:#x}"),
+        "inboxAddress": format!("{inbox:#x}"),
         "publicKey": "0x",
     })
     .to_string();
     super::l2_registration::govern_l2_registry_payload(world, &payload);
-    assert_eq!(registered_network(world), (inbox, public));
-    assert_eq!(world.rpc.l2_chain_by_l1_address(inbox), Some(L2_CHAIN_ID));
-    // The offering user is independent of the registered inbox administrator.
-    let caller = super::l2_registration::operator_address(world, &operator_key(world));
-    assert_eq!(world.rpc.l2_chain_by_l1_address(caller), Some(0));
+    assert_eq!(registered_network(world), (owner, public));
+    assert_eq!(world.rpc.l2_chain_by_l1_address(owner), Some(L2_CHAIN_ID));
+    assert_eq!(world.rpc.l2_chain_by_l1_address(inbox), Some(0));
+    assert_eq!(world.rpc.l2_inbox_address(L2_CHAIN_ID), Some(inbox));
 }
 
 /// The existing canonical test-chain binding used by this basic scenario.

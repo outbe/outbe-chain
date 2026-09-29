@@ -1,13 +1,14 @@
 //! The bootstrapped committee: start/stop/restart the validator set and its
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
+use std::collections::HashMap;
 use std::fs;
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
@@ -72,6 +73,27 @@ fn quiesce_and_terminate_committee_with(
         return Err(error);
     }
     signal(pids, "CONT")
+}
+
+fn reap_stopped_committee(validators: &mut HashMap<usize, proc::ChildGuard>) -> Result<()> {
+    let deadline = Instant::now() + proc::GRACEFUL_STOP_TIMEOUT;
+    let mut failures = Vec::new();
+    for (index, child) in validators {
+        let pid = child.pid();
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match child.wait_for_exit(remaining) {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                failures.push(format!("validator-{index} PID {pid} exited with {status}"))
+            }
+            Err(error) => failures.push(format!("validator-{index} PID {pid}: {error:#}")),
+        }
+    }
+    if !failures.is_empty() {
+        failures.sort();
+        bail!("committee stop failed: {}", failures.join("; "));
+    }
+    Ok(())
 }
 
 /// Preparation may block on external services; no node gets a head start while
@@ -255,10 +277,8 @@ impl Localnet {
             );
         }
         quiesce_and_terminate_committee_with(&validator_pids, signal_committee)?;
+        reap_stopped_committee(&mut self.validators)?;
         self.validators.clear();
-        if !self.validators.is_empty() {
-            bail!("committee stop barrier retained a validator process");
-        }
         Ok(())
     }
 
@@ -1557,10 +1577,33 @@ fn verified_compressed_entities_reconstruction_path(
 mod tests {
     use super::{
         cargo_package_version, committee_signal_args, compressed_entities_reconstruction_path,
-        replacement_chain_build_args, rewrite_workspace_version, unix_time_offset_arg,
-        verified_compressed_entities_reconstruction_path,
+        reap_stopped_committee, replacement_chain_build_args, rewrite_workspace_version,
+        unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
     };
     use clap::Parser;
+    use std::{collections::HashMap, process::Command};
+
+    use crate::internal::proc::ChildGuard;
+
+    #[test]
+    fn committee_reap_reports_abnormal_exit_without_losing_other_statuses() {
+        let mut validators = HashMap::new();
+        for (index, exit_code) in [(0, 0), (1, 134)] {
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!("exit {exit_code}")]);
+            validators.insert(
+                index,
+                ChildGuard::spawn(format!("validator-{index}"), command).unwrap(),
+            );
+        }
+
+        let error = reap_stopped_committee(&mut validators).unwrap_err();
+        assert!(format!("{error:#}").contains("validator-1 PID"));
+        assert!(format!("{error:#}").contains("134"));
+        assert!(validators
+            .values_mut()
+            .all(|child| child.exit_status().unwrap().is_some()));
+    }
 
     #[derive(Debug, Parser)]
     struct ClockOffsetArgs {

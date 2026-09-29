@@ -701,7 +701,7 @@ mod distribute_daily_tests {
                 AgentRewardContract::new(ctx.storage.clone())
                     .get_pool_claimable_reward(RewardPool::Cca, cca)
                     .unwrap(),
-                native(48)
+                native(150)
             );
         });
     }

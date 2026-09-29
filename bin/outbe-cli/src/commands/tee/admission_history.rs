@@ -215,11 +215,12 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let mut rpc = MockRpc::default();
-        rpc.block_by_number = Ok(serde_json::json!({
-            "number": format!("0x{height:x}"), "extraData": format!("0x{}", hex::encode(extra))
-        }));
-        rpc
+        MockRpc {
+            block_by_number: Ok(serde_json::json!({
+                "number": format!("0x{height:x}"), "extraData": format!("0x{}", hex::encode(extra))
+            })),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
