@@ -42,6 +42,10 @@ pub fn dispatch(
                     )?),
                 })
             }),
+            inboxAddress(c) => view(c, |c| {
+                let record = registry.load_network(c.chainId)?;
+                registry.inbox_address(&record)
+            }),
             chainIdByL1Address(c) => view(c, |c| registry.l1_to_chain.read(&c.l1Address)),
         }
     })

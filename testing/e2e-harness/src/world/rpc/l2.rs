@@ -24,4 +24,12 @@ impl Rpc {
         )?;
         Some((network.l1Address, network.publicKey.to_vec()))
     }
+
+    pub fn l2_inbox_address(&self, chain_id: u64) -> Option<Address> {
+        eth::read_call(
+            &self.cfg.rpc0,
+            addresses::L2_REGISTRY_ADDR,
+            &IL2Registry::inboxAddressCall { chainId: chain_id },
+        )
+    }
 }
