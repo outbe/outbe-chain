@@ -177,6 +177,30 @@ impl ValidatorSet<'_> {
                 (ValidatorLifecycle::Joining(joining), false, false) => {
                     ValidatorLifecycle::Joining(joining)
                 }
+                (ValidatorLifecycle::WaitingForStake(waiting), true, false) => {
+                    ValidatorLifecycle::Exiting(state_machine::exit_waiting_for_stake_at_boundary(
+                        waiting,
+                        post_freeze_demotion_height(
+                            changed_at,
+                            freeze_height,
+                            before.address(),
+                            registered_status(before.lifecycle())?,
+                        )?,
+                    )?)
+                }
+                (ValidatorLifecycle::WaitingForReadiness(waiting), true, false) => {
+                    ValidatorLifecycle::Exiting(
+                        state_machine::exit_waiting_for_readiness_at_boundary(
+                            waiting,
+                            post_freeze_demotion_height(
+                                changed_at,
+                                freeze_height,
+                                before.address(),
+                                registered_status(before.lifecycle())?,
+                            )?,
+                        )?,
+                    )
+                }
                 (lifecycle, false, false) => lifecycle,
                 (lifecycle, true, false) => {
                     return Err(PrecompileError::Fatal(format!(
@@ -333,5 +357,34 @@ impl ValidatorSet<'_> {
         }
 
         Ok(())
+    }
+}
+
+/// Height used to retain a frozen joiner who is no longer `Joining`.
+///
+/// A height after the freeze is the demotion block. A missing height is an
+/// already-finalized demotion from before that stamp existed: `freeze + 1`
+/// stays inside this epoch and before the next freeze. A height at or before
+/// the freeze means the artifact included someone who was already ineligible.
+fn post_freeze_demotion_height(
+    changed_at: Option<u64>,
+    freeze_height: u64,
+    address: Address,
+    status: u8,
+) -> Result<u64> {
+    match changed_at {
+        Some(height) if height > freeze_height => Ok(height),
+        Some(_) => Err(PrecompileError::Fatal(format!(
+            "validated boundary included ineligible validator {address} with status {status}"
+        ))),
+        None => {
+            let height = freeze_height.saturating_add(1);
+            if height <= freeze_height {
+                return Err(PrecompileError::Fatal(
+                    "validator deactivation height must be non-zero".into(),
+                ));
+            }
+            Ok(height)
+        }
     }
 }

@@ -406,6 +406,171 @@ fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
     });
 }
 
+fn with_frozen_target_joiner(f: impl FnOnce(&mut ValidatorSet<'_>, Address, Address)) {
+    let survivor = address!("0x0000000000000000000000000000000000000B11");
+    let joiner = address!("0x0000000000000000000000000000000000000B12");
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // Height 11 is after the freeze snapshot at height 10.
+    storage.set_block_number(11);
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut vs = ValidatorSet::new(storage);
+        vs.config_owner.write(OWNER).unwrap();
+        vs.config_max_validators.write(10).unwrap();
+        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xB1))
+            .unwrap();
+        vs.register_validator(OWNER, joiner, &dummy_consensus_pubkey(0xB2))
+            .unwrap();
+        activate_staked_for_test(&mut vs, survivor);
+        let minimum = U256::from(1_000u64);
+        vs.record_stake_increase(joiner, minimum, minimum).unwrap();
+        confirm_ready(&mut vs, joiner, 0xB2);
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::Joining(_)
+        ));
+        f(&mut vs, survivor, joiner);
+    });
+}
+
+fn assert_demoted_joiner_retained_then_excluded(
+    vs: &mut ValidatorSet<'_>,
+    survivor: Address,
+    joiner: Address,
+) {
+    let retained_hash = B256::with_last_byte(0xB1);
+    vs.test_activate_validated_boundary_set(&[survivor, joiner], retained_hash, 10)
+        .unwrap();
+    assert!(matches!(
+        vs.validator_lifecycle(joiner).unwrap(),
+        ValidatorLifecycle::Exiting(_)
+    ));
+    assert!(vs.is_consensus_participant(joiner).unwrap());
+    assert!(vs.val_has_bls_share.read(&joiner).unwrap());
+    assert!(vs.has_pending_set_change().unwrap());
+    assert_eq!(vs.val_deactivated_at_height.read(&joiner).unwrap(), 11);
+    assert_eq!(vs.active_consensus_set_hash().unwrap(), retained_hash);
+
+    let survivor_before = vs.validator_lifecycle(survivor).unwrap();
+    let joiner_before = vs.validator_lifecycle(joiner).unwrap();
+    let pending_before = vs.has_pending_set_change().unwrap();
+    let hash_before = vs.active_consensus_set_hash().unwrap();
+    let err = vs
+        .test_activate_validated_boundary_set(&[survivor, joiner], B256::with_last_byte(0xBE), 11)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        PrecompileError::Fatal(message)
+            if message.contains("retained validator")
+                && message.contains("exited at 11 before freeze 11")
+    ));
+    assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
+    assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
+    assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
+    assert_eq!(vs.active_consensus_set_hash().unwrap(), hash_before);
+
+    let excluded_hash = B256::with_last_byte(0xB2);
+    vs.test_activate_validated_boundary_set(&[survivor], excluded_hash, 12)
+        .unwrap();
+    assert!(matches!(
+        vs.validator_lifecycle(joiner).unwrap(),
+        ValidatorLifecycle::Unbonding(_)
+    ));
+    assert!(!vs.is_consensus_participant(joiner).unwrap());
+    assert!(!vs.has_pending_set_change().unwrap());
+    assert_eq!(vs.active_consensus_set_hash().unwrap(), excluded_hash);
+}
+
+#[test]
+fn post_freeze_joiner_unstake_is_retained_then_excluded_at_a_later_boundary() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::WaitingForStake(_)
+        ));
+        assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
+    });
+}
+
+#[test]
+fn post_freeze_joiner_slash_is_retained_then_excluded_at_a_later_boundary() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.record_stake_slash(joiner, U256::from(1u64), U256::from(1_000u64), None)
+            .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::WaitingForStake(_)
+        ));
+        assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
+    });
+}
+
+#[test]
+fn post_freeze_joiner_restake_without_ready_is_retained_then_excluded() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        let minimum = U256::from(1_000u64);
+        vs.record_unstake(joiner, U256::from(1u64), minimum, 0)
+            .unwrap();
+        vs.record_stake_increase(joiner, minimum, minimum).unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
+        assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
+    });
+}
+
+#[test]
+fn included_waiting_for_stake_at_or_before_freeze_still_fatals() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+            .unwrap();
+        let survivor_before = vs.validator_lifecycle(survivor).unwrap();
+        let joiner_before = vs.validator_lifecycle(joiner).unwrap();
+        let pending_before = vs.has_pending_set_change().unwrap();
+        let hash_before = vs.active_consensus_set_hash().unwrap();
+        let err = vs
+            .test_activate_validated_boundary_set(
+                &[survivor, joiner],
+                B256::with_last_byte(0xBF),
+                11,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::Fatal(message) if message.contains("included ineligible validator")
+        ));
+        assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
+        assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
+        assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), hash_before);
+    });
+}
+
+#[test]
+fn included_demoted_joiner_without_height_is_retained_for_upgrade() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+            .unwrap();
+        // Old demotions finalized before the height stamp existed.
+        vs.val_deactivated_at_height.write(&joiner, 0).unwrap();
+
+        vs.test_activate_validated_boundary_set(
+            &[survivor, joiner],
+            B256::with_last_byte(0xB0),
+            10,
+        )
+        .unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::Exiting(_)
+        ));
+        assert_eq!(vs.val_deactivated_at_height.read(&joiner).unwrap(), 11);
+        assert!(vs.is_consensus_participant(joiner).unwrap());
+    });
+}
+
 // ---------------------------------------------------------------------------
 // 14. test_pending_set_change
 // ---------------------------------------------------------------------------
