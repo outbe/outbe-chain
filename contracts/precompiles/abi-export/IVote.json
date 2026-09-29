@@ -43,6 +43,35 @@
   },
   {
     "type": "function",
+    "name": "createProposalWithVotingWindow",
+    "inputs": [
+      {
+        "name": "targetModule",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "votingWindowBlocks",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "getProposal",
     "inputs": [
       {
