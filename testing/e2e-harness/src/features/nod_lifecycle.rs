@@ -16,6 +16,7 @@ use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target};
+use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
 use crate::features::entity_lifecycle::payment::assert_refused;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
@@ -39,11 +40,8 @@ alloy_sol_types::sol! {
     }
 }
 
-/// A Nod's id derives from its owner and day, so one bucket of five needs five owners.
-const OWNERS: usize = 5;
-/// Two paid while qualified, two inside the notice, and the last one left to forfeit.
-const FORFEITED: usize = 4;
-const OWNER_FUNDING_COEN: u64 = 10;
+/// A Nod's id derives from its owner and day, so one bucket needs an owner per Nod.
+const HOLDER_SEED: u64 = 0x0e0d_0000;
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 const GRATIS_LOAD_MINOR: u64 = 5_000_000;
 /// `effectiveState` of `INod.NodData`.
@@ -67,22 +65,15 @@ fn issue_five_nods(world: &mut World) {
         .state
         .issuance_market
         .expect("the Nod scenario prices an issuance market");
-    let funder = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("validator-0 funding key");
     let now = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
     // The bucket counts breach days only after it was issued: stamp it behind the
     // whole call window the scenario is about to seed.
     let issued_at = now.saturating_sub((u64::from(CALL_LOOKBACK_DAYS) + 2) * 86_400);
-    let mut nods = Vec::with_capacity(OWNERS);
-    for index in 0..OWNERS {
+    holders::fund(world, HOLDER_SEED);
+    let mut nods = Vec::with_capacity(HOLDERS);
+    for index in 0..HOLDERS {
         let owner = owner_address(index);
-        // Owners pay their own notes, mine and redeem, so they need gas of their own.
-        eth::send_value(&url, owner, &funder, eth::coen(OWNER_FUNDING_COEN))
-            .expect("fund the Nod owner");
         let issue = INodFactoryTestArming::issueForTestCall {
             owner,
             worldwideDay: day,
@@ -119,7 +110,7 @@ impl Lifecycle for NodLifecycle {
         let entry = U256::from(ENTRY_PRICE_MINOR);
         let issuance_currency = world.state.issuance_market.expect("issuance market");
         let first = read_nod(world, nod(world, 0));
-        for index in 0..OWNERS {
+        for index in 0..HOLDERS {
             let data = read_nod(world, nod(world, index));
             assert_eq!(data.owner, owner_address(index));
             assert_eq!(data.effectiveState, ISSUED);
@@ -154,22 +145,18 @@ impl Lifecycle for NodLifecycle {
     }
 
     fn qualified(&self, world: &World) -> bool {
-        (0..OWNERS).all(|index| {
+        (0..HOLDERS).all(|index| {
             let data = read_nod(world, nod(world, index));
             data.effectiveState == QUALIFIED && data.isQualified
         })
     }
 
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {
-        let first = match phase {
-            Phase::Qualified => 0,
-            Phase::Called => 2,
-        };
-        [target(world, first), target(world, first + 1)]
+        holders::paid_in(phase).map(|index| target(world, index))
     }
 
     fn called(&self, world: &World) -> bool {
-        let unpaid = [2, 3, FORFEITED].map(|index| read_nod(world, nod(world, index)));
+        let unpaid = UNPAID_AT_CALL.map(|index| read_nod(world, nod(world, index)));
         let called_at = unpaid[0].calledAt;
         unpaid.iter().all(|data| {
             data.effectiveState == CALLED
@@ -180,7 +167,9 @@ impl Lifecycle for NodLifecycle {
 
     fn assert_paid_settled(&self, world: &World) {
         for paid in &world.state.entity_lifecycle.payments {
-            let Item::Nod(id) = paid.target.item;
+            let Item::Nod(id) = paid.target.item else {
+                unreachable!("a Nod scenario pays only for Nods")
+            };
             let data = read_nod(world, id);
             assert!(data.isSettled, "paid Nod {id} is not settled");
             assert_eq!(data.effectiveState, SETTLED, "paid Nod {id} left Settled");
@@ -264,7 +253,7 @@ impl Lifecycle for NodLifecycle {
     fn mine_paid(&self, world: &mut World) -> Vec<Mined> {
         let url = world.rpc.url(world.validators.primary_port());
         let load = U256::from(GRATIS_LOAD_MINOR);
-        (0..FORFEITED)
+        holders::paid()
             .map(|index| {
                 let key = owner_key(index);
                 let owner = owner_address(index);
@@ -317,11 +306,11 @@ impl Lifecycle for NodLifecycle {
 }
 
 fn owner_key(index: usize) -> String {
-    format!("0x{:064x}", 0x0e0d_0000_u64 + index as u64 + 1)
+    holders::key(HOLDER_SEED, index)
 }
 
 fn owner_address(index: usize) -> Address {
-    eth::address_of(&owner_key(index)).expect("Nod owner address")
+    holders::address(HOLDER_SEED, index)
 }
 
 fn nod(world: &World, index: usize) -> U256 {

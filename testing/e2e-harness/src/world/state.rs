@@ -656,13 +656,10 @@ pub struct FixtureState {
     pub gem_source_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The merchant position those parked units opened.
     pub gem_position: Option<alloy_primitives::U256>,
-    /// The gem that is settled and mined, and the one whose notice runs out.
-    pub mined_gem: Option<alloy_primitives::U256>,
-    pub forfeited_gem: Option<alloy_primitives::U256>,
+    /// The gem lifecycle's gems, one per owner, in owner order.
+    pub lifecycle_gems: Vec<alloy_primitives::U256>,
     /// Promis held before mining, so the mined load shows as a delta.
     pub promis_before_mining: Option<alloy_primitives::U256>,
-    /// Finalized height and unallocated PROMIS before either expiry return.
-    pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
     /// The Nod lifecycle's Nods, one per owner, in owner order.
     pub lifecycle_nods: Vec<alloy_primitives::U256>,
     /// What the shared lifecycle phases recorded.
@@ -736,10 +733,8 @@ impl Default for FixtureState {
             issuance_market: None,
             gem_source_series: None,
             gem_position: None,
-            mined_gem: None,
-            forfeited_gem: None,
+            lifecycle_gems: Vec::new(),
             promis_before_mining: None,
-            gem_expiry_baseline: None,
             lifecycle_nods: Vec::new(),
             #[cfg(feature = "ocomp-integration")]
             entity_lifecycle: Default::default(),

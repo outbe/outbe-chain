@@ -5,6 +5,7 @@
 pub(crate) mod chain;
 pub(crate) mod entity;
 pub(crate) mod guards;
+pub(crate) mod holders;
 pub(crate) mod markets;
 pub(crate) mod payment;
 pub(crate) mod phases;
@@ -16,7 +17,7 @@ pub struct LifecycleLedger {
     pub(crate) payments: Vec<payment::Payment>,
     /// How many of `payments` a vault check already covered.
     pub(crate) verified: usize,
-    /// The block and unallocated pool just before the call notice was let lapse.
+    /// The block and unallocated pool the forfeit is measured from.
     pub(crate) pool_before_forfeit: Option<(u64, alloy_primitives::U256)>,
     pub(crate) mined: Vec<redeem::Mined>,
     pub(crate) redeemed: Vec<redeem::Redeemed>,

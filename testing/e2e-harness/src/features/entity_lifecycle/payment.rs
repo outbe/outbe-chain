@@ -34,6 +34,19 @@ pub(crate) struct Payment {
 pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
     let url = world.rpc.url(world.validators.primary_port());
     match &target.item {
+        Item::Gem(id) => {
+            let quote = eth::read_call(
+                &url,
+                addresses::GEM_FACTORY_ADDR,
+                &eth::IGemFactory::quoteSettlementCall { gemId: *id, asset },
+            )
+            .unwrap_or_else(|| panic!("gem {id} does not quote a payment in {asset}"));
+            Quote {
+                currency: quote.settlementCurrency,
+                payable: quote.payableUnits,
+                snapshot: quote.snapshotId,
+            }
+        }
         Item::Nod(id) => {
             let quote = eth::read_call(
                 &url,
@@ -53,6 +66,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
 /// The factory a holding is settled through.
 pub(crate) fn factory(target: &Target) -> Address {
     match target.item {
+        Item::Gem(_) => addresses::GEM_FACTORY_ADDR,
         Item::Nod(_) => addresses::NOD_FACTORY_ADDR,
     }
 }
@@ -160,6 +174,16 @@ fn settle_erc20(
     snapshot: U256,
 ) -> eth::MinedCallOutcome {
     match &target.item {
+        Item::Gem(id) => send(
+            url,
+            payer_key,
+            addresses::GEM_FACTORY_ADDR,
+            &eth::IGemFactory::settleGemCall {
+                gemId: *id,
+                asset,
+                snapshotId: snapshot,
+            },
+        ),
         Item::Nod(id) => send(
             url,
             payer_key,
@@ -180,6 +204,15 @@ fn settle_paynote(
     proof: Vec<u8>,
 ) -> eth::MinedCallOutcome {
     match &target.item {
+        Item::Gem(id) => send(
+            url,
+            payer_key,
+            addresses::GEM_FACTORY_ADDR,
+            &eth::IGemFactory::settleGemWithPayNoteCall {
+                gemId: *id,
+                payNoteProof: proof.into(),
+            },
+        ),
         Item::Nod(id) => send(
             url,
             payer_key,
@@ -202,11 +235,27 @@ fn assert_paid_event(
     target: &Target,
     rail: Rail,
     asset: Address,
-    _currency: u16,
+    currency: u16,
     payable: U256,
     receipt: &serde_json::Value,
 ) {
     match &target.item {
+        Item::Gem(id) => {
+            let settled = eth::receipt_event::<eth::IGemFactory::GemSettled>(
+                receipt,
+                addresses::GEM_FACTORY_ADDR,
+            );
+            assert_eq!(
+                (
+                    settled.gemId,
+                    settled.owner,
+                    settled.amountPaid,
+                    settled.settlementCurrency
+                ),
+                (*id, target.owner, payable, currency),
+                "GemSettled does not record this payment"
+            );
+        }
         Item::Nod(id) => {
             let paid = eth::receipt_event::<eth::INodFactory::NodPaid>(
                 receipt,

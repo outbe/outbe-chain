@@ -8569,6 +8569,8 @@ dependencies = [
  "outbe-consensus",
  "outbe-evm",
  "outbe-fidelity",
+ "outbe-gem",
+ "outbe-gemfactory",
  "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",

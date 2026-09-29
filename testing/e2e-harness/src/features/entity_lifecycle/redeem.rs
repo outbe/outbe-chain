@@ -3,21 +3,25 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::units::checked_protocol_to_native;
-use outbe_tee::protocol::GratisOp;
+use outbe_tee::protocol::{GratisOp, PromisOp};
 
-use crate::features::settlement::{assert_mined_success, chain_id_b256, gratis_balance};
+use crate::features::settlement::{
+    assert_mined_success, chain_id_b256, gratis_balance, promis_balance,
+};
 use crate::internal::{addresses, eth};
 use crate::world::World;
 
 /// The confidential balance a paid holding mines into.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Ledger {
+    Promis,
     Gratis,
 }
 
 impl Ledger {
     fn tee(self) -> outbe_tee::protocol::Ledger {
         match self {
+            Self::Promis => outbe_tee::protocol::Ledger::Promis,
             Self::Gratis => outbe_tee::protocol::Ledger::Gratis,
         }
     }
@@ -48,6 +52,7 @@ pub(crate) fn balance(world: &World, ledger: Ledger, owner_key: &str, owner: Add
     let keys = eth::derive_account_keys(&url, owner_key, ledger.tee())
         .expect("derive the owner's confidential keys");
     match ledger {
+        Ledger::Promis => promis_balance(&url, owner, &keys.view),
         Ledger::Gratis => gratis_balance(&url, owner, &keys.view),
     }
 }
@@ -77,6 +82,24 @@ fn authorization(
         .expect("derive the owner's modify key");
     let chain_id = chain_id_b256(world);
     match ledger {
+        Ledger::Promis => {
+            let nonce = eth::read_call(
+                &url,
+                addresses::PROMIS_ADDR,
+                &eth::IPromis::opNonceOfCall { account: owner },
+            )
+            .expect("Promis operation nonce");
+            let op = if mint { PromisOp::Mint } else { PromisOp::Burn };
+            let mac = outbe_tee_enclave::promis::modify_mac(
+                &keys.modify,
+                owner,
+                op,
+                amount,
+                nonce,
+                chain_id,
+            );
+            (B256::from(mac), nonce)
+        }
         Ledger::Gratis => {
             let nonce = eth::read_call(
                 &url,
@@ -127,6 +150,17 @@ pub(crate) fn redeem(world: &World, mined: &[Mined]) -> Vec<Redeemed> {
             );
             let native_before = eth::balance(&url, record.owner).expect("native balance");
             let outcome = match record.ledger {
+                Ledger::Promis => eth::send_call_outcome(
+                    &url,
+                    addresses::PROMIS_FACTORY_ADDR,
+                    &record.owner_key,
+                    &eth::IPromisFactory::mineCoenCall {
+                        amount: record.amount,
+                        mac,
+                        opNonce: nonce,
+                    },
+                    None,
+                ),
                 Ledger::Gratis => eth::send_call_outcome(
                     &url,
                     addresses::GRATIS_FACTORY_ADDR,

@@ -3,6 +3,7 @@
 //! product's own error type renders.
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_gemfactory::errors::GemFactoryError;
 use outbe_nodfactory::errors::NodFactoryError;
 
 use super::entity::{Item, Target};
@@ -17,6 +18,13 @@ pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
     let payer = third_party(world);
     let asset = currency(world, USD_ISO).asset;
     match &target.item {
+        Item::Gem(id) => assert_refused(
+            world,
+            payer,
+            factory(target),
+            &erc20_gem(*id, asset, U256::ZERO),
+            GemFactoryError::InvalidState,
+        ),
         Item::Nod(id) => assert_refused(
             world,
             payer,
@@ -41,6 +49,38 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
     );
     let note = foreign_note(world, target);
     match &target.item {
+        Item::Gem(id) => {
+            assert_refused(
+                world,
+                payer,
+                factory(target),
+                &erc20_gem(*id, myr, U256::ZERO),
+                GemFactoryError::VwapSnapshotMismatch {
+                    authorized: U256::ZERO,
+                    required,
+                },
+            );
+            assert_refused(
+                world,
+                payer,
+                factory(target),
+                &erc20_gem(*id, eur, U256::ZERO),
+                GemFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
+            );
+            assert_refused(
+                world,
+                target.owner,
+                factory(target),
+                &eth::IGemFactory::settleGemWithPayNoteCall {
+                    gemId: *id,
+                    payNoteProof: note.into(),
+                },
+                GemFactoryError::PayNoteOwnerMismatch {
+                    expected: target.owner,
+                    actual: payer,
+                },
+            );
+        }
         Item::Nod(id) => {
             assert_refused(
                 world,
@@ -79,6 +119,13 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
 /// A holding nobody paid for cannot be mined.
 pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
     match &target.item {
+        Item::Gem(id) => assert_refused(
+            world,
+            target.owner,
+            factory(target),
+            &mine_gem(*id),
+            GemFactoryError::InvalidState,
+        ),
         Item::Nod(id) => assert_refused(
             world,
             target.owner,
@@ -92,6 +139,13 @@ pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
 /// A holding mined once is gone, so mining it again finds nothing.
 pub(crate) fn assert_mined_unminable(world: &World, target: &Target) {
     match &target.item {
+        Item::Gem(id) => assert_refused(
+            world,
+            target.owner,
+            factory(target),
+            &mine_gem(*id),
+            GemFactoryError::GemNotFound,
+        ),
         Item::Nod(id) => assert_refused(
             world,
             target.owner,
@@ -119,6 +173,23 @@ fn foreign_note(world: &World, target: &Target) -> Vec<u8> {
         usd,
         quote(world, target, usd).payable,
     )
+}
+
+fn erc20_gem(id: U256, asset: Address, snapshot: U256) -> eth::IGemFactory::settleGemCall {
+    eth::IGemFactory::settleGemCall {
+        gemId: id,
+        asset,
+        snapshotId: snapshot,
+    }
+}
+
+fn mine_gem(id: U256) -> eth::IGemFactory::minePromisCall {
+    eth::IGemFactory::minePromisCall {
+        gemId: id,
+        nonce: 0,
+        mac: B256::ZERO,
+        opNonce: 0,
+    }
 }
 
 fn erc20_nod(id: U256, asset: Address, snapshot: U256) -> eth::INodFactory::settleNodCall {
