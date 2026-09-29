@@ -143,7 +143,7 @@ pub(super) async fn upgrade_finalize(
     };
     let binding = exact.binding.as_ref().expect("matching finalized binding");
     let finalized = FinalizedReplacementBindingV1 {
-        view: exact.view.clone(),
+        view: exact.view,
         node_id_hash: binding.node_id_hash,
         enclave_id: binding.enclave_id,
         binding_id: binding.binding_id,

@@ -12,7 +12,7 @@ pub const BLS_PUBLIC_KEY_LEN: usize = 256;
 ///
 /// Storage remains three compressed 32-byte words, preserving existing records.
 /// Public inputs and outputs use the 256-byte EIP-2537 representation.
-/// All three words zero selects live `IDaInbox(l1_address).groupPubKey()` lookup;
+/// All three words zero selects live `IDaInbox(inbox_address).groupPubKey()` lookup;
 /// the registration still exists because `l1_address` remains nonzero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = l1_address)]
@@ -20,7 +20,7 @@ pub struct L2NetworkRecord {
     #[key]
     pub chain_id: u64,
 
-    /// L1 operator account managing the network, not a required Tribute submitter.
+    /// L1 owner authorized to rotate the key or remove the network.
     /// Non-zero for every registered network; doubles as the existence marker.
     #[attribute(order = 0)]
     pub l1_address: Address,
@@ -72,7 +72,8 @@ impl L2NetworkRecord {
 ///
 /// Storage slots:
 ///   0: networks - mapping(chain_id => L2NetworkRecord) (4 slots)
-///   1: l1_to_chain - mapping(l1_address => chain_id), 0 = absent
+///   4: l1_to_chain - mapping(l1_address => chain_id), 0 = absent
+///   5: inbox_addresses - mapping(chain_id => key getter), 0 = l1_address
 #[storage_schema]
 #[contract(addr = L2_REGISTRY_ADDRESS)]
 pub struct L2RegistryContract {
@@ -84,4 +85,9 @@ pub struct L2RegistryContract {
     /// which is why chain id 0 is rejected at registration.
     #[attribute(order = 1)]
     pub l1_to_chain: outbe_primitives::storage::dsl::Map<Address, u64>,
+
+    /// Optional key getter, separate from the owner. Zero preserves legacy
+    /// registrations where the owner itself implements `groupPubKey()`.
+    #[attribute(order = 2)]
+    pub inbox_addresses: outbe_primitives::storage::dsl::Map<u64, Address>,
 }

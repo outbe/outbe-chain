@@ -25,6 +25,8 @@ pub enum CcaError {
     Arithmetic,
     #[error("CCA address must be nonzero")]
     ZeroAddress,
+    #[error("CCA active set is full")]
+    ActiveSetFull,
 }
 
 impl From<CcaError> for PrecompileError {
