@@ -5,6 +5,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolCall;
 use cucumber::{given, then, when};
 use outbe_nod::constants::{
     CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_THRESHOLD_DAYS,
@@ -48,6 +49,8 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 120;
 const QUALIFY_TIMEOUT_SECS: u64 = 120;
 /// The call sweep runs on the shortened e2e cadence, not instantly.
 const CALL_TIMEOUT_SECS: u64 = 300;
+/// How long a Nod view may trail the block that wrote it.
+const READ_TIMEOUT_SECS: u64 = 60;
 /// Once the notice has lapsed the next sweep burns the unpaid Nod.
 const FORFEIT_TIMEOUT_SECS: u64 = 300;
 
@@ -323,36 +326,44 @@ fn forfeited_nod(world: &World) -> U256 {
 }
 
 fn nod_balance(url: &str, owner: Address) -> U256 {
-    eth::read_call(
-        url,
-        addresses::NOD_ADDR,
-        &eth::INod::balanceOfCall { owner },
-    )
-    .expect("Nod balance")
+    read_nod_view(url, &eth::INod::balanceOfCall { owner }, "Nod balance")
 }
 
 fn read_nod(url: &str, id: U256) -> eth::INod::NodData {
-    eth::read_call(
-        url,
-        addresses::NOD_ADDR,
-        &eth::INod::nodDataCall { nodId: id },
-    )
-    .expect("Nod data")
+    read_nod_view(url, &eth::INod::nodDataCall { nodId: id }, "Nod data")
+}
+
+/// Nod views read through the compressed-body projection, which trails the block
+/// that wrote the body, so a fresh write can answer an error for a moment.
+fn read_nod_view<C>(url: &str, call: &C, what: &str) -> C::Return
+where
+    C: SolCall,
+    C::Return: Send + 'static,
+{
+    let deadline = Instant::now() + Duration::from_secs(READ_TIMEOUT_SECS);
+    loop {
+        match eth::read_call_result(url, addresses::NOD_ADDR, call) {
+            Ok(value) => return value,
+            Err(error) => {
+                assert!(Instant::now() < deadline, "{what}: {error}");
+                sleep(Duration::from_secs(1));
+            }
+        }
+    }
 }
 
 fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {
         if nod_balance(url, owner) == U256::ONE {
-            return eth::read_call(
+            return read_nod_view(
                 url,
-                addresses::NOD_ADDR,
                 &eth::INod::tokenOfOwnerByIndexCall {
                     owner,
                     index: U256::ZERO,
                 },
-            )
-            .expect("owner's Nod id");
+                "owner's Nod id",
+            );
         }
         assert!(
             Instant::now() < deadline,
