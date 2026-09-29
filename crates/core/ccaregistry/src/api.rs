@@ -2,12 +2,16 @@
 pub use crate::precompile::ICcaRegistry;
 pub use crate::runtime::{position_opened, position_voided};
 use crate::{
+    constants::MAX_ACTIVE_CCAS,
     errors::CcaError,
     schema::{address_day_key, CcaContract},
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    error::{PrecompileError, Result},
+    storage::StorageHandle,
+};
 
 pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry::State> {
     Ok(CcaContract::new(storage.clone()).load(cca)?.state)
@@ -50,13 +54,23 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
 
 /// Positive net Gratis weights for CCAs active at the time of settlement.
 /// Historical day buckets are read without mutation.
+///
+/// Enumeration is limited to [`MAX_ACTIVE_CCAS`]. A longer index fails settlement.
 pub fn active_reward_weights(
     storage: &StorageHandle<'_>,
     day: u32,
 ) -> Result<Vec<(Address, U256)>> {
     let contract = CcaContract::new(storage.clone());
+    let len = contract.active.len()?;
+    if len > MAX_ACTIVE_CCAS {
+        return Err(CcaError::ActiveSetFull.into());
+    }
     let mut weights = Vec::new();
-    for cca in contract.active.read_all()? {
+    for index in 0..len {
+        let cca = contract
+            .active
+            .at(index)?
+            .ok_or_else(|| PrecompileError::Fatal("CCA active index entry missing".into()))?;
         let weight = contract
             .gratis_sum_per_utc_day
             .read(&address_day_key(cca, day))?;

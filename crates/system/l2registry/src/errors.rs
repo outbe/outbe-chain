@@ -17,6 +17,9 @@ pub enum L2RegistryError {
     #[error("l1 address must be non-zero")]
     InvalidL1Address,
 
+    #[error("inbox address must be non-zero")]
+    InvalidInboxAddress,
+
     #[error("EIP-2537 G2 public key must be 256 bytes, got {length}")]
     InvalidPublicKeyLength { length: usize },
 

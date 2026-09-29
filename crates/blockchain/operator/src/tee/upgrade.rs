@@ -1047,10 +1047,9 @@ pub async fn run_upgrade_submission_v1(
             UpgradeJournalStateV1::CandidateKeyReady { .. }
                 | UpgradeJournalStateV1::SubmissionPrepared { .. }
                 | UpgradeJournalStateV1::Submitted { .. }
-        ) {
-            if reset_expired_upgrade_submission_v1(rpc, node_data_dir, selector, &snapshot).await? {
-                continue;
-            }
+        ) && reset_expired_upgrade_submission_v1(rpc, node_data_dir, selector, &snapshot).await?
+        {
+            continue;
         }
         match snapshot.lifecycle {
             UpgradeJournalStateV1::CandidatePrepared { .. } => {

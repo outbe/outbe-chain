@@ -648,7 +648,7 @@ pub(crate) fn validate_snapshot_with_node(
     Ok(report)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) fn validate_snapshot(
     inputs: &ValidationInputs,
     node_args: Vec<std::ffi::OsString>,

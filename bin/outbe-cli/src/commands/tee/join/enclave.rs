@@ -19,7 +19,7 @@ use outbe_tee::ReplacementCandidateEnclaveV1;
 use outbe_tee::TransportError;
 
 pub(in super::super) enum JoinEnclave {
-    Committed(AuthorizedEnclaveClient),
+    Committed(Box<AuthorizedEnclaveClient>),
     Candidate(Box<ReplacementCandidateEnclaveV1>),
     Development(Box<EnclaveClient>),
 }

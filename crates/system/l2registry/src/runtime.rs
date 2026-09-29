@@ -32,11 +32,25 @@ impl L2RegistryContract<'_> {
         l1_address: Address,
         public_key: &[u8],
     ) -> Result<()> {
+        self.register_network_with_inbox(chain_id, l1_address, l1_address, public_key)
+    }
+
+    /// Registers an owner and an independently addressed live key getter.
+    pub fn register_network_with_inbox(
+        &mut self,
+        chain_id: u64,
+        l1_address: Address,
+        inbox_address: Address,
+        public_key: &[u8],
+    ) -> Result<()> {
         if chain_id == 0 {
             return Err(L2RegistryError::InvalidChainId.into());
         }
         if l1_address == Address::ZERO {
             return Err(L2RegistryError::InvalidL1Address.into());
+        }
+        if inbox_address == Address::ZERO {
+            return Err(L2RegistryError::InvalidInboxAddress.into());
         }
         let pubkey = decode_optional_public_key(public_key)?;
 
@@ -66,6 +80,9 @@ impl L2RegistryContract<'_> {
                 pubkey_hi,
             })?;
             self.l1_to_chain.write(&l1_address, chain_id)?;
+            if inbox_address != l1_address {
+                self.inbox_addresses.write(&chain_id, inbox_address)?;
+            }
 
             self.emit(IL2Registry::L2NetworkRegistered {
                 chainId: chain_id,
@@ -120,6 +137,7 @@ impl L2RegistryContract<'_> {
         storage.with_checkpoint(|| {
             self.networks.delete(chain_id)?;
             self.l1_to_chain.clear(&record.l1_address)?;
+            self.inbox_addresses.clear(&chain_id)?;
             self.emit(IL2Registry::L2NetworkRemoved { chainId: chain_id })?;
             Ok(())
         })
@@ -132,6 +150,16 @@ impl L2RegistryContract<'_> {
             .ok_or_else(|| L2RegistryError::NetworkNotRegistered { chain_id }.into())
     }
 
+    /// Returns the configured key getter, or the owner for legacy records.
+    pub fn inbox_address(&self, record: &L2NetworkRecord) -> Result<Address> {
+        let address = self.inbox_addresses.read(&record.chain_id)?;
+        Ok(if address == Address::ZERO {
+            record.l1_address
+        } else {
+            address
+        })
+    }
+
     /// Resolves the current signing key without caching the inbox's response.
     pub(crate) fn resolve_public_key(&self, record: &L2NetworkRecord) -> Result<G2> {
         let public_key = record.compressed_public_key_bytes();
@@ -142,7 +170,7 @@ impl L2RegistryContract<'_> {
 
         self.storage.deduct_gas(INBOX_KEY_READ_GAS)?;
         let response = match self.storage.try_staticcall_with_gas(
-            record.l1_address,
+            self.inbox_address(record)?,
             IDaInbox::groupPubKeyCall {}.abi_encode().into(),
             INBOX_KEY_READ_GAS,
         ) {

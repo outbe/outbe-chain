@@ -24,6 +24,8 @@ enum L2RegistryVotePayloadJsonV1 {
     Register {
         chain_id: u64,
         l1_address: String,
+        #[serde(default)]
+        inbox_address: Option<String>,
         public_key: String,
     },
 }
@@ -34,6 +36,7 @@ pub enum L2RegistryVotePayloadV1 {
     Register {
         chain_id: u64,
         l1_address: Address,
+        inbox_address: Address,
         public_key: [u8; BLS_PUBLIC_KEY_LEN],
     },
 }
@@ -46,6 +49,7 @@ impl L2RegistryVotePayloadV1 {
             L2RegistryVotePayloadJsonV1::Register {
                 chain_id,
                 l1_address,
+                inbox_address,
                 public_key,
             } => {
                 if chain_id == 0 {
@@ -56,11 +60,22 @@ impl L2RegistryVotePayloadV1 {
                 if l1_address.is_zero() {
                     return Err(L2RegistryError::InvalidL1Address);
                 }
+                let inbox_address = inbox_address
+                    .as_deref()
+                    .map(|value| {
+                        Address::from_str(value)
+                            .map_err(|_| L2RegistryError::InvalidProposalPayload)
+                    })
+                    .transpose()?
+                    .unwrap_or(l1_address);
+                if inbox_address.is_zero() {
+                    return Err(L2RegistryError::InvalidInboxAddress);
+                }
                 let encoded = public_key
                     .strip_prefix("0x")
                     .ok_or(L2RegistryError::InvalidPublicKeyEncoding)?;
                 // `0x` (and 256 zero bytes) pin no key: reads resolve
-                // `IDaInbox.groupPubKey()` at `l1_address` instead.
+                // `IDaInbox.groupPubKey()` at `inbox_address` instead.
                 let mut key = [0u8; BLS_PUBLIC_KEY_LEN];
                 if !encoded.is_empty() {
                     hex::decode_to_slice(encoded, &mut key).map_err(|_| {
@@ -76,6 +91,7 @@ impl L2RegistryVotePayloadV1 {
                 Ok(Self::Register {
                     chain_id,
                     l1_address,
+                    inbox_address,
                     public_key: key,
                 })
             }
@@ -87,8 +103,14 @@ impl L2RegistryVotePayloadV1 {
             Self::Register {
                 chain_id,
                 l1_address,
+                inbox_address,
                 public_key,
-            } => registry.register_network(*chain_id, *l1_address, public_key),
+            } => registry.register_network_with_inbox(
+                *chain_id,
+                *l1_address,
+                *inbox_address,
+                public_key,
+            ),
         }
     }
 }
@@ -181,6 +203,39 @@ mod tests {
             L2RegistryVotePayloadV1::decode_json(br#"{"operation":"remove","chainId":4242}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn registration_accepts_distinct_owner_and_inbox() {
+        let payload = register_json_with_key(
+            4242,
+            "",
+            ",\"inboxAddress\":\"0x2222222222222222222222222222222222222222\"",
+        );
+        let decoded = L2RegistryVotePayloadV1::decode_json(payload.as_bytes()).unwrap();
+        let L2RegistryVotePayloadV1::Register {
+            l1_address,
+            inbox_address,
+            ..
+        } = &decoded;
+        assert_eq!(*l1_address, Address::repeat_byte(0x11));
+        assert_eq!(*inbox_address, Address::repeat_byte(0x22));
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                storage.clone(),
+            );
+            assert_eq!(
+                L2RegistryVoteTarget
+                    .handle_approved(&ctx, U256::ONE, payload.as_bytes(), vote_context())
+                    .unwrap(),
+                TargetExecutionOutcome::Applied
+            );
+            let registry = L2RegistryContract::new(storage);
+            let record = registry.load_network(4242).unwrap();
+            assert_eq!(registry.inbox_address(&record).unwrap(), *inbox_address);
+        });
     }
 
     #[test]
