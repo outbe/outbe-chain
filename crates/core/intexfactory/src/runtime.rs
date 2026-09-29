@@ -10,7 +10,7 @@ use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
-use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
+use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::IntexState;
@@ -285,9 +285,9 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-/// Cost of `amount` units in payment-token minor units, floored once over the
-/// whole operation. `rate` is `(COEN/target, COEN/reference)` when the token is
-/// not in the reference currency.
+/// Cost of `amount` units in payment-token minor units, floored once above the
+/// per-unit minimum of one reference-currency minor unit. `rate` is
+/// `(COEN/target, COEN/reference)` when the token is not in the reference currency.
 pub(crate) fn settlement_units(
     product: U256,
     amount: U256,
@@ -295,6 +295,13 @@ pub(crate) fn settlement_units(
     payment_decimals: u8,
 ) -> Result<U256> {
     let overflow = || PrecompileError::Revert("settlement cost overflow".into());
+    // Per unit, so units batched into one call cannot share a single minimum.
+    // A priceless series stays free.
+    let product = if product.is_zero() {
+        product
+    } else {
+        product.max(SCALE_1E6_U256)
+    };
     let obligation = product.checked_mul(amount).ok_or_else(overflow)?;
     let (numerator, denominator) = match rate {
         Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
@@ -933,7 +940,7 @@ enum PaymentCurrency {
 /// Cost of `amount` units in `token`'s minor units and, on the issuance rail, the
 /// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
 /// reference currency; an issuance-currency token is charged at the snapshot's
-/// COEN cross rate, folded into the same fraction so the operation is floored once.
+/// COEN cross rate, folded into the same fraction so the conversion floors once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
