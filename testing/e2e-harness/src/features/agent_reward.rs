@@ -215,10 +215,24 @@ fn observe_agent_rewards(world: &mut World) {
     let ports = world.validators.committee_ports();
     let deadline = Instant::now() + AGENT_REWARD_WAIT;
     let (checkpoint, balances) = loop {
-        let checkpoint = world
+        let checkpoint = match world
             .rpc
             .wait_finalized_checkpoint(&ports, before.height, 1)
-            .expect("common finalized AgentReward checkpoint");
+        {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                // A validator may temporarily reject RPC reads while it
+                // catches up with the finalized settlement block. Retry this
+                // observation after three seconds, including errors returned
+                // immediately by the exact checkpoint read.
+                assert!(
+                    Instant::now() < deadline,
+                    "common finalized AgentReward checkpoint unavailable after settlement wait: {error:#}"
+                );
+                sleep(Duration::from_secs(3));
+                continue;
+            }
+        };
         let balances = reward_balances_at(
             world,
             checkpoint,
