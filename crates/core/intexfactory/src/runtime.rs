@@ -295,8 +295,8 @@ pub(crate) fn settlement_units(
     payment_decimals: u8,
 ) -> Result<U256> {
     let overflow = || PrecompileError::Revert("settlement cost overflow".into());
-    // Per unit, so that settling a series in one call costs what settling it
-    // unit by unit costs. A priceless series stays free.
+    // Per unit, so units batched into one call cannot share a single minimum.
+    // A priceless series stays free.
     let product = if product.is_zero() {
         product
     } else {
