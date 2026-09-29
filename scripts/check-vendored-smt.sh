@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-vendor_dir="$repo_root/crates/core/compressed-entities/vendor/sparse-merkle-tree"
+vendor_dir="$repo_root/crates/core/offchain-entities/vendor/sparse-merkle-tree"
 cd "$vendor_dir"
 
 if command -v sha256sum >/dev/null 2>&1; then
