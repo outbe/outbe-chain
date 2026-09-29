@@ -405,8 +405,15 @@ fn issue(world: &mut World) {
         },
         Some(stake),
     );
-    let mut preimage = f.pledge.to_vec();
+    let block = receipt["blockNumber"]
+        .as_str()
+        .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+        .expect("issuance block number");
+    let mut preimage = Vec::with_capacity(68);
+    preimage.extend_from_slice(f.cca.as_slice());
     preimage.extend_from_slice(f.account.as_slice());
+    preimage.extend_from_slice(f.currency.asset.as_slice());
+    preimage.extend_from_slice(&block.to_be_bytes());
     let id = U256::from_be_bytes(keccak256(preimage).0);
     assert_receipt_event(
         &receipt,
