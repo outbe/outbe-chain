@@ -1,7 +1,6 @@
 //! Rounding rule shared by Nod, Intex and Gem settlement: the obligation is
 //! computed at full precision, any FX leg included, then floored once into the
-//! settlement asset's minor units. Callers raise a positive obligation to their
-//! own minimum before handing it over.
+//! settlement asset's minor units.
 
 use alloy_primitives::U256;
 use core::fmt;
