@@ -14,7 +14,7 @@ pub use memory::MemoryStorage;
 pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
 pub use pending::PendingOverlayStorage;
 pub use provider::{OpenedStorage, StorageOwnershipGuard, StorageProvider, StorageReadSource};
-pub use rocks::{RocksDbReader, RocksDbStorage};
+pub use rocks::{RocksDbCloseWaiter, RocksDbReader, RocksDbStorage};
 pub use types::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
     StorageError, StorageErrorKind, StorageMetadata, StoredValue, Value, MAX_ATOMIC_BATCH_BYTES,

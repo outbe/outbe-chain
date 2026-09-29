@@ -15,6 +15,7 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
+use outbe_offchain_storage::RocksDbCloseWaiter;
 use outbe_offchain_storage::StorageConfig;
 use outbe_offchain_storage::StorageError;
 use outbe_offchain_storage::StorageErrorKind;
@@ -64,6 +65,12 @@ pub struct PreparedOffchainDataProjection {
 }
 
 impl PreparedOffchainDataProjection {
+    /// Completion of the primary RocksDB destructor, if this node uses RocksDB.
+    #[must_use]
+    pub fn rocksdb_close_waiter(&self) -> Option<RocksDbCloseWaiter> {
+        self.storage.ownership.rocksdb_close_waiter()
+    }
+
     /// Typed read-only capabilities injected into EVM execution.
     #[must_use]
     pub fn runtime_body_readers(&self) -> RuntimeBodyReaders {
