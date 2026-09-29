@@ -3,16 +3,17 @@
 use eyre::Result;
 use reth_cli_runner::CliRunner;
 use reth_ethereum::tasks::{RuntimeConfig, TokioConfig};
-use std::time::Duration;
 
 /// The Tokio owner must never be retained by provider/network task clones.
-/// Match CliRunner's bounded runtime teardown, including while unwinding.
+/// Join blocking work before process exit, including while unwinding.
 struct ExecutionRuntimeOwner(Option<tokio::runtime::Runtime>);
 
 impl Drop for ExecutionRuntimeOwner {
     fn drop(&mut self) {
         if let Some(runtime) = self.0.take() {
-            runtime.shutdown_timeout(Duration::from_secs(5));
+            // A timed shutdown can leave a worker closing RocksDB after C++
+            // process-global mutexes have been destroyed by exit().
+            drop(runtime);
         }
     }
 }
@@ -54,6 +55,49 @@ pub(super) fn run_with_execution_runtime(
 mod tests {
     use super::*;
     use std::{panic::AssertUnwindSafe, sync::mpsc, time::Duration};
+
+    #[test]
+    fn cli_waits_for_blocking_offchain_storage_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("offchain");
+        let storage = outbe_offchain_storage::RocksDbStorage::open(&path).unwrap();
+        let (started, task_started) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (closed, storage_closed) = mpsc::channel();
+        let (returned, cli_returned) = mpsc::channel();
+
+        let launcher = std::thread::spawn(move || {
+            let result = run_with_execution_runtime(RuntimeConfig::default(), |runner| {
+                runner.runtime().handle().spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    drop(storage);
+                    closed.send(()).unwrap();
+                });
+                Ok(())
+            });
+            returned.send(result).unwrap();
+        });
+
+        task_started.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The old five-second shutdown_timeout returns while this task still
+        // owns the DB, allowing process exit to destroy RocksDB's C++ mutexes.
+        let early_result = cli_returned.recv_timeout(Duration::from_millis(5_500)).ok();
+        let returned_before_close = early_result.is_some();
+        release.send(()).unwrap();
+        storage_closed
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        let result = early_result
+            .unwrap_or_else(|| cli_returned.recv_timeout(Duration::from_secs(10)).unwrap());
+        launcher.join().unwrap();
+        result.unwrap();
+        assert!(
+            !returned_before_close,
+            "CLI returned before offchain DB closed"
+        );
+        drop(outbe_offchain_storage::RocksDbStorage::open(&path).unwrap());
+    }
 
     #[test]
     fn late_provider_runtime_clone_can_drop_in_async_task_after_runner_shutdown() {
