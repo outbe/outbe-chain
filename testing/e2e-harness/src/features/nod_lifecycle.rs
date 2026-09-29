@@ -25,6 +25,7 @@ alloy_sol_types::sol! {
             uint32 worldwideDay,
             uint256 gratisLoadMinor,
             uint256 entryPriceMinor,
+            uint16 issuanceCurrency,
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
@@ -73,6 +74,7 @@ fn issue_two_nods(world: &mut World) {
             worldwideDay: day,
             gratisLoadMinor: U256::from(GRATIS_LOAD_MINOR),
             entryPriceMinor: U256::from(ENTRY_PRICE_MINOR),
+            issuanceCurrency: USD_ISO,
             referenceCurrency: USD_ISO,
             issuedAt: issued_at,
         };

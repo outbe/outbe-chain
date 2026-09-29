@@ -33,6 +33,7 @@ alloy_sol_types::sol! {
             uint32 worldwideDay,
             uint256 gratisLoadMinor,
             uint256 entryPriceMinor,
+            uint16 issuanceCurrency,
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
@@ -57,7 +58,7 @@ fn issue_for_test(
         league_id: 1,
         gratis_load_minor: call.gratisLoadMinor,
         entry_price_minor: call.entryPriceMinor,
-        issuance_currency: call.referenceCurrency,
+        issuance_currency: call.issuanceCurrency,
         reference_currency: call.referenceCurrency,
     };
     runtime::issue_nod(storage, scope, parent, &params)?;
