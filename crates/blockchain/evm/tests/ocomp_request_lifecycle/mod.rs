@@ -86,7 +86,7 @@ use outbe_primitives::{
         direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
         MetadosisMutationPurposeTag, StorageHandle,
     },
-    OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
+    OutbeBlock, OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_txpool::OutbeTransactionOrdering;
@@ -100,10 +100,10 @@ use reth_chainspec::{ChainInfo, ChainSpec, ChainSpecBuilder, ChainSpecProvider};
 use reth_ethereum::{Transaction, TransactionSigned};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{execute::Executor as _, ConfigureEvm, RecoveredTx};
-use reth_payload_primitives::BuiltPayload as _;
+use reth_payload_primitives::{BuiltPayload as _, PayloadBuilderError};
 use reth_primitives_traits::{
     crypto::secp256k1::sign_message as sign_secp256k1_message, Account, AlloyBlockHeader as _,
-    Bytecode, SealedHeader, SignedTransaction,
+    Bytecode, SealedBlock, SealedHeader, SignedTransaction,
 };
 use reth_provider::{
     test_utils::{ExtendedAccount, MockEthProvider},
@@ -139,7 +139,12 @@ const BURNER_ADDRESS: Address = address!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 
 mod support;
 use support::*;
+pub(super) mod carrier_overlay;
+pub(super) mod carrier_skip;
+pub(super) mod carrier_state_unavailable;
+pub(super) mod early_vote;
 pub(super) mod expiry;
+pub(super) mod near_cap;
 pub(super) mod quorum;
 pub(super) mod rejection;
 mod request;

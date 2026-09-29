@@ -10,6 +10,7 @@ pub(in crate::lifecycle) struct CanonicalOcompSuccessor {
     pub(in crate::lifecycle) user_receipt_successes: Vec<bool>,
     pub(in crate::lifecycle) user_receipt_cumulative_gas: Vec<u64>,
     pub(in crate::lifecycle) header_state_root: B256,
+    pub(in crate::lifecycle) sealed_block: SealedBlock<OutbeBlock>,
 }
 
 pub(in crate::lifecycle) fn canonical_evm_config(
@@ -51,8 +52,51 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
     intent_id: B256,
     user_transactions: Vec<EthPooledTransaction>,
 ) -> CanonicalOcompSuccessor {
+    try_build_canonical_ocomp_successor(
+        chain_spec,
+        tree_service,
+        signer,
+        runtime_body_readers,
+        fork_install,
+        dkg,
+        snapshot,
+        proposer,
+        parent,
+        parent_storage,
+        height,
+        timestamp,
+        intent_id,
+        user_transactions,
+        None,
+    )
+    .expect("canonical OCOMP model successor builds")
+}
+
+/// Same as [`build_canonical_ocomp_successor`], but returns the payload
+/// builder error instead of panicking, so a test can assert that a failed
+/// build publishes nothing. `unreadable_slot` makes the parent state backend
+/// fail reads of that one slot.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
+    chain_spec: &Arc<ChainSpec<OutbeHeader>>,
+    tree_service: &Arc<CompressedTreeService>,
+    signer: &Arc<OutbeEvmSigner>,
+    runtime_body_readers: &RuntimeBodyReaders,
+    fork_install: &Arc<outbe_metadosis::config::OcompForkInstallV1>,
+    dkg: &Dkg,
+    snapshot: &CommitteeSnapshot,
+    proposer: Address,
+    parent: Arc<SealedHeader<OutbeHeader>>,
+    parent_storage: &HashMap<(Address, U256), U256>,
+    height: u64,
+    timestamp: u64,
+    intent_id: B256,
+    user_transactions: Vec<EthPooledTransaction>,
+    unreadable_slot: Option<(Address, B256)>,
+) -> Result<CanonicalOcompSuccessor, PayloadBuilderError> {
     assert_eq!(height, parent.number() + 1);
-    let provider = mock_provider(chain_spec, parent_storage);
+    let mut provider = mock_provider(chain_spec, parent_storage);
+    provider.unreadable_slot = unreadable_slot;
     provider.inner.add_block(
         parent.hash(),
         Block::new(parent.header().clone(), Default::default()),
@@ -101,9 +145,7 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
         PayloadId::new([u8::try_from(height).unwrap_or(u8::MAX); 8]),
     );
     let payload = if user_transaction_count == 0 {
-        builder
-            .build_empty_payload(payload_config)
-            .expect("canonical OCOMP model successor builds")
+        builder.build_empty_payload(payload_config)?
     } else {
         builder
             .try_build(BuildArguments::new(
@@ -113,8 +155,7 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
                 payload_config,
                 Default::default(),
                 None,
-            ))
-            .expect("canonical OCOMP model successor with public votes builds")
+            ))?
             .into_payload()
             .expect("canonical OCOMP model public-vote build returns a payload")
     };
@@ -223,7 +264,9 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
     tree_service
         .apply_finalized(height, payload.block().hash(), ce.r_sealed)
         .expect("canonical OCOMP model CE candidate finalizes before its child");
-    CanonicalOcompSuccessor {
+    let sealed_block = payload.block().clone();
+    Ok(CanonicalOcompSuccessor {
+        sealed_block,
         header: Arc::new(SealedHeader::new(
             payload.block().header().clone(),
             payload.block().hash(),
@@ -236,5 +279,5 @@ pub(in crate::lifecycle) fn build_canonical_ocomp_successor(
         user_receipt_successes,
         user_receipt_cumulative_gas,
         header_state_root,
-    }
+    })
 }

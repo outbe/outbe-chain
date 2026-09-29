@@ -38,6 +38,7 @@ alloy-sol-types.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 futures.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-oracle.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-tasks.workspace = true

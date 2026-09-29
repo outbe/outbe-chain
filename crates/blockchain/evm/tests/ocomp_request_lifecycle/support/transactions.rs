@@ -33,9 +33,17 @@ pub(in crate::lifecycle) fn pooled_vote_transaction(
     input: Bytes,
     validator_index: u8,
 ) -> EthPooledTransaction {
+    pooled_vote_transaction_at_nonce(input, validator_index, 0)
+}
+
+pub(in crate::lifecycle) fn pooled_vote_transaction_at_nonce(
+    input: Bytes,
+    validator_index: u8,
+    nonce: u64,
+) -> EthPooledTransaction {
     let transaction: Transaction = TxEip1559 {
         chain_id: CHAIN_ID,
-        nonce: 0,
+        nonce,
         gas_limit: 30_000,
         max_fee_per_gas: 1_000_000_000,
         max_priority_fee_per_gas: 0,

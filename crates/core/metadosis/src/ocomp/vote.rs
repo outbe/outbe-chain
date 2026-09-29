@@ -38,11 +38,11 @@ pub struct RecordedResultVoteV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ResolvedHistoricalResultVoteMemberV1 {
-    validator_address: Address,
+pub(super) struct ResolvedHistoricalResultVoteMemberV1 {
+    pub(super) validator_address: Address,
     validator_index: u16,
-    key_epoch: u64,
-    ocomp_public_key_sec1: [u8; 33],
+    pub(super) key_epoch: u64,
+    pub(super) ocomp_public_key_sec1: [u8; 33],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,7 +135,10 @@ pub fn dispatch_public_result_vote(
     Ok(Bytes::new())
 }
 
-fn preflight_result_vote_calldata<'a>(data: &'a [u8], limits: &SchemaLimits) -> Result<&'a [u8]> {
+pub(super) fn preflight_result_vote_calldata<'a>(
+    data: &'a [u8],
+    limits: &SchemaLimits,
+) -> Result<&'a [u8]> {
     outbe_ocomp_protocol::vote::decode_submit_lysis_result_prefix(data, limits).map_err(
         |error| {
             vote_reject(if matches!(error, ProtocolError::CapacityExceeded { .. }) {
@@ -268,7 +271,7 @@ pub fn resolve_historical_result_vote_participant(
     .map(|member| member.validator_address))
 }
 
-fn resolve_historical_result_vote_member(
+pub(super) fn resolve_historical_result_vote_member(
     storage: StorageHandle<'_>,
     snapshot_key: B256,
     member_count: u16,
@@ -326,6 +329,14 @@ pub fn resolve_historical_result_vote_carrier_signer(
     else {
         return Ok(None);
     };
+    authorize_historical_result_vote_carrier_signer(storage, historical_validator, signer)
+}
+
+pub(super) fn authorize_historical_result_vote_carrier_signer(
+    storage: StorageHandle<'_>,
+    historical_validator: Address,
+    signer: Address,
+) -> Result<Option<Address>> {
     let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
     let role = outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp;
     let explicit = validators.get_delegate(historical_validator, role)?;
