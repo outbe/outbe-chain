@@ -32,6 +32,7 @@ outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-l2registry.workspace = true
+outbe-hyperlanecontroller.workspace = true
 outbe-radicleregistry.workspace = true
 outbe-tee.workspace = true
 outbe-vote.workspace = true
@@ -141,6 +142,7 @@ e2e-test = [
     "outbe-intexfactory/e2e-test",
     "outbe-cycle/e2e-test",
     "outbe-gem/e2e-test",
+    "outbe-nodfactory/e2e-test",
 ]
 
 [package.metadata.cargo-machete]

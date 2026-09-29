@@ -23,6 +23,8 @@ pub mod governance;
 #[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;
 #[cfg(feature = "ocomp-integration")]
+pub mod nod_lifecycle;
+#[cfg(feature = "ocomp-integration")]
 mod tribute_expectations;
 pub mod update;
 

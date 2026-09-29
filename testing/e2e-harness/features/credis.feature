@@ -3,6 +3,7 @@ Feature: Credis happy flow and payments
   Scenario: Credis issuance happy path and three payments by user
     Given a prepared Credis localnet with funded actors and vault liquidity
     Then the controlled COEN USD quote is finalized through the real price feeder
+    And the pledge valuation window closes over that quote
     When the CCA reserves 300 stablecoins for the user's smart account
     Then the reservation holds the requested liquidity for those actors
     When the user pledges Gratis

@@ -134,6 +134,12 @@ const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
 
+/// The Nod call sweep is daily in production; an e2e run seeds the days it reads.
+#[cfg(not(feature = "e2e-test"))]
+const NOD_DAILY_PERIOD_SECONDS: u64 = 86_400;
+#[cfg(feature = "e2e-test")]
+const NOD_DAILY_PERIOD_SECONDS: u64 = 60;
+
 /// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
@@ -253,7 +259,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::NodCallDaily.as_u32(),
             label: "nod_daily",
-            period_seconds: 86_400,
+            period_seconds: NOD_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Calls and forfeits using the latest completed UTC day.
             // Missed slots would repeat the same scan against the current clock.

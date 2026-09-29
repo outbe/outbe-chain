@@ -35,6 +35,7 @@ members = [
     "crates/system/emit",
     "crates/system/ocomp-protocol",
     "crates/system/ocompregistry",
+    "crates/system/hyperlanecontroller",
     "crates/core/compressed-entities",
     # core outbe
     "crates/core/gratis",
@@ -72,6 +73,7 @@ members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
+    "bin/outbe-hyperlane-attester",
     "bin/outbe-ocomp",
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
@@ -135,6 +137,7 @@ outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
+outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
 outbe-radicleregistry = { path = "crates/system/radicleregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }

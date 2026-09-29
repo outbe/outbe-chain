@@ -8730,6 +8730,7 @@ dependencies = [
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
+ "outbe-hyperlanecontroller",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-l2registry",
@@ -8926,6 +8927,41 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-hyperlane-attester"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "outbe-hyperlanecontroller"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -10059,6 +10095,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-hyperlanecontroller",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-ocomp-protocol",

@@ -312,13 +312,13 @@ fn issue_wallet_cost_and_floor_markup_state_issued() {
 }
 
 #[test]
-fn issue_rejects_positive_price_and_load_when_six_decimal_cost_rounds_to_zero() {
+fn issue_charges_one_minor_unit_when_the_six_decimal_cost_rounds_to_zero() {
     with_storage(Some(U256::ONE), |storage| {
-        let result = issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840);
-        assert!(
-            result.is_err(),
-            "positive economics produced a zero-cost Gem"
-        );
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), U256::ONE);
     });
 }
 
@@ -689,17 +689,14 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         // Paying with the EUR asset picks the issuance rail.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 978);
-    assert_eq!(event.amountPaid, cost / U256::from(2u64));
+    assert_eq!(event.amountPaid, U256::from(10u64) * six_decimal_unit());
 }
 
 #[test]
@@ -751,6 +748,65 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
 }
 
 #[test]
+fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
+    with_storage(Some(U256::ONE), |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
+
+        for (rate, decimals, expected) in [
+            (None, 6, 1u64),
+            (None, 8, 100),
+            (None, 18, 1_000_000_000_000),
+            (fx(2, 1), 6, 2),
+            (fx(1, 2), 18, 500_000_000_000),
+        ] {
+            assert_eq!(
+                runtime::settlement_units(&item, rate, decimals).unwrap(),
+                U256::from(expected)
+            );
+        }
+        // The minimum is one reference minor unit, which a narrower asset and an
+        // unfavourable rate still floor away, as they do for Nod.
+        for (rate, decimals) in [(None, 0), (fx(1, 2), 6)] {
+            assert!(err_msg(runtime::settlement_units(&item, rate, decimals))
+                .contains("settlement cost rounds to zero"));
+        }
+    });
+}
+
+#[test]
+fn a_dust_gem_settles_for_one_minor_unit() {
+    let mut provider = test_storage(Some(U256::ONE));
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        seed_qualifying_day(storage, gem_id);
+        gem_id
+    });
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
+    });
+
+    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
+}
+
+#[test]
+fn the_settlement_minimum_ignores_the_sra_discount() {
+    with_storage(Some(U256::ONE), |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Sra, U256::ONE, 840, 840).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+
+        assert_eq!(
+            runtime::settlement_units(&item, None, 6).unwrap(),
+            U256::ONE
+        );
+    });
+}
+
+#[test]
 fn settling_on_an_unregistered_issuance_leg_is_refused() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     with_storage_paying(Some(usd_rate), STABLE_EUR, ALICE, |storage, proof| {
@@ -794,16 +850,13 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, cost);
+    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -850,16 +903,16 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         // An eighteen-decimal asset was a hard revert before; now it scales.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
-    assert_eq!(event.amountPaid, cost * U256::from(1_000_000_000_000u64));
+    assert_eq!(
+        event.amountPaid,
+        U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
+    );
 }
 
 #[test]
@@ -882,16 +935,13 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, cost);
+    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -1637,6 +1687,18 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.entry_price_minor, source_entry);
         assert_eq!(item.floor_price_minor, source_floor);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
+    with_storage(Some(U256::ONE), |storage| {
+        seed_day_vwap(storage, 840, U256::ONE);
+        let id = seed_and_send(storage, U256::ONE, U256::ONE, six_decimal_u128());
+
+        let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, U256::ONE).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), U256::ONE);
     });
 }
 

@@ -55,6 +55,17 @@ builds:
       - --package=outbe-feeder
     targets:
       - x86_64-unknown-linux-gnu
+  - builder: rust
+    id: outbe-hyperlane-attester
+    binary: outbe-hyperlane-attester
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe-hyperlane-attester
+    targets:
+      - x86_64-unknown-linux-gnu
   # Production TEE enclave binary (built WITHOUT the `mock` feature, so it links
   # no mock key material). This is the bare ELF; running it under SGX needs the
   # signed Gramine bundle produced by the `sign-enclave` job in
