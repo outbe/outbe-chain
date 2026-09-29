@@ -9,8 +9,10 @@ use outbe_agentreward::{
 };
 use outbe_ccaregistry::{
     api,
-    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
+    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
     precompile::ICcaRegistry,
+    runtime,
+    schema::CcaContract,
 };
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{
@@ -441,6 +443,65 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW + UNBOND_COOLDOWN_SECONDS
     )
     .is_success());
+}
+
+#[test]
+fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    db.insert_account_info(
+        CCA_REGISTRY_ADDRESS,
+        AccountInfo {
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        },
+    );
+    db.insert_account_info(
+        CCA,
+        AccountInfo {
+            balance: BOND_REQUIREMENT,
+            ..Default::default()
+        },
+    );
+    with_storage(&mut db, |storage| {
+        for id in 1..=u64::from(MAX_ACTIVE_CCAS) {
+            let cca = Address::from_word(U256::from(id).into());
+            storage
+                .increase_balance(CCA_REGISTRY_ADDRESS, BOND_REQUIREMENT)
+                .unwrap();
+            runtime::bond(storage.clone(), cca, BOND_REQUIREMENT, "Test CCA".into()).unwrap();
+        }
+        assert_eq!(
+            CcaContract::new(storage).active.len().unwrap(),
+            MAX_ACTIVE_CCAS
+        );
+    });
+    let registry_before = db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance;
+    let caller_before = db.cache.accounts[&CCA].info.balance;
+    let outcome = tx(
+        &mut db,
+        BOND_REQUIREMENT,
+        ICcaRegistry::bondCall {
+            name: "Overflow CCA".into(),
+        }
+        .abi_encode(),
+        NOW,
+    );
+    assert!(!outcome.is_success());
+    assert!(outcome.logs().is_empty());
+    assert_eq!(db.cache.accounts[&CCA].info.balance, caller_before);
+    assert_eq!(
+        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
+        registry_before
+    );
+    with_storage(&mut db, |storage| {
+        assert!(api::get_cca(&storage, CCA).is_err());
+        assert_eq!(
+            CcaContract::new(storage).active.len().unwrap(),
+            MAX_ACTIVE_CCAS
+        );
+    });
 }
 
 alloy_sol_types::sol!("../../../contracts/precompiles/src/IAgentReward.sol");

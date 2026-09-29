@@ -1,14 +1,16 @@
 //! CCA reward distribution and claims owned by AgentReward.
 use super::*;
+use crate::distribution::calculate_proportional_distribution;
 use outbe_ccaregistry::{
     api,
-    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
+    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
     precompile::ICcaRegistry,
     runtime,
 };
 use outbe_primitives::{
     addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
+    units::checked_protocol_to_native,
 };
 
 const ALICE: Address = Address::repeat_byte(1);
@@ -109,20 +111,40 @@ fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
 }
 
 #[test]
-fn daily_distribution_fits_a_representative_active_population() {
+fn daily_distribution_at_the_active_cap_matches_the_proportional_reference() {
+    // Engineering reserve inside the 30_000_000 steady block gas limit.
+    const CCA_DISTRIBUTION_GAS_BUDGET: u64 = 5_000_000;
+    let population = u64::from(MAX_ACTIVE_CCAS);
+    let mut weights = Vec::new();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        for id in 1..=128u64 {
+        for id in 1..=population {
             let cca = Address::from_word(U256::from(id).into());
             bond(&storage, cca, BOND_REQUIREMENT);
             runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
+            weights.push((cca, U256::ONE));
         }
     });
     provider.set_gas_limit(30_000_000);
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(reward(&storage, U256::from(128)), U256::ZERO);
-        assert!(storage.gas_used().unwrap() < 30_000_000);
+        let pool = U256::from(population);
+        let excess = reward(&storage, pool);
+        let (expected, expected_excess) =
+            calculate_proportional_distribution(pool, &weights).unwrap();
+        assert_eq!(excess, expected_excess);
+        assert_eq!(excess, U256::ZERO);
+        for share in expected {
+            assert_eq!(
+                claimable(&storage, share.address),
+                checked_protocol_to_native(share.reward_amount).unwrap()
+            );
+        }
+        let gas = storage.gas_used().unwrap();
+        assert!(
+            gas <= CCA_DISTRIBUTION_GAS_BUDGET,
+            "CCA distribution used {gas} gas, budget is {CCA_DISTRIBUTION_GAS_BUDGET}"
+        );
     });
 }
 

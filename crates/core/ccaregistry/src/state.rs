@@ -1,5 +1,6 @@
 //! Local record reads and active-index maintenance.
 use crate::{
+    constants::MAX_ACTIVE_CCAS,
     errors::CcaError,
     precompile::ICcaRegistry,
     schema::{CcaContract, CcaRecord},
@@ -23,6 +24,10 @@ impl CcaContract<'_> {
 
     pub(crate) fn save(&mut self, record: &CcaRecord) -> Result<()> {
         if validate_state(record.state)? == ICcaRegistry::State::Active {
+            // A top-up of an address already in the set does not take another slot.
+            if !self.active.contains(&record.cca)? && self.active.len()? >= MAX_ACTIVE_CCAS {
+                return Err(CcaError::ActiveSetFull.into());
+            }
             self.active.insert(record.cca)?;
         } else {
             self.active.remove(&record.cca)?;

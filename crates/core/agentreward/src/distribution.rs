@@ -313,7 +313,7 @@ pub fn calculate_distribution_with_cap(
 /// The undistributed remainder is excess, including an empty or all-zero
 /// weight set. Callers supply one weight per distinct address. Results are
 /// ordered by address.
-fn calculate_proportional_distribution(
+pub(crate) fn calculate_proportional_distribution(
     total_pool: U256,
     counts: &[(Address, U256)],
 ) -> Result<(Vec<AddressReward>, U256), DistributionError> {
