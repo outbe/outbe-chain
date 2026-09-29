@@ -141,6 +141,7 @@ e2e-test = [
     "outbe-intexfactory/e2e-test",
     "outbe-cycle/e2e-test",
     "outbe-gem/e2e-test",
+    "outbe-nodfactory/e2e-test",
 ]
 
 [package.metadata.cargo-machete]
