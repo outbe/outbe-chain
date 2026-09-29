@@ -242,20 +242,13 @@ PRICE_REST_URL=http://localhost:8000 ./scripts/price-oracle/run.sh /tmp/outbe-te
 
 ## Architecture
 
-1. Polls `eth_blockNumber` at configured interval
-2. Detects a vote period boundary with `(height + 1) / vote_period > last_voted_period`
-3. Runs read-only preflight before fetching prices:
-   - `IOracle.getParams()` verifies the oracle is enabled and on-chain `votePeriod` matches local config
-   - `IOracle.getVotePenaltyCounter(validator)` reads current oracle counters for logging/context
-   - `IOracle.getAggregateVote(validator)` skips if a vote already exists for the current period
-   - `IValidatorSet.validatorByAddress(validator)` reads lifecycle status for observability
-4. If preflight fails, logs the reason and skips the period without building or sending a transaction
-5. Fetches prices from configured providers
-6. Filters outlier prices (sigma-based deviation filtering)
-7. Computes VWAP (ticker) or TVWAP (candle, preferred)
-8. Builds ABI-encoded `submitVote(ExchangeRateTuple[])` calldata
-9. Signs with feeder private key via alloy and submits to Oracle precompile (`0xEE05`)
-10. Records health success/failure state
+1. Reads the latest canonical block and derives its vote period as `height / vote_period`.
+2. Pins oracle and validator preflight reads to that block hash. A failed read is retried on the next poll, without consuming the period.
+3. Checks the signer, active validator, oracle settings, and whether the validator has already voted.
+4. Fetches provider prices, aggregates them, and repeats preflight if the period changed during aggregation.
+5. Signs a transaction with an explicit nonce and writes its raw bytes to a durable journal before broadcasting.
+6. Rechecks the canonical receipt and nonce on each poll. A lost RPC response is retried with the same bytes; a stalled transaction can be replaced at the same nonce with a higher fee.
+7. Reports canonical head progress, oracle price freshness, pending transaction age, and vote results through `/health` and `/status`.
 
 ## Oracle Precompile
 
@@ -270,11 +263,12 @@ The feeder submits votes via standard EVM transactions to this address. See `int
 ```text
 PrivateKeySigner::parse()
   -> EthereumWallet::from()
-  -> ProviderBuilder::new().wallet(wallet).connect_http(...)
-  -> provider.send_transaction(tx)
+  -> sign EIP-1559 transaction with explicit nonce
+  -> persist raw transaction and hash
+  -> eth_sendRawTransaction
 ```
 
-`chain.chain_id` is set explicitly on each vote transaction. Alloy handles nonce lookup, gas estimation, signing, and broadcasting.
+`chain.chain_id` is set explicitly on each vote transaction. The journal is keyed by chain genesis, signer, and validator, and is stored in `STATE_DIRECTORY` when systemd supplies it. The validator service provisions `/var/lib/outbe-feeder` for this purpose. Without systemd, the journal is stored beside the canonical config path.
 
 When `chain.gasless_oracle_votes = true`, the feeder still sends a normal signed EVM transaction to `Oracle.submitVote(...)`, but marks it with zero priority fee and a max fee cap high enough for Reth's public txpool protocol checks. The `outbe-txpool` crate and executor both call the system `zerofee` hook registry. The registered `OracleSubmitVoteHook` revalidates the signer, delegated feeder status, one-vote-per-period rule, zero native value, and policy size limits before waiving native fee debit. Authorized gasless `submitVote` transactions are ordered ahead of fee-paying transactions inside the Outbe txpool, so payload building considers validator votes before the normal tip market while still enforcing nonce, validity, and block gas limits. Paid `submitVote` transactions keep the normal EVM path.
 
@@ -297,4 +291,4 @@ curl -s http://127.0.0.1:9002/health
 curl -s http://127.0.0.1:9002/status
 ```
 
-`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` returns JSON with the latest period, vote timestamp, success/failure counters, and configured vote period.
+`/health` returns HTTP 200 when the feeder is healthy and HTTP 503 when unhealthy. `/status` includes the latest observed period, vote counters, pending transaction, head progress, and per-pair oracle freshness.
