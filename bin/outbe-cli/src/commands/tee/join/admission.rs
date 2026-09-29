@@ -156,9 +156,9 @@ impl<R: Rpc + Sync> FinalizedAdmissionRecoveryIoV1 for CliFinalizedAdmissionIoV1
 
     fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError> {
         let reconnected = match self.enclave {
-            JoinEnclave::Committed(_) => JoinEnclave::Committed(
+            JoinEnclave::Committed(_) => JoinEnclave::Committed(Box::new(
                 connect_committed_node_host_enclave(self.enclave_socket, self.node_data_dir)?,
-            ),
+            )),
             JoinEnclave::Candidate(_) => JoinEnclave::Candidate(Box::new(
                 outbe_tee::prepare_node_host_enclave_replacement_candidate(
                     self.enclave_socket,

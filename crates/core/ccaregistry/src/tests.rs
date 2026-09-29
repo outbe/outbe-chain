@@ -1,6 +1,6 @@
 use crate::{
     api,
-    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
+    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
     precompile::{dispatch, ICcaRegistry},
     runtime,
     schema::{address_day_key, CcaContract, CcaRecordEntryExt},
@@ -21,6 +21,10 @@ fn run(f: impl FnOnce(StorageHandle<'_>)) {
     provider.set_timestamp(U256::from(NOW));
     StorageHandle::enter(&mut provider, f);
 }
+fn cca_at(id: u32) -> Address {
+    Address::from_word(U256::from(id).into())
+}
+
 fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     // Simulate the real payable boundary's already-credited value.
     storage
@@ -37,6 +41,100 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     )
     .unwrap();
 }
+#[test]
+fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
+    run(|storage| {
+        for id in 1..=MAX_ACTIVE_CCAS {
+            bond(&storage, cca_at(id), BOND_REQUIREMENT);
+        }
+        let contract = CcaContract::new(storage.clone());
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+
+        let rejected = cca_at(MAX_ACTIVE_CCAS + 1);
+        let registry_balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
+        let error = runtime::bond(
+            storage.clone(),
+            rejected,
+            BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("CCA active set is full"));
+        assert!(api::get_cca(&storage, rejected).is_err());
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+        assert_eq!(
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
+            registry_balance
+        );
+
+        let partial = cca_at(MAX_ACTIVE_CCAS + 2);
+        bond(&storage, partial, BOND_REQUIREMENT - U256::ONE);
+        assert_eq!(
+            api::cca_state(&storage, partial).unwrap(),
+            ICcaRegistry::State::Bonding
+        );
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+        let error =
+            runtime::bond(storage.clone(), partial, U256::ONE, "Test CCA".into()).unwrap_err();
+        assert!(error.to_string().contains("CCA active set is full"));
+        assert_eq!(
+            api::get_cca(&storage, partial).unwrap().bondedAmount,
+            BOND_REQUIREMENT - U256::ONE
+        );
+        assert_eq!(
+            api::cca_state(&storage, partial).unwrap(),
+            ICcaRegistry::State::Bonding
+        );
+
+        let incumbent = cca_at(1);
+        bond(&storage, incumbent, U256::ONE);
+        assert_eq!(
+            api::get_cca(&storage, incumbent).unwrap().bondedAmount,
+            BOND_REQUIREMENT + U256::ONE
+        );
+        assert!(api::is_active(&storage, incumbent).unwrap());
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+
+        runtime::unbond(storage.clone(), incumbent).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+        runtime::claim_unbonded(storage.clone(), incumbent).unwrap();
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS - 1);
+        assert_eq!(
+            api::cca_state(&storage, incumbent).unwrap(),
+            ICcaRegistry::State::Deregistered
+        );
+
+        bond(&storage, partial, U256::ONE);
+        assert!(api::is_active(&storage, partial).unwrap());
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+
+        let still_rejected = cca_at(MAX_ACTIVE_CCAS + 3);
+        assert!(runtime::bond(
+            storage.clone(),
+            still_rejected,
+            BOND_REQUIREMENT,
+            "Test CCA".into()
+        )
+        .is_err());
+        assert!(api::get_cca(&storage, still_rejected).is_err());
+        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+    });
+}
+
+#[test]
+fn active_reward_weights_reject_a_set_past_the_cap() {
+    run(|storage| {
+        let contract = CcaContract::new(storage.clone());
+        for id in 1..=MAX_ACTIVE_CCAS + 1 {
+            contract.active.insert(cca_at(id)).unwrap();
+        }
+        let error = api::active_reward_weights(&storage, DAY).unwrap_err();
+        assert!(error.to_string().contains("CCA active set is full"));
+    });
+}
+
 #[test]
 fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration() {
     run(|storage| {
