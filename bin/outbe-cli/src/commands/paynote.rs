@@ -1,5 +1,7 @@
 //! Local bearer notes and proofs for the existing PayNote pool.
 
+mod merge;
+
 use std::{
     fs,
     io::Write,
@@ -63,6 +65,21 @@ sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
+    /// Generate a private-value merge proof and durably retain its output note.
+    MergeProof {
+        #[arg(required = true, num_args = 2..=4)]
+        paynotes: Vec<String>,
+    },
+    /// Merge selected notes, using successive batches for more than four inputs.
+    Merge {
+        #[arg(required_unless_present = "resume", conflicts_with = "resume", num_args = 2..)]
+        paynotes: Vec<String>,
+        /// Resume an immutable operation file after interruption or reorganization.
+        #[arg(long)]
+        resume: Option<PathBuf>,
+    },
+    /// Reconcile notes with a canonical snapshot; no arguments checks ./paynotes.
+    Status { paynotes: Vec<String> },
     /// Deposit ERC20 base units; save the bearer secret in ./paynotes.
     Deposit {
         asset: Address,
@@ -85,6 +102,12 @@ impl PaynoteCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         let dir = Path::new("./paynotes");
         let output = match self {
+            Self::MergeProof { paynotes } => merge::proof(client, dir, &paynotes).await?,
+            Self::Merge { paynotes, resume } => {
+                let signer = require_signer(private_key)?;
+                merge::run(client, &signer, dir, &paynotes, resume.as_deref()).await?
+            }
+            Self::Status { paynotes } => merge::status(client, dir, &paynotes).await?,
             Self::Deposit { asset, amount } => {
                 let signer = require_signer(private_key)?;
                 let note = Note::random(client.eth_chain_id().await?, asset, amount)?;

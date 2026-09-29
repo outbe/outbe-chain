@@ -6,7 +6,9 @@
 //! No raw key ever crosses the enclave interface.
 use crate::seal::{self, KeyPolicy, SealHeader, UnsealedTributeOfferAndGroupSig};
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
-use zeroize::{Zeroize, Zeroizing};
+#[cfg(target_arch = "x86_64")]
+use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 5] = b"TSGX1";
 const REQUEST_LEN: usize = 512;
@@ -16,6 +18,7 @@ const FLAGS_MASK: u64 = 0xffff_ffff_ffff_fff3;
 #[repr(C, align(512))]
 struct KeyRequest([u8; REQUEST_LEN]);
 #[repr(C, align(16))]
+#[cfg(target_arch = "x86_64")]
 struct HardwareKey([u8; 16]);
 
 fn parameters(cpu_svn: [u8; 16], isv_svn: u16, config_svn: u16) -> KeyRequest {

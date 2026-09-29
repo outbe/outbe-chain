@@ -215,6 +215,17 @@ fn fixture() -> (
     RuntimeBodyReaders,
     [WwdEntityId; 2],
 ) {
+    fixture_with_cost(COST)
+}
+
+fn fixture_with_cost(
+    cost: u128,
+) -> (
+    EvmCtx,
+    Arc<ExecutionScope>,
+    RuntimeBodyReaders,
+    [WwdEntityId; 2],
+) {
     test_enclave::install();
 
     let mut database = CacheDB::new(EmptyDB::default());
@@ -233,7 +244,8 @@ fn fixture() -> (
         begin_block(storage.clone(), scope.as_ref()).unwrap();
         seed_vault_router(&storage);
         DAYS.map(|day| {
-            let params = nod_params(day);
+            let mut params = nod_params(day);
+            params.entry_price_minor = U256::from(cost * 1_000_000 / GRATIS_LOAD);
             let nod_id =
                 outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
             let floor_price_minor =
@@ -641,6 +653,183 @@ fn measure_settle_gem_gas_with_real_paynote() {
             "SETTLE_GEM_GAS sample={sample} total={used} calldata_bytes={} elapsed_us={}",
             calldata.len(),
             elapsed.as_micros()
+        );
+    }
+}
+
+#[test]
+fn merged_12_8_5_pays_a_20_nod_and_preserves_five_as_ordinary_change() {
+    use outbe_paynote::test_support::merge_proof;
+    let (mut ctx, scope, readers, nods) = fixture_with_cost(20);
+    let inputs = [12, 8, 5]
+        .into_iter()
+        .enumerate()
+        .map(|(i, amount)| note(CHAIN_ID, 17 + i as u64, ASSET, U256::from(amount)))
+        .collect::<Vec<_>>();
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    for (i, input) in inputs.iter().enumerate() {
+        deposit(
+            &mut ctx,
+            &scope,
+            if i == 0 { ALICE1 } else { ALICE2 },
+            input,
+        );
+        tree.append(input.commitment).unwrap();
+    }
+    let output = note(CHAIN_ID, 99, ASSET, U256::from(25));
+    let proof = merge_proof(CHAIN_ID, &tree, &inputs.iter().collect::<Vec<_>>(), &output);
+    let external_before = ctx
+        .journaled_state
+        .inner
+        .state
+        .iter()
+        .filter(|(address, _)| **address != PAYNOTE_ADDRESS)
+        .map(|(address, account)| {
+            (
+                *address,
+                (
+                    account.info.balance,
+                    account
+                        .storage
+                        .iter()
+                        .map(|(key, slot)| (*key, slot.present_value))
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                ),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let out = call(
+        &mut ctx,
+        scope.clone(),
+        None,
+        Address::repeat_byte(0x77),
+        PAYNOTE_ADDRESS,
+        IPayNote::mergePayNotesCall {
+            proof: proof.into(),
+        }
+        .abi_encode()
+        .into(),
+        false,
+    );
+    assert!(matches!(out.status, SubCallStatus::Success));
+    for (address, (balance, slots)) in external_before {
+        let account = &ctx.journaled_state.inner.state[&address];
+        assert_eq!(account.info.balance, balance);
+        for (key, value) in slots {
+            assert_eq!(account.storage[&key].present_value, value);
+        }
+    }
+    for input in &inputs {
+        assert!(is_spent(&mut ctx, &scope, word(input.nullifier)));
+    }
+    tree.append(output.commitment).unwrap();
+    let spend = spend_proof(CHAIN_ID, &tree, 3, &output, ALICE1, U256::from(20));
+    assert_eq!(
+        assert_mined(
+            &settle_and_mine(&mut ctx, &scope, &readers, nods[0], &spend),
+            "merged note pays Nod"
+        ),
+        U256::from(GRATIS_LOAD)
+    );
+    let change = change_note(CHAIN_ID, &output, U256::from(20)).unwrap();
+    assert_eq!(change.amount, U256::from(5));
+    assert!(view(
+        &mut ctx,
+        &scope,
+        PAYNOTE_ADDRESS,
+        IPayNote::hasCommitmentCall {
+            commitment: word(change.commitment)
+        }
+    ));
+    assert!(is_spent(&mut ctx, &scope, word(output.nullifier)));
+    assert_eq!(leaf_count(&mut ctx, &scope), 5);
+}
+
+#[test]
+fn measure_four_input_merge_gas_with_real_proof_and_paid_transaction() {
+    use alloy_evm::{Evm as _, EvmFactory as _};
+    use alloy_sol_types::SolEvent as _;
+    use reth_ethereum::evm::primitives::EvmEnv;
+    use revm::context::{BlockEnv, CfgEnv, TxEnv};
+    use revm::primitives::TxKind;
+    use revm::DatabaseCommit as _;
+    let (mut ctx, scope, _, _) = fixture();
+    let inputs = [12, 8, 5, 7]
+        .into_iter()
+        .enumerate()
+        .map(|(i, amount)| note(CHAIN_ID, 17 + i as u64, ASSET, U256::from(amount)))
+        .collect::<Vec<_>>();
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    for input in &inputs {
+        deposit(&mut ctx, &scope, ALICE2, input);
+        tree.append(input.commitment).unwrap();
+    }
+    let output = note(CHAIN_ID, 99, ASSET, U256::from(32));
+    let proof = outbe_paynote::test_support::merge_proof(
+        CHAIN_ID,
+        &tree,
+        &inputs.iter().collect::<Vec<_>>(),
+        &output,
+    );
+    let calldata = Bytes::from(
+        IPayNote::mergePayNotesCall {
+            proof: proof.into(),
+        }
+        .abi_encode(),
+    );
+    ctx.journaled_state
+        .database
+        .commit(ctx.journaled_state.inner.state.clone());
+    let funded = U256::from(1_000_000_000u64);
+    ctx.journaled_state.database.insert_account_info(
+        ALICE1,
+        AccountInfo {
+            balance: funded,
+            ..Default::default()
+        },
+    );
+    let env = EvmEnv {
+        cfg_env: CfgEnv::new()
+            .with_chain_id(CHAIN_ID)
+            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
+        block_env: BlockEnv {
+            gas_limit: 30_000_000,
+            timestamp: U256::from(BLOCK_TIMESTAMP),
+            ..Default::default()
+        },
+    };
+    for sample in 0..5 {
+        let mut evm = outbe_evm::OutbeEvmFactory::new()
+            .create_evm(ctx.journaled_state.database.clone(), env.clone());
+        let mut tx = TxEnv::builder()
+            .caller(ALICE1)
+            .nonce(0)
+            .kind(TxKind::Call(PAYNOTE_ADDRESS))
+            .gas_price(1)
+            .data(calldata.clone())
+            .gas_limit(2_000_000)
+            .build()
+            .unwrap();
+        tx.chain_id = Some(CHAIN_ID);
+        let started = std::time::Instant::now();
+        let outcome = evm.transact_raw(tx).unwrap();
+        assert!(outcome.result.is_success(), "{:?}", outcome.result);
+        let gas = outcome.result.tx_gas_used();
+        assert!(gas <= 2_000_000);
+        assert_eq!(
+            outcome.state[&ALICE1].info.balance,
+            funded - U256::from(gas)
+        );
+        assert!(outcome
+            .result
+            .logs()
+            .iter()
+            .any(|log| log.address == PAYNOTE_ADDRESS
+                && log.data.topics().first() == Some(&IPayNote::NotesMerged::SIGNATURE_HASH)));
+        eprintln!(
+            "MERGE_GAS sample={sample} total={gas} calldata_bytes={} elapsed_us={}",
+            calldata.len(),
+            started.elapsed().as_micros()
         );
     }
 }

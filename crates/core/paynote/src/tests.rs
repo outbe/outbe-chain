@@ -10,6 +10,8 @@
 //! storage provider cannot serve, so only its pre-mutation guards are covered
 //! here; the full path belongs in an EVM-level integration test.
 
+mod merge;
+
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use ark_ff::Zero;
