@@ -326,7 +326,7 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
     let dust = native(1);
 
     with_contract_mut(|storage, contract| {
-        // Entry 1 minor unit x load 1 minor unit floors to a zero cost.
+        // Entry 1 minor unit x load 1 minor unit floors below one minor unit.
         seed_oracle(&storage, U256::from(1u64));
         contract
             .storage
@@ -340,7 +340,15 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
             .claim_reward(RewardPool::Waa, alice, U256::ZERO)
             .unwrap();
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
-        assert_eq!(gem_of(&storage, alice).entry_price_minor, U256::from(1u64));
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
+        let gem = gem_of(&storage, alice);
+        assert_eq!(gem.entry_price_minor, U256::ONE);
+        assert_eq!(gem.promis_load_minor, U256::ONE);
     });
 }
 
