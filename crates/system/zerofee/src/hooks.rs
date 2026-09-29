@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
+use crate::hyperlane::HyperlaneSubmitCheckpointHook;
 use crate::intexfactory::IntexFactoryPayContributorBatchHook;
 use crate::oracle::OracleSubmitVoteHook;
 
@@ -30,6 +31,8 @@ pub enum ZeroFeeHookId {
     OracleSubmitVote,
     /// `IntexFactory.payContributorBatch(uint32,uint32,ContributorLeaf[],bytes32[])`.
     IntexFactoryPayContributorBatch,
+    /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
+    HyperlaneSubmitCheckpoint,
 }
 
 /// A transaction that matched a hook's stateless zero-fee envelope.
@@ -333,9 +336,12 @@ impl ZeroFeeRegistry {
 static ORACLE_SUBMIT_VOTE_HOOK: OracleSubmitVoteHook = OracleSubmitVoteHook;
 static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: IntexFactoryPayContributorBatchHook =
     IntexFactoryPayContributorBatchHook;
+static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: HyperlaneSubmitCheckpointHook =
+    HyperlaneSubmitCheckpointHook;
 static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
     &ORACLE_SUBMIT_VOTE_HOOK,
     &INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK,
+    &HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
 ];
 
 /// Returns the Outbe system zero-fee hook registry.
