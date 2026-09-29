@@ -7,7 +7,7 @@
 use crate::seal::{self, KeyPolicy, SealHeader, UnsealedTributeOfferAndGroupSig};
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 #[cfg(target_arch = "x86_64")]
-use zeroize::Zeroize;
+use zeroize::Zeroize as _;
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 5] = b"TSGX1";
@@ -17,6 +17,8 @@ const FLAGS_MASK: u64 = 0xffff_ffff_ffff_fff3;
 
 #[repr(C, align(512))]
 struct KeyRequest([u8; REQUEST_LEN]);
+// Only the x86_64 EGETKEY path constructs this buffer.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 #[repr(C, align(16))]
 #[cfg(target_arch = "x86_64")]
 struct HardwareKey([u8; 16]);

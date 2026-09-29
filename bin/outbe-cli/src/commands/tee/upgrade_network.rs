@@ -430,7 +430,9 @@ async fn collect_proof(
         });
     }
     if registry_storage.len() != slots.len() {
-        return Err(eyre::eyre!("eth_getProof omitted a required TeeRegistry slot").into());
+        return Err(eyre::eyre!(
+            "eth_getProof omitted a required TeeRegistry slot"
+        ));
     }
     let admission_witness = FinalizedAdmissionWitnessV1 {
         admission: admission.expect("positive finalized height sets admission proof"),

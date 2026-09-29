@@ -115,6 +115,17 @@ fn register_and_owner_remove_roundtrip() {
 }
 
 #[test]
+fn genesis_storage_slots_keep_owner_index_and_add_inbox_mapping() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let registry = L2RegistryContract::new(storage);
+        assert_eq!(registry.networks.base_slot(), U256::ZERO);
+        assert_eq!(registry.l1_to_chain.base_slot(), U256::from(4));
+        assert_eq!(registry.inbox_addresses.base_slot(), U256::from(5));
+    });
+}
+
+#[test]
 fn registration_publishes_operator_and_key() {
     let (_, public) = keypair();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -846,5 +857,110 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
                 .abi_encode_params()
                 .as_slice(),
         );
+    });
+}
+
+#[test]
+fn distinct_owner_and_inbox_keep_live_key_and_owner_authority() {
+    let owner = l1_addr();
+    let inbox = Address::repeat_byte(0x22);
+    let (private, public) = seeded_keypair(41);
+    let (rotated_private, rotated_public) = seeded_keypair(42);
+    let root = [0x42; 32];
+    let signature = |private: &Private| {
+        sign_message::<MinSig>(private, ZK_MERKLE_ROOT_NAMESPACE, &root)
+            .encode()
+            .to_vec()
+    };
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.stub_sub_call_at_selector(
+        inbox,
+        IDaInbox::groupPubKeyCall::SELECTOR,
+        inbox_key_returns(&public),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+        registry
+            .register_network_with_inbox(L2_CHAIN_ID, owner, inbox, &[])
+            .unwrap();
+        let record = registry.load_network(L2_CHAIN_ID).unwrap();
+        assert_eq!(record.l1_address, owner);
+        assert_eq!(registry.inbox_address(&record).unwrap(), inbox);
+        assert_eq!(registry.l1_to_chain.read(&owner).unwrap(), L2_CHAIN_ID);
+        assert_eq!(registry.l1_to_chain.read(&inbox).unwrap(), 0);
+        assert_eq!(
+            check_zk_merkle_root_signature(
+                storage.clone(),
+                L2_CHAIN_ID,
+                &root,
+                &signature(&private)
+            )
+            .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        let call = precompile::IL2Registry::inboxAddressCall {
+            chainId: L2_CHAIN_ID,
+        };
+        assert_eq!(
+            precompile::dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO)
+                .unwrap()
+                .as_ref(),
+            (inbox,).abi_encode_params().as_slice()
+        );
+        assert!(registry
+            .update_public_key(inbox, L2_CHAIN_ID, &public)
+            .is_err());
+        assert!(registry.remove_network(inbox, L2_CHAIN_ID).is_err());
+    });
+
+    provider.stub_sub_call_at_selector(
+        inbox,
+        IDaInbox::groupPubKeyCall::SELECTOR,
+        inbox_key_returns(&rotated_public),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+        assert!(check_zk_merkle_root_signature(
+            storage.clone(),
+            L2_CHAIN_ID,
+            &root,
+            &signature(&private)
+        )
+        .is_err());
+        assert_eq!(
+            check_zk_merkle_root_signature(
+                storage.clone(),
+                L2_CHAIN_ID,
+                &root,
+                &signature(&rotated_private)
+            )
+            .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        registry
+            .update_public_key(owner, L2_CHAIN_ID, &public)
+            .unwrap();
+        assert_eq!(
+            check_zk_merkle_root_signature(
+                storage.clone(),
+                L2_CHAIN_ID,
+                &root,
+                &signature(&private)
+            )
+            .unwrap(),
+            ZkOfferCheck::Verified {
+                chain_id: L2_CHAIN_ID
+            }
+        );
+        registry.remove_network(owner, L2_CHAIN_ID).unwrap();
+        assert_eq!(
+            registry.inbox_addresses.read(&L2_CHAIN_ID).unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(registry.l1_to_chain.read(&owner).unwrap(), 0);
     });
 }
