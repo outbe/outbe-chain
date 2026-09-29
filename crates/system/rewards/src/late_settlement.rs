@@ -11,7 +11,7 @@
 //! `D` is constant per block (independent of who voted), so excluding a peer
 //! enriches nobody - there is no censorship incentive. The
 //! residue (`pending - sum payout` = absentees + decay gap + division remainders)
-//! burns, keeping mint/burn parity (`sum payout + residue == pending`).
+//! is never paid out: `sum payout + residue == pending`.
 //!
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]; the executor wires them into the begin-zone CPA
@@ -28,7 +28,7 @@ use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    units::{checked_protocol_to_native, native_to_protocol_floor},
+    units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT},
 };
 
 use crate::constants::{decay_weight, fixed_denominator};
@@ -172,8 +172,8 @@ pub fn settle_matured(
 }
 
 /// Settle the matured window for `fb_hash` exactly once: pay each credited voter
-/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the residue, and assert
-/// `sum payout + residue == pending`. Returns `(distributed, residue)`.
+/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the whole protocol units of
+/// the residue, and assert `sum payout + residue == pending`. Returns `(distributed, residue)`.
 pub fn settle_window(
     ctx: &BlockRuntimeContext,
     fb_hash: B256,
@@ -232,10 +232,10 @@ pub fn settle_window(
         let native = residue
             .checked_add(rewards.late_residue_dust_native.read()?)
             .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
+        let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let burned = native - dust;
         let units = native_to_protocol_floor(native);
-        let burned = checked_protocol_to_native(units)
-            .ok_or_else(|| PrecompileError::Revert("late residue burn overflow".into()))?;
-        rewards.late_residue_dust_native.write(native - burned)?;
+        rewards.late_residue_dust_native.write(dust)?;
         if !units.is_zero() {
             ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
             outbe_emissionlimit::block::dispatch_late_settlement_residue_at(

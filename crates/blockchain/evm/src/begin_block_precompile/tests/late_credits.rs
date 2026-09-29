@@ -46,7 +46,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         // Empty artifact: the mandatory phase still closes block 10's window.
         run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 
-        let each = pool / U256::from(committee_size); // 1000, unchanged by exclusion
+        let each = pool / U256::from(committee_size); // 1000e12, unchanged by exclusion
         assert_eq!(ctx.storage.balance(V0).unwrap(), each);
         assert_eq!(ctx.storage.balance(V1).unwrap(), each);
         assert_eq!(ctx.storage.balance(V2).unwrap(), each);
