@@ -405,6 +405,7 @@ pub(crate) fn consume_pledge(
     smart_account: Address,
     spend_auth: [u8; 32],
 ) -> Result<(PledgeTerms, Vec<u8>)> {
+    let block_timestamp = pledge_timestamp(&storage)?;
     let gratis = Gratis::new(storage.clone());
     let ticket_ct = gratis.pledge_ticket_ct_of(pledge_note)?;
     // Recover the pledger EOA from the ticket so we can read/write its own pledged ledger.
@@ -415,7 +416,7 @@ pub(crate) fn consume_pledge(
         eoa,
         U256::ZERO,
     );
-    req.block_timestamp = pledge_timestamp(&storage)?;
+    req.block_timestamp = block_timestamp;
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
     req.current_pledge_record = ticket_ct;
     req.pledge_note = Some(pledge_note);
