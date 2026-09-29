@@ -55,7 +55,7 @@ pub fn issue_gem(
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
     let terms = outbe_gem::config::read(storage)?;
-    let floor_price = compute_floor(gem_type, promis_load, entry_price, &terms)?;
+    let floor_price = compute_floor(gem_type, entry_price, &terms)?;
     let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let params = GemAddParams {
@@ -227,7 +227,6 @@ pub fn issue_merchant_gem(
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let market_price = read_market_price(storage, record.reference_currency, now)?;
     let entry_price = market_price.max(record.source_entry_price);
-    compute_cost(entry_price, promis_load, 100)?;
     let terms = outbe_gem::config::read(storage)?;
     let floor_price = derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price);
     let call_price = derived_call_price(entry_price, terms.call_rate)?;
@@ -541,8 +540,8 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
 }
 
 /// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,
-/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail.
-/// Apply the one-reference-minor-unit minimum before asset/currency conversion.
+/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail. A
+/// positive cost is at least one reference-currency minor unit before conversion.
 pub(crate) fn settlement_units(
     item: &outbe_gem::GemData,
     rate: Option<(U256, U256)>,
@@ -556,14 +555,11 @@ pub(crate) fn settlement_units(
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_rate(item.gem_type)))
         .ok_or(GemFactoryError::Overflow)?;
-    // The denominator carries `percent`, so one reference unit is `1e6 x percent`.
-    let minimum = SCALE_1E6_U256
-        .checked_mul(percent)
-        .ok_or(GemFactoryError::Overflow)?;
+    // The denominator carries `percent`: one reference minor unit is `1e6 x percent`.
     let obligation = if obligation.is_zero() {
         obligation
     } else {
-        obligation.max(minimum)
+        obligation.max(SCALE_1E6_U256 * percent)
     };
     let (numerator, denominator) = match rate {
         Some((to, from)) => (
@@ -578,14 +574,14 @@ pub(crate) fn settlement_units(
         .map_err(|e| GemFactoryError::from(e).into())
 }
 
-/// The gem's cost in its reference currency at six decimals, minimum included.
-/// Settlement converts this obligation into the asset's own minor units.
+/// The gem's cost in its reference currency at six decimals. Settlement converts
+/// the unfloored obligation instead, so a wider asset keeps what this drops.
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
-    compute_cost(
-        item.entry_price_minor,
-        item.promis_load_minor,
-        cost_rate(item.gem_type),
+    settlement_units(
+        item,
+        None,
+        outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS,
     )
 }
 
@@ -690,25 +686,14 @@ fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Re
 
 fn compute_floor(
     gem_type: GemTypes,
-    promis_load: U256,
     coen_rate: U256,
     terms: &outbe_gem::GemParams,
 ) -> Result<U256> {
-    // The cost is derived on demand; computed here only to reject an overflow.
     let floor_price = match gem_type {
         // A zero floor clears at any price on the gem's first full day.
-        GemTypes::Genesis => {
-            compute_cost(coen_rate, promis_load, 100)?;
-            U256::ZERO
-        }
-        GemTypes::Sra => {
-            compute_cost(coen_rate, promis_load, SRA_RATE)?;
-            derived_floor(coen_rate, terms.floor_rate)?
-        }
-        // Validator (post-genesis), Wallet, Cca - standard agent-class flow:
-        // cost = entry x load, floor = rate x 1.08, born Issued.
-        GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
-            compute_cost(coen_rate, promis_load, 100)?;
+        GemTypes::Genesis => U256::ZERO,
+        // Every other agent class: floor = rate x 1.08.
+        GemTypes::Sra | GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             derived_floor(coen_rate, terms.floor_rate)?
         }
         // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
@@ -716,25 +701,6 @@ fn compute_floor(
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
     Ok(floor_price)
-}
-
-/// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and
-/// result are six-decimal monetary values. Positive inputs have a minimum cost
-/// of one reference-currency minor unit.
-fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
-    let numerator = entry
-        .checked_mul(load)
-        .ok_or(GemFactoryError::Overflow)?
-        .checked_mul(U256::from(cost_num))
-        .ok_or(GemFactoryError::Overflow)?;
-    let denominator = SCALE_1E6_U256
-        .checked_mul(U256::from(100u64))
-        .ok_or(GemFactoryError::Overflow)?;
-    let cost = numerator / denominator;
-    if entry.is_zero() || load.is_zero() {
-        return Ok(cost);
-    }
-    Ok(cost.max(U256::ONE))
 }
 
 /// Floor price = `entry x (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
