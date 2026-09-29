@@ -542,6 +542,7 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
 
 /// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,
 /// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail.
+/// Apply the one-reference-minor-unit minimum before asset/currency conversion.
 pub(crate) fn settlement_units(
     item: &outbe_gem::GemData,
     rate: Option<(U256, U256)>,
@@ -555,6 +556,15 @@ pub(crate) fn settlement_units(
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_rate(item.gem_type)))
         .ok_or(GemFactoryError::Overflow)?;
+    // The denominator carries `percent`, so one reference unit is `1e6 x percent`.
+    let minimum = SCALE_1E6_U256
+        .checked_mul(percent)
+        .ok_or(GemFactoryError::Overflow)?;
+    let obligation = if obligation.is_zero() {
+        obligation
+    } else {
+        obligation.max(minimum)
+    };
     let (numerator, denominator) = match rate {
         Some((to, from)) => (
             obligation
@@ -568,8 +578,8 @@ pub(crate) fn settlement_units(
         .map_err(|e| GemFactoryError::from(e).into())
 }
 
-/// The gem's cost in its reference currency at six decimals: the formula the
-/// issuance guard applies. Settlement does not floor here.
+/// The gem's cost in its reference currency at six decimals, minimum included.
+/// Settlement converts this obligation into the asset's own minor units.
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
     compute_cost(
@@ -684,8 +694,7 @@ fn compute_floor(
     coen_rate: U256,
     terms: &outbe_gem::GemParams,
 ) -> Result<U256> {
-    // The cost is derived from the record on demand; it is computed here only to
-    // reject a load whose cost rounds to zero.
+    // The cost is derived on demand; computed here only to reject an overflow.
     let floor_price = match gem_type {
         // A zero floor clears at any price on the gem's first full day.
         GemTypes::Genesis => {
@@ -710,7 +719,8 @@ fn compute_floor(
 }
 
 /// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and
-/// result are six-decimal monetary values; the calculation rounds only once.
+/// result are six-decimal monetary values. Positive inputs have a minimum cost
+/// of one reference-currency minor unit.
 fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
     let numerator = entry
         .checked_mul(load)
@@ -721,12 +731,10 @@ fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
         .checked_mul(U256::from(100u64))
         .ok_or(GemFactoryError::Overflow)?;
     let cost = numerator / denominator;
-    if !entry.is_zero() && !load.is_zero() && cost.is_zero() {
-        return Err(PrecompileError::Revert(
-            "gem cost rounds to zero".to_owned(),
-        ));
+    if entry.is_zero() || load.is_zero() {
+        return Ok(cost);
     }
-    Ok(cost)
+    Ok(cost.max(U256::ONE))
 }
 
 /// Floor price = `entry x (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).

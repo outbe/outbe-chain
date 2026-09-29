@@ -312,13 +312,13 @@ fn issue_wallet_cost_and_floor_markup_state_issued() {
 }
 
 #[test]
-fn issue_rejects_positive_price_and_load_when_six_decimal_cost_rounds_to_zero() {
+fn issue_charges_one_minor_unit_when_the_six_decimal_cost_rounds_to_zero() {
     with_storage(Some(U256::ONE), |storage| {
-        let result = issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840);
-        assert!(
-            result.is_err(),
-            "positive economics produced a zero-cost Gem"
-        );
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), U256::ONE);
     });
 }
 
@@ -748,6 +748,42 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
         settled_event(&provider).amountPaid,
         U256::from(1_500_001_000_000u64)
     );
+}
+
+#[test]
+fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
+    with_storage(Some(U256::ONE), |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+
+        assert_eq!(
+            runtime::settlement_units(&item, None, 6).unwrap(),
+            U256::ONE
+        );
+        assert_eq!(
+            runtime::settlement_units(&item, None, 18).unwrap(),
+            U256::from(1_000_000_000_000u64)
+        );
+        // The minimum is one reference unit, which a narrower asset and an
+        // unfavourable rate still floor away, as they do for Nod.
+        assert!(runtime::settlement_units(&item, None, 0).is_err());
+        assert!(runtime::settlement_units(&item, Some((U256::ONE, U256::from(2u64))), 6).is_err());
+    });
+}
+
+#[test]
+fn the_settlement_minimum_ignores_the_sra_discount() {
+    with_storage(Some(U256::ONE), |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Sra, U256::ONE, 840, 840).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+
+        assert_eq!(
+            runtime::settlement_units(&item, None, 6).unwrap(),
+            U256::ONE
+        );
+    });
 }
 
 #[test]

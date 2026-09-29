@@ -321,7 +321,7 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
 }
 
 #[test]
-fn a_load_whose_cost_rounds_to_zero_keeps_its_balance() {
+fn a_load_whose_cost_rounds_to_zero_still_claims() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let dust = native(1);
 
@@ -336,10 +336,11 @@ fn a_load_whose_cost_rounds_to_zero_keeps_its_balance() {
             .add_claimable_reward(RewardPool::Waa, alice, dust)
             .unwrap();
 
-        assert!(contract
+        contract
             .claim_reward(RewardPool::Waa, alice, U256::ZERO)
-            .is_err());
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), dust);
+            .unwrap();
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        assert_eq!(gem_of(&storage, alice).entry_price_minor, U256::from(1u64));
     });
 }
 
