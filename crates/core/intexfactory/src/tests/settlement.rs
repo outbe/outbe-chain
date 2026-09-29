@@ -46,6 +46,28 @@ fn a_subunit_cost_is_refused_rather_than_rounded_up() {
 }
 
 #[test]
+fn a_subunit_cost_charges_one_minor_unit_per_selected_unit() {
+    for (amount, expected) in [(1u64, 1u64), (3, 3), (1_000, 1_000)] {
+        assert_eq!(
+            runtime::settlement_units(U256::ONE, U256::from(amount), None, 6).unwrap(),
+            U256::from(expected)
+        );
+    }
+}
+
+#[test]
+fn a_priceless_series_keeps_its_zero_cost() {
+    assert_eq!(
+        runtime::settlement_units(U256::ZERO, U256::from(1_000u64), None, 6).unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        runtime::settlement_units(product(), U256::ZERO, None, 6).unwrap(),
+        U256::ZERO
+    );
+}
+
+#[test]
 fn the_selected_units_are_floored_once_not_one_by_one() {
     // 1.5 payment units each: three units cost 4.5, floored once to 4, where
     // flooring every unit to 1 first would have charged 3.
