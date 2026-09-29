@@ -101,6 +101,26 @@ fn a_batch_prices_off_the_day_before_its_delivery() {
 }
 
 #[test]
+fn a_batch_whose_cost_floors_below_one_minor_unit_still_delivers() {
+    with_ctx(|ctx| {
+        seed_oracle(ctx, U256::ONE);
+        seed_day_vwap(ctx, REWARD_DAY, U256::ONE);
+        seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::ONE);
+
+        prepare(ctx);
+        assert!(matches!(
+            deliver_oldest_reward_gem_batch(ctx).unwrap(),
+            RewardGemDeliveryOutcome::Delivered {
+                reward_utc_day: REWARD_DAY,
+                recipient_count: 1,
+                ..
+            }
+        ));
+        assert_eq!(delivered_entry_price(ctx), U256::ONE);
+    });
+}
+
+#[test]
 fn a_batch_waits_while_the_day_before_its_delivery_has_no_vwap() {
     with_ctx(|ctx| {
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
