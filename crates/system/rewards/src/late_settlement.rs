@@ -514,6 +514,86 @@ mod tests {
     }
 
     #[test]
+    fn late_residue_credits_whole_units_and_keeps_native_dust() {
+        run(|ctx| {
+            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let pending = U256::from(4_000) * unit + U256::from(7);
+            fund(ctx, pending);
+            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+
+            let (_, residue) = settle_window(ctx, FB, 4).unwrap();
+            assert_eq!(residue, U256::from(1_000) * unit + U256::from(4));
+            assert_eq!(
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::from(1_000)
+            );
+            let rewards = ctx.storage.contract::<Rewards>();
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(4)
+            );
+            assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::from(4));
+
+            assert_eq!(settle_window(ctx, FB, 4).unwrap(), (U256::ZERO, U256::ZERO));
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(4)
+            );
+        });
+    }
+
+    #[test]
+    fn sub_unit_residue_accumulates_until_a_whole_unit() {
+        run(|ctx| {
+            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let pending = U256::from(24) * unit / U256::from(10);
+            let second = B256::repeat_byte(0xCD);
+            let rewards = ctx.storage.contract::<Rewards>();
+            rewards.pending_reward_day.write(&second, 19700101).unwrap();
+            fund(ctx, pending * U256::from(2));
+            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(
+                ctx,
+                11,
+                second,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
+            let carry_over = || {
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap()
+            };
+
+            settle_window(ctx, FB, 4).unwrap();
+            assert_eq!(carry_over(), U256::ZERO);
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(6) * unit / U256::from(10)
+            );
+
+            settle_window(ctx, second, 4).unwrap();
+            assert_eq!(carry_over(), U256::from(1));
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(2) * unit / U256::from(10)
+            );
+            assert_eq!(
+                ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
+                U256::from(2) * unit / U256::from(10)
+            );
+        });
+    }
+
+    #[test]
     fn ocomp_late_settlement_residue_waits_for_daily_limit_formation() {
         let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         storage.set_block_number(156);
