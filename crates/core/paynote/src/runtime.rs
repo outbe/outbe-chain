@@ -13,7 +13,6 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::noir::paynote::Paynote;
 use outbe_zk_canonical::paynote::{
@@ -38,7 +37,8 @@ use crate::PayNoteSuit;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNoteClaim {
     pub asset: Address,
-    pub owner: Address,
+    /// Opaque settlement statement. The caller recomputes it; PayNote does not.
+    pub context: B256,
     pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
@@ -302,19 +302,18 @@ pub(crate) fn deposit(
     })
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.2.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
-/// The proof is the single source of truth for the statement: there is no
-/// calldata path, so there is nothing to cross-check it against and no
-/// statement-mismatch failure mode.
+/// The proof is the single source of truth for the statement it carries.
+/// `context` is an opaque public word; the caller recomputes the settlement
+/// statement and compares it. PayNote does not interpret the word.
 ///
 /// Notes are bearer instruments — spend authority is knowledge of the spend
-/// key, not an address — so there is deliberately no caller check. The circuit
-/// binds `owner` as the payout target, so a third party who replays someone
-/// else's proof only spends their own gas; the claim still names the intended
-/// owner.
+/// key, not an address — so there is deliberately no caller check. Any address
+/// may relay a proof. The nullifier does not include `context`, so every
+/// statement for one note shares one use.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
@@ -336,8 +335,8 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    if claim.owner.is_zero() {
-        return Err(PayNoteError::InvalidInput("owner must be non-zero".into()).into());
+    if claim.context == B256::ZERO {
+        return Err(PayNoteError::InvalidInput("context must be non-zero".into()).into());
     }
     if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
@@ -404,7 +403,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
                 asset: claim.asset,
-                owner: claim.owner,
+                context: claim.context,
                 nullifier: nullifier_word,
                 spendAmount: claim.spend_amount,
             }),
@@ -428,7 +427,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     Ok(PayNoteClaim {
         asset: claim.asset,
-        owner: claim.owner,
+        context: claim.context,
         spend_amount: claim.spend_amount,
         nullifier: nullifier_word,
     })

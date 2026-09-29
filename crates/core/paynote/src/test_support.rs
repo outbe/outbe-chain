@@ -5,11 +5,10 @@
 //! from [`crate::runtime`]. Client applications use [`crate::client`] for
 //! production membership witnesses.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::Codec as _;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -65,8 +64,8 @@ pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Not
     Some(note_under_key(chain_id, key, note.asset, remaining))
 }
 
-/// Proves `owner` spending `spend_amount` of the note sitting at `leaf_index`
-/// in `tree`, returning combined public-inputs-plus-proof bytes.
+/// Proves a `spend_amount` spend of the note sitting at `leaf_index` in `tree`,
+/// bound to `context`, returning combined public-inputs-plus-proof bytes.
 ///
 /// The tree is a parameter because a note's auth path only exists relative to
 /// the pool state it is spent against — including any change leaf an earlier
@@ -76,10 +75,10 @@ pub fn spend_proof(
     tree: &PayNoteTree,
     leaf_index: u32,
     note: &Note,
-    owner: Address,
+    context: B256,
     spend_amount: U256,
 ) -> Vec<u8> {
-    let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, owner, spend_amount);
+    let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, context, spend_amount);
     combined_from(&public, &proof)
 }
 
@@ -88,7 +87,7 @@ fn prove_spend(
     tree: &PayNoteTree,
     leaf_index: u32,
     n: &Note,
-    owner: Address,
+    context: B256,
     spend_amount: U256,
 ) -> (PublicInputs, Vec<Vec<u8>>) {
     let public = PublicInputs {
@@ -96,7 +95,7 @@ fn prove_spend(
         root: tree.root(),
         nullifier: n.nullifier,
         asset: n.asset.to_field().unwrap(),
-        owner: owner.to_field().unwrap(),
+        context: PayNoteSuit::field_from_b256(&context).expect("canonical settlement context"),
         spend_amount: u256_limbs_be(&spend_amount.to_be_bytes::<32>()),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
@@ -112,17 +111,13 @@ fn prove_spend(
             .try_into()
             .unwrap(),
     };
-    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("paynote proof generation");
+    let proof = ProofGenerator::<PayNote>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("paynote proof generation");
     (public, proof.proof)
 }
 
 pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields = <PayNote as Circuit<PayNoteSuit>>::public_inputs(public);
+    let fields = <PayNote as Circuit>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
@@ -154,7 +149,7 @@ pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: 
         PayNoteSuit::field_to_b256(&output.commitment).unwrap()
     );
     let public = public.try_into().unwrap();
-    let proof = ProofGenerator::<PayNoteSuit, PaynoteMerge>::generate(
+    let proof = ProofGenerator::<PaynoteMerge>::generate(
         &Barretenberg::default(),
         &witness.try_into().unwrap(),
         &public,
@@ -198,21 +193,21 @@ pub struct SpendFixture {
 }
 
 /// Builds a note of `note_amount` in `asset` and proves a `spend_amount` spend
-/// of it by `owner`, over a tree holding that note alone.
+/// of it bound to `context`, over a tree holding that note alone.
 ///
 /// Proving is real Barretenberg work — roughly half a second per call — so
 /// callers should build one fixture per assertion, not one per iteration.
 pub fn note_and_spend_proof(
     chain_id: u64,
     asset: Address,
-    owner: Address,
+    context: B256,
     note_amount: U256,
     spend_amount: U256,
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = crate::client::new_tree(chain_id).unwrap();
     let leaf_index = u32::try_from(tree.append(n.commitment).unwrap().0).unwrap();
-    let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, owner, spend_amount);
+    let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, context, spend_amount);
 
     SpendFixture {
         commitment: n.commitment,
@@ -223,15 +218,16 @@ pub fn note_and_spend_proof(
 }
 
 /// Seeds two funded notes, merges them through the public dispatch and proves a
-/// full ordinary spend of the output. Consumer tests use this to cover the real
-/// merge -> settlement boundary with no token transfer or mock verifier.
+/// full ordinary spend of the output. Returns that spend proof and the output
+/// nullifier. Consumer tests use this to cover the real merge -> settlement
+/// boundary with no token transfer or mock verifier.
 pub fn merged_note_spend_proof(
     provider: &mut HashMapStorageProvider,
     chain_id: u64,
     asset: Address,
-    owner: Address,
+    context: B256,
     amount: U256,
-) -> Vec<u8> {
+) -> (Vec<u8>, Field) {
     use alloy_sol_types::SolCall;
     assert!(amount > U256::ONE);
     let inputs = [
@@ -258,5 +254,8 @@ pub fn merged_note_spend_proof(
         .unwrap()
     });
     tree.append(output.commitment).unwrap();
-    spend_proof(chain_id, &tree, 2, &output, owner, amount)
+    (
+        spend_proof(chain_id, &tree, 2, &output, context, amount),
+        output.nullifier,
+    )
 }

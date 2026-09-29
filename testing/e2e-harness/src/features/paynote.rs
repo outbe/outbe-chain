@@ -12,6 +12,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_paynote::api::{intex_series_target, settlement_context, SettlementDomain};
 use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
@@ -20,7 +21,6 @@ use outbe_paynote::PayNoteSuit;
 use outbe_paynote::PayNoteTree;
 use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::Codec as _;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -68,8 +68,41 @@ impl Note {
     }
 }
 
+/// Context word for a Nod spend: id word, one unit, and the quoted snapshot.
+pub(crate) fn nod_context(nod_id: U256, snapshot: U256) -> B256 {
+    settlement_context(
+        SettlementDomain::Nod,
+        B256::from(nod_id),
+        U256::ONE,
+        snapshot,
+    )
+    .expect("nod settlement context")
+}
+
+/// Context word for a Gem spend: id word, one unit, and the quoted snapshot.
+pub(crate) fn gem_context(gem_id: U256, snapshot: U256) -> B256 {
+    settlement_context(
+        SettlementDomain::Gem,
+        B256::from(gem_id),
+        U256::ONE,
+        snapshot,
+    )
+    .expect("gem settlement context")
+}
+
+/// Context word for an Intex spend: left-aligned series id, selected units, snapshot.
+pub(crate) fn intex_context(series_id: &[u8; 14], units: U256, snapshot: U256) -> B256 {
+    settlement_context(
+        SettlementDomain::Intex,
+        intex_series_target(series_id),
+        units,
+        snapshot,
+    )
+    .expect("intex settlement context")
+}
+
 /// Deposits a note covering `cost_minor` of `asset` for `payer`, then proves a
-/// spend of it — the proof `settleNodWithPayNote` takes.
+/// full spend bound to `context`.
 ///
 /// Every Nod is paid for by burning a note, so a Nod that costs nothing still
 /// has to present one. The pool refuses a zero deposit, so a free Nod is paid
@@ -81,6 +114,7 @@ pub(crate) fn deposit_and_prove(
     payer: Address,
     asset: Address,
     cost_minor: U256,
+    context: B256,
 ) -> Vec<u8> {
     let amount = if cost_minor.is_zero() {
         U256::ONE
@@ -116,17 +150,17 @@ pub(crate) fn deposit_and_prove(
         &deposit,
         "deposit the note that pays for the Nod",
     );
-    prove_spend(world, port, &note, payer)
+    prove_spend(world, port, &note, context)
 }
 
-/// Proves a full spend of `note` by `owner` against the pool's live tree.
+/// Proves a full spend of `note` bound to `context` against the pool's live tree.
 ///
 /// Every leaf ever appended is read back from `NewNote`, so the proof is built
-/// against the same root the chain will check it under — including any notes
-/// other scenarios deposited.
-pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address) -> Vec<u8> {
+/// against the same root the chain will check it under, including notes other
+/// scenarios deposited.
+pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, context: B256) -> Vec<u8> {
     let tree = read_tree(world, port, note.chain_id);
-    prove_full_spend(note, owner, &tree)
+    prove_full_spend(note, context, &tree)
 }
 
 fn read_tree(world: &World, port: u16, chain_id: u64) -> PayNoteTree {
@@ -142,7 +176,7 @@ fn read_tree(world: &World, port: u16, chain_id: u64) -> PayNoteTree {
     tree
 }
 
-fn prove_full_spend(note: &Note, owner: Address, tree: &PayNoteTree) -> Vec<u8> {
+fn prove_full_spend(note: &Note, context: B256, tree: &PayNoteTree) -> Vec<u8> {
     let (leaf_index, auth_path) =
         witness(tree, note.commitment).expect("the scenario's own deposit must be in the pool");
 
@@ -151,7 +185,7 @@ fn prove_full_spend(note: &Note, owner: Address, tree: &PayNoteTree) -> Vec<u8> 
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
         asset: note.asset.to_field().unwrap(),
-        owner: owner.to_field().unwrap(),
+        context: PayNoteSuit::field_from_b256(&context).expect("canonical settlement context"),
         spend_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
@@ -163,12 +197,8 @@ fn prove_full_spend(note: &Note, owner: Address, tree: &PayNoteTree) -> Vec<u8> 
         leaf_index,
         auth_path,
     };
-    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("paynote spend proof");
+    let proof = ProofGenerator::<PayNote>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("paynote spend proof");
     combined_from(&public, &proof.proof)
 }
 

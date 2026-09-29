@@ -9,10 +9,11 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use eyre::{ensure, Result, WrapErr};
+use outbe_paynote::api::{settlement_context, SettlementDomain};
 use outbe_paynote::Field;
 use outbe_paynote::{
     client::{new_tree, witness},
@@ -20,11 +21,12 @@ use outbe_paynote::{
     precompile::IPayNote,
     PayNoteSuit, PayNoteTree,
 };
-use outbe_primitives::addresses::PAYNOTE_ADDRESS;
+use outbe_primitives::addresses::{
+    GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
+};
 use outbe_protocol::{
     codec::FieldElement,
     protocol::zk::{Circuit, CircuitId, ProofGenerator},
-    Codec,
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
 use outbe_zk_canonical::noir::paynote::{
@@ -44,6 +46,27 @@ use crate::{
 
 sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 
+sol! {
+    interface INodSettlementQuote {
+        function quoteSettlement(uint256 nodId, address asset)
+            external
+            view
+            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+    }
+    interface IGemSettlementQuote {
+        function quoteSettlement(uint256 gemId, address asset)
+            external
+            view
+            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+    }
+    interface IIntexSettlementQuote {
+        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
+            external
+            view
+            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
+    }
+}
+
 /// Deposit shielded paynotes and generate spend proofs.
 ///
 /// Assets are ERC20 addresses; amounts are positive integers in token base units.
@@ -56,12 +79,13 @@ sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 ///   outbe-cli --rpc-url http://localhost:8545 --private-key "$PRIVATE_KEY" \
 ///     paynote deposit "$ASSET_ADDRESS" 1000000
 ///
-///   outbe-cli --rpc-url http://localhost:8545 --private-key "$PRIVATE_KEY" \
-///     paynote spend-proof ./paynotes/0xCOMMITMENT.json 600000
-///
-///   Generate a proof for an explicit recipient without a signing key:
 ///   outbe-cli --rpc-url http://localhost:8545 \
-///     paynote spend-proof 0xCOMMITMENT 600000 --owner "$RECIPIENT_ADDRESS"
+///     paynote spend-proof ./paynotes/0xCOMMITMENT.json 600000 --nod "$NOD_ID"
+///
+///   Bind an Intex series. The series id is exactly 14 bytes, and --units is
+///   the number of units being settled, which can differ from the token amount:
+///   outbe-cli --rpc-url http://localhost:8545 \
+///     paynote spend-proof 0xCOMMITMENT 600000 --intex 20260212-TRY-U --units 2
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
@@ -92,10 +116,27 @@ pub enum PaynoteCmd {
         paynote: String,
         #[arg(value_parser = parse_amount)]
         amount: U256,
-        /// Proof owner (recipient); defaults to the global --private-key address.
-        #[arg(long)]
-        owner: Option<Address>,
+        #[command(flatten)]
+        target: SpendTarget,
+        /// Units of `--intex` this proof settles.
+        #[arg(long, requires = "intex", value_parser = parse_amount)]
+        units: Option<U256>,
     },
+}
+
+/// Exactly one right the proof is allowed to settle.
+#[derive(Args, Debug, Clone)]
+#[group(required = true, multiple = false)]
+pub(crate) struct SpendTarget {
+    /// Nod id this proof may settle.
+    #[arg(long)]
+    nod: Option<U256>,
+    /// Gem id this proof may settle.
+    #[arg(long)]
+    gem: Option<U256>,
+    /// 14-byte Intex series id this proof may settle.
+    #[arg(long, requires = "units")]
+    intex: Option<String>,
 }
 
 impl PaynoteCmd {
@@ -116,11 +157,12 @@ impl PaynoteCmd {
             Self::SpendProof {
                 paynote,
                 amount,
-                owner,
+                target,
+                units,
             } => {
-                let owner = resolve_owner(owner, private_key)?;
                 let note = load_note(&resolve_note(dir, &paynote))?;
-                spend_proof(client, dir, &note, amount, owner).await?
+                let target = target.into_settlement(units)?;
+                spend_proof(client, dir, &note, amount, target).await?
             }
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -128,13 +170,129 @@ impl PaynoteCmd {
     }
 }
 
-fn resolve_owner(owner: Option<Address>, private_key: Option<&str>) -> Result<Address> {
-    let address = match owner {
-        Some(address) => address,
-        None => require_signer(private_key)?.address(),
+/// The settlement a spend proof is bound to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettlementTarget {
+    Nod(U256),
+    Gem(U256),
+    Intex { series: [u8; 14], units: U256 },
+}
+
+impl SpendTarget {
+    fn into_settlement(self, units: Option<U256>) -> Result<SettlementTarget> {
+        if let Some(nod) = self.nod {
+            return Ok(SettlementTarget::Nod(nod));
+        }
+        if let Some(gem) = self.gem {
+            return Ok(SettlementTarget::Gem(gem));
+        }
+        let Some(series) = self.intex else {
+            return Err(eyre::eyre!("a settlement target is required"));
+        };
+        let Some(units) = units else {
+            return Err(eyre::eyre!("--intex requires --units"));
+        };
+        let bytes = series.as_bytes();
+        ensure!(
+            bytes.len() == 14,
+            "intex series id must be exactly 14 bytes"
+        );
+        let mut series_id = [0u8; 14];
+        series_id.copy_from_slice(bytes);
+        Ok(SettlementTarget::Intex {
+            series: series_id,
+            units,
+        })
+    }
+}
+
+struct QuotedSettlement {
+    context: B256,
+    domain: &'static str,
+    target: B256,
+    units: U256,
+    snapshot_id: U256,
+}
+
+async fn quote_settlement(
+    client: &impl Rpc,
+    note: &Note,
+    amount: U256,
+    target: SettlementTarget,
+) -> Result<QuotedSettlement> {
+    let (domain, target_word, units, quote_units, snapshot_id, domain_tag) = match target {
+        SettlementTarget::Nod(id) => {
+            let quote = call(
+                client,
+                NOD_FACTORY_ADDRESS,
+                INodSettlementQuote::quoteSettlementCall {
+                    nodId: id,
+                    asset: note.asset,
+                },
+            )
+            .await?;
+            (
+                "nod",
+                B256::from(id),
+                U256::ONE,
+                quote.payableUnits,
+                quote.snapshotId,
+                SettlementDomain::Nod,
+            )
+        }
+        SettlementTarget::Gem(id) => {
+            let quote = call(
+                client,
+                GEM_FACTORY_ADDRESS,
+                IGemSettlementQuote::quoteSettlementCall {
+                    gemId: id,
+                    asset: note.asset,
+                },
+            )
+            .await?;
+            (
+                "gem",
+                B256::from(id),
+                U256::ONE,
+                quote.payableUnits,
+                quote.snapshotId,
+                SettlementDomain::Gem,
+            )
+        }
+        SettlementTarget::Intex { series, units } => {
+            let quote = call(
+                client,
+                INTEX_FACTORY_ADDRESS,
+                IIntexSettlementQuote::quoteSettlementCall {
+                    seriesId: FixedBytes::from(series),
+                    paymentToken: note.asset,
+                    amount: units,
+                },
+            )
+            .await?;
+            (
+                "intex",
+                outbe_paynote::api::intex_series_target(&series),
+                units,
+                quote.payableUnits,
+                quote.snapshotId,
+                SettlementDomain::Intex,
+            )
+        }
     };
-    ensure!(!address.is_zero(), "owner must be non-zero");
-    Ok(address)
+    ensure!(
+        quote_units == amount,
+        "quoted payable units {quote_units} do not match spend amount {amount}"
+    );
+    let context = settlement_context(domain_tag, target_word, units, snapshot_id)
+        .map_err(|error| eyre::eyre!("{error}"))?;
+    Ok(QuotedSettlement {
+        context,
+        domain,
+        target: target_word,
+        units,
+        snapshot_id,
+    })
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -580,11 +738,11 @@ async fn check_unspent(client: &impl Rpc, note: &Note) -> Result<()> {
 fn prove(
     note: &Note,
     amount: U256,
-    owner: Address,
+    context: B256,
     tree: &PayNoteTree,
 ) -> Result<(Vec<u8>, Option<Note>, PublicInputs)> {
     note.validate()?;
-    ensure!(!owner.is_zero(), "owner must be non-zero");
+    ensure!(context != B256::ZERO, "context must be non-zero");
     let change = note.change(amount)?;
     let (leaf_index, auth_path) = witness(tree, note.commitment.to_field()?)?;
     let public = PublicInputs {
@@ -592,7 +750,7 @@ fn prove(
         root: PayNoteSuit::field_to_b256(&tree.root())?,
         nullifier: note.nullifier()?,
         asset: note.asset,
-        owner,
+        context,
         spend_amount: amount,
         change_commitment: change.as_ref().map_or(B256::ZERO, |n| n.commitment),
     };
@@ -606,13 +764,13 @@ fn prove(
         *word = PayNoteSuit::field_to_b256(&field)?;
     }
     let circuit_public = public.try_into()?;
-    let proof = ProofGenerator::<PayNoteSuit, Paynote>::generate(
+    let proof = ProofGenerator::<Paynote>::generate(
         &Barretenberg::default(),
         &witness.try_into()?,
         &circuit_public,
     )
     .map_err(|_| eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup"))?;
-    let fields = <Paynote as Circuit<PayNoteSuit>>::public_inputs(&circuit_public);
+    let fields = <Paynote as Circuit>::public_inputs(&circuit_public);
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
@@ -633,18 +791,18 @@ async fn spend_proof(
     dir: &Path,
     note: &Note,
     amount: U256,
-    owner: Address,
+    target: SettlementTarget,
 ) -> Result<Value> {
     note.validate()?;
     ensure!(
         client.eth_chain_id().await? == note.chain_id,
         "note chain ID does not match RPC chain"
     );
-    ensure!(!owner.is_zero(), "owner must be non-zero");
     note.change(amount)?;
     check_unspent(client, note).await?;
+    let quoted = quote_settlement(client, note, amount, target).await?;
     let tree = read_tree(client, note.chain_id).await?;
-    let (combined, change, public) = prove(note, amount, owner, &tree)?;
+    let (combined, change, public) = prove(note, amount, quoted.context, &tree)?;
     ensure!(
         call(
             client,
@@ -662,7 +820,9 @@ async fn spend_proof(
         .transpose()?;
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
-        "asset": note.asset, "owner": owner, "spend_amount": amount.to_string(),
+        "asset": note.asset, "context": quoted.context, "domain": quoted.domain,
+        "target": quoted.target, "units": quoted.units.to_string(),
+        "snapshotId": quoted.snapshot_id.to_string(), "spend_amount": amount.to_string(),
         "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
     let proof_path = save_json(
         &dir.join("proofs"),

@@ -16,7 +16,6 @@ use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_protocol::protocol::entity::Entity as EntityTrait;
-use outbe_protocol::{OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 
@@ -57,7 +56,7 @@ pub(crate) fn derive_expected_hashes(
         .iter()
         .map(|value| parse_b256(value, "su_hash"))
         .collect::<Result<Vec<_>, _>>()?;
-    let su_ids = outbe_protocol::codec::sort_set::<Fr, B256>(&su_ids)
+    let su_ids = outbe_protocol::codec::sort_set(&su_ids)
         .map_err(|error| format!("invalid canonical su_ids: {error}"))?;
 
     let draft = TributeDraftClaim {
@@ -69,11 +68,14 @@ pub(crate) fn derive_expected_hashes(
         atto: amount.micro,
         su_ids,
     };
-    let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft)
+    let nft_hash = draft
+        .entity_hash()
         .map_err(|error| format!("invalid canonical TributeDraft: {error}"))?;
-    let binding_hash = OutbeV1::binding(
-        &offer.owner.into_array(),
-        id.as_ref(),
+    let sender = offer.owner.into_array();
+    let commitment_id: [u8; 32] = id.into();
+    let binding_hash = outbe_protocol::primitive::hash::binding(
+        &sender,
+        &commitment_id,
         context.chain_id,
         context.l2_chain_id,
     )

@@ -5,7 +5,6 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::Codec as _;
 use outbe_zk_canonical::paynote_merge::{
     alloy::{PublicInputs, Witness},
     MAX_MERGE_INPUTS,

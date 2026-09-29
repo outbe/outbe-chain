@@ -12,8 +12,7 @@ use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::Codec as _;
+use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
@@ -126,8 +125,7 @@ fn selectors_and_gas_are_pinned() {
 // ---- real-proof fixture ----------------------------------------------------
 
 fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields =
-        <EmitMint as outbe_protocol::protocol::zk::Circuit<EmitSuite>>::public_inputs(public);
+    let fields = <EmitMint as Circuit>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
@@ -201,12 +199,8 @@ fn prove_mint_u256(
             .try_into()
             .unwrap(),
     };
-    let proof = ProofGenerator::<EmitSuite, EmitMint>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("emit mint proof generation");
+    let proof = ProofGenerator::<EmitMint>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("emit mint proof generation");
     combined_from(&public, &proof.proof)
 }
 

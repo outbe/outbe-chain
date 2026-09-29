@@ -443,13 +443,13 @@ fn inbox_key_real_zk_offer_records_rewards_once_and_rolls_back_failures() {
 fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
     use ark_bn254::Fr;
     use ark_ff::{BigInteger, PrimeField};
-    use outbe_protocol::primitive::{curve::coords, hash::FieldHasher};
+    use outbe_protocol::primitive::curve::coords;
+    use outbe_protocol::primitive::hash::{self, poseidon2};
     use outbe_protocol::protocol::{
         entity::Entity as EntityTrait,
         key::{NftSigner, Signer},
         zk::ProofGenerator,
     };
-    use outbe_protocol::{OutbeV1, Suite};
     use outbe_tee_enclave::zk_claim::TributeDraftClaim;
     use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
     use outbe_zk_canonical::noir::{niflheim_tribute, EmbeddedCurvePoint};
@@ -457,7 +457,7 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
 
     const L2_CHAIN_ID: u32 = 9_900_501;
     let mut rng = StdRng::from_seed([0x99; 32]);
-    let signer = Signer::<OutbeV1>::local(&mut rng).unwrap();
+    let signer = Signer::local(&mut rng).unwrap();
     let seed = signer.owner_seed();
     let owner = seed.derive_owner().unwrap();
     let draft = TributeDraftClaim {
@@ -469,17 +469,18 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
         atto: 0,
         su_ids: vec![B256::with_last_byte(0x22)],
     };
-    let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft).unwrap();
-    let binding_hash = OutbeV1::binding(
+    let nft_hash = draft.entity_hash().unwrap();
+    let commitment_id: [u8; 32] = draft.id.into();
+    let binding_hash = hash::binding(
         &Address::repeat_byte(0x77).into_array(),
-        draft.id.as_ref(),
+        &commitment_id,
         CHAIN_ID,
         u64::from(L2_CHAIN_ID),
     )
     .unwrap();
-    let message = OutbeV1::signing_payload(nft_hash, seed.nonce, binding_hash).unwrap();
+    let message = hash::signing_payload(nft_hash, seed.nonce, binding_hash).unwrap();
     let signature = signer.sign(&mut rng, message).unwrap();
-    let (x, y) = coords::<<OutbeV1 as Suite>::Curve>(&seed.pk).unwrap();
+    let (x, y) = coords(&seed.pk).unwrap();
     // Niflheim uses two-input Poseidon2 without Demo's domain separator.
     // Insert the draft at the leftmost leaf of a depth-32 empty tree.
     let mut merkle_root = nft_hash;
@@ -487,8 +488,8 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
     let mut siblings = [sibling; 32];
     for level in &mut siblings {
         *level = sibling;
-        merkle_root = <OutbeV1 as Suite>::Hash::hash(&[merkle_root, sibling]).unwrap();
-        sibling = <OutbeV1 as Suite>::Hash::hash(&[sibling, sibling]).unwrap();
+        merkle_root = poseidon2(&[merkle_root, sibling]).unwrap();
+        sibling = poseidon2(&[sibling, sibling]).unwrap();
     }
     let witness = niflheim_tribute::Witness {
         pk: EmbeddedCurvePoint { x, y },
@@ -504,7 +505,7 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
         merkle_root,
     };
     init_crs().unwrap();
-    let proof = ProofGenerator::<OutbeV1, niflheim_tribute::NiflheimTribute>::generate(
+    let proof = ProofGenerator::<niflheim_tribute::NiflheimTribute>::generate(
         &Barretenberg::default(),
         &witness,
         &public,

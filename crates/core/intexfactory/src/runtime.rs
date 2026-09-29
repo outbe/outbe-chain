@@ -686,7 +686,7 @@ fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Resul
     }
 }
 
-/// Settle paying the cost by spending a PayNote owned by `settler`.
+/// Settle paying the cost by spending a PayNote bound to this series and unit count.
 pub fn settle_intex_with_paynote(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -702,7 +702,7 @@ pub fn settle_intex_with_paynote(
         settler,
         amount,
         |_| Ok(()),
-        |series, ()| discharge_cost(storage, series, amount, settler, paynote_proof),
+        |series, ()| discharge_cost(storage, series_id, series, amount, paynote_proof),
     )
 }
 
@@ -849,24 +849,27 @@ fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
 /// Discharges the settlement cost by spending one PayNote.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
+    series_id: SeriesId,
     series: &outbe_intex::SeriesRecord,
     amount: U256,
-    settler: Address,
     paynote_proof: &[u8],
 ) -> Result<()> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-
-    // Notes are bearer: anyone can relay a proof, so bind its owner to the settler.
-    if claim.owner != settler {
-        return Err(IntexFactoryError::PayNoteOwnerMismatch {
-            expected: settler,
-            actual: claim.owner,
+    let currency = accept_payment_token(storage, claim.asset, series)?;
+    let (cost, snapshot) = cost_in_token(storage, series, claim.asset, currency, amount)?;
+    let expected = outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Intex,
+        outbe_paynote::api::intex_series_target(series_id.as_bytes()),
+        amount,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+    )?;
+    if claim.context != expected {
+        return Err(IntexFactoryError::PayNoteContextMismatch {
+            expected,
+            actual: claim.context,
         }
         .into());
     }
-
-    let currency = accept_payment_token(storage, claim.asset, series)?;
-    let (cost, _) = cost_in_token(storage, series, claim.asset, currency, amount)?;
     // Exact: the surplus of an over-spend is already in the reserve vault.
     if claim.spend_amount != cost {
         return Err(IntexFactoryError::PayNoteCostMismatch {

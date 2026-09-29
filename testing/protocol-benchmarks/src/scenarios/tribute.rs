@@ -48,12 +48,12 @@ use outbe_primitives::{
     },
     time::date_key_to_utc_timestamp,
 };
-use outbe_protocol::primitive::signature::SignatureScheme;
+use outbe_protocol::primitive::hash::{self, derive_owner};
+use outbe_protocol::primitive::signature;
 use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::protocol::zkproof::decode_public_words;
-use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
@@ -198,7 +198,7 @@ struct GateMeasurement {
 }
 
 fn field_bytes(field: &Fr) -> [u8; 32] {
-    OutbeV1::field_to_be_bytes(field)
+    outbe_protocol::codec::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
 }
@@ -238,9 +238,9 @@ fn build_fixture() -> Fixture {
     let proof_started = Instant::now();
     let generated_combined = {
         let mut proof_rng = StdRng::from_seed([9; 32]);
-        let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut proof_rng);
+        let (secret, public_key) = signature::keypair(&mut proof_rng);
         let owner_nonce = Fr::rand(&mut proof_rng);
-        let derived_owner = OutbeV1::derive_owner(&public_key, owner_nonce).unwrap();
+        let derived_owner = derive_owner(&public_key, owner_nonce).unwrap();
         let draft_id = B256::with_last_byte(0x11);
         let draft = TributeDraftFixture {
             id: draft_id,
@@ -253,29 +253,26 @@ fn build_fixture() -> Fixture {
         };
         // The submission binding is the caller, the draft and *both* chain ids: the
         // host chain that executes the offer and the selected L2 network.
-        let binding = OutbeV1::binding(
+        let binding = hash::binding(
             &CALLER.into_array(),
-            draft_id.as_ref(),
+            &draft_id.0,
             CHAIN_ID,
             u64::from(L2_CHAIN_ID),
         )
         .unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
 
-        let path = Imt::<OutbeV1>::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
+        let path = Imt::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
             .unwrap()
             .empty_inclusion_path(0);
         let (witness, public) = draft
             .derive_demo_tribute_witness(&mut proof_rng, &signer, binding, &path)
             .unwrap();
-        let proof = ProofGenerator::<OutbeV1, DemoTribute>::generate(
-            &Barretenberg::default(),
-            &witness,
-            &public,
-        )
-        .unwrap();
+        let proof =
+            ProofGenerator::<DemoTribute>::generate(&Barretenberg::default(), &witness, &public)
+                .unwrap();
 
-        let public_fields = <DemoTribute as Circuit<OutbeV1>>::public_inputs(&public);
+        let public_fields = <DemoTribute as Circuit>::public_inputs(&public);
         let mut combined = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
         combined.extend_from_slice(&(public_fields.len() as u32).to_be_bytes());
         for value in public_fields {

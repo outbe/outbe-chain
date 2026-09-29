@@ -701,9 +701,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     )
     .unwrap()
     .to::<u128>();
-    let paynote_proof = world
-        .fund_note(NOTE_ASSET, population.actions[0].owner, cost.max(1), cost)
-        .0;
+    let paynote_proof = world.fund_note(NOTE_ASSET, nod_id, cost.max(1), cost).0;
     world
         .settle(nod_id, population.actions[0].owner, &paynote_proof)
         .unwrap();

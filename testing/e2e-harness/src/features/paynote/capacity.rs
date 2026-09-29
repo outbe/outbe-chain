@@ -7,10 +7,11 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use cucumber::then;
-use outbe_protocol::Codec as _;
 use serde_json::Value;
 
-use super::{new_tree, note_nullifier, prove_full_spend, read_tree, Note, PayNoteSuit};
+use super::{
+    gem_context, new_tree, note_nullifier, prove_full_spend, read_tree, Note, PayNoteSuit,
+};
 use crate::features::gem_lifecycle::IGemTestArming;
 use crate::features::settlement::{assert_mined_success, assert_receipt_event, fund_and_approve};
 use crate::internal::{addresses, eth};
@@ -55,21 +56,24 @@ fn settle_gems(world: &mut World, notes_count: u32) {
     );
 
     let gems = issue_gems(world, notes_count);
-    let notes: Vec<_> = gems
+    let quotes: Vec<_> = gems
         .iter()
         .map(|&gem_id| {
-            let amount = read(
+            let quote = read(
                 &url,
                 addresses::GEM_FACTORY_ADDR,
                 &eth::IGemFactory::quoteSettlementCall {
                     gemId: gem_id,
                     asset: currency.asset,
                 },
-            )
-            .payableUnits;
-            assert!(!amount.is_zero(), "zero quote for GEM {gem_id}");
-            Note::new(chain_id, currency.asset, amount)
+            );
+            assert!(!quote.payableUnits.is_zero(), "zero quote for GEM {gem_id}");
+            quote
         })
+        .collect();
+    let notes: Vec<_> = quotes
+        .iter()
+        .map(|quote| Note::new(chain_id, currency.asset, quote.payableUnits))
         .collect();
     assert_eq!(notes.len(), notes_count as usize);
     let commitments: BTreeSet<_> = notes.iter().map(|n| word(&n.commitment)).collect();
@@ -169,7 +173,8 @@ fn settle_gems(world: &mut World, notes_count: u32) {
         deposited = end;
         if deposited == 1 {
             first_root = word(&tree.root());
-            stale_proof = prove_full_spend(&notes[0], owner, &tree);
+            stale_proof =
+                prove_full_spend(&notes[0], gem_context(gems[0], quotes[0].snapshotId), &tree);
         }
         if matches!(deposited, 32 | 33) {
             assert_eq!(
@@ -225,9 +230,10 @@ fn settle_gems(world: &mut World, notes_count: u32) {
     }
 
     let mut last_settlement = None;
-    for (index, (&gem_id, note)) in gems.iter().zip(&notes).enumerate() {
+    for (index, ((&gem_id, note), quote)) in gems.iter().zip(&notes).zip(&quotes).enumerate() {
         eprintln!("paynote_capacity phase=prove note={index} gem_id={gem_id}");
-        let proof = prove_full_spend(note, owner, &tree);
+        let context = gem_context(gem_id, quote.snapshotId);
+        let proof = prove_full_spend(note, context, &tree);
         let outcome = send(
             &url,
             addresses::GEM_FACTORY_ADDR,
@@ -246,7 +252,7 @@ fn settle_gems(world: &mut World, notes_count: u32) {
             addresses::PAYNOTE_ADDR,
             &eth::IPayNote::NoteUsed {
                 asset: note.asset,
-                owner,
+                context,
                 nullifier: nullifiers[index],
                 spendAmount: note.amount,
             },

@@ -142,10 +142,22 @@ fn command_inputs_and_note_validation() {
         "spend-proof",
         "note.json",
         "1",
-        "--owner",
-        &asset
+        "--nod",
+        "7"
     ])
     .is_ok());
+    assert!(crate::Cli::try_parse_from([
+        "outbe-cli",
+        "paynote",
+        "spend-proof",
+        "note.json",
+        "1",
+        "--nod",
+        "7",
+        "--gem",
+        "8"
+    ])
+    .is_err());
     for invalid in [
         "0",
         "-1",
@@ -158,13 +170,6 @@ fn command_inputs_and_note_validation() {
     ] {
         assert!(parse_amount(invalid).is_err(), "{invalid}");
     }
-    assert_eq!(
-        resolve_owner(None, Some(KEY)).unwrap(),
-        TxSigner::new(KEY).unwrap().address()
-    );
-    assert_eq!(resolve_owner(Some(ASSET), None).unwrap(), ASSET);
-    assert!(resolve_owner(None, None).is_err());
-    assert!(resolve_owner(Some(Address::ZERO), Some(KEY)).is_err());
     let mut n = note();
     assert!(n.change(U256::ZERO).is_err());
     assert!(n.change(n.amount + U256::ONE).is_err());
@@ -330,7 +335,25 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
         .contains("pending"));
 }
 
+fn nod_target() -> SettlementTarget {
+    SettlementTarget::Nod(U256::from(7u64))
+}
+
+fn quote_return(payable: U256) -> Vec<u8> {
+    INodSettlementQuote::quoteSettlementCall::abi_encode_returns(
+        &INodSettlementQuote::quoteSettlementReturn {
+            settlementCurrency: 840,
+            payableUnits: payable,
+            snapshotId: U256::ZERO,
+        },
+    )
+}
+
 pub(super) fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
+    tree_rpc_quoted(tree, logs, U256::ZERO)
+}
+
+pub(super) fn tree_rpc_quoted(tree: &PayNoteTree, logs: Vec<Value>, payable: U256) -> MockRpc {
     MockRpc {
         chain_id: Ok(CHAIN),
         block_number: Ok(10),
@@ -351,6 +374,13 @@ pub(super) fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
             (
                 (PAYNOTE_ADDRESS, IPayNote::isKnownRootCall::SELECTOR),
                 abi_u64(1),
+            ),
+            (
+                (
+                    NOD_FACTORY_ADDRESS,
+                    INodSettlementQuote::quoteSettlementCall::SELECTOR,
+                ),
+                quote_return(payable),
             ),
         ]))),
         ..Default::default()
@@ -395,7 +425,7 @@ async fn wrong_chain_overspend_and_spent_notes_fail_before_proving() {
         chain_id: Ok(CHAIN + 1),
         ..Default::default()
     };
-    assert!(spend_proof(&rpc, temp.path(), &n, U256::ONE, ASSET)
+    assert!(spend_proof(&rpc, temp.path(), &n, U256::ONE, nod_target())
         .await
         .unwrap_err()
         .to_string()
@@ -405,7 +435,7 @@ async fn wrong_chain_overspend_and_spent_notes_fail_before_proving() {
         ..Default::default()
     };
     assert!(
-        spend_proof(&rpc, temp.path(), &n, n.amount + U256::ONE, ASSET)
+        spend_proof(&rpc, temp.path(), &n, n.amount + U256::ONE, nod_target())
             .await
             .unwrap_err()
             .to_string()
@@ -419,7 +449,7 @@ async fn wrong_chain_overspend_and_spent_notes_fail_before_proving() {
         )]))),
         ..Default::default()
     };
-    assert!(spend_proof(&rpc, temp.path(), &n, U256::ONE, ASSET)
+    assert!(spend_proof(&rpc, temp.path(), &n, U256::ONE, nod_target())
         .await
         .unwrap_err()
         .to_string()
@@ -452,8 +482,15 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
             (PAYNOTE_ADDRESS, IPayNote::isKnownRootCall::SELECTOR),
             abi_u64(0),
         ),
+        (
+            (
+                NOD_FACTORY_ADDRESS,
+                INodSettlementQuote::quoteSettlementCall::SELECTOR,
+            ),
+            quote_return(U256::ONE),
+        ),
     ])));
-    let error = spend_proof(&rpc, temp.path(), &n, U256::ONE, ASSET)
+    let error = spend_proof(&rpc, temp.path(), &n, U256::ONE, nod_target())
         .await
         .unwrap_err();
     assert!(error.to_string().contains("root expired"));
@@ -464,7 +501,6 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
 #[tokio::test]
 async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let n = note();
-    let owner = TxSigner::new(KEY).unwrap().address();
     let temp = private_tempdir();
     let mut tree = new_tree(CHAIN).unwrap();
     tree.append(n.commitment.to_field().unwrap()).unwrap();
@@ -482,18 +518,28 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     rpc.assert_done();
     let saved = load_note(Path::new(deposited["note"].as_str().unwrap())).unwrap();
     let amount = (U256::ONE << 199) + U256::from(40);
+    let context = outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Nod,
+        B256::from(U256::from(7u64)),
+        U256::ONE,
+        U256::ZERO,
+    )
+    .unwrap();
     let output = spend_proof(
-        &tree_rpc(&tree, vec![origin_log.clone()]),
+        &tree_rpc_quoted(&tree, vec![origin_log.clone()], amount),
         temp.path(),
         &saved,
         amount,
-        owner,
+        nod_target(),
     )
     .await
     .unwrap();
     let combined = hex::decode(output["proof"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     let change = load_note(Path::new(output["change_note"].as_str().unwrap())).unwrap();
-    assert_eq!(output["owner"], json!(owner));
+    assert_eq!(output["context"], json!(context));
+    assert_eq!(output["domain"], json!("nod"));
+    assert_eq!(output["units"], json!("1"));
+    assert_eq!(output["snapshotId"], json!("0"));
     assert_eq!(change.amount, n.amount - amount);
     assert!(witness(&tree, change.commitment.to_field().unwrap()).is_err());
     assert!(load_note(Path::new(deposited["note"].as_str().unwrap())).unwrap() == n);
@@ -508,7 +554,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     provider.enter(|storage| {
         let claim = outbe_paynote::api::consume(&storage, &combined).unwrap();
         assert_eq!(claim.spend_amount, amount);
-        assert_eq!(claim.owner, owner);
+        assert_eq!(claim.context, context);
         assert!(outbe_paynote::api::is_spent(&storage, n.nullifier().unwrap()).unwrap());
     });
     tree.append(change.commitment.to_field().unwrap()).unwrap();
@@ -523,11 +569,11 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         PayNoteSuit::field_to_b256(&tree.root()).unwrap()
     );
     let output = spend_proof(
-        &tree_rpc(&tree, vec![origin_log, change_log]),
+        &tree_rpc_quoted(&tree, vec![origin_log, change_log], change.amount),
         temp.path(),
         &change,
         change.amount,
-        owner,
+        nod_target(),
     )
     .await
     .unwrap();
@@ -546,4 +592,76 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         assert!(outbe_paynote::api::is_spent(&storage, change.nullifier().unwrap()).unwrap());
         assert!(outbe_paynote::api::consume(&storage, &combined).is_err());
     });
+}
+
+#[tokio::test]
+async fn a_quote_whose_units_differ_from_the_spend_never_proves() {
+    let n = note();
+    let temp = private_tempdir();
+    save_note(temp.path(), &n).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
+    tree.append(n.commitment.to_field().unwrap()).unwrap();
+    let error = spend_proof(
+        &tree_rpc_quoted(
+            &tree,
+            vec![event(&n, 0, tree.root(), n.amount)],
+            U256::from(2u64),
+        ),
+        temp.path(),
+        &n,
+        U256::ONE,
+        nod_target(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("do not match spend amount"),
+        "{error}"
+    );
+    assert!(temp.path().join("proofs").read_dir().is_err());
+}
+
+#[test]
+fn spend_proof_requires_exactly_one_settlement_target() {
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Probe {
+        #[command(subcommand)]
+        cmd: PaynoteCmd,
+    }
+
+    assert!(Probe::try_parse_from(["outbe-cli", "spend-proof", "note", "1"]).is_err());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--nod",
+        "1",
+        "--gem",
+        "2"
+    ])
+    .is_err());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--intex",
+        "20260212-TRY-U"
+    ])
+    .is_err());
+    assert!(Probe::try_parse_from(["outbe-cli", "spend-proof", "note", "1", "--nod", "7"]).is_ok());
+    assert!(Probe::try_parse_from([
+        "outbe-cli",
+        "spend-proof",
+        "note",
+        "1",
+        "--intex",
+        "20260212-TRY-U",
+        "--units",
+        "2"
+    ])
+    .is_ok());
 }

@@ -336,7 +336,7 @@ fn prove_stage(
         "saved merge output differs from proof"
     );
     let circuit_public = public.try_into()?;
-    let proof = ProofGenerator::<PayNoteSuit, PaynoteMerge>::generate(
+    let proof = ProofGenerator::<PaynoteMerge>::generate(
         &Barretenberg::default(),
         &witness.try_into()?,
         &circuit_public,

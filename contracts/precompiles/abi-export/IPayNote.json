@@ -179,10 +179,10 @@
         "internalType": "address"
       },
       {
-        "name": "owner",
-        "type": "address",
+        "name": "context",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
       },
       {
         "name": "nullifier",

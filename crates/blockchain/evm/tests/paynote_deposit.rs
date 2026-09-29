@@ -19,7 +19,6 @@
 
 use outbe_paynote::Field;
 use outbe_paynote::PayNoteSuit;
-use outbe_protocol::Codec as _;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
