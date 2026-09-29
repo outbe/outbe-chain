@@ -555,7 +555,7 @@ pub(crate) fn settlement_units(
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_rate(item.gem_type)))
         .ok_or(GemFactoryError::Overflow)?;
-    // The denominator carries `percent`: one reference minor unit is `1e6 x percent`.
+    // The obligation keeps the x100 of the rate: one reference minor unit is 1e8.
     let obligation = if obligation.is_zero() {
         obligation
     } else {
@@ -574,8 +574,7 @@ pub(crate) fn settlement_units(
         .map_err(|e| GemFactoryError::from(e).into())
 }
 
-/// The gem's cost in its reference currency at six decimals. Settlement converts
-/// the unfloored obligation instead, so a wider asset keeps what this drops.
+/// What settlement charges in a six-decimal reference-currency asset.
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
     settlement_units(
