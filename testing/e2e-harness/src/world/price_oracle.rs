@@ -495,6 +495,17 @@ pub struct PriceOracleTopology {
     mocks: BTreeMap<usize, MockPriceServer>,
     feeders: BTreeMap<usize, ChildGuard>,
     evidence: PriceOracleEvidenceV1,
+    fixed_pairs: Vec<FixedPair>,
+}
+
+/// A COEN pair every feeder quotes at one unchanging price beside the controlled COEN/840.
+#[derive(Clone, Debug)]
+pub(crate) struct FixedPair {
+    pub(crate) iso_code: u16,
+    pub(crate) rate: alloy_primitives::U256,
+    quote: String,
+    price: String,
+    volume: String,
 }
 
 impl PriceOracleTopology {
@@ -552,23 +563,56 @@ impl PriceOracleTopology {
             mocks: BTreeMap::new(),
             feeders: BTreeMap::new(),
             evidence: PriceOracleEvidenceV1::default(),
+            fixed_pairs: Vec::new(),
         }
     }
 
+    /// Quote COEN in `iso_code` at the scale-6 `rate` on every feeder started from now on.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn add_fixed_pair(
+        &mut self,
+        iso_code: u16,
+        rate: alloy_primitives::U256,
+        volume: &str,
+    ) {
+        let scale = alloy_primitives::U256::from(1_000_000_u64);
+        self.fixed_pairs.push(FixedPair {
+            iso_code,
+            rate,
+            quote: iso_code.to_string(),
+            price: format!("{}.{:06}", rate / scale, rate % scale),
+            volume: volume.to_owned(),
+        });
+    }
+
+    pub(crate) fn fixed_pairs(&self) -> &[FixedPair] {
+        &self.fixed_pairs
+    }
+
     pub(crate) fn start(&mut self, launch: FeederLaunch<'_>, quote: PriceQuote<'_>) -> Result<()> {
-        self.start_with_pairs(
-            launch,
-            &[FeederPair {
+        let fixed = self.fixed_pairs.clone();
+        let pairs = std::iter::once(FeederPair {
+            base: "COEN",
+            quote: "840",
+            sources: vec![FeederSource {
                 base: "COEN",
                 quote: "840",
-                sources: vec![FeederSource {
-                    base: "COEN",
-                    quote: "840",
-                    price: quote.price,
-                    volume: quote.volume,
-                }],
+                price: quote.price,
+                volume: quote.volume,
             }],
-        )
+        })
+        .chain(fixed.iter().map(|pair| FeederPair {
+            base: "COEN",
+            quote: &pair.quote,
+            sources: vec![FeederSource {
+                base: "COEN",
+                quote: &pair.quote,
+                price: &pair.price,
+                volume: &pair.volume,
+            }],
+        }))
+        .collect::<Vec<_>>();
+        self.start_with_pairs(launch, &pairs)
     }
 
     pub(crate) fn start_with_pairs(

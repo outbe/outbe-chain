@@ -18,7 +18,7 @@ use crate::world::World;
 
 const USD_ISO: u16 = 840;
 const MOCK_PRICE: &str = "1.000000";
-const MOCK_VOLUME: &str = "1000.000000";
+pub(crate) const MOCK_VOLUME: &str = "1000.000000";
 const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
@@ -235,6 +235,31 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
 fn controlled_quote_is_finalized(world: &mut World) {
     start_feeder(world, OracleEvidencePhaseV1::Initial);
     assert_controlled_quote_is_finalized(world);
+}
+
+/// The controlled COEN/840 quote and every fixed pair the scenario configured, each
+/// finalized unanimously by the real feeders.
+#[then("the controlled COEN quotes are finalized through the real price feeder")]
+fn controlled_quotes_are_finalized(world: &mut World) {
+    start_feeder(world, OracleEvidencePhaseV1::Initial);
+    assert_controlled_quote_is_finalized(world);
+    let after = world
+        .price_oracle
+        .cohort()
+        .expect("initial Oracle cohort")
+        .checkpoint
+        .height;
+    for pair in world.price_oracle.fixed_pairs().to_vec() {
+        wait_for_unanimous_pair_publication(
+            world,
+            OracleEvidencePhaseV1::Initial,
+            Address::ZERO,
+            outbe_primitives::asset_type::currency_address(pair.iso_code),
+            after,
+            pair.rate,
+            true,
+        );
+    }
 }
 
 #[then("all five admitted validators finalize the controlled COEN USD quote through the real price feeder")]

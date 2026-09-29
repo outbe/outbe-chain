@@ -680,6 +680,12 @@ pub struct FixtureState {
     /// The stablecoin owners settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
+    /// Every settlement currency a lifecycle scenario registered, by ISO code.
+    #[cfg(feature = "ocomp-integration")]
+    pub currencies:
+        std::collections::BTreeMap<u16, crate::world::settlement_currency::SettlementCurrency>,
+    /// The issuance currency a lifecycle scenario prices besides USD, chosen by its tag.
+    pub issuance_market: Option<u16>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
 
@@ -723,6 +729,9 @@ impl Default for FixtureState {
             downtime: None,
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
+            #[cfg(feature = "ocomp-integration")]
+            currencies: std::collections::BTreeMap::new(),
+            issuance_market: None,
             gem_source_series: None,
             gem_position: None,
             mined_gem: None,

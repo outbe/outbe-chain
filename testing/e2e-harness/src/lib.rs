@@ -312,6 +312,8 @@ pub async fn run() {
                 Duration::from_secs(env::scenario_timeout_secs(feature, scenario, &env_hook)),
             );
             world.localnet.set_scenario_deadline(deadline);
+            #[cfg(feature = "ocomp-integration")]
+            features::entity_lifecycle::markets::configure(world, &scenario.tags);
             // Only reachable for unmet scenarios in `--all` mode (the filter
             // excludes them otherwise); panic so they count as failures.
             let reason = if env_hook.all {
