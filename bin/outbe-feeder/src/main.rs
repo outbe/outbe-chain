@@ -309,9 +309,8 @@ async fn feeder_tick(
                 &fresh,
                 wallet,
                 signer,
-                config.chain.chain_id,
+                &config.chain,
                 &calldata,
-                config.chain.gasless_oracle_votes,
                 journal.pending(),
             )
             .await?;
