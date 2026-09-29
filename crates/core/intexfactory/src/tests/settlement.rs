@@ -258,6 +258,16 @@ fn settle_two_units_spending(
     HashMapStorageProvider,
     outbe_primitives::error::Result<U256>,
 ) {
+    settle_two_units_spending_from(spend, false)
+}
+
+fn settle_two_units_spending_from(
+    spend: U256,
+    merged: bool,
+) -> (
+    HashMapStorageProvider,
+    outbe_primitives::error::Result<U256>,
+) {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
 
@@ -282,27 +292,31 @@ fn settle_two_units_spending(
     );
     storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
 
-    let fixture = outbe_paynote::test_support::note_and_spend_proof(
-        CHAIN_ID,
-        payment_token(),
-        PAYER,
-        spend,
-        spend,
-    );
-    outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
+    let proof = if merged {
+        outbe_paynote::test_support::merged_note_spend_proof(
+            &mut storage,
+            CHAIN_ID,
+            payment_token(),
+            PAYER,
+            spend,
+        )
+    } else {
+        let fixture = outbe_paynote::test_support::note_and_spend_proof(
+            CHAIN_ID,
+            payment_token(),
+            PAYER,
+            spend,
+            spend,
+        );
+        outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
+        fixture.proof
+    };
 
     let outcome = StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         seed_qualifying_day(&s);
-        runtime::settle_intex_with_paynote(
-            &s,
-            sid(7),
-            owner(),
-            PAYER,
-            U256::from(2u64),
-            &fixture.proof,
-        )
-        .map(|_| U256::from(outbe_intex::api::settled_units(&s, sid(7)).unwrap()))
+        runtime::settle_intex_with_paynote(&s, sid(7), owner(), PAYER, U256::from(2u64), &proof)
+            .map(|_| U256::from(outbe_intex::api::settled_units(&s, sid(7)).unwrap()))
     });
     (storage, outcome)
 }
@@ -771,4 +785,10 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         assert_eq!(counts.gemFactoryUnits, 10);
         assert_eq!(counts.forfeitedUnits, 0);
     });
+}
+
+#[test]
+fn merged_paynote_settles_intex_units_without_additional_funding() {
+    let (_, outcome) = settle_two_units_spending_from(TWO_UNIT_COST, true);
+    assert_eq!(outcome.unwrap(), U256::from(2));
 }

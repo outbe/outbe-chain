@@ -7,11 +7,11 @@ use outbe_paynote::{schema::PayNoteContract, test_support::seed_pool};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use std::collections::HashMap;
 
-const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
-const CHAIN: u64 = 1337;
-const ASSET: Address = Address::new([0x33; 20]);
+pub(super) const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+pub(super) const CHAIN: u64 = 1337;
+pub(super) const ASSET: Address = Address::new([0x33; 20]);
 
-fn private_tempdir() -> tempfile::TempDir {
+pub(super) fn private_tempdir() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     #[cfg(unix)]
     {
@@ -32,7 +32,7 @@ fn note() -> Note {
     .unwrap()
 }
 
-fn event(note: &Note, index: u32, root: Field, amount: U256) -> Value {
+pub(super) fn event(note: &Note, index: u32, root: Field, amount: U256) -> Value {
     let log = IPayNote::NewNote {
         commitment: note.commitment,
         leafIndex: index,
@@ -330,7 +330,7 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
         .contains("pending"));
 }
 
-fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
+pub(super) fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
     MockRpc {
         chain_id: Ok(CHAIN),
         block_number: Ok(10),

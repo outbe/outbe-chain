@@ -1931,3 +1931,32 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
         assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }
+
+#[test]
+fn merged_paynote_settles_a_gem_without_additional_funding() {
+    let mut provider = test_storage(Some(U256::from(2) * six_decimal_unit()));
+    let (gem_id, cost) = StorageHandle::enter(&mut provider, |storage| {
+        let id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Genesis,
+            U256::from(10) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, id);
+        let (_, cost, _) = runtime::quote_settlement(&storage, id, STABLE).unwrap();
+        (id, cost)
+    });
+    let proof =
+        outbe_paynote::test_support::merged_note_spend_proof(&mut provider, 1, STABLE, ALICE, cost);
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
+        assert!(runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).is_err());
+    });
+}

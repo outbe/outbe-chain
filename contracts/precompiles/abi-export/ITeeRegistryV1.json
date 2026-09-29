@@ -14,6 +14,57 @@
   },
   {
     "type": "function",
+    "name": "cancelEnclaveUpgrade",
+    "inputs": [
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "expectedContextHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "enclaveUpgradeV1",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "activationHeight",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "mrenclave",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "successorPolicyHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "predecessorPolicyHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isBootstrapped",
     "inputs": [],
     "outputs": [
@@ -229,6 +280,45 @@
   },
   {
     "type": "function",
+    "name": "pendingEnclaveUpgrade",
+    "inputs": [
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "contextHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "sourceBindingId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "targetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "nonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "policyHash",
     "inputs": [],
     "outputs": [
@@ -239,6 +329,35 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "prepareEnclaveUpgrade",
+    "inputs": [
+      {
+        "name": "evidence",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "nodeSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "enclaveSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -720,6 +839,99 @@
       },
       {
         "name": "renewalNonce",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EnclaveUpgradeCancelledV1",
+    "inputs": [
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "contextHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EnclaveUpgradeMissedV1",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "activationHeight",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "requiredMrenclave",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "slashedAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EnclaveUpgradePreparedV1",
+    "inputs": [
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "contextHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "bindingId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "nonce",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"

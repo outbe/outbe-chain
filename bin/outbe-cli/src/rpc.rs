@@ -630,6 +630,8 @@ pub mod mock {
         pub send_raw_tx: Result<String>,
         pub transaction_receipt: Result<Option<Value>>,
         pub eth_call_map: Option<EthCallMap>,
+        /// Argument-sensitive responses take precedence over selector defaults.
+        pub eth_call_overrides: std::collections::HashMap<(Address, Vec<u8>), Vec<u8>>,
         pub consensus_status: Result<Value>,
         pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
@@ -655,6 +657,7 @@ pub mod mock {
                 send_raw_tx: Err(eyre::eyre!("not mocked")),
                 transaction_receipt: Err(eyre::eyre!("not mocked")),
                 eth_call_map: None,
+                eth_call_overrides: std::collections::HashMap::new(),
                 consensus_status: Err(eyre::eyre!("not mocked")),
                 epoch_info: Err(eyre::eyre!("not mocked")),
                 latest_block: Err(eyre::eyre!("not mocked")),
@@ -681,6 +684,9 @@ pub mod mock {
             self.eth_call(to, data).await
         }
         async fn eth_call(&self, to: Address, data: &[u8]) -> Result<Vec<u8>> {
+            if let Some(response) = self.eth_call_overrides.get(&(to, data.to_vec())) {
+                return Ok(response.clone());
+            }
             match &self.eth_call_map {
                 Some(map) => map.dispatch(to, data),
                 None => Err(eyre::eyre!("eth_call not mocked")),
@@ -763,6 +769,15 @@ pub mod mock {
     }
 
     impl Rpc for RecordingRpc {
+        async fn eth_call_at(&self, to: Address, data: &[u8], block_tag: &str) -> Result<Vec<u8>> {
+            self.next_response(RecordedRpcCall::EthCallAt {
+                to,
+                data: data.to_vec(),
+                block_tag: block_tag.into(),
+            })?
+            .into_bytes("eth_call at block")
+        }
+
         async fn eth_call(&self, to: Address, data: &[u8]) -> Result<Vec<u8>> {
             self.next_response(RecordedRpcCall::EthCall {
                 to,

@@ -134,6 +134,35 @@ pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> 
     combined
 }
 
+/// A real merge proof built through the same checked witness builder as clients.
+pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: &Note) -> Vec<u8> {
+    use outbe_zk_canonical::paynote_merge::{encode_combined_proof, PaynoteMerge};
+    let private = inputs
+        .iter()
+        .map(|note| (note.amount, PayNoteSuit::field_to_b256(&note.key).unwrap()))
+        .collect::<Vec<_>>();
+    let (public, witness) = crate::client::merge_witness(
+        tree,
+        chain_id,
+        output.asset,
+        &private,
+        PayNoteSuit::field_to_b256(&output.key).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        public.output_commitment,
+        PayNoteSuit::field_to_b256(&output.commitment).unwrap()
+    );
+    let public = public.try_into().unwrap();
+    let proof = ProofGenerator::<PayNoteSuit, PaynoteMerge>::generate(
+        &Barretenberg::default(),
+        &witness.try_into().unwrap(),
+        &public,
+    )
+    .unwrap();
+    encode_combined_proof(public, proof.proof).unwrap()
+}
+
 /// Seed an initialized pool holding exactly `leaves`, mirroring what a
 /// sequence of deposits would have produced. Bypasses `deposit` because its
 /// ERC20/VaultRouter sub-calls cannot be served in-memory.
@@ -191,4 +220,43 @@ pub fn note_and_spend_proof(
         public,
         tree,
     }
+}
+
+/// Seeds two funded notes, merges them through the public dispatch and proves a
+/// full ordinary spend of the output. Consumer tests use this to cover the real
+/// merge -> settlement boundary with no token transfer or mock verifier.
+pub fn merged_note_spend_proof(
+    provider: &mut HashMapStorageProvider,
+    chain_id: u64,
+    asset: Address,
+    owner: Address,
+    amount: U256,
+) -> Vec<u8> {
+    use alloy_sol_types::SolCall;
+    assert!(amount > U256::ONE);
+    let inputs = [
+        note(chain_id, 17, asset, U256::ONE),
+        note(chain_id, 18, asset, amount - U256::ONE),
+    ];
+    let output = note(chain_id, 99, asset, amount);
+    let mut tree = crate::client::new_tree(chain_id).unwrap();
+    for input in &inputs {
+        tree.append(input.commitment).unwrap();
+    }
+    seed_pool(provider, chain_id, tree.leaves());
+    let merge = merge_proof(chain_id, &tree, &inputs.iter().collect::<Vec<_>>(), &output);
+    provider.enter(|storage| {
+        crate::precompile::dispatch(
+            storage,
+            &crate::precompile::IPayNote::mergePayNotesCall {
+                proof: merge.into(),
+            }
+            .abi_encode(),
+            Address::repeat_byte(0x77),
+            U256::ZERO,
+        )
+        .unwrap()
+    });
+    tree.append(output.commitment).unwrap();
+    spend_proof(chain_id, &tree, 2, &output, owner, amount)
 }

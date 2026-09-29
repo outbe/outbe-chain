@@ -20,6 +20,7 @@ use outbe_zk_canonical::paynote::{
     alloy::PublicInputs as PayNotePublicInputs,
     decode_public_inputs as decode_paynote_public_inputs,
 };
+use outbe_zk_canonical::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
 
 use crate::errors::PayNoteError;
 use crate::hash::{empty_subtrees, merkle_node, note_commitment};
@@ -43,6 +44,112 @@ pub struct PayNoteClaim {
     /// identifier of the payment, so a consuming module can record which note
     /// paid it without learning anything that links back to the depositor.
     pub nullifier: B256,
+}
+
+/// The circuit capacity fits u32 (currently four); checked to keep ABI and
+/// generated witness changes from silently truncating the published bound.
+pub(crate) fn max_merge_inputs() -> Result<u32> {
+    u32::try_from(MAX_MERGE_INPUTS)
+        .map_err(|_| PrecompileError::Fatal("PayNote merge capacity exceeds u32".into()))
+}
+
+/// Proof-authorized consolidation. Shares settlement's canonical nullifiers,
+/// tree and checkpoint; touches no token, Reserve, Oracle or right state.
+pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> {
+    let claim: paynote_merge::alloy::PublicInputs = paynote_merge::decode_public_inputs(proof)
+        .and_then(TryInto::try_into)
+        .map_err(|error| {
+            PayNoteError::InvalidInput(format!("merge proof is malformed: {error}"))
+        })?;
+    if claim.chain_id != storage.chain_id()? || claim.pool != PAYNOTE_ADDRESS {
+        return Err(PayNoteError::InvalidInput(
+            "merge chain or pool does not match runtime".into(),
+        )
+        .into());
+    }
+    if !(2..=max_merge_inputs()?).contains(&claim.input_count) {
+        return Err(PayNoteError::InvalidInput(
+            "merge input count is outside supported bounds".into(),
+        )
+        .into());
+    }
+    let count = usize::try_from(claim.input_count)
+        .map_err(|_| PayNoteError::InvalidInput("merge input count exceeds usize".into()))?;
+    let (active, padding) = claim.nullifiers.split_at(count);
+    if claim.asset.is_zero()
+        || claim.output_commitment.is_zero()
+        || padding.iter().any(|word| !word.is_zero())
+        || active
+            .iter()
+            .enumerate()
+            .any(|(i, word)| word.is_zero() || active[..i].contains(word))
+    {
+        return Err(PayNoteError::InvalidInput(
+            "merge has zero or duplicate inputs, output, asset, or nonzero padding".into(),
+        )
+        .into());
+    }
+    let paynote: PayNoteContract<'_> = storage.contract();
+    let leaf_count = paynote.leaf_count.read()?;
+    if leaf_count == 0 {
+        return Err(PayNoteError::NotInitialized.into());
+    }
+    if leaf_count >= PAYNOTE_TREE_CAPACITY {
+        return Err(PayNoteError::TreeFull.into());
+    }
+    if !paynote.recent_roots.read_all()?.contains(&claim.root) {
+        return Err(PayNoteError::RootNotRecent.into());
+    }
+    for nullifier in active {
+        if paynote.spent_nullifiers.read(nullifier)? {
+            return Err(PayNoteError::NullifierSpent.into());
+        }
+    }
+    if paynote.commitments.read(&claim.output_commitment)? {
+        return Err(PayNoteError::CommitmentExists.into());
+    }
+    match verify_circuit::<PaynoteMerge>(proof) {
+        Ok(true) => {}
+        Ok(false) => return Err(PayNoteError::InvalidInput("merge proof is invalid".into()).into()),
+        Err(error) => {
+            return Err(PayNoteError::InvalidInput(format!(
+                "merge proof verification failed: {error}"
+            ))
+            .into())
+        }
+    }
+    // The canonical decoder and circuit prove the confidential U256 sum;
+    // runtime never receives amounts and must not reconstruct them from logs.
+    let output = PayNoteSuit::field_from_b256(&claim.output_commitment)
+        .map_err(|_| PayNoteError::InvalidInput("merge output is not a canonical field".into()))?;
+    let (_, zeros) = chain_state(storage)?;
+    storage.with_checkpoint(|| {
+        for nullifier in active {
+            paynote.spent_nullifiers.write(nullifier, true)?;
+        }
+        let (index, root_after) = append(&paynote, &zeros, output)?;
+        paynote.commitments.write(&claim.output_commitment, true)?;
+        storage.emit_event(
+            PAYNOTE_ADDRESS,
+            IPayNote::NotesMerged::encode_log_data(&IPayNote::NotesMerged {
+                asset: claim.asset,
+                outputCommitment: claim.output_commitment,
+                nullifiers: active.to_vec(),
+            }),
+        )?;
+        storage.emit_event(
+            PAYNOTE_ADDRESS,
+            IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
+                commitment: claim.output_commitment,
+                leafIndex: index,
+                rootAfter: PayNoteSuit::field_to_b256(&root_after)
+                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+                asset: claim.asset,
+                noteAmount: U256::ZERO,
+            }),
+        )?;
+        Ok(())
+    })
 }
 
 /// Reads the live chain ID and derives its full in-memory empty ladder.
