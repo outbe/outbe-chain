@@ -689,17 +689,14 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         // Paying with the EUR asset picks the issuance rail.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 978);
-    assert_eq!(event.amountPaid, cost / U256::from(2u64));
+    assert_eq!(event.amountPaid, U256::from(10u64) * six_decimal_unit());
 }
 
 #[test]
@@ -780,7 +777,7 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
 }
 
 #[test]
-fn a_dust_gem_is_charged_exactly_what_its_quote_says() {
+fn a_dust_gem_settles_for_one_minor_unit() {
     let mut provider = test_storage(Some(U256::ONE));
     let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
         let gem_id =
@@ -853,16 +850,13 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, cost);
+    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -909,16 +903,16 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         // An eighteen-decimal asset was a hard revert before; now it scales.
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
-    assert_eq!(event.amountPaid, cost * U256::from(1_000_000_000_000u64));
+    assert_eq!(
+        event.amountPaid,
+        U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
+    );
 }
 
 #[test]
@@ -941,16 +935,13 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         seed_qualifying_day(storage, gem_id);
         gem_id
     });
-    let cost = StorageHandle::enter(&mut provider, |storage| {
-        let cost =
-            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
-        cost
     });
 
     let event = settled_event(&provider);
     assert_eq!(event.settlementCurrency, 840);
-    assert_eq!(event.amountPaid, cost);
+    assert_eq!(event.amountPaid, U256::from(20u64) * six_decimal_unit());
 }
 
 #[test]
@@ -1696,6 +1687,18 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.entry_price_minor, source_entry);
         assert_eq!(item.floor_price_minor, source_floor);
+    });
+}
+
+#[test]
+fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
+    with_storage(Some(U256::ONE), |storage| {
+        seed_day_vwap(storage, 840, U256::ONE);
+        let id = seed_and_send(storage, U256::ONE, U256::ONE, six_decimal_u128());
+
+        let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, U256::ONE).unwrap();
+        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), U256::ONE);
     });
 }
 
