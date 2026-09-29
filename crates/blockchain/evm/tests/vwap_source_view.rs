@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{

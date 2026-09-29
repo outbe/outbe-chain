@@ -7,7 +7,7 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
 pub(super) fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     storage
         .sstore(
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
@@ -45,7 +45,7 @@ pub(super) fn persistent_test_tree(
             block_hash: genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
         },
     )
 }
@@ -61,7 +61,7 @@ pub(super) fn persistent_test_tree_with_marker(
         block_hash: genesis_hash,
         parent_block_hash: B256::ZERO,
         parent_root: B256::ZERO,
-        new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+        new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
     };
     let db = CeMdbx::open(
         directory.path(),
@@ -70,7 +70,7 @@ pub(super) fn persistent_test_tree_with_marker(
             chain_id: CHAIN_ID,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            topology: outbe_offchain_entities::CeTopologyV1.encode(),
             tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },

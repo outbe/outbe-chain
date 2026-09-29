@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use alloy_primitives::B256;
 
-use outbe_compressed_entities::CanonicalBodyError;
+use outbe_offchain_entities::CanonicalBodyError;
 
 use outbe_lysis::program_v1::artifacts::LysisArtifactErrorV1;
 

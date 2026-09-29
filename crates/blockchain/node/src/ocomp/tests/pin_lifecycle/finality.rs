@@ -188,11 +188,11 @@ fn finalized_event_mismatch_cannot_create_a_durable_registration() {
 
 #[test]
 fn durable_finalized_admission_precedes_same_frame_retirement_and_survives_replay() {
-    use outbe_compressed_entities::{
-        body_commitment, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-    };
     use outbe_offchain_data::{
         FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
+    };
+    use outbe_offchain_entities::{
+        body_commitment, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
     };
     use outbe_primitives::addresses::TRIBUTE_ADDRESS;
     use outbe_tribute::{canonical_body, precompile::ITribute, TributeRepositoryReader};
@@ -210,7 +210,7 @@ fn durable_finalized_admission_precedes_same_frame_retirement_and_survives_repla
             OffchainDataProjection::open(config, storage.clone(), storage.clone()).unwrap();
         let day = WorldwideDay::new(fixture.candidate.wwd);
         let tribute_id =
-            outbe_compressed_entities::derive_poseidon_entity_id(Address::repeat_byte(2), day)
+            outbe_offchain_entities::derive_poseidon_entity_id(Address::repeat_byte(2), day)
                 .unwrap();
         let body = TributeData {
             tribute_id,

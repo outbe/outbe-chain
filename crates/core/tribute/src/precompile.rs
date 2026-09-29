@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;

@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
 use outbe_gem::GemAddParams;
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{

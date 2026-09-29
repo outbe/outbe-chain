@@ -17,9 +17,9 @@ use crate::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Bytes, B256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::error::{PrecompileError, Result as DomainResult};
 use outbe_primitives::{
     addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS},

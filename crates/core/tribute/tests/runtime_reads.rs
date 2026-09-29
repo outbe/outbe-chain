@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
     CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
     ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody, WwdEntityId,
@@ -74,7 +74,7 @@ impl TreeHarness {
                 chain_id: 1,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                topology: outbe_offchain_entities::CeTopologyV1.encode(),
                 tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -84,7 +84,7 @@ impl TreeHarness {
                 block_hash: genesis_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .unwrap();
@@ -443,7 +443,7 @@ fn absence_corruption_and_unavailability_remain_distinct() {
 fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     let original = tribute(Address::repeat_byte(0x61), 20_260_716);
     let original_payload =
-        outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&original))
+        outbe_offchain_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&original))
             .unwrap();
 
     let mut mutations = Vec::new();
@@ -476,7 +476,7 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     mutations.push(("exclude_from_intex_issuance", changed));
 
     for (field, changed) in mutations {
-        let payload = match outbe_compressed_entities::encode_tribute_v1(
+        let payload = match outbe_offchain_entities::encode_tribute_v1(
             &outbe_tribute::canonical_body(&changed),
         ) {
             Ok(payload) => payload,

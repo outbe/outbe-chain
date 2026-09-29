@@ -16,7 +16,6 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
 };
@@ -40,6 +39,7 @@ use outbe_ocomp_protocol::{
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
 };
 use outbe_offchain_data::TributeRetentionSelector;
+use outbe_offchain_entities::WwdEntityId;
 use outbe_offchain_storage::{AtomicWriteBatch, MemoryStorage, StorageError, StorageWriter};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{

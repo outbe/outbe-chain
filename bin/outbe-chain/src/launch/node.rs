@@ -727,7 +727,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             chain_id: builder.config().chain.chain().id(),
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            topology: outbe_offchain_entities::CeTopologyV1.encode(),
             tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         };
@@ -737,7 +737,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             block_hash: genesis_hash,
             parent_block_hash: Default::default(),
             parent_root: Default::default(),
-            new_root: outbe_compressed_entities::sealed_root(Default::default())?,
+            new_root: outbe_offchain_entities::sealed_root(Default::default())?,
         };
         let ce_db = CeMdbx::open(&ce_data_dir, ce_identity, genesis_marker)
             .wrap_err("failed to open and validate compressed-entity MDBX")?;

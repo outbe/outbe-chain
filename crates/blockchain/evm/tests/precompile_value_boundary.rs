@@ -776,7 +776,7 @@ fn borrowed_native_subcalls_normalize_initial_and_nested_delegations() {
                     false,
                     SpecId::PRAGUE,
                     None,
-                    std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+                    std::sync::Arc::new(outbe_offchain_entities::ExecutionScope::new()),
                     SubCallInput {
                         target: if nested { forwarder } else { BORROWER },
                         value: U256::from(if is_static { 0 } else { 10 }),

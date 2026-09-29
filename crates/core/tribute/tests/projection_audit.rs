@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_stored_tribute_v1, CeAuditError, CeAuditLimits, CeAuditWork, IdPageRequest, WwdEntityId,
 };
 use outbe_offchain_storage::{

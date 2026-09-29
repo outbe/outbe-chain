@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     begin_block, decode_tribute_v1, derive_poseidon_entity_id, encode_tribute_v1, end_block,
     ExecutionScope, PartitionRef, WwdEntityId,
 };
@@ -118,7 +118,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

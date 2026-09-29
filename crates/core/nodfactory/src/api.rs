@@ -1,9 +1,9 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::schema::NodIssueParams;
 use outbe_ocomp_protocol::{nod_materialization::NodMaterializationBatchV1, SchemaLimits};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;

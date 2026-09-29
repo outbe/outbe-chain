@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
     api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
     NodRepositoryReader,
 };
+use outbe_offchain_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -68,7 +68,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

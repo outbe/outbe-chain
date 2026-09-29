@@ -1,5 +1,4 @@
 use alloy_primitives::{Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1};
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
@@ -15,6 +14,7 @@ use outbe_ocomp_protocol::{
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     wwd_allocation_ceiling, SchemaLimits,
 };
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;

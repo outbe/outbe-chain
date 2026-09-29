@@ -224,15 +224,15 @@ fn headers_in_native_static_files_are_inspected_without_copying_them_into_mdbx()
 fn stopped_stores_keep_ce_projection_and_sparse_ocomp_progress_distinct() {
     use super::super::native::{ce_identity, inspect_stopped_stores};
     use alloy_primitives::B256;
-    use outbe_compressed_entities::{CeMdbx, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
     use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
+    use outbe_offchain_entities::{CeMdbx, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
     use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
     use outbe_primitives::projection::ProjectionCheckpoint;
     use std::sync::Arc;
 
     let (root, layout, h, _) = fixture();
     let genesis_hash = layout.chain.genesis_hash();
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let genesis = FinalizedMarker {
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         height: 0,

@@ -33,7 +33,7 @@ pub(in crate::lifecycle) fn prepare_parent(
             block_hash: genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
         },
     )
     .unwrap();
@@ -226,24 +226,24 @@ pub(in crate::lifecycle) fn prepare_parent(
 #[derive(Debug)]
 pub(in crate::lifecycle) struct EmptyParent;
 
-impl outbe_compressed_entities::ParentBodySource for EmptyParent {
+impl outbe_offchain_entities::ParentBodySource for EmptyParent {
     fn get(
         &self,
-        _entity: outbe_compressed_entities::EntityRef,
+        _entity: outbe_offchain_entities::EntityRef,
     ) -> Result<
-        Option<outbe_compressed_entities::StoredBody>,
-        outbe_compressed_entities::ParentBodySourceError,
+        Option<outbe_offchain_entities::StoredBody>,
+        outbe_offchain_entities::ParentBodySourceError,
     > {
         Ok(None)
     }
 
     fn list(
         &self,
-        _query: outbe_compressed_entities::QueryRef,
-        _request: outbe_compressed_entities::IdPageRequest,
-    ) -> Result<outbe_compressed_entities::IdPage, outbe_compressed_entities::ParentBodySourceError>
+        _query: outbe_offchain_entities::QueryRef,
+        _request: outbe_offchain_entities::IdPageRequest,
+    ) -> Result<outbe_offchain_entities::IdPage, outbe_offchain_entities::ParentBodySourceError>
     {
-        Ok(outbe_compressed_entities::IdPage {
+        Ok(outbe_offchain_entities::IdPage {
             ids: Vec::new(),
             next_after: None,
         })
@@ -338,7 +338,7 @@ pub(in crate::lifecycle) fn seed_ce_genesis(storage: &StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

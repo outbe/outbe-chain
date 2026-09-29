@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_offchain_entities::WwdEntityId;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};

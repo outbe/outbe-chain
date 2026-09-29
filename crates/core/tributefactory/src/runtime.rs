@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
 use outbe_primitives::error::{PrecompileError, Result};

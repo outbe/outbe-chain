@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     sealed_root, AuthenticatedParentTree, CeAuditError, CeAuditLimits, CeAuditVisitor, CeAuditWork,
     CeMdbx, CeMdbxReadOnly, CeTopologyV1, Commitment, EntityRef, EnvironmentIdentity,
     ExactParentIdentity, FinalLeafMutation, FinalizedMarker, LeafValue, MdbxAuthenticatedTree,

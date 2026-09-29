@@ -2,15 +2,15 @@ use std::{fs, sync::Arc};
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
+use outbe_offchain_entities::{
     body_commitment, sealed_root, AuthenticatedParentTree, CeAuditError, CeAuditLimits,
     CeAuditReport, CeAuditWork, CeBodyAudit, CeMdbx, CeMdbxReadOnly, CeTopologyV1, EntityRef,
     EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker,
     MdbxAuthenticatedTree, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
-use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
 use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageWriter, Value};
 use outbe_primitives::{
     reshare_artifact::{
@@ -120,7 +120,7 @@ impl Fixture {
                 let body = tribute(seed);
                 tribute_writer.put(&body).unwrap();
                 let stored = StoredBody::new_v1(
-                    outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(
+                    outbe_offchain_entities::encode_tribute_v1(&outbe_tribute::canonical_body(
                         &body,
                     ))
                     .unwrap(),
@@ -147,10 +147,8 @@ impl Fixture {
                 EntityRef::NodItem(item.nod_id),
                 item.nod_id,
                 StoredBody::new_v1(
-                    outbe_compressed_entities::encode_nod_item_v1(&outbe_nod::canonical_item(
-                        &item,
-                    ))
-                    .unwrap(),
+                    outbe_offchain_entities::encode_nod_item_v1(&outbe_nod::canonical_item(&item))
+                        .unwrap(),
                 )
                 .unwrap(),
             ));
@@ -169,7 +167,7 @@ impl Fixture {
                 EntityRef::NodBucket(bucket_id),
                 bucket_id,
                 StoredBody::new_v1(
-                    outbe_compressed_entities::encode_nod_bucket_v1(&canonical).unwrap(),
+                    outbe_offchain_entities::encode_nod_bucket_v1(&canonical).unwrap(),
                 )
                 .unwrap(),
             ));

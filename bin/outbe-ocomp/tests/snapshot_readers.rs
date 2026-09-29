@@ -552,7 +552,6 @@ mod admission {
         include!("support/mod.rs");
     }
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_lysis::program_v1::{
         planner::{
             LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
@@ -593,6 +592,7 @@ mod admission {
         unit::{UnitArtifactV1, UnitPhase, WorkOutputHeaderV1},
         ListKind,
     };
+    use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_primitives::time::WorldwideDay;
     use std::{
         collections::BTreeMap,
@@ -1430,7 +1430,6 @@ mod export_binding {
         include!("support/mod.rs");
     }
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_ocomp::{
         cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
         control::poc_schema_limits,
@@ -1453,6 +1452,7 @@ mod export_binding {
         CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, SchemaLimits,
         SnapshotExportCommittedV1,
     };
+    use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_primitives::time::WorldwideDay;
     use std::{
         collections::BTreeMap,

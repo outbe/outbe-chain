@@ -85,7 +85,7 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
     .unwrap()
     .into_install();
     provider.enter(|storage| {
-        let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
         storage
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,

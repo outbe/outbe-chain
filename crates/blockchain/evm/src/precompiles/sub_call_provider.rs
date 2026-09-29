@@ -7,9 +7,9 @@ use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256};
 use core::{fmt::Debug, marker::PhantomData};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},

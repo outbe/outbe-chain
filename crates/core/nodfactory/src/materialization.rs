@@ -3,7 +3,6 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     nod_materialization::{
@@ -11,6 +10,7 @@ use outbe_ocomp_protocol::{
     },
     SchemaLimits,
 };
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_FACTORY_ADDRESS,

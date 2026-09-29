@@ -8,10 +8,6 @@
 use clap::Parser;
 use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
-use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-};
 use outbe_consensus::executor::actor::FinalizedCeCommitter;
 use outbe_engine::args::ConsensusArgs;
 use outbe_engine::bridge::ConsensusExecutionBridge;
@@ -32,6 +28,10 @@ use outbe_node::{
         OffchainDataProjectionConfig, ProjectionRetentionFence,
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
+};
+use outbe_offchain_entities::{
+    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_operator::tee::{
     inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,

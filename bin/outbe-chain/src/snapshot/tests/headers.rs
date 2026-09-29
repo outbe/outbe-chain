@@ -2,7 +2,7 @@ use std::fs;
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_compressed_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
+use outbe_offchain_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
 use outbe_primitives::reshare_artifact::{
     encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
 };

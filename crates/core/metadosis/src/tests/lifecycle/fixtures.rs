@@ -6,7 +6,7 @@ pub(super) struct FailOncePartitionLookup {
     pub(super) calls: AtomicUsize,
 }
 
-impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLookup {
+impl outbe_offchain_entities::AuthenticatedParentTree for FailOncePartitionLookup {
     fn parent_block_hash(&self) -> B256 {
         B256::ZERO
     }
@@ -17,9 +17,9 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLoo
 
     fn read_leaf_verified(
         &self,
-        _entity: outbe_compressed_entities::EntityRef,
+        _entity: outbe_offchain_entities::EntityRef,
         expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<outbe_compressed_entities::Commitment>> {
+    ) -> outbe_primitives::error::Result<Option<outbe_offchain_entities::Commitment>> {
         if expected_parent_root != self.parent_root {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "injected parent root mismatch".into(),
@@ -30,7 +30,7 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLoo
 
     fn partition_present_verified(
         &self,
-        _partition: outbe_compressed_entities::PartitionRef,
+        _partition: outbe_offchain_entities::PartitionRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<bool> {
         if expected_parent_root != self.parent_root {
@@ -48,7 +48,7 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLoo
 
     fn partition_root_verified(
         &self,
-        _partition: outbe_compressed_entities::PartitionRef,
+        _partition: outbe_offchain_entities::PartitionRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<Option<B256>> {
         if expected_parent_root != self.parent_root {
@@ -62,15 +62,15 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLoo
     fn prepare_seal(
         &self,
         block_number: u64,
-        mutations: &[outbe_compressed_entities::FinalLeafMutation],
-        retirements: &[outbe_compressed_entities::PartitionRef],
-    ) -> outbe_primitives::error::Result<outbe_compressed_entities::ProvisionalTreeBatch> {
+        mutations: &[outbe_offchain_entities::FinalLeafMutation],
+        retirements: &[outbe_offchain_entities::PartitionRef],
+    ) -> outbe_primitives::error::Result<outbe_offchain_entities::ProvisionalTreeBatch> {
         if !mutations.is_empty() || !retirements.is_empty() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "empty injected parent received unexpected CE changes".into(),
             ));
         }
-        outbe_compressed_entities::ProvisionalTreeBatch::new_identity(
+        outbe_offchain_entities::ProvisionalTreeBatch::new_identity(
             block_number,
             B256::ZERO,
             B256::ZERO,
@@ -90,7 +90,7 @@ pub(super) struct FailSecondPartitionLookup {
     pub(super) calls: AtomicUsize,
 }
 
-impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionLookup {
+impl outbe_offchain_entities::AuthenticatedParentTree for FailSecondPartitionLookup {
     fn parent_block_hash(&self) -> B256 {
         B256::ZERO
     }
@@ -101,9 +101,9 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionL
 
     fn read_leaf_verified(
         &self,
-        _entity: outbe_compressed_entities::EntityRef,
+        _entity: outbe_offchain_entities::EntityRef,
         expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<outbe_compressed_entities::Commitment>> {
+    ) -> outbe_primitives::error::Result<Option<outbe_offchain_entities::Commitment>> {
         if expected_parent_root != self.parent_root {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "injected parent root mismatch".into(),
@@ -114,7 +114,7 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionL
 
     fn partition_present_verified(
         &self,
-        partition: outbe_compressed_entities::PartitionRef,
+        partition: outbe_offchain_entities::PartitionRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<bool> {
         Ok(self
@@ -124,13 +124,13 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionL
 
     fn partition_root_verified(
         &self,
-        partition: outbe_compressed_entities::PartitionRef,
+        partition: outbe_offchain_entities::PartitionRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<Option<B256>> {
         if expected_parent_root != self.parent_root
             || !matches!(
                 partition,
-                outbe_compressed_entities::PartitionRef::TributeWwd(_)
+                outbe_offchain_entities::PartitionRef::TributeWwd(_)
             )
         {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -148,9 +148,9 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionL
     fn prepare_seal(
         &self,
         _block_number: u64,
-        _mutations: &[outbe_compressed_entities::FinalLeafMutation],
-        _retirements: &[outbe_compressed_entities::PartitionRef],
-    ) -> outbe_primitives::error::Result<outbe_compressed_entities::ProvisionalTreeBatch> {
+        _mutations: &[outbe_offchain_entities::FinalLeafMutation],
+        _retirements: &[outbe_offchain_entities::PartitionRef],
+    ) -> outbe_primitives::error::Result<outbe_offchain_entities::ProvisionalTreeBatch> {
         Err(outbe_primitives::error::PrecompileError::Fatal(
             "multi-WWD rollback test does not seal its synthetic parent tree".into(),
         ))
@@ -297,7 +297,7 @@ pub(super) fn begin_persistent_active_scope(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::from(1),
                 U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                    outbe_offchain_entities::sealed_root(B256::ZERO)
                         .unwrap()
                         .as_slice(),
                 ),

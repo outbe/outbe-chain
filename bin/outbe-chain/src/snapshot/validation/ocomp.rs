@@ -397,7 +397,7 @@ pub(crate) fn verify_export_inputs(
             finalized_state_root: finalized.finalized_request_state_root,
             finalized_ce_root: job.intent.ce_sealed_root,
             ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             )?,
         };
         ensure!(
@@ -710,11 +710,11 @@ pub(crate) fn verify_lease_inputs(
     protected: &ProtectedPaths,
     maximum_records: Option<u64>,
 ) -> eyre::Result<outbe_ocomp::exporter::TributeStreamSummary> {
-    use outbe_compressed_entities::{
+    use outbe_ocomp::exporter::{FinalizedTributeError, FinalizedTributeSource};
+    use outbe_offchain_entities::{
         BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
         TributePartitionWorkConfig, ACTIVE_COMMITMENT_SCHEME,
     };
-    use outbe_ocomp::exporter::{FinalizedTributeError, FinalizedTributeSource};
     use outbe_tribute::RetainedTributePin;
 
     validate_layout(&[], protected, &[scratch_parent.to_path_buf()])?;
@@ -2445,7 +2445,7 @@ pub(crate) fn verify_present_receipt(
             finalized_state_root: finalized.finalized_request_state_root,
             finalized_ce_root: job.intent.ce_sealed_root,
             ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             )?,
         };
         ensure!(
@@ -3136,7 +3136,7 @@ fn validate_present_manifest(
             && checkpoint.finalized_state_root == finalized.finalized_request_state_root
             && checkpoint.finalized_ce_root == job.intent.ce_sealed_root
             && checkpoint.ce_schema_version
-                == u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
+                == u16::try_from(outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
         "present manifest differs from canonical checkpoint"
     );
     manifest.validate_against_bundle(bundle.bundle(), &poc_schema_limits())?;
@@ -3659,9 +3659,9 @@ impl outbe_tribute::RetainedTributeAuditVisitor for PresentRetainedCount {
     fn visit_retained(
         &mut self,
         _: outbe_tribute::RetainedTributeAuditEntry,
-    ) -> Result<(), outbe_compressed_entities::CeAuditError> {
+    ) -> Result<(), outbe_offchain_entities::CeAuditError> {
         self.0 = self.0.checked_add(1).ok_or_else(|| {
-            outbe_compressed_entities::CeAuditError::Invalid("retained body count overflow".into())
+            outbe_offchain_entities::CeAuditError::Invalid("retained body count overflow".into())
         })?;
         Ok(())
     }
@@ -3671,10 +3671,10 @@ fn verify_present_projection_structure(
     layout: &crate::snapshot::config::RequestedLayout,
     scratch: &Path,
 ) -> eyre::Result<(u64, u64)> {
-    use outbe_compressed_entities::{
+    use outbe_nod::NodRepositoryReader;
+    use outbe_offchain_entities::{
         CeAuditLimits, CeAuditWork, CeDomain, IdPageRequest, MAX_ID_PAGE_LIMIT,
     };
-    use outbe_nod::NodRepositoryReader;
     use outbe_offchain_storage::{RocksDbReader, StorageReaderHandle};
     use outbe_tribute::{RetainedTributeReader, TributeRepositoryReader};
     let location = layout

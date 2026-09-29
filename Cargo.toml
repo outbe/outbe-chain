@@ -145,7 +145,7 @@ outbe-ocomp = { path = "bin/outbe-ocomp" }
 heartwood-outbe-radicle = { package = "outbe-radicle", git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 radicle-log = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 radicle-signals = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
-outbe-compressed-entities = { path = "crates/core/offchain-entities" }
+outbe-offchain-entities = { path = "crates/core/offchain-entities" }
 # Core - outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }

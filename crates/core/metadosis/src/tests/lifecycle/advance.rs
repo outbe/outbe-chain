@@ -137,7 +137,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
         U256::ZERO,
     );
     let timestamp = first_offering_end.max(second_offering_end);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x81)).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::repeat_byte(0x81)).unwrap();
     let tree = Arc::new(FailSecondPartitionLookup {
         parent_root,
         partition_root: B256::repeat_byte(0x82),
@@ -145,7 +145,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
     });
     let scope = ExecutionScope::with_parent_tree(
         tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
+        outbe_offchain_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
     StorageHandle::enter(&mut provider, |storage| {
         storage
@@ -213,7 +213,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
                 .unwrap()
                 .unwrap()
                 .retirement,
-            outbe_compressed_entities::RetirementOutcome::Requested
+            outbe_offchain_entities::RetirementOutcome::Requested
         );
         assert_eq!(
             metadosis
@@ -221,7 +221,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
                 .unwrap()
                 .unwrap()
                 .retirement,
-            outbe_compressed_entities::RetirementOutcome::Requested
+            outbe_offchain_entities::RetirementOutcome::Requested
         );
         assert_eq!(
             PromisLimitContract::new(storage)

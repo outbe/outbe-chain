@@ -140,11 +140,6 @@ mod copied_unequal_ce_projection {
     use super::copy_stopped_directory;
     use alloy_consensus::{Header, Sealable};
     use alloy_primitives::{B256, U256};
-    use outbe_compressed_entities::{
-        sealed_root, CandidateCacheLimits, CeMdbx, CeTopologyV1, CompressedTreeService,
-        EnvironmentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
-        LOCAL_STORAGE_SCHEMA_VERSION,
-    };
     use outbe_engine::{
         ce_finalizer::RethDurableCeState,
         ce_recovery::{CanonicalCeReplaySource, CeStartupRecovery, CeStartupRecoveryCoordinator},
@@ -155,6 +150,11 @@ mod copied_unequal_ce_projection {
             prepare_offchain_data_projection, validate_offchain_data_checkpoint,
             FinalizedProjectionSink, FinalizedTargetReconciliationV1, OffchainDataProjectionConfig,
         },
+    };
+    use outbe_offchain_entities::{
+        sealed_root, CandidateCacheLimits, CeMdbx, CeTopologyV1, CompressedTreeService,
+        EnvironmentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
+        LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_offchain_storage::{RocksDbConfig, StorageBackend, StorageConfig};
     use outbe_primitives::{

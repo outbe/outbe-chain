@@ -1005,7 +1005,7 @@ mod orchestration {
 
     #[test]
     fn missing_historical_ce_header_does_not_block_current_evm() {
-        use outbe_compressed_entities::{
+        use outbe_offchain_entities::{
             sealed_root, AuthenticatedParentTree, CeMdbx, ExactParentIdentity, FinalizedMarker,
             MdbxAuthenticatedTree, ACTIVE_COMMITMENT_SCHEME,
         };

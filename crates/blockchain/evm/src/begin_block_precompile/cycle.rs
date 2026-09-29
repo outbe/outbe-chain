@@ -19,17 +19,17 @@ pub(super) fn run_cycle_tick_at_activation(
 
         let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
         let parent = outbe_offchain_data::RuntimeBodyReaders::new(storage);
-        let scope = outbe_compressed_entities::ExecutionScope::new();
+        let scope = outbe_offchain_entities::ExecutionScope::new();
         let compressed =
-            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+            outbe_offchain_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+        <outbe_offchain_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
             &compressed,
         )?;
         let lifecycle =
             outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent)
                 .with_metadosis_genesis_activation_height(_metadosis_genesis_activation_height);
         <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+        <outbe_offchain_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
             &compressed,
         )
         .map(|_| ())?;
@@ -44,7 +44,7 @@ pub(super) fn run_cycle_tick_at_activation(
 
 pub(super) fn run_cycle_tick_with_readers_at_activation(
     ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
+    scope: &outbe_offchain_entities::ExecutionScope,
     parent: &outbe_offchain_data::RuntimeBodyReaders,
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
@@ -138,7 +138,7 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 /// lifecycle handler into this already receipt-visible phase.
 pub(crate) fn run_ocomp_lifecycle_begin(
     ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
+    scope: &outbe_offchain_entities::ExecutionScope,
     fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<()> {
     if let Some(install) = fork_install {
@@ -153,7 +153,7 @@ pub(crate) fn run_ocomp_lifecycle_begin(
 /// roots while the scope remains active for terminal failure retirement.
 pub(crate) fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
+    scope: &outbe_offchain_entities::ExecutionScope,
 ) -> Result<()> {
     outbe_metadosis::commands::run_ocomp_terminal_request(ctx, scope)
 }

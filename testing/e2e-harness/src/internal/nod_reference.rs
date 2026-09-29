@@ -7,8 +7,8 @@
 //! correctness of their economic fields. Those require fixture-derived values.
 
 use alloy_primitives::{keccak256, B256, U256};
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_ocomp_protocol::result::NodActionV1;
+use outbe_offchain_entities::TributeBodyV1;
 
 const NOD_LIST_KIND: [u8; 2] = 1u16.to_be_bytes();
 const RECORD_BYTES: usize = 266;
@@ -227,7 +227,7 @@ mod tests {
                     id[..4].copy_from_slice(&20260908u32.to_be_bytes());
                     id[31] = ordinal as u8;
                     TributeBodyV1 {
-                        tribute_id: outbe_compressed_entities::WwdEntityId::from(id),
+                        tribute_id: outbe_offchain_entities::WwdEntityId::from(id),
                         owner: Address::repeat_byte(ordinal as u8 + 1),
                         worldwide_day: outbe_primitives::time::WorldwideDay::new(20260908),
                         issuance_amount_minor: U256::from(2_000_000),

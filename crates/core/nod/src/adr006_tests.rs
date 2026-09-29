@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::WwdEntityId;
-use outbe_compressed_entities::{begin_block, ExecutionScope};
+use outbe_offchain_entities::WwdEntityId;
+use outbe_offchain_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
@@ -25,7 +25,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

@@ -152,7 +152,7 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
         false,
         SpecId::LONDON,
         None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        std::sync::Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         input.clone(),
     )
     .unwrap();
@@ -167,7 +167,7 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
         false,
         SpecId::SHANGHAI,
         None,
-        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        std::sync::Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         input,
     )
     .unwrap();

@@ -3,13 +3,13 @@
 use std::{collections::BTreeMap, fmt};
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, ordered_list_root, pad_hash, root_hash, OrderedListLimits,
 };
 use outbe_ocomp_protocol::registry::{HashDomain, ListKind};
 use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::{hash_framed, CanonicalReader, CanonicalWriter, SchemaLimits};
+use outbe_offchain_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_primitives::time::WorldwideDay;
 
 use outbe_nod::NodContract;

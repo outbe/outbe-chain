@@ -1,7 +1,7 @@
 //! Isolate canonical NOD serialization and durable RocksDB byte preservation.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     body_commitment, decode_nod_item_v1, encode_nod_item_v1, NodItemBodyV1, StoredBody,
     WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };

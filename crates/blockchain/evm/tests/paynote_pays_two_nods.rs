@@ -26,13 +26,13 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
 use outbe_nod::{NodContract, NodIssueParams, NodRepositoryReader};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_paynote::client::new_tree;
 
@@ -198,7 +198,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1_u64),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

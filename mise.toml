@@ -103,7 +103,7 @@ env = { RUST_TEST_THREADS = "2", RAYON_NUM_THREADS = "2" }
 run = [
   "cargo test --locked -p outbe-chain --features snapshot-integration",
   "cargo test --locked -p outbe-engine --features snapshot-integration",
-  "cargo test --locked -p outbe-compressed-entities --features snapshot-integration",
+  "cargo test --locked -p outbe-offchain-entities --features snapshot-integration",
 ]
 
 [tasks.nextest-install]
@@ -303,7 +303,7 @@ target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --te
 description = "Run the three large-data capacity checks used by the full E2E suite"
 env = { RAYON_NUM_THREADS = "4" }
 run = '''
-cargo test --locked --release -j 4 -p outbe-ocomp -p outbe-compressed-entities \
+cargo test --locked --release -j 4 -p outbe-ocomp -p outbe-offchain-entities \
   --test streaming_input_artifacts --test bounded_collection_reconstruction --test input_inventory \
   -- --exact --ignored --test-threads=1 \
   production_publisher_streams_one_million_records_with_a_256_record_peak \

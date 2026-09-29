@@ -9,7 +9,6 @@ use std::{
 };
 
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_ocomp_protocol::{
     control::{FinalizedJobSpecV1, SnapshotExportCommittedV1},
     input::CheckpointIdentityV1,
@@ -17,6 +16,7 @@ use outbe_ocomp_protocol::{
     profile::ProtocolBundleV1,
     ProtocolError, SchemaLimits,
 };
+use outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_primitives::projection::ProjectionCheckpoint;
 use thiserror::Error;
 

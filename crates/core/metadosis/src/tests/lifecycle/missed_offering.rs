@@ -77,7 +77,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         assert_eq!(receipt.block_number, 2);
         assert_eq!(
             receipt.retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
+            outbe_offchain_entities::RetirementOutcome::NotPresent
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
@@ -472,14 +472,14 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, formed_limit, U256::ZERO, later_carry);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let tree = Arc::new(FailOncePartitionLookup {
         parent_root,
         calls: AtomicUsize::new(0),
     });
     let scope = ExecutionScope::with_parent_tree(
         tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
+        outbe_offchain_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
     StorageHandle::enter(&mut provider, |storage| {
         storage
@@ -543,7 +543,7 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
                 .unwrap()
                 .unwrap()
                 .retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
+            outbe_offchain_entities::RetirementOutcome::NotPresent
         );
     });
     end_persistent_active_scope(&mut provider, &scope);

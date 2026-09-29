@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
@@ -10,6 +9,7 @@ use outbe_ocomp_protocol::{
     result::NodActionV1,
     ListKind,
 };
+use outbe_offchain_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
 

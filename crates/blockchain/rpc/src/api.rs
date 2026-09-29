@@ -349,8 +349,8 @@ pub trait OutbeApi {
     #[method(name = "getCompressedEntity")]
     async fn get_compressed_entity(
         &self,
-        request: outbe_compressed_entities::PointReadRequestV1,
-    ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
+        request: outbe_offchain_entities::PointReadRequestV1,
+    ) -> jsonrpsee::core::RpcResult<outbe_offchain_entities::PointReadResultV1>;
 
     /// Builds the exact Fidelity/Oracle openings for one finalized OCOMP
     /// `JobIntent`. The event supplies only `intent_id`; the node resolves the

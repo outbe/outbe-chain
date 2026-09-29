@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_nod::NodContract;
+use outbe_offchain_entities::derive_poseidon_entity_id;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
 

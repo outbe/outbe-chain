@@ -6,10 +6,10 @@
 use alloy_primitives::{address, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers;
 use outbe_evm::handlers;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{begin_block, end_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, UPDATE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -94,7 +94,7 @@ fn seed_oracle_for_pre_exec(storage: StorageHandle) {
 }
 
 fn seed_compressed_entities_genesis(storage: StorageHandle) {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     storage
         .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();

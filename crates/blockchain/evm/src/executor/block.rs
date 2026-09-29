@@ -103,9 +103,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// One lifecycle capability shared with every precompile in this EVM.
     pub(super) compressed_entities_scope: Arc<ExecutionScope>,
     pub(super) compressed_entities_started: bool,
-    pub(super) compressed_entities_seal_output: Option<outbe_compressed_entities::SealOutput>,
-    pub(super) compressed_tree_service:
-        Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
+    pub(super) compressed_entities_seal_output: Option<outbe_offchain_entities::SealOutput>,
+    pub(super) compressed_tree_service: Option<Arc<outbe_offchain_entities::CompressedTreeService>>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -192,7 +191,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     pub(crate) fn with_compressed_tree_service(
         mut self,
-        service: Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
+        service: Option<Arc<outbe_offchain_entities::CompressedTreeService>>,
     ) -> Self {
         self.compressed_tree_service = service;
         self
@@ -490,11 +489,11 @@ where
                 )?;
                 run_atomic_storage_hooks(db, ctx, |hook_ctx| {
                     let lifecycle =
-                        outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                        outbe_offchain_entities::CompressedEntitiesLifecycleContext::new(
                             hook_ctx.clone(),
                             scope.as_ref(),
                         );
-                    <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+                    <outbe_offchain_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
                         &lifecycle,
                     )
                 })?

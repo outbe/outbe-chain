@@ -12,7 +12,7 @@ e2e-test = []
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-compressed-entities.workspace = true
+outbe-offchain-entities.workspace = true
 outbe-accounting.workspace = true
 outbe-emissionlimit.workspace = true
 outbe-rewards.workspace = true

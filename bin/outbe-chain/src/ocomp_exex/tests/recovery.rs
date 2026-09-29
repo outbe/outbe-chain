@@ -35,7 +35,7 @@ async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce()
     ) {
         return;
     }
-    use outbe_compressed_entities::{
+    use outbe_offchain_entities::{
         CandidateCacheLimits, CeMdbx, CeTopologyV1, Commitment, CompressedTreeService, EntityRef,
         EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker, WwdEntityId,
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -49,7 +49,7 @@ async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce()
         let root = tempfile::tempdir().unwrap();
         let parent_hash = B256::repeat_byte(0x38);
         let head_hash = B256::repeat_byte(0x39);
-        let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let parent_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
         let db = CeMdbx::open(
             &root.path().join("ce"),
             EnvironmentIdentity {
@@ -1433,7 +1433,6 @@ pub(super) mod copied_native {
         use super::*;
         use alloy_primitives::{Address, Log};
         use alloy_sol_types::SolEvent as _;
-        use outbe_compressed_entities::WwdEntityId;
         use outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore;
         use outbe_metadosis::{precompile::IMetadosis, proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT};
         use outbe_node::{
@@ -1448,6 +1447,7 @@ pub(super) mod copied_native {
             intent::intent_storage_key,
             state::{LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompTerminalOutcome},
         };
+        use outbe_offchain_entities::WwdEntityId;
         use outbe_offchain_storage::{
             AtomicWriteBatch, RocksDbStorage, StorageError, StorageWriter, StorageWriterHandle,
         };

@@ -121,7 +121,7 @@ mod observation {
             finalized_state_root: checkpoint.state_root,
             finalized_ce_root: intent.ce_sealed_root,
             ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             )?,
         };
         ensure!(

@@ -3,9 +3,6 @@
 use std::path::PathBuf;
 
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::{
-    body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -22,6 +19,9 @@ use outbe_ocomp_protocol::{
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
 use outbe_offchain_data::{ProjectionConfig, ProjectionState};
+use outbe_offchain_entities::{
+    body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_offchain_storage::{
     StorageConfig, StorageError, StorageErrorKind, StorageProvider, StorageReadSource,
 };
@@ -510,7 +510,7 @@ impl ExpectedInputAuthorityV1 {
                 finalized_state_root: finalized.request.state_root,
                 finalized_ce_root: finalized.intent.ce_sealed_root,
                 ce_schema_version: u16::try_from(
-                    outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                    outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
                 )
                 .map_err(|_| RpcInputExporterErrorV1::Authority("CE schema version"))?,
             },
@@ -598,7 +598,7 @@ fn verify_replayed_finalized_inputs(
                         continue;
                     }
                     for canonical in verified.chunk.canonical_records_or_openings {
-                        let body = outbe_compressed_entities::decode_tribute_v1(&canonical.0)
+                        let body = outbe_offchain_entities::decode_tribute_v1(&canonical.0)
                             .map_err(|error| stage("decode replay Tribute", error))?;
                         let commitment = body_commitment(
                             ACTIVE_COMMITMENT_SCHEME,

@@ -3,13 +3,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
-    end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
-    CompressedTreeService, EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
-    FinalizedMarker, ParentBodySource, SealOutput, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
-    LOCAL_STORAGE_SCHEMA_VERSION,
-};
 use outbe_nod::{
     canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodContract, NodItemState,
     NodRepositoryReader,
@@ -17,6 +10,13 @@ use outbe_nod::{
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
     RuntimeBodyReaders,
+};
+use outbe_offchain_entities::{
+    begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
+    end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
+    CompressedTreeService, EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
+    FinalizedMarker, ParentBodySource, SealOutput, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
@@ -233,7 +233,7 @@ fn update_nod_bucket(
     .unwrap();
 }
 
-fn as_b256(commitment: Option<outbe_compressed_entities::Commitment>) -> Option<B256> {
+fn as_b256(commitment: Option<outbe_offchain_entities::Commitment>) -> Option<B256> {
     commitment.map(|value| B256::from(*value.as_bytes()))
 }
 
@@ -275,7 +275,7 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             chain_id: 91,
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            topology: outbe_offchain_entities::CeTopologyV1.encode(),
             tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },
@@ -285,7 +285,7 @@ fn tree_service(directory: &std::path::Path, genesis_hash: B256) -> CompressedTr
             block_hash: genesis_hash,
             parent_block_hash: B256::ZERO,
             parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
         },
     )
     .unwrap();
@@ -342,7 +342,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
 
     let owner = Address::repeat_byte(0x41);
     let day = WorldwideDay::new(20_260_716);
-    let tribute_id = outbe_compressed_entities::derive_poseidon_entity_id(owner, day).unwrap();
+    let tribute_id = outbe_offchain_entities::derive_poseidon_entity_id(owner, day).unwrap();
     let mut tribute = TributeData {
         tribute_id,
         owner,
@@ -355,7 +355,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         exclude_from_intex_issuance: false,
     };
     let nod_owner = Address::repeat_byte(0x42);
-    let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
+    let nod_id = outbe_offchain_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(14), 978);
     let mut nod = NodItemState {
         is_settled: false,
@@ -372,7 +372,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     };
     let bucket_id = WwdEntityId::from_day_and_digest(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     StorageHandle::enter(&mut execution, |storage| {
         storage
             .sstore(

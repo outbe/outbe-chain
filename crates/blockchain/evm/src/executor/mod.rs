@@ -17,12 +17,12 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::system_carrier::{
     classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierView,
     OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
 };
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, GenesisValidators},

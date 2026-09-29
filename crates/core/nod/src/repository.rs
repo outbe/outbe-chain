@@ -1,7 +1,7 @@
 //! Typed off-chain persistence boundary for Nod item and bucket bodies.
 
 use alloy_primitives::Address;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
     encode_nod_item_v1, CanonicalBodyError, CeAuditError, CeAuditWork, EntityRef, IdPage,
     IdPageRequest, NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError,

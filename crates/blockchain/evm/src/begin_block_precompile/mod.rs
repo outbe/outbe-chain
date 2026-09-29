@@ -72,7 +72,7 @@ pub fn dispatch(
 /// Dispatches begin-block work with explicit read-only body authority.
 pub fn dispatch_with_readers(
     storage: StorageHandle,
-    scope: &outbe_compressed_entities::ExecutionScope,
+    scope: &outbe_offchain_entities::ExecutionScope,
     parent: &outbe_offchain_data::RuntimeBodyReaders,
     data: &[u8],
     caller: Address,
@@ -106,7 +106,7 @@ pub fn dispatch_with_tee_attestation(
 /// Production dispatch with both finalized body readers and the immutable
 /// chain-manifest fork authority.
 pub(crate) struct SystemTxRuntime<'a> {
-    pub(crate) scope: &'a outbe_compressed_entities::ExecutionScope,
+    pub(crate) scope: &'a outbe_offchain_entities::ExecutionScope,
     pub(crate) parent: &'a outbe_offchain_data::RuntimeBodyReaders,
     pub(crate) ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
     pub(crate) tee_attestation_v1:
@@ -143,7 +143,7 @@ fn dispatch_inner(
     caller: Address,
     value: U256,
     body_readers: Option<(
-        &outbe_compressed_entities::ExecutionScope,
+        &outbe_offchain_entities::ExecutionScope,
         &outbe_offchain_data::RuntimeBodyReaders,
     )>,
     ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,

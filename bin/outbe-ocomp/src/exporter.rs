@@ -7,12 +7,12 @@
 use std::collections::VecDeque;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, decode_tribute_v1, AuthenticatedTributePartition, CanonicalBodyError,
-    IdPageRequest, TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_offchain_data::{
     read_projection_state, ProjectionConfig, ProjectionError, ProjectionState,
+};
+use outbe_offchain_entities::{
+    body_commitment, decode_tribute_v1, AuthenticatedTributePartition, CanonicalBodyError,
+    IdPageRequest, TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_storage::{StorageReaderHandle, MAX_SCAN_ENTRIES};
 use outbe_tribute::{
@@ -514,7 +514,7 @@ pub enum FinalizedTributeError {
     #[error(transparent)]
     CanonicalBody(#[from] CanonicalBodyError),
     #[error(transparent)]
-    Commitment(#[from] outbe_compressed_entities::CommitmentError),
+    Commitment(#[from] outbe_offchain_entities::CommitmentError),
     #[error("export page limit {0} is outside the storage bound")]
     InvalidPageLimit(usize),
     #[error("Tribute source pagination did not advance")]

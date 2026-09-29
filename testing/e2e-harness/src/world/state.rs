@@ -517,7 +517,7 @@ pub struct FixtureState {
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Independently authenticated OFFERING inputs, retained before processing
     /// retires their current Tribute projection and point-read domain.
-    pub ocomp_nod_input_bodies: Option<Vec<outbe_compressed_entities::TributeBodyV1>>,
+    pub ocomp_nod_input_bodies: Option<Vec<outbe_offchain_entities::TributeBodyV1>>,
     /// Successor activation evidence captured while a V1 job remains live.
     pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
     pub ocomp_successor_activation_height: Option<u64>,

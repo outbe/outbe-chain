@@ -275,7 +275,7 @@ fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input(
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled =
         seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 1, nominal);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x86)).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::repeat_byte(0x86)).unwrap();
     let tree = Arc::new(FailSecondPartitionLookup {
         parent_root,
         partition_root: B256::repeat_byte(0x87),
@@ -283,7 +283,7 @@ fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input(
     });
     let scope = ExecutionScope::with_parent_tree(
         tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
+        outbe_offchain_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
     let parent = TestParent::empty();
     StorageHandle::enter(&mut provider, |storage| {
@@ -331,14 +331,14 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled =
         seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 0, U256::ZERO);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let tree = Arc::new(FailOncePartitionLookup {
         parent_root,
         calls: AtomicUsize::new(0),
     });
     let scope = ExecutionScope::with_parent_tree(
         tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
+        outbe_offchain_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
     let parent = TestParent::empty();
     StorageHandle::enter(&mut provider, |storage| {

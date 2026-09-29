@@ -15,10 +15,10 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 use outbe_common::settlement::floor_to_asset_units;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;

@@ -1,7 +1,7 @@
 //! Private outer-WWD lifecycle transitions and their ordered effects.
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::ExecutionScope;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
@@ -323,8 +323,8 @@ fn apply_capacity_forfeiture(
             sourceGeneration: receipt.source_generation,
             retiredGeneration: receipt.retired_generation,
             retirementOutcome: match receipt.retirement {
-                outbe_compressed_entities::RetirementOutcome::NotPresent => 1,
-                outbe_compressed_entities::RetirementOutcome::Requested => 2,
+                outbe_offchain_entities::RetirementOutcome::NotPresent => 1,
+                outbe_offchain_entities::RetirementOutcome::Requested => 2,
             },
             blockNumber: receipt.block_number,
         })
@@ -391,8 +391,8 @@ fn apply_missed_offering(
             carryOverBefore: receipt.carry_over_before,
             carryOverAfter: receipt.carry_over_after,
             retirementOutcome: match retirement {
-                outbe_compressed_entities::RetirementOutcome::NotPresent => 1,
-                outbe_compressed_entities::RetirementOutcome::Requested => 2,
+                outbe_offchain_entities::RetirementOutcome::NotPresent => 1,
+                outbe_offchain_entities::RetirementOutcome::Requested => 2,
             },
             blockNumber: receipt.block_number,
         })?;

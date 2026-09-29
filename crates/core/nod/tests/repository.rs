@@ -9,13 +9,13 @@ use std::{
 
 use alloy_primitives::{Address, B256, U256};
 use mongodb::sync::Client;
-use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
-};
 use outbe_nod::{
     canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
     NodItemState, NodPageRequest, NodRepositoryError, NodRepositoryReader, NodRepositoryWriter,
+};
+use outbe_offchain_entities::{
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
+    encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,

@@ -141,10 +141,10 @@ pub fn dispatch(
                         .into());
                 };
                 let retirement = match receipt.retirement {
-                    outbe_compressed_entities::RetirementOutcome::NotPresent => {
+                    outbe_offchain_entities::RetirementOutcome::NotPresent => {
                         terminal_retirement::NOT_PRESENT
                     }
-                    outbe_compressed_entities::RetirementOutcome::Requested => {
+                    outbe_offchain_entities::RetirementOutcome::Requested => {
                         terminal_retirement::REQUESTED
                     }
                 };

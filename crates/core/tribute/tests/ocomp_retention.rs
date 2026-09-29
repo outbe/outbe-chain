@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
+use outbe_offchain_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, Namespace, StorageReaderHandle, StorageWriterHandle,
     Value,
@@ -76,7 +76,7 @@ fn atomic_retirement_keeps_exact_job_scoped_bytes_until_exact_job_gc() {
                 .unwrap()
                 .unwrap()
                 .payload(),
-            outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&body))
+            outbe_offchain_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&body))
                 .unwrap()
         );
     }

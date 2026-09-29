@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     list, mint, BodyInput, CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext,
     EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
     QueryRef, StoredBody, TributeBodyV1, WwdEntityId,

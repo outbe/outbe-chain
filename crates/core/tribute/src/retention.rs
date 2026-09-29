@@ -8,11 +8,11 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
+use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
+use outbe_offchain_entities::{
     body_commitment, decode_stored_tribute_v1, CeAuditError, CeAuditWork, StoredBody, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME,
 };
-use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, ScanEntry, ScanRequest, StorageReaderHandle,
     StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,

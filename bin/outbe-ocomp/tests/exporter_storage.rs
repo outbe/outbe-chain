@@ -4,7 +4,6 @@ mod support;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_ocomp::exporter::{
     AuthenticatedTributeRecord, FinalizedTributeSource, TributeStreamSummary,
 };
@@ -23,6 +22,7 @@ use outbe_ocomp_protocol::{
         RawStorageSlotV1,
     },
 };
+use outbe_offchain_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, MemoryStorage, StorageConfig, StorageProvider, StorageReaderHandle,
     StorageWriterHandle,

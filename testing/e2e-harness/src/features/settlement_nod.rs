@@ -1,7 +1,7 @@
 //! The successor public Nod pays through ERC20; the original retains PayNote coverage.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, verify_point_read_v1, NodBucketBodyV1,
     NodItemBodyV1, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
     WwdEntityId,

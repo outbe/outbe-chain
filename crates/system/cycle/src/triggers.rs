@@ -6,7 +6,7 @@
 //! [`crate::runtime`] iterates this slice on every block and fires any
 //! trigger whose next slot has been reached.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Stable on-chain identifier for each trigger. The numeric values

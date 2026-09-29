@@ -616,7 +616,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
         let day_limit = U256::from(100);
         let mut fire_at = 0_u64;
         let (tree_directory, tree_service) = persistent_test_tree(B256::ZERO);
-        let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
         let parent_tree = tree_service
             .open_parent(ExactParentIdentity {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
@@ -636,7 +636,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
             1,
             4,
             |storage| {
-                outbe_compressed_entities::begin_block(storage.clone(), &seed_scope)
+                outbe_offchain_entities::begin_block(storage.clone(), &seed_scope)
                     .expect("open CE seed block");
                 let genesis_ctx = BlockRuntimeContext::new(
                     BlockContext::new(0, 1_704_067_200, CHAIN_ID, proposer, vec![proposer]),
@@ -680,7 +680,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
                         &seed_scope,
                         &tribute_parent,
                         &TributeData {
-                            tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(
+                            tribute_id: outbe_offchain_entities::derive_poseidon_entity_id(
                                 proposer, victim,
                             )
                             .unwrap(),
@@ -747,7 +747,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
                         .unwrap();
                 }
                 staged_tree_batch = Some(
-                    outbe_compressed_entities::end_block(storage, &seed_scope)
+                    outbe_offchain_entities::end_block(storage, &seed_scope)
                         .expect("seal populated Tribute seed block")
                         .staged_tree_batch,
                 );

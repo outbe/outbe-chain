@@ -9,7 +9,6 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits as exporter_schema_limits,
@@ -28,6 +27,7 @@ use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     ObjectKind, SnapshotHandoffV1,
 };
+use outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_primitives::projection::ProjectionCheckpoint;
 use tempfile::TempDir;
 

@@ -5,7 +5,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here

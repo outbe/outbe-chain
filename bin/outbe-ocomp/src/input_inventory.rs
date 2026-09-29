@@ -16,12 +16,12 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_ocomp_protocol::input::CheckpointIdentityV1;
+use outbe_offchain_entities::{
     body_commitment, decode_tribute_v1, BoundedTributePartitionVerifier, Commitment,
     TributePartitionExpectationV1, TributePartitionRetentionStatsV1, TributePartitionWorkConfig,
     WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_oracle::MAX_OCOMP_REFERENCE_ISOS;
 use outbe_primitives::time::WorldwideDay;
 use sha3::{Digest, Keccak256};
@@ -1314,7 +1314,7 @@ pub enum TributeInventoryError {
     #[error("Tribute inventory integer overflow")]
     IntegerOverflow,
     #[error(transparent)]
-    Partition(#[from] outbe_compressed_entities::TributePartitionReconstructionError),
+    Partition(#[from] outbe_offchain_entities::TributePartitionReconstructionError),
     #[error("Tribute inventory I/O failed during {operation} at {path}: {source}")]
     Io {
         operation: &'static str,

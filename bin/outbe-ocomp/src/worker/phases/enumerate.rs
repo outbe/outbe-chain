@@ -2,7 +2,7 @@ use super::super::require_authenticated_input;
 use super::super::require_lease_active;
 use super::super::WorkerError;
 
-use outbe_compressed_entities::decode_tribute_v1;
+use outbe_offchain_entities::decode_tribute_v1;
 
 use outbe_lysis::program_v1::artifacts::encode_enumerated_run;
 

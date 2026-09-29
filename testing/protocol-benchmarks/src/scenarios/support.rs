@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
+use outbe_offchain_entities::{
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
 };
-use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS,
@@ -51,7 +51,7 @@ pub(crate) fn seed_compressed_entities_genesis(
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .map_err(|error| error.to_string())?
                     .as_slice(),
             ),

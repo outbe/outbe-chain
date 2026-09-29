@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::SCALE_1E6_U256;

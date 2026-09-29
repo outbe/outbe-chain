@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-compressed-entities.workspace = true
+outbe-offchain-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-oracle.workspace = true

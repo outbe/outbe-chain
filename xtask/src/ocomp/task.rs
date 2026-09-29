@@ -307,7 +307,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -334,7 +334,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -493,7 +493,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
+                &["test", "--locked", "-p", "outbe-offchain-entities"],
             )?;
             cargo(
                 repository_root,
@@ -520,7 +520,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -562,7 +562,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
+                &["test", "--locked", "-p", "outbe-offchain-entities"],
             )?;
             cargo(
                 repository_root,
@@ -598,7 +598,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -650,7 +650,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -684,7 +684,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -1375,7 +1375,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "--",
                     "--test-threads=1",
                 ],
@@ -1413,7 +1413,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "-p",
                     "outbe-primitives",
                     "-p",
-                    "outbe-compressed-entities",
+                    "outbe-offchain-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",

@@ -1,9 +1,9 @@
 //! Read-only Tribute and Nod body capabilities used by runtime execution.
 
-use outbe_compressed_entities::{
+use outbe_nod::{NodRepositoryError, NodRepositoryReader};
+use outbe_offchain_entities::{
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
 };
-use outbe_nod::{NodRepositoryError, NodRepositoryReader};
 use std::{
     collections::BTreeMap,
     sync::{

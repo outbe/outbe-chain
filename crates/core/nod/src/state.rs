@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
     ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
     MAX_ID_PAGE_LIMIT,

@@ -1,9 +1,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1, WwdEntityId,
-};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -24,6 +21,9 @@ use outbe_ocomp_protocol::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, RawContractOpeningProofV1,
         RawStorageSlotV1,
     },
+};
+use outbe_offchain_entities::{
+    derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1, WwdEntityId,
 };
 use outbe_primitives::time::WorldwideDay;
 

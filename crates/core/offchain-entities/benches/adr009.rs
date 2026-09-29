@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{keccak256, B256};
 use criterion::{black_box, BenchmarkId, Criterion};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     bench_support::{aggregate_shard_roots, candidate_checksum, derived_shard, field_word},
     CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityRef,
     EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker, WwdEntityId,
@@ -195,7 +195,7 @@ fn environment(_shard_count: u32, genesis_hash: B256) -> EnvironmentIdentity {
         chain_id: 9_009,
         genesis_hash,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        topology: outbe_compressed_entities::CeTopologyV1.encode(),
+        topology: outbe_offchain_entities::CeTopologyV1.encode(),
         tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
         vendor_revision: VENDOR_REVISION.to_owned(),
     }
@@ -297,7 +297,7 @@ fn build_fixture(
     let directory = tempfile::tempdir().expect("benchmark tempdir");
     let genesis_hash = B256::repeat_byte(9);
     let genesis_root =
-        outbe_compressed_entities::sealed_root(B256::ZERO).expect("ADR-010 empty authority");
+        outbe_offchain_entities::sealed_root(B256::ZERO).expect("ADR-010 empty authority");
     let genesis = FinalizedMarker {
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         height: 0,
@@ -440,7 +440,7 @@ fn measured_aggregation(fixture: Fixture) -> Duration {
     let provisional = parent
         .prepare_seal(2, &fixture.mutations, &[])
         .expect("sharded proof and seal");
-    let roots = outbe_compressed_entities::bench_support::candidate_shard_roots(&provisional);
+    let roots = outbe_offchain_entities::bench_support::candidate_shard_roots(&provisional);
     let started = Instant::now();
     black_box(aggregate_shard_roots(black_box(&roots)).expect("shard aggregation"));
     started.elapsed()
@@ -659,7 +659,7 @@ fn cold_run(arguments: &[String]) -> Result<(), String> {
 
     let genesis_hash = B256::repeat_byte(9);
     let genesis_root =
-        outbe_compressed_entities::sealed_root(B256::ZERO).map_err(|error| error.to_string())?;
+        outbe_offchain_entities::sealed_root(B256::ZERO).map_err(|error| error.to_string())?;
     let genesis = FinalizedMarker {
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         height: 0,

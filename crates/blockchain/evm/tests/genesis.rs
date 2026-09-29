@@ -196,7 +196,7 @@ fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
         format!(
             "{:#066x}",
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(alloy_primitives::B256::ZERO)
+                outbe_offchain_entities::sealed_root(alloy_primitives::B256::ZERO)
                     .unwrap()
                     .as_slice(),
             )

@@ -9,10 +9,10 @@ use reth_ethereum::evm::EthEvmConfig;
 
 use std::sync::Arc;
 
-use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, reshare_artifact::sanitize_prefinal_outbe_block_artifacts,
     OutbeHeader,

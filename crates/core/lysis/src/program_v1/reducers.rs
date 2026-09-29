@@ -1,7 +1,7 @@
 //! Streaming, Lysis-specific merge reducers for bounded shuffle chunks.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
+use outbe_offchain_entities::WwdEntityId;
 
 use super::{
     phases::{BucketRecordV1, FinalizedContributorV1},

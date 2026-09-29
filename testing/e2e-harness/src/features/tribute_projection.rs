@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
     PointReadResultV1, VerifiedPointReadV1, WwdEntityId,
 };

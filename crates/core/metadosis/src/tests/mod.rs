@@ -1,10 +1,10 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{
+use outbe_nod::NodRepositoryReader;
+use outbe_offchain_entities::{
     begin_block, end_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody,
 };
-use outbe_nod::NodRepositoryReader;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -125,7 +125,7 @@ fn with_active_scope<R>(
                 COMPRESSED_ENTITIES_ADDRESS,
                 U256::from(1),
                 U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                    outbe_offchain_entities::sealed_root(B256::ZERO)
                         .unwrap()
                         .as_slice(),
                 ),

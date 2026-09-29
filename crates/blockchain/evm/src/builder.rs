@@ -37,7 +37,7 @@ pub(crate) fn encode_final_header_artifacts(
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
     artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+        commitment_scheme_version: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
         r_sealed: compressed_root,
     });
     encode_outbe_block_artifacts(&artifacts).map_err(|e| BlockExecutionError::msg(e.to_string()))
@@ -249,7 +249,7 @@ mod tests {
 
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
-    use outbe_compressed_entities::{
+    use outbe_offchain_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
     };
@@ -576,7 +576,7 @@ mod tests {
                 chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
                 genesis_hash: parent_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                topology: outbe_offchain_entities::CeTopologyV1.encode(),
                 tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -586,7 +586,7 @@ mod tests {
                 block_hash: parent_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .expect("CE test MDBX must open");
@@ -682,7 +682,7 @@ mod tests {
         );
         metadosis_genesis.set_block_number(1);
         metadosis_genesis.enter(|storage| {
-            let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+            let root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
                     outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,

@@ -9,10 +9,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
-    encode_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_nod::{
     canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodItemState,
     NodPageRequest, NodRepositoryReader,
@@ -21,6 +17,10 @@ use outbe_offchain_data::{
     read_projection_state, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
     ProjectionConfig, ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState,
     TributeRetentionSelector, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
+};
+use outbe_offchain_entities::{
+    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
+    encode_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,

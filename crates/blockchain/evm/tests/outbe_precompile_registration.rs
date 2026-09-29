@@ -65,7 +65,7 @@ fn build_extended_precompiles() -> PrecompilesMap {
         OutbePrecompileExecutionContext::new(spec, B256::ZERO),
         OutbePrecompileRuntime::new(
             None,
-            std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+            std::sync::Arc::new(outbe_offchain_entities::ExecutionScope::new()),
             None,
             false,
         ),

@@ -3,7 +3,7 @@ use super::*;
 #[derive(Debug)]
 struct RecordingCeStartupRecovery {
     requested_height: AtomicU64,
-    marker: outbe_compressed_entities::FinalizedMarker,
+    marker: outbe_offchain_entities::FinalizedMarker,
 }
 
 impl CeStartupRecovery for RecordingCeStartupRecovery {
@@ -11,7 +11,7 @@ impl CeStartupRecovery for RecordingCeStartupRecovery {
         &self,
         consensus_finalized_height: u64,
     ) -> std::result::Result<
-        outbe_compressed_entities::FinalizedMarker,
+        outbe_offchain_entities::FinalizedMarker,
         crate::ce_recovery::CeStartupRecoveryError,
     > {
         self.requested_height
@@ -35,7 +35,7 @@ fn ce_recovery_uses_exact_archive_backed_head_when_ack_floor_lags() {
         }),
     )
     .unwrap();
-    let marker = outbe_compressed_entities::FinalizedMarker {
+    let marker = outbe_offchain_entities::FinalizedMarker {
         commitment_scheme_version: 1,
         height: archive_height,
         block_hash: archive_hash,
@@ -243,7 +243,7 @@ pub(in crate::stack::tests) mod copied_native {
     use crate::ce_recovery::{CanonicalCeReplaySource, CeStartupRecoveryCoordinator};
     use alloy_consensus::Sealable;
     use alloy_primitives::U256;
-    use outbe_compressed_entities::{
+    use outbe_offchain_entities::{
         sealed_root, CandidateCacheLimits, CeMdbx, CeTopologyV1, CompressedTreeService,
         EnvironmentIdentity, ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
         LOCAL_STORAGE_SCHEMA_VERSION,

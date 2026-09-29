@@ -7,7 +7,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -27,6 +26,7 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     CasObjectRefV1, ListKind, OrderedListLimits,
 };
+use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
 
 fn hash(byte: u8) -> B256 {

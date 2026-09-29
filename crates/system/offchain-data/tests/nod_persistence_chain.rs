@@ -4,15 +4,15 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    begin_block, derive_poseidon_entity_id, encode_nod_item_v1, end_block, CeMdbx, CeWorkConfig,
-    EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope, FinalizedMarker,
-    MdbxAuthenticatedTree, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-};
 use outbe_nod::{api, canonical_item, NodContract, NodItemState};
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
     RuntimeBodyReaders,
+};
+use outbe_offchain_entities::{
+    begin_block, derive_poseidon_entity_id, encode_nod_item_v1, end_block, CeMdbx, CeWorkConfig,
+    EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope, FinalizedMarker,
+    MdbxAuthenticatedTree, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::RocksDbStorage;
 use outbe_primitives::{
@@ -40,7 +40,7 @@ fn assert_authenticated_nods(
                 .expect("authenticate projected NOD against its persisted CE leaf")
                 .expect("NOD exists");
             assert_eq!(canonical_item(loaded.body()), canonical_item(item));
-            let verified = outbe_compressed_entities::read(
+            let verified = outbe_offchain_entities::read(
                 storage.clone(),
                 &scope,
                 readers,
@@ -71,13 +71,13 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     let ce_path = directory.path().join("ce");
     let rocks_path = directory.path().join("projection");
     let genesis = B256::repeat_byte(0x42);
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let environment = EnvironmentIdentity {
         local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
         chain_id: 91,
         genesis_hash: genesis,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        topology: outbe_compressed_entities::CeTopologyV1.encode(),
+        topology: outbe_offchain_entities::CeTopologyV1.encode(),
         tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
         vendor_revision: "nod-persistence-chain-test".into(),
     };
@@ -231,7 +231,7 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     );
     let error = StorageHandle::enter(&mut evm, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
-        outbe_compressed_entities::read(
+        outbe_offchain_entities::read(
             storage,
             &scope,
             &reopened_readers,

@@ -2,11 +2,11 @@
 
 use alloy_primitives::{Address, U256};
 use cucumber::then;
-use outbe_compressed_entities::{
+use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
+use outbe_offchain_entities::{
     decode_stored_tribute_v1, verify_point_read_v1, PointReadRequestV1, PointReadResultV1,
     SelectedHeaderV1, TributeBodyV1, VerifiedPointReadV1,
 };
-use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 
 use crate::internal::{eth, nod_reference};
 use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO};

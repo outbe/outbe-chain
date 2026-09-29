@@ -5,11 +5,11 @@ use std::sync::{
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
+use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
+use outbe_offchain_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
-use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
@@ -49,7 +49,7 @@ fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReade
                 COMPRESSED_ENTITIES_ADDRESS,
                 U256::from(1),
                 U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                    outbe_offchain_entities::sealed_root(B256::ZERO)
                         .unwrap()
                         .as_slice(),
                 ),

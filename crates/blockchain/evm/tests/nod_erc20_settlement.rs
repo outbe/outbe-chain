@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodContract, NodIssueParams, NodRepositoryReader};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
@@ -120,7 +120,7 @@ impl World {
                     COMPRESSED_ENTITIES_ADDRESS,
                     U256::ONE,
                     U256::from_be_slice(
-                        outbe_compressed_entities::sealed_root(B256::ZERO)
+                        outbe_offchain_entities::sealed_root(B256::ZERO)
                             .unwrap()
                             .as_slice(),
                     ),

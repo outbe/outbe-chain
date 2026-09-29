@@ -5,8 +5,8 @@
 //! sponsorship and future address classes intentionally remain outside this table.
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::{
     addresses::*,
     error::{PrecompileError, Result},

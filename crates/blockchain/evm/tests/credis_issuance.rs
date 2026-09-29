@@ -1,10 +1,10 @@
 //! Real issuance with confidential note consumption and stateful ERC-20/vault calls.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::precompile::IGratisFactory;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     addresses::{

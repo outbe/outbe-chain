@@ -16,10 +16,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
-use outbe_compressed_entities::{
-    begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
-    EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
-};
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
 use outbe_nod::schema::NodContract;
@@ -56,6 +52,10 @@ use outbe_ocomp_protocol::{
     state::RESULT_VOTE_MIN_FINALITY_DEPTH,
     vote::ResultVoteV1,
     SchemaLimits,
+};
+use outbe_offchain_entities::{
+    begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
+    EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
 };
 #[cfg(test)]
 use outbe_primitives::addresses::STAKING_ADDRESS;
@@ -1136,7 +1136,7 @@ impl AuthenticatedParentTree for TributePartitionTree {
         &self,
         _entity: EntityRef,
         _expected_parent_root: B256,
-    ) -> PrecompileResult<Option<outbe_compressed_entities::Commitment>> {
+    ) -> PrecompileResult<Option<outbe_offchain_entities::Commitment>> {
         Ok(None)
     }
 

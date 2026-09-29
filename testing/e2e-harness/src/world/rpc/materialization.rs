@@ -193,7 +193,7 @@ impl Rpc {
                 "post-completion settleNodWithPayNote transaction failed"
             ));
         }
-        let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
+        let entity = outbe_offchain_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, owner, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
@@ -412,7 +412,7 @@ pub(in crate::world::rpc) fn classify_owner_index_result(
     result: std::result::Result<Vec<u8>, String>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     match result {
-        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::WwdEntityId::len_bytes() => {
+        Ok(nod_id) if nod_id.len() == outbe_offchain_entities::WwdEntityId::len_bytes() => {
             Ok(Some(nod_id))
         }
         Ok(nod_id) => Err(format!(

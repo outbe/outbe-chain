@@ -1,7 +1,7 @@
 //! Typed off-chain persistence boundary for Tribute bodies and indexes.
 
 use alloy_primitives::{Address, B256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, CeAuditError, CeAuditWork,
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
     StoredBody, StoredBodyPage, TributeBodyV1, WwdEntityId,

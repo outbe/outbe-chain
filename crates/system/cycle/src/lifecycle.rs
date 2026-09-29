@@ -11,7 +11,7 @@
 //! boundary, subject to that participation gate, and owns contiguous-day
 //! settlement and missed-day forfeiture.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,

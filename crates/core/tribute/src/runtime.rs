@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     delete, mint, read, retire_partition, BodyInput, EntityRef, ExecutionScope, ParentBodySource,
     PartitionRef, RetirementOutcome, VerifiedBody, WwdEntityId,
 };
@@ -470,7 +470,7 @@ impl TributeContract<'_> {
     pub fn seal_pre_admission(
         &mut self,
         day: WorldwideDay,
-        sealed_collection: outbe_compressed_entities::SealedCollectionRoot,
+        sealed_collection: outbe_offchain_entities::SealedCollectionRoot,
     ) -> Result<crate::TributePreAdmissionProjection> {
         let storage = self.storage_handle();
         storage.with_checkpoint(|| {
@@ -478,7 +478,7 @@ impl TributeContract<'_> {
                 return Err(TributeError::OcompProfileNotReady.into());
             }
             if sealed_collection.partition()
-                != outbe_compressed_entities::PartitionRef::TributeWwd(day)
+                != outbe_offchain_entities::PartitionRef::TributeWwd(day)
             {
                 return Err(TributeError::InvalidSealedCollectionRoot.into());
             }

@@ -1,9 +1,9 @@
 use crate::{signer::SharedOutbeEvmSigner, system_tx::OcompLifecycleActivation};
 
-use outbe_compressed_entities::CompressedTreeService;
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::CompressedTreeService;
 use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
     chainspec::ChainSpec,

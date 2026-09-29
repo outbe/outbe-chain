@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
@@ -52,6 +51,7 @@ use outbe_ocomp_protocol::{
     FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
     UnitFinishedV1,
 };
+use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
 use support::tempdir;

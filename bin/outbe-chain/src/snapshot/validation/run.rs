@@ -800,8 +800,8 @@ fn require_source(path: &std::path::Path, directory: bool) -> eyre::Result<()> {
 
 fn canonical_ce_identity(
     layout: &crate::snapshot::config::RequestedLayout,
-) -> outbe_compressed_entities::EnvironmentIdentity {
-    use outbe_compressed_entities::{
+) -> outbe_offchain_entities::EnvironmentIdentity {
+    use outbe_offchain_entities::{
         CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
     };
     // Same canonical identity as existing native::ce_identity, whose signature
@@ -861,7 +861,7 @@ fn run_native_checks(
                 &layout.chain_root.join("compressed_entities/smt/mdbx.dat"),
                 false,
             )?;
-            let reader = outbe_compressed_entities::CeMdbxReadOnly::open(
+            let reader = outbe_offchain_entities::CeMdbxReadOnly::open(
                 &layout.chain_root,
                 canonical_ce_identity(layout),
             )?;
@@ -966,13 +966,13 @@ fn run_native_checks(
 }
 
 struct IgnoreCeLeaves;
-impl outbe_compressed_entities::CeAuditVisitor for IgnoreCeLeaves {
+impl outbe_offchain_entities::CeAuditVisitor for IgnoreCeLeaves {
     fn visit_leaf(
         &mut self,
-        _namespace: outbe_compressed_entities::TreeNamespace,
-        _key: outbe_compressed_entities::TreeKey,
-        _value: outbe_compressed_entities::LeafValue,
-    ) -> Result<(), outbe_compressed_entities::CeAuditError> {
+        _namespace: outbe_offchain_entities::TreeNamespace,
+        _key: outbe_offchain_entities::TreeKey,
+        _value: outbe_offchain_entities::LeafValue,
+    ) -> Result<(), outbe_offchain_entities::CeAuditError> {
         Ok(())
     }
 }
@@ -982,9 +982,9 @@ impl outbe_tribute::RetainedTributeAuditVisitor for CountRetainedBodies {
     fn visit_retained(
         &mut self,
         _entry: outbe_tribute::RetainedTributeAuditEntry,
-    ) -> Result<(), outbe_compressed_entities::CeAuditError> {
+    ) -> Result<(), outbe_offchain_entities::CeAuditError> {
         self.0 = self.0.checked_add(1).ok_or_else(|| {
-            outbe_compressed_entities::CeAuditError::Invalid("retained body count overflow".into())
+            outbe_offchain_entities::CeAuditError::Invalid("retained body count overflow".into())
         })?;
         Ok(())
     }
@@ -994,8 +994,8 @@ fn audit_ce_and_bodies(
     layout: &crate::snapshot::config::RequestedLayout,
     view: &crate::snapshot::native::RethReadOnlyView,
     ce_input: (
-        outbe_compressed_entities::CeMdbxReadOnly,
-        outbe_compressed_entities::FinalizedMarker,
+        outbe_offchain_entities::CeMdbxReadOnly,
+        outbe_offchain_entities::FinalizedMarker,
     ),
     scratch: &std::path::Path,
     bodies_requested: bool,
@@ -1003,7 +1003,7 @@ fn audit_ce_and_bodies(
     report: &mut super::report::ValidationReport,
 ) {
     use super::report::{CheckName::*, CheckStatus, RequiredHeight, RetainedRange};
-    use outbe_compressed_entities::{CeAuditLimits, CeAuditWork, CeBodyAudit};
+    use outbe_offchain_entities::{CeAuditLimits, CeAuditWork, CeBodyAudit};
     let (reader, marker) = ce_input;
     let ce_result = (|| -> eyre::Result<_> {
         let header = view.header(marker.height)?.ok_or_else(|| {
@@ -1076,7 +1076,7 @@ fn audit_ce_and_bodies(
 fn record_ce_success(
     report: &mut super::report::ValidationReport,
     height: u64,
-    ce: &outbe_compressed_entities::CeAuditReport,
+    ce: &outbe_offchain_entities::CeAuditReport,
 ) {
     report.record(CheckName::Ce, super::report::CheckStatus::Passed, None);
     report.retained_ranges.push(super::report::RetainedRange {

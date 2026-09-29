@@ -1695,11 +1695,11 @@ fn observe_stopped_native(
         SnapshotBlock, SnapshotNativeObservation, SnapshotNativeProgress, SnapshotUnwind,
     };
     use alloy_consensus::Sealable;
-    use outbe_compressed_entities::{
+    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
+    use outbe_offchain_entities::{
         CeMdbxReadOnly, CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME,
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
-    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
     use outbe_offchain_storage::{RocksDbReader, StorageBackend};
     use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
     use reth_ethereum::provider::db::{

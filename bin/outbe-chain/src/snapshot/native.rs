@@ -226,13 +226,13 @@ impl RethReadOnlyView {
     }
 }
 
-pub(crate) fn ce_identity(layout: &NativeLayout) -> outbe_compressed_entities::EnvironmentIdentity {
-    outbe_compressed_entities::EnvironmentIdentity {
-        local_storage_schema_version: outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+pub(crate) fn ce_identity(layout: &NativeLayout) -> outbe_offchain_entities::EnvironmentIdentity {
+    outbe_offchain_entities::EnvironmentIdentity {
+        local_storage_schema_version: outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
         chain_id: layout.chain.chain().id(),
         genesis_hash: layout.chain.genesis_hash(),
-        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
-        topology: outbe_compressed_entities::CeTopologyV1.encode(),
+        commitment_scheme_version: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
+        topology: outbe_offchain_entities::CeTopologyV1.encode(),
         tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
         vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
     }
@@ -244,9 +244,9 @@ pub(crate) fn inspect_stopped_stores(
     layout: &NativeLayout,
     scratch: &std::path::Path,
 ) -> eyre::Result<outbe_snapshot::manifest::NativeProgress> {
-    use outbe_compressed_entities::CeMdbxReadOnly;
     use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
+    use outbe_offchain_entities::CeMdbxReadOnly;
     use outbe_offchain_storage::RocksDbReader;
     use outbe_primitives::projection::ProjectionCheckpoint;
     use outbe_snapshot::manifest::NativeProgress;

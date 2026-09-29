@@ -1,7 +1,4 @@
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
-    partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
-};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     intent::{
@@ -10,6 +7,9 @@ use outbe_ocomp_protocol::{
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     receipts::RequestLimitSplitReceiptV1,
+};
+use outbe_offchain_entities::{
+    partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};

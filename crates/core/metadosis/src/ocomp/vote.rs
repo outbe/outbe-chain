@@ -6,13 +6,13 @@
 //! the atomic pinned-ValidatorSet vote transition. It never executes Lysis.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
     state::OcompJobStatus,
     vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVotePrefixV1, ResultVoteV1},
     SchemaLimits,
 };
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,

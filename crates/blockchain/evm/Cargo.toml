@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
-outbe-compressed-entities.workspace = true
+outbe-offchain-entities.workspace = true
 outbe-offchain-data.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
@@ -97,7 +97,7 @@ tracing.workspace = true
 # Emit integration-test fixtures: real witness construction and proving stay
 # test-only; no proving API enters production.
 outbe-chain-constants.workspace = true
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
+outbe-offchain-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils"] }

@@ -5,7 +5,7 @@ use std::{ops::RangeInclusive, path::PathBuf};
 use alloy_consensus::Sealable;
 use alloy_primitives::B256;
 use eyre::{ensure, WrapErr};
-use outbe_compressed_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
+use outbe_offchain_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
 use outbe_primitives::{
     reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
     OutbeHeader,

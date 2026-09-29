@@ -26,7 +26,7 @@
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{

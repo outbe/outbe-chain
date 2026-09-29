@@ -6,11 +6,11 @@ pub(in crate::executor) fn validate_compressed_entities_root_scheme(
     let artifact = artifact.ok_or_else(|| {
         BlockExecutionError::msg("missing compressed-entities root artifact in block extra_data")
     })?;
-    if artifact.commitment_scheme_version != outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME {
+    if artifact.commitment_scheme_version != outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME {
         return Err(BlockExecutionError::msg(format!(
             "compressed-entities root artifact scheme mismatch: header={}, active={}",
             artifact.commitment_scheme_version,
-            outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME
+            outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME
         )));
     }
     Ok(artifact)
@@ -33,13 +33,13 @@ pub(in crate::executor) fn validate_compressed_entities_root_after_seal(
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     pub(crate) fn compressed_entities_seal_output(
         &self,
-    ) -> Option<outbe_compressed_entities::SealOutput> {
+    ) -> Option<outbe_offchain_entities::SealOutput> {
         self.compressed_entities_seal_output.clone()
     }
 
     pub(crate) fn compressed_tree_service(
         &self,
-    ) -> Option<Arc<outbe_compressed_entities::CompressedTreeService>> {
+    ) -> Option<Arc<outbe_offchain_entities::CompressedTreeService>> {
         self.compressed_tree_service.clone()
     }
 }
@@ -80,11 +80,11 @@ where
                 proposer,
             )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
-                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                let lifecycle = outbe_offchain_entities::CompressedEntitiesLifecycleContext::new(
                     hook_ctx.clone(),
                     scope.as_ref(),
                 );
-                let output = <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+                let output = <outbe_offchain_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
                     &lifecycle,
                 )?;
                 let evm_root = B256::from(
@@ -120,7 +120,7 @@ where
     /// leaving the scope active for a possible failure retirement.
     pub(in crate::executor) fn preview_compressed_entities(
         &mut self,
-    ) -> Result<outbe_compressed_entities::SealOutput, BlockExecutionError> {
+    ) -> Result<outbe_offchain_entities::SealOutput, BlockExecutionError> {
         if !self.compressed_entities_started {
             return Err(BlockExecutionError::msg(
                 "compressed-entity preview requested outside active lifecycle",
@@ -143,11 +143,11 @@ where
                 proposer,
             )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
-                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
+                let lifecycle = outbe_offchain_entities::CompressedEntitiesLifecycleContext::new(
                     hook_ctx.clone(),
                     scope.as_ref(),
                 );
-                outbe_compressed_entities::preview_lifecycle_end_block(&lifecycle)
+                outbe_offchain_entities::preview_lifecycle_end_block(&lifecycle)
             })?
         };
         if !changes.is_empty() || !events.is_empty() {

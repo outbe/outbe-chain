@@ -436,7 +436,7 @@ fn whole_committee_ocomp_deadline_and_successor_blocks_execute() {
                 .unwrap();
         });
 
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let parent_hash = B256::repeat_byte(0x90);
     let (_tree_directory, tree) = persistent_test_tree_with_marker(
         test_chain_spec().genesis_hash(),

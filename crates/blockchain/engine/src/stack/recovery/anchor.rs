@@ -297,7 +297,7 @@ pub(in crate::stack) fn recover_ce_at_reconciled_anchor(
     ce_startup_recovery: &dyn CeStartupRecovery,
     marshal_processed_height: u64,
     recovery_anchor_height: u64,
-) -> Result<outbe_compressed_entities::FinalizedMarker> {
+) -> Result<outbe_offchain_entities::FinalizedMarker> {
     let recovered = ce_startup_recovery
         .recover_before_participation(recovery_anchor_height)
         .wrap_err("compressed-tree startup recovery failed before validator participation")?;

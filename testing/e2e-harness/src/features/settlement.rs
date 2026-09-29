@@ -981,7 +981,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let (nod_id, initial) = wait_for_materialized_nod(world, port, owner);
     erc20_nod::qualify_public_nod(
         world,
-        outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())
+        outbe_offchain_entities::WwdEntityId::try_from(nod_id.as_slice())
             .expect("original public Nod identity"),
         owner,
         initial.floorPriceMinor,

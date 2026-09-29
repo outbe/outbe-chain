@@ -21,15 +21,15 @@ use std::{
 
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
+use outbe_nod::{
+    precompile::INod, projection::NOD_PROJECTION_NAMESPACES, NodBucketState, NodItemState,
+    NodRepositoryError, NodRepositoryReader,
+};
+use outbe_offchain_entities::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
     IdPageRequest, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
     MAX_ID_PAGE_LIMIT,
-};
-use outbe_nod::{
-    precompile::INod, projection::NOD_PROJECTION_NAMESPACES, NodBucketState, NodItemState,
-    NodRepositoryError, NodRepositoryReader,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanRequest, StorageError,
@@ -1089,7 +1089,7 @@ fn validate_stored_commitment(
     new: B256,
 ) -> Result<(), ProjectionError> {
     if !previous.is_zero() {
-        outbe_compressed_entities::Commitment::try_from(previous.0)
+        outbe_offchain_entities::Commitment::try_from(previous.0)
             .map_err(|error| malformed_event(source, error))?;
     }
     let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, payload)
@@ -1107,7 +1107,7 @@ fn validate_deleted_commitment(
     source: ProjectionSource,
     previous: B256,
 ) -> Result<(), ProjectionError> {
-    outbe_compressed_entities::Commitment::try_from(previous.0)
+    outbe_offchain_entities::Commitment::try_from(previous.0)
         .map(|_| ())
         .map_err(|error| malformed_event(source, error))
 }

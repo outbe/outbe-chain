@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
-use outbe_compressed_entities::{decode_stored_tribute_v1, WwdEntityId};
+use outbe_offchain_entities::{decode_stored_tribute_v1, WwdEntityId};
 use outbe_offchain_storage::{
     Key, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend, StorageConfig,
     StorageProvider, StorageReader, StorageReaderHandle,

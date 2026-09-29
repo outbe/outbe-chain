@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use alloy_evm::{block::BlockExecutor, eth::EthBlockExecutionCtx};
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_compressed_entities::{
+use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmConfig};
+use outbe_offchain_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmConfig};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS, units::SCALE_1E6_U256, OutbeHeader,
@@ -93,7 +93,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
 #[test]
 fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
     let parent_hash = B256::repeat_byte(0x42);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let db = CeMdbx::open(
         directory.path(),
@@ -102,7 +102,7 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
             chain_id: MAINNET.chain().id(),
             genesis_hash: parent_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            topology: outbe_offchain_entities::CeTopologyV1.encode(),
             tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
             vendor_revision: "scope-wiring-regression".into(),
         },

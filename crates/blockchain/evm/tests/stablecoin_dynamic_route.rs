@@ -177,7 +177,7 @@ fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
         false,
         SpecId::PRAGUE,
         None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -213,7 +213,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
         false,
         SpecId::PRAGUE,
         None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -232,7 +232,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
         false,
         SpecId::PRAGUE,
         None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         SubCallInput {
             target: token,
             value: U256::ZERO,
@@ -266,7 +266,7 @@ fn nested_call_with_insufficient_gas_halts_out_of_gas() {
         false,
         SpecId::PRAGUE,
         None,
-        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        Arc::new(outbe_offchain_entities::ExecutionScope::new()),
         SubCallInput {
             target: token,
             value: U256::ZERO,

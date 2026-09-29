@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use mongodb::sync::Client;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     decode_tribute_v1, encode_tribute_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
@@ -276,7 +276,7 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
         .unwrap();
     assert_eq!(
         outbe_tribute::from_canonical_body(
-            outbe_compressed_entities::decode_stored_tribute_v1(primary.as_bytes()).unwrap()
+            outbe_offchain_entities::decode_stored_tribute_v1(primary.as_bytes()).unwrap()
         )
         .tribute_id,
         first_id

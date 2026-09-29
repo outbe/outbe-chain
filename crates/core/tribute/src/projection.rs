@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use outbe_compressed_entities::WwdEntityId;
+use outbe_offchain_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, StorageMetadata, StoredValue, Value,
 };

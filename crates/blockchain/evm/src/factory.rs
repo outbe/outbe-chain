@@ -12,9 +12,9 @@ use alloy_evm::{
 };
 use alloy_primitives::{Address, Bytes, TxKind, B256};
 use core::ops::{Deref, DerefMut};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use reth_ethereum::evm::{
     primitives::{Database, EvmEnv},
@@ -343,7 +343,7 @@ pub struct OutbeEvmFactory {
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     compressed_tree_service:
-        Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
+        Arc<std::sync::RwLock<Option<Arc<outbe_offchain_entities::CompressedTreeService>>>>,
     ocomp_finality_authority:
         Arc<std::sync::RwLock<Option<Arc<dyn OcompFinalizedIntentAuthority>>>>,
     ocomp_lifecycle_activation: Arc<std::sync::RwLock<OcompLifecycleActivation>>,
@@ -441,7 +441,7 @@ impl OutbeEvmFactory {
 
     pub fn install_compressed_tree_service(
         &self,
-        service: Arc<outbe_compressed_entities::CompressedTreeService>,
+        service: Arc<outbe_offchain_entities::CompressedTreeService>,
     ) {
         *self
             .compressed_tree_service

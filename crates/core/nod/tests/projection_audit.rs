@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader, NodRepositoryWriter};
+use outbe_offchain_entities::{
     CeAuditLimits, CeAuditWork, IdPageRequest, StoredBody, StoredBodyPage, WwdEntityId,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader, NodRepositoryWriter};
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanEntry, ScanPage,
     ScanRequest, StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue, Value,

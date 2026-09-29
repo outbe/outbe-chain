@@ -1,4 +1,4 @@
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::time::WorldwideDay;
 #[cfg(test)]
 use outbe_primitives::time::{

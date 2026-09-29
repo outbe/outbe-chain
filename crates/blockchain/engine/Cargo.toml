@@ -18,7 +18,7 @@ snapshot-integration = []
 [dependencies]
 # Internal
 outbe-consensus.workspace = true
-outbe-compressed-entities.workspace = true
+outbe-offchain-entities.workspace = true
 outbe-evm.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-node.workspace = true

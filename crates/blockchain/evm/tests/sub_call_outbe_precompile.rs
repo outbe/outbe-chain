@@ -16,14 +16,14 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{
+use outbe_evm::sub_call;
+use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{
     begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
     Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_evm::sub_call;
-use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
@@ -59,7 +59,7 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
     }
 
     fn parent_root(&self) -> B256 {
-        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+        outbe_offchain_entities::sealed_root(B256::ZERO).unwrap()
     }
 
     fn read_leaf_verified(
@@ -69,7 +69,7 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
     ) -> outbe_primitives::error::Result<Option<Commitment>> {
         assert_eq!(
             expected_parent_root,
-            outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+            outbe_offchain_entities::sealed_root(B256::ZERO).unwrap()
         );
         Ok((entity == self.entity).then_some(self.commitment))
     }
@@ -317,7 +317,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
                 COMPRESSED_ENTITIES_ADDRESS,
                 U256::from(1_u64),
                 U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                    outbe_offchain_entities::sealed_root(B256::ZERO)
                         .unwrap()
                         .as_slice(),
                 ),

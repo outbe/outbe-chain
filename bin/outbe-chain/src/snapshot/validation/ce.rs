@@ -1,6 +1,6 @@
 //! Full native CE verification at its actual saved marker, independently of H/E/P.
 
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     CeAuditReport, CeAuditVisitor, CeAuditWork, CeMdbxReadOnly, ExactParentIdentity,
 };
 use outbe_primitives::OutbeHeader;

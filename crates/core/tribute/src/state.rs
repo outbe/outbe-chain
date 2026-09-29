@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     derive_poseidon_entity_id, list, read, EntityRef, ExecutionScope, IdPageRequest,
     ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
@@ -241,13 +241,12 @@ impl TributeContract<'_> {
             return Err(TributeError::PreAdmissionSealed.into());
         }
 
-        let body_bytes = outbe_compressed_entities::encode_tribute_v1(
-            &crate::repository::canonical_body(tribute),
-        )
-        .map_err(|error| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-        })?
-        .len();
+        let body_bytes =
+            outbe_offchain_entities::encode_tribute_v1(&crate::repository::canonical_body(tribute))
+                .map_err(|error| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
+                })?
+                .len();
         let body_bytes = u64::try_from(body_bytes).map_err(|_| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
                 "Tribute canonical body length exceeds u64".into(),

@@ -7,10 +7,10 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
-use outbe_compressed_entities::{
+use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::{
     CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
 };
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{

@@ -3,11 +3,6 @@ mod support;
 use std::fs;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
-    tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -30,6 +25,11 @@ use outbe_ocomp_protocol::{
         InputChunkKind,
     },
     opening::{LysisOpeningsProofV1, RawContractOpeningProofV1, RawStorageSlotV1},
+};
+use outbe_offchain_entities::{
+    body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
+    tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_primitives::time::WorldwideDay;
 

@@ -1,12 +1,12 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
     WwdDayType, WwdStatus,
+};
+use outbe_offchain_entities::{
+    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
+    ParentBodySourceError, QueryRef, StoredBody,
 };
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
@@ -50,8 +50,8 @@ impl ParentBodySource for NoParentBodies {
 
 mod l2_zk_gate {
     use alloy_primitives::{Address, Bytes, U256};
-    use outbe_compressed_entities::ExecutionScope;
     use outbe_l2registry::L2RegistryContract;
+    use outbe_offchain_entities::ExecutionScope;
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
@@ -375,7 +375,7 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

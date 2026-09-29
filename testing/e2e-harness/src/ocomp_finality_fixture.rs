@@ -30,7 +30,6 @@ use commonware_cryptography::{
     Signer as _,
 };
 use commonware_utils::{ordered::Set, Participant};
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_consensus::{
     block::ConsensusBlock,
     hybrid::HybridScheme,
@@ -54,6 +53,7 @@ use outbe_ocomp_protocol::{
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
+use outbe_offchain_entities::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, VALIDATOR_SET_ADDRESS},

@@ -14,7 +14,7 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, ExecutionScope,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
@@ -187,7 +187,7 @@ fn with_execution_scope(
         COMPRESSED_ENTITIES_ADDRESS,
         U256::from(1),
         U256::from_be_slice(
-            outbe_compressed_entities::sealed_root(B256::ZERO)
+            outbe_offchain_entities::sealed_root(B256::ZERO)
                 .unwrap()
                 .as_slice(),
         ),
@@ -375,7 +375,7 @@ fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_sta
                 COMPRESSED_ENTITIES_ADDRESS,
                 U256::from(1),
                 U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                    outbe_offchain_entities::sealed_root(B256::ZERO)
                         .unwrap()
                         .as_slice(),
                 ),
@@ -1518,7 +1518,7 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
         assert_eq!(receipt.carry_over_after, day_limit);
         assert_eq!(
             receipt.retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
+            outbe_offchain_entities::RetirementOutcome::NotPresent
         );
         assert_eq!(receipt.block_number, 20);
 
@@ -1637,7 +1637,7 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(
             receipt.retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
+            outbe_offchain_entities::RetirementOutcome::NotPresent
         );
 
         let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();

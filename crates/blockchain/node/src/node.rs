@@ -9,10 +9,10 @@ use crate::{
     payload_builder::OutbePayloadBuilder,
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
-use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::CompressedTreeService;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, system_tx::OcompLifecycleActivation, OutbeHeader,
     OutbePayloadTypes, OutbePrimitives, OutbeTxEnvelope,

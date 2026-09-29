@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::{
     block::BlockContext,

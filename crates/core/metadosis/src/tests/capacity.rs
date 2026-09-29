@@ -2,7 +2,7 @@ use super::*;
 use crate::{WwdDayType, WwdStatus};
 
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     AuthenticatedParentTree, CeWorkConfig, Commitment, FinalLeafMutation, PartitionRef,
     ProvisionalTreeBatch, RetirementOutcome,
 };
@@ -214,7 +214,7 @@ fn seed_capacity_fixture_with_victim_state(
 
 fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
     let scope = ExecutionScope::new();
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
     StorageHandle::enter(provider, |storage| {
         storage
             .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
@@ -234,7 +234,7 @@ fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
 fn begin_fixed_partition_scope(
     provider: &mut HashMapStorageProvider,
 ) -> (ExecutionScope, Arc<FixedPartitionTree>) {
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x71)).unwrap();
+    let parent_root = outbe_offchain_entities::sealed_root(B256::repeat_byte(0x71)).unwrap();
     let tree = Arc::new(FixedPartitionTree {
         parent_root,
         partition_root: B256::repeat_byte(0x72),

@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     derive_poseidon_entity_id, tribute_partition_root_from_leaves, BoundedTributePartitionVerifier,
     Commitment, TributePartitionExpectationV1, TributePartitionReconstructionError,
     TributePartitionWorkConfig,
@@ -17,7 +17,7 @@ fn commitment(value: u64) -> Commitment {
 fn leaves(
     day: WorldwideDay,
     count: u64,
-) -> Vec<(outbe_compressed_entities::WwdEntityId, Commitment)> {
+) -> Vec<(outbe_offchain_entities::WwdEntityId, Commitment)> {
     (1..=count)
         .map(|value| {
             let mut owner = [0_u8; 20];
@@ -33,7 +33,7 @@ fn leaves(
 
 fn expected_root(
     day: WorldwideDay,
-    leaves: &[(outbe_compressed_entities::WwdEntityId, Commitment)],
+    leaves: &[(outbe_offchain_entities::WwdEntityId, Commitment)],
 ) -> alloy_primitives::B256 {
     tribute_partition_root_from_leaves(day, leaves.iter().copied()).unwrap()
 }
@@ -41,7 +41,7 @@ fn expected_root(
 fn verifier(
     scratch: &std::path::Path,
     day: WorldwideDay,
-    leaves: &[(outbe_compressed_entities::WwdEntityId, Commitment)],
+    leaves: &[(outbe_offchain_entities::WwdEntityId, Commitment)],
     expected_collection_root: alloy_primitives::B256,
     records_per_run: usize,
     merge_fan_in: usize,
@@ -52,7 +52,7 @@ fn verifier(
             day,
             exact_leaf_count: u32::try_from(leaves.len()).unwrap(),
             expected_collection_root,
-            commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+            commitment_scheme: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
         },
         TributePartitionWorkConfig {
             records_per_run,
@@ -79,7 +79,7 @@ fn tiny_runs_and_fan_in_reconstruct_the_existing_root_in_any_input_order() {
                 day,
                 exact_leaf_count: 17,
                 expected_collection_root: expected_root,
-                commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+                commitment_scheme: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
             },
             TributePartitionWorkConfig {
                 records_per_run: 2,
@@ -178,7 +178,7 @@ fn duplicate_across_runs_and_invalid_expectations_fail_closed() {
                 day,
                 exact_leaf_count: 0,
                 expected_collection_root: expected_root(day, &[]),
-                commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+                commitment_scheme: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
             },
             TributePartitionWorkConfig {
                 records_per_run: 0,
@@ -226,7 +226,7 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
             day,
             exact_leaf_count: 1,
             expected_collection_root: single_root,
-            commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+            commitment_scheme: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
         },
         TributePartitionWorkConfig::default(),
     )
@@ -256,7 +256,7 @@ fn count_root_day_and_scratch_corruption_fail_closed() {
             day,
             exact_leaf_count: 1,
             expected_collection_root: alloy_primitives::B256::repeat_byte(0x55),
-            commitment_scheme: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+            commitment_scheme: outbe_offchain_entities::ACTIVE_COMMITMENT_SCHEME,
         },
         TributePartitionWorkConfig::default(),
     )

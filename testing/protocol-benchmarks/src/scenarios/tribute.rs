@@ -22,14 +22,14 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
     WwdDayType, WwdStatus,
+};
+use outbe_offchain_entities::{
+    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
+    ParentBodySourceError, QueryRef, StoredBody,
 };
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
@@ -384,7 +384,7 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
             U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
+                outbe_offchain_entities::sealed_root(B256::ZERO)
                     .unwrap()
                     .as_slice(),
             ),

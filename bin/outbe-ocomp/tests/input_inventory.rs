@@ -4,16 +4,16 @@ mod support;
 use std::fs;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
-    tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_ocomp::input_inventory::{
     SealedTributeInventory, TributeInventoryBuilder, TributeInventoryRecordV1,
     TributeInventorySubjectV1, TributeInventoryWorkConfig,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
+use outbe_offchain_entities::{
+    body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
+    tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_primitives::time::WorldwideDay;
 
 fn checkpoint() -> CheckpointIdentityV1 {
@@ -188,7 +188,7 @@ fn inventory_rejects_body_field_substitution_and_source_reordering() {
     .unwrap();
     let mut wrong_body = records[0].clone();
     let mut decoded =
-        outbe_compressed_entities::decode_tribute_v1(&wrong_body.canonical_body).unwrap();
+        outbe_offchain_entities::decode_tribute_v1(&wrong_body.canonical_body).unwrap();
     decoded.tribute_price_minor += U256::from(1);
     wrong_body.canonical_body = encode_tribute_v1(&decoded).unwrap();
     assert!(mismatched_commitment.push(wrong_body).is_err());

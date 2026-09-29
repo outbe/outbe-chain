@@ -29,7 +29,7 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,

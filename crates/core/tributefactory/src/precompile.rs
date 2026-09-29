@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{
+use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome};
+use outbe_offchain_entities::{
     begin_block, end_block, preview_end_block, AuthenticatedParentTree,
     AuthenticatedParentTreeFactory, Commitment, EntityRef, ExactParentIdentity, ExecutionScope,
     FinalLeafMutation, PartitionRef, ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME,
 };
-use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},

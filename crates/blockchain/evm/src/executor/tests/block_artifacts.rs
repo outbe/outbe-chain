@@ -1329,7 +1329,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     };
     let seed_state = || {
         let (directory, tree_service) = persistent_test_tree(B256::ZERO);
-        let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let empty_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
         let parent_tree = tree_service
             .open_parent(ExactParentIdentity {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
@@ -1359,7 +1359,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                         U256::from_be_bytes(empty_root.0),
                     )
                     .unwrap();
-                outbe_compressed_entities::begin_block(storage.clone(), &scope)
+                outbe_offchain_entities::begin_block(storage.clone(), &scope)
                     .expect("open compressed-entity seed scope");
                 let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
                 outbe_nod::api::add_nod(
@@ -1396,7 +1396,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
                     )
                     .unwrap();
                 staged = Some(
-                    outbe_compressed_entities::end_block(storage, &scope)
+                    outbe_offchain_entities::end_block(storage, &scope)
                         .expect("close compressed-entity seed scope")
                         .staged_tree_batch,
                 );
@@ -1434,7 +1434,7 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         let readers = RuntimeBodyReaders::new(reader);
         assert!(readers
             .nod()
-            .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+            .get_bucket(outbe_offchain_entities::WwdEntityId::from_day_and_digest(
                 worldwide_day,
                 bucket_key.0,
             ))
@@ -1572,8 +1572,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             ExecutionScope::with_parent_tree(clean_parent, CeWorkConfig::new(0, 0, u64::MAX));
         let clean_ctx = BlockContext::new(3, 2, CHAIN_ID, proposer, vec![proposer]);
         super::run_atomic_storage_hooks(&mut state, clean_ctx, |hook_ctx| {
-            outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
-            outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &clean_scope).map(|_| ())
+            outbe_offchain_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;
+            outbe_offchain_entities::end_block(hook_ctx.storage.clone(), &clean_scope).map(|_| ())
         })
         .expect("finished block must leave a clean compressed-entity overlay");
         (
@@ -1658,9 +1658,9 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);
     let tribute_id =
-        outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
+        outbe_offchain_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
     let nod_owner = Address::repeat_byte(0x32);
-    let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
+    let nod_id = outbe_offchain_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
     let bucket_key = NodContract::bucket_key(day, U256::from(13), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
@@ -1673,7 +1673,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
-                outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
+                outbe_offchain_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
                 let tribute = TributeData {
                     tribute_id,
                     owner: tribute_owner,
@@ -1707,7 +1707,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     },
                     U256::from(16),
                 )?;
-                outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
+                outbe_offchain_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
             })
             .expect("body mint execution must succeed");
         let compressed_root = {
@@ -1763,7 +1763,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
     let mut failed_state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
-        outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
+        outbe_offchain_entities::begin_block(hook_ctx.storage.clone(), &scope)?;
         let tribute = TributeData {
             tribute_id,
             owner: tribute_owner,
@@ -1815,7 +1815,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     )?
                     .to_be_bytes::<32>(),
             ),
-            outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+            outbe_offchain_entities::sealed_root(B256::ZERO).unwrap()
         );
         assert_eq!(TributeContract::new(storage.clone()).total_supply()?, 0);
         assert_eq!(NodContract::new(storage).total_supply()?, 0);

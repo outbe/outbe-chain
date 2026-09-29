@@ -12,8 +12,8 @@ use std::{
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_compressed_entities::{CeMdbxReadOnly, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME};
 use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
+use outbe_offchain_entities::{CeMdbxReadOnly, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME};
 use outbe_offchain_storage::{RocksDbReader, StorageBackend, StorageConfig};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
 use outbe_snapshot::{
@@ -522,11 +522,11 @@ fn open_native_stores(roots: &RecipientRoots, fixture: &StoppedFixture) {
     let ce = CeMdbxReadOnly::open(
         &roots.chain,
         EnvironmentIdentity {
-            local_storage_schema_version: outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+            local_storage_schema_version: outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             chain_id: 54322345,
             genesis_hash: fixture.genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
+            topology: outbe_offchain_entities::CeTopologyV1.encode(),
             tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },

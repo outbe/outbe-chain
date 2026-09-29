@@ -12,7 +12,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     classify_restart, reconstruct_effective_final_mutations, CanonicalBodyEvent,
     CompressedTreeService, DurableFinalizedCheckpoint, ExactParentIdentity, FinalizedMarker,
     PartitionRef, RestartClassification, ACTIVE_COMMITMENT_SCHEME,

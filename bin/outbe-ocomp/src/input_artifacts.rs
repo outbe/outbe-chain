@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet, path::Path};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
 use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_ocomp_protocol::{
     control::CasObjectRefV1,
@@ -14,6 +13,7 @@ use outbe_ocomp_protocol::{
     profile::ProtocolBundleV1,
     ListKind, ObjectKind, OrderedListLimits, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
+use outbe_offchain_entities::{decode_tribute_v1, CanonicalBodyError};
 use thiserror::Error;
 
 use crate::{

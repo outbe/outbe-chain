@@ -703,7 +703,7 @@ where
 }
 
 fn discard_failed_payload_candidate(
-    service: Option<&Arc<outbe_compressed_entities::CompressedTreeService>>,
+    service: Option<&Arc<outbe_offchain_entities::CompressedTreeService>>,
     block_number: u64,
     block_hash: B256,
 ) -> Result<(), PayloadBuilderError> {
@@ -750,7 +750,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
     use alloy_rpc_types_engine::PayloadId;
-    use outbe_compressed_entities::{
+    use outbe_offchain_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
         LOCAL_STORAGE_SCHEMA_VERSION,
@@ -940,7 +940,7 @@ mod tests {
         seed.set_block_number(1);
         seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         StorageHandle::enter(&mut seed, |storage| {
-            let root = outbe_compressed_entities::sealed_root(B256::ZERO)
+            let root = outbe_offchain_entities::sealed_root(B256::ZERO)
                 .expect("CE genesis root is deterministic");
             storage
                 .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
@@ -1314,7 +1314,7 @@ mod tests {
                 chain_id: 1,
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                topology: outbe_offchain_entities::CeTopologyV1.encode(),
                 tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -1324,7 +1324,7 @@ mod tests {
                 block_hash: genesis_hash,
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .unwrap();
@@ -1371,7 +1371,7 @@ mod tests {
         let (_directory, service) = tree_service();
         let genesis_hash = B256::repeat_byte(0x11);
         let block_hash = B256::repeat_byte(0x22);
-        let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let genesis_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
         let provisional = service
             .open_parent(ExactParentIdentity {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,

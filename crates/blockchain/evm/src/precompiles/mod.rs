@@ -6,9 +6,9 @@ use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, B256};
 use core::fmt::Debug;
 use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use revm::{primitives::hardfork::SpecId, Database};
 use std::sync::Arc;
 

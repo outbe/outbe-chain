@@ -15,7 +15,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall as _};
 use eyre::{ensure, eyre, Result, WrapErr as _};
-use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 #[cfg(feature = "ocomp-integration")]
 use outbe_nod::NodCertifiedGenerationProjection;
 #[cfg(feature = "ocomp-integration")]
@@ -29,6 +28,7 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocompregistry::precompile::IOcompRegistry;
+use outbe_offchain_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::time::WorldwideDay;

@@ -2,7 +2,7 @@
 //!
 //! Qualification is derived when read (`api::is_qualified`).
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Daily cycle-trigger entry. Opens the day's call sweep and runs its first

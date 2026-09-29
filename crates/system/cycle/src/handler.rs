@@ -9,12 +9,12 @@
 
 use alloy_primitives::U256;
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
     block::dispatch_terminal_remainder_at,
     day_emission::day_emission_limit,
 };
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},

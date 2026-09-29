@@ -11,12 +11,12 @@ use alloy_consensus::{BlockHeader as _, TxReceipt};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use outbe_compressed_entities::{
+use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
+use outbe_offchain_entities::{
     decode_canonical_body_event, decode_partition_retirement, CompressedTreeService,
     DurableFinalizedCheckpoint, FinalizedCandidateOutcome, FinalizedMarker, StagedTreeBatch,
     ACTIVE_COMMITMENT_SCHEME,
 };
-use outbe_consensus::executor::actor::{FinalizedCeBlock, FinalizedCeCommitter};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
@@ -743,7 +743,7 @@ mod tests {
     use std::{collections::BTreeMap, sync::Mutex};
 
     use futures::channel::mpsc;
-    use outbe_compressed_entities::{
+    use outbe_offchain_entities::{
         CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityRef,
         EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, WwdEntityId,
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -878,7 +878,7 @@ mod tests {
 
     fn candidate() -> Arc<StagedTreeBatch> {
         Arc::new(
-            outbe_compressed_entities::ProvisionalTreeBatch::new_identity(1, hash(1), B256::ZERO)
+            outbe_offchain_entities::ProvisionalTreeBatch::new_identity(1, hash(1), B256::ZERO)
                 .unwrap()
                 .freeze(hash(2)),
         )
@@ -893,7 +893,7 @@ mod tests {
                 chain_id: 1,
                 genesis_hash: hash(1),
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                topology: outbe_offchain_entities::CeTopologyV1.encode(),
                 tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
                 vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
             },
@@ -903,7 +903,7 @@ mod tests {
                 block_hash: hash(1),
                 parent_block_hash: B256::ZERO,
                 parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             },
         )
         .unwrap();
@@ -932,7 +932,7 @@ mod tests {
                 0,
                 DurableCeEvidence {
                     block_hash: hash(1),
-                    evm_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                    evm_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
                     header_root: None,
                 },
             );
@@ -1009,7 +1009,7 @@ mod tests {
                     block_hash: hash(1),
                     parent_block_hash: B256::ZERO,
                     parent_root: B256::ZERO,
-                    new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                    new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
                 },
                 attempts: Mutex::new(Vec::new()),
                 apply_error: false,
@@ -1034,7 +1034,7 @@ mod tests {
                     block_hash: hash(1),
                     parent_block_hash: B256::ZERO,
                     parent_root: B256::ZERO,
-                    new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                    new_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
                 },
                 attempts: Mutex::new(Vec::new()),
                 apply_error: true,
@@ -1407,7 +1407,7 @@ mod tests {
             number: 1,
             hash: hash(2),
             parent_hash: hash(1),
-            parent_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            parent_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             new_root: root,
             events: Vec::new(),
             retirements: Vec::new(),
@@ -1432,7 +1432,7 @@ mod tests {
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                 block_number: 0,
                 block_hash: hash(1),
-                root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             })
             .unwrap();
         let expected_root = parent
@@ -1453,9 +1453,9 @@ mod tests {
             number: 1,
             hash: hash(2),
             parent_hash: hash(1),
-            parent_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            parent_root: outbe_offchain_entities::sealed_root(B256::ZERO).unwrap(),
             new_root: expected_root,
-            events: vec![outbe_compressed_entities::CanonicalBodyEvent {
+            events: vec![outbe_offchain_entities::CanonicalBodyEvent {
                 entity,
                 previous: None,
                 next: Some(commitment),
@@ -1492,7 +1492,7 @@ mod tests {
         let day = id.worldwide_day();
         let entity = EntityRef::Tribute(id);
         let commitment = Commitment::try_from([3_u8; 32]).unwrap();
-        let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let genesis_root = outbe_offchain_entities::sealed_root(B256::ZERO).unwrap();
 
         let block_one_root = service
             .open_parent(ExactParentIdentity {
@@ -1520,7 +1520,7 @@ mod tests {
                 parent_hash: hash(1),
                 parent_root: genesis_root,
                 new_root: block_one_root,
-                events: vec![outbe_compressed_entities::CanonicalBodyEvent {
+                events: vec![outbe_offchain_entities::CanonicalBodyEvent {
                     entity,
                     previous: None,
                     next: Some(commitment),
@@ -1541,7 +1541,7 @@ mod tests {
             .prepare_seal(
                 2,
                 &[],
-                &[outbe_compressed_entities::PartitionRef::TributeWwd(day)],
+                &[outbe_offchain_entities::PartitionRef::TributeWwd(day)],
             )
             .unwrap()
             .new_root();
@@ -1554,7 +1554,7 @@ mod tests {
                 parent_root: block_one_root,
                 new_root: block_two_root,
                 events: Vec::new(),
-                retirements: vec![outbe_compressed_entities::PartitionRef::TributeWwd(day)],
+                retirements: vec![outbe_offchain_entities::PartitionRef::TributeWwd(day)],
             },
         )
         .unwrap();

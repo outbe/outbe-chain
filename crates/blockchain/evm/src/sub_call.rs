@@ -19,9 +19,9 @@
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_entities::ExecutionScope;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::{Evm, LocalContextTr},

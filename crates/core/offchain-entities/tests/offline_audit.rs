@@ -1,11 +1,11 @@
 use alloy_primitives::B256;
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
     AuthenticatedParentTree, CeBodyAudit, CeDomain, EntityRef, FinalLeafMutation,
     MdbxAuthenticatedTree, NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1, WwdEntityId,
 };
-use outbe_compressed_entities::{
+use outbe_offchain_entities::{
     sealed_root, CeAuditError, CeAuditLimits, CeAuditVisitor, CeAuditWork, CeMdbx, CeMdbxReadOnly,
     CeTopologyV1, EnvironmentIdentity, ExactParentIdentity, FinalizedMarker, LeafValue, TreeKey,
     TreeNamespace, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -263,7 +263,7 @@ fn complete_body_population_covers_tribute_items_and_buckets_across_runs() {
 #[test]
 fn body_population_accepts_multiple_days_and_materialized_empty_collections() {
     let mut committed = bodies();
-    let mut tribute = outbe_compressed_entities::decode_stored_tribute_v1(&committed[0].2).unwrap();
+    let mut tribute = outbe_offchain_entities::decode_stored_tribute_v1(&committed[0].2).unwrap();
     for (day, digest) in [(20_260_717, 0x61), (20_260_718, 0x62), (20_260_719, 0x63)] {
         tribute.worldwide_day = WorldwideDay::new(day);
         tribute.tribute_id = WwdEntityId::from_day_and_digest(tribute.worldwide_day, [digest; 32]);
@@ -312,7 +312,7 @@ fn body_population_rejects_missing_extra_changed_and_duplicate_records() {
         "duplicate across runs"
     );
     let mut changed = committed.clone();
-    let mut bucket = outbe_compressed_entities::decode_stored_nod_bucket_v1(&changed[2].2).unwrap();
+    let mut bucket = outbe_offchain_entities::decode_stored_nod_bucket_v1(&changed[2].2).unwrap();
     bucket.entry_price_minor += U256::from(1);
     changed[2].2 = StoredBody::new_v1(encode_nod_bucket_v1(&bucket).unwrap())
         .unwrap()

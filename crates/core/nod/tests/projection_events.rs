@@ -1,12 +1,12 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_nod::{
     canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
     from_canonical_item, precompile::INod, NodBucketState, NodItemState,
+};
+use outbe_offchain_entities::{
+    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, encode_nod_bucket_v1,
+    encode_nod_item_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_primitives::time::WorldwideDay;
 

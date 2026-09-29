@@ -1656,7 +1656,6 @@ mod nod_inventory {
         queued_owner, seed_nod_generation, with_owner_storage, CanonicalInventory, Incomplete,
     };
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_lysis::program_v1::{
         planner::{
             LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
@@ -1703,6 +1702,7 @@ mod nod_inventory {
         nod_materialization::NodMaterializationHeadV1, profile::ProtocolBundleV1, CasObjectRefV1,
         StreamingOrderedListRoot,
     };
+    use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::time::WorldwideDay;
     use std::{
@@ -3417,14 +3417,14 @@ mod pin_authority {
                 };
                 use alloy_consensus::Header;
                 use alloy_primitives::Address;
-                use outbe_compressed_entities::{
-                    body_commitment, sealed_root, AuthenticatedParentTree, CeMdbx, EntityRef,
-                    ExactParentIdentity, FinalLeafMutation, FinalizedMarker, MdbxAuthenticatedTree,
-                    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-                };
                 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
                 use outbe_offchain_data::{
                     ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION,
+                };
+                use outbe_offchain_entities::{
+                    body_commitment, sealed_root, AuthenticatedParentTree, CeMdbx, EntityRef,
+                    ExactParentIdentity, FinalLeafMutation, FinalizedMarker, MdbxAuthenticatedTree,
+                    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
                 };
                 use outbe_offchain_storage::{
                     Key, Namespace, RocksDbStorage, StorageWriter, Value,
@@ -3490,7 +3490,7 @@ mod pin_authority {
                         write_source(&requested);
                         let request = seal_source(&layout);
                         // The root is read from the real committed CE marker, not a fixture constant.
-                        let marker = outbe_compressed_entities::CeMdbxReadOnly::open(
+                        let marker = outbe_offchain_entities::CeMdbxReadOnly::open(
                             &layout.chain_root,
                             ce_identity(&layout),
                         )
@@ -4901,7 +4901,6 @@ mod pin_authority {
                 Incomplete,
             };
             use alloy_primitives::{keccak256, B256};
-            use outbe_compressed_entities::encode_tribute_v1;
             use outbe_node::ocomp::retention::{
                 inspect_retention_journal, CandidatePinV1, ExportAuthorityV1, PinRecordV1,
                 PinStateV1,
@@ -4923,6 +4922,7 @@ mod pin_authority {
                 },
                 ListKind, ObjectKind, OrderedListLimits, SnapshotExportCommittedV1,
             };
+            use outbe_offchain_entities::encode_tribute_v1;
             use std::{fs, path::Path};
             const CAS_LIMITS: CasLimits = CasLimits {
                 max_object_bytes: 1_048_576,
@@ -5002,7 +5002,7 @@ mod pin_authority {
                         finalized_state_root: spec.summary.finalized_state_root,
                         finalized_ce_root: intent.ce_sealed_root,
                         ce_schema_version: u16::try_from(
-                            outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                            outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
                         )
                         .unwrap(),
                     },
@@ -5283,8 +5283,7 @@ mod pin_authority {
         fn source_body() -> outbe_tribute::TributeData {
             let owner = alloy_primitives::Address::repeat_byte(1);
             outbe_tribute::TributeData {
-                tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(owner, DAY)
-                    .unwrap(),
+                tribute_id: outbe_offchain_entities::derive_poseidon_entity_id(owner, DAY).unwrap(),
                 owner,
                 worldwide_day: DAY,
                 issuance_amount_minor: U256::from(1000),
@@ -5297,7 +5296,7 @@ mod pin_authority {
         }
 
         fn bind_source(intent: &mut JobIntentV1) {
-            use outbe_compressed_entities::{
+            use outbe_offchain_entities::{
                 body_commitment, encode_tribute_v1, partition_collection_key,
                 tribute_partition_root_from_leaves, PartitionRef, ACTIVE_COMMITMENT_SCHEME,
                 BODY_SCHEMA_V1,
@@ -7661,16 +7660,16 @@ mod lease_inventory {
         validation::{ocomp::verify_lease_inputs, Incomplete},
     };
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{
-        body_commitment, derive_poseidon_entity_id, encode_tribute_v1, partition_collection_key,
-        tribute_partition_root_from_leaves, PartitionRef, StoredBody, ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-    };
     use outbe_ocomp::{control::poc_schema_limits, exporter::TributeStreamSummary};
     use outbe_ocomp_protocol::intent::{
         ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+    };
+    use outbe_offchain_entities::{
+        body_commitment, derive_poseidon_entity_id, encode_tribute_v1, partition_collection_key,
+        tribute_partition_root_from_leaves, PartitionRef, StoredBody, ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
     };
     use outbe_offchain_storage::{
         AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, RocksDbReader, RocksDbStorage,
@@ -8260,7 +8259,6 @@ mod export_inventory {
         validation::{ocomp::verify_export_inputs, Incomplete},
     };
     use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_node::ocomp::retention::ExportAuthorityV1;
     use outbe_ocomp::{
         cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
@@ -8288,6 +8286,7 @@ mod export_inventory {
         state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
         CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, SnapshotExportCommittedV1,
     };
+    use outbe_offchain_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
     use outbe_primitives::time::WorldwideDay;
     use std::{fs, path::PathBuf};
     const CAS_LIMITS: CasLimits = CasLimits {
@@ -8540,7 +8539,7 @@ mod export_inventory {
                 finalized_state_root: spec.summary.finalized_state_root,
                 finalized_ce_root: intent.ce_sealed_root,
                 ce_schema_version: u16::try_from(
-                    outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                    outbe_offchain_entities::LOCAL_STORAGE_SCHEMA_VERSION,
                 )
                 .unwrap()
                     + u16::from(damage == Some("checkpoint_schema")),

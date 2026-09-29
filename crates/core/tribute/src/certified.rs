@@ -6,9 +6,6 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    partition_collection_key, ExecutionScope, PartitionRef, RetirementOutcome,
-};
 use outbe_ocomp_protocol::{
     intent::TributeInputBindingV1,
     receipts::{
@@ -16,6 +13,9 @@ use outbe_ocomp_protocol::{
         TributeStateEventProjectionV1,
     },
     SchemaLimits,
+};
+use outbe_offchain_entities::{
+    partition_collection_key, ExecutionScope, PartitionRef, RetirementOutcome,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -234,11 +234,11 @@ mod tests {
 
     use alloy_primitives::{Address, LogData};
     use alloy_sol_types::SolEvent;
-    use outbe_compressed_entities::{
+    use outbe_ocomp_protocol::profile::poc_schema_limits;
+    use outbe_offchain_entities::{
         begin_block, AuthenticatedParentTree, CeWorkConfig, EntityRef, FinalLeafMutation,
         ProvisionalTreeBatch,
     };
-    use outbe_ocomp_protocol::profile::poc_schema_limits;
     use outbe_primitives::{
         addresses::COMPRESSED_ENTITIES_ADDRESS,
         storage::{
@@ -281,7 +281,7 @@ mod tests {
             &self,
             _entity: EntityRef,
             _expected_parent_root: B256,
-        ) -> Result<Option<outbe_compressed_entities::Commitment>> {
+        ) -> Result<Option<outbe_offchain_entities::Commitment>> {
             Ok(None)
         }
 

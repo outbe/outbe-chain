@@ -1,5 +1,5 @@
 use alloy_primitives::{Bytes, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_offchain_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -261,7 +261,7 @@ pub fn submit_verified_result_vote(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{keccak256, Address, B256, U256};
-    use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
+    use outbe_offchain_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
         addresses::COMPRESSED_ENTITIES_ADDRESS,
@@ -523,7 +523,7 @@ mod tests {
                     COMPRESSED_ENTITIES_ADDRESS,
                     U256::from(1),
                     U256::from_be_slice(
-                        outbe_compressed_entities::sealed_root(B256::ZERO)
+                        outbe_offchain_entities::sealed_root(B256::ZERO)
                             .unwrap()
                             .as_slice(),
                     ),
