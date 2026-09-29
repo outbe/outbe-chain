@@ -246,6 +246,36 @@ where
     rx.recv().expect("eth runtime dropped the task")
 }
 
+/// The one `E` event `emitter` logged in `receipt`.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn receipt_event<E: alloy_sol_types::SolEvent>(
+    receipt: &serde_json::Value,
+    emitter: Address,
+) -> E {
+    let mut found = receipt["logs"]
+        .as_array()
+        .expect("receipt logs")
+        .iter()
+        .filter_map(|log| {
+            if log["address"].as_str()?.parse::<Address>().ok()? != emitter {
+                return None;
+            }
+            let topics = log["topics"]
+                .as_array()?
+                .iter()
+                .map(|t| t.as_str()?.parse::<B256>().ok())
+                .collect::<Option<Vec<_>>>()?;
+            if topics.first() != Some(&E::SIGNATURE_HASH) {
+                return None;
+            }
+            let data = log["data"].as_str()?.parse::<Bytes>().ok()?;
+            Some(E::decode_raw_log(topics, &data).expect("decode matching event"))
+        });
+    let value = found.next().expect("expected event missing");
+    assert!(found.next().is_none(), "duplicate {} event", E::SIGNATURE);
+    value
+}
+
 /// `eth_call` a view function and decode its return while preserving the failure.
 pub(crate) fn read_call_result<C: SolCall>(
     url: &str,

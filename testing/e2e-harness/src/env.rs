@@ -803,6 +803,28 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn lifecycle_scenarios_use_only_registered_steps() {
+        for file in [
+            "nod.feature",
+            "gem.feature",
+            "intex.feature",
+            "credis.feature",
+        ] {
+            let feature = Feature::parse_path(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("features")
+                    .join(file),
+                cucumber::gherkin::GherkinEnv::default(),
+            )
+            .expect("parse a lifecycle feature");
+            for scenario in &feature.scenarios {
+                assert_registered_steps(&feature, scenario);
+            }
+        }
+    }
+
     #[test]
     fn chained_followers_keep_all_twelve_live_handoff_and_restart_steps() {
         let env = Environment {

@@ -663,9 +663,11 @@ pub struct FixtureState {
     pub promis_before_mining: Option<alloy_primitives::U256>,
     /// Finalized height and unallocated PROMIS before either expiry return.
     pub gem_expiry_baseline: Option<(u64, alloy_primitives::U256)>,
-    /// The Nod paid inside the call notice, and the one whose notice runs out.
-    pub paid_nod: Option<alloy_primitives::U256>,
-    pub forfeited_nod: Option<alloy_primitives::U256>,
+    /// The Nod lifecycle's Nods, one per owner, in owner order.
+    pub lifecycle_nods: Vec<alloy_primitives::U256>,
+    /// What the shared lifecycle phases recorded.
+    #[cfg(feature = "ocomp-integration")]
+    pub entity_lifecycle: crate::features::entity_lifecycle::LifecycleLedger,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// Issued alongside them and only partly settled, so the call notice runs out on
@@ -738,8 +740,9 @@ impl Default for FixtureState {
             forfeited_gem: None,
             promis_before_mining: None,
             gem_expiry_baseline: None,
-            paid_nod: None,
-            forfeited_nod: None,
+            lifecycle_nods: Vec::new(),
+            #[cfg(feature = "ocomp-integration")]
+            entity_lifecycle: Default::default(),
             lifecycle_series: Vec::new(),
             expiring_series: None,
             untouched_series: None,
