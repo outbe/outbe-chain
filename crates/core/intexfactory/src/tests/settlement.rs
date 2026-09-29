@@ -40,7 +40,7 @@ fn cost_amount_twelve_decimals() {
 }
 
 #[test]
-fn a_subunit_cost_is_refused_rather_than_rounded_up() {
+fn a_minimum_the_payment_asset_cannot_express_is_refused() {
     let err = runtime::settlement_units(U256::ONE, U256::ONE, None, 0).unwrap_err();
     assert!(err.to_string().contains("rounds to zero"), "{err}");
 }
@@ -53,6 +53,24 @@ fn a_subunit_cost_charges_one_minor_unit_per_selected_unit() {
             U256::from(expected)
         );
     }
+}
+
+#[test]
+fn the_unit_minimum_precedes_asset_and_currency_conversion() {
+    let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
+    for (rate, decimals, expected) in [
+        (None, 8, 100u64),
+        (None, 18, 1_000_000_000_000),
+        (fx(2, 1), 6, 2),
+        (fx(1, 2), 18, 500_000_000_000),
+    ] {
+        assert_eq!(
+            runtime::settlement_units(U256::ONE, U256::ONE, rate, decimals).unwrap(),
+            U256::from(expected)
+        );
+    }
+    let err = runtime::settlement_units(U256::ONE, U256::ONE, fx(1, 2), 6).unwrap_err();
+    assert!(err.to_string().contains("rounds to zero"), "{err}");
 }
 
 #[test]
