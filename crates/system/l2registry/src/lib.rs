@@ -8,7 +8,8 @@
 //! removal. The operator may be an EOA or a contract; authorization uses the
 //! immediate caller, not the transaction origin.
 //! An empty registration key or 256 zero bytes selects the registered inbox's
-//! `groupPubKey()` getter. Registry views and Tribute verification resolve that
+//! `groupPubKey()` getter. The inbox may differ from the owner; old records
+//! default to the owner. Registry views and Tribute verification resolve that
 //! EIP-2537 G2 key via STATICCALL on every use, validate it, and never cache it.
 //!
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature

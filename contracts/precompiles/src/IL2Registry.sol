@@ -9,7 +9,9 @@ pragma solidity ^0.8.30;
 /// Public keys use canonical EIP-2537 G2 encoding (256 bytes):
 /// x.c0 || x.c1 || y.c0 || y.c1, each component padded to 64 bytes.
 /// Registering an empty key or 256 zero bytes selects live resolution from
-/// `IDaInbox(l1Address).groupPubKey()`. Explicit registry keys take precedence.
+/// `IDaInbox(inboxAddress).groupPubKey()`. The inbox address may differ from
+/// the owner (`l1Address`); omitted inbox addresses default to the owner.
+/// Explicit registry keys take precedence.
 /// Compressed inputs are rejected; inbox keys and updates must be nonidentity.
 interface IL2Registry {
     event L2NetworkRegistered(uint64 indexed chainId, address indexed l1Address, bytes publicKey);
@@ -32,6 +34,10 @@ interface IL2Registry {
     /// inbox call, or an invalid inbox key.
     /// Inbox lookup charges a prepaid 100,000 gas and forwards that budget.
     function getNetwork(uint64 chainId) external view returns (address l1Address, bytes memory publicKey);
+
+    /// Returns the effective contract address used for live `groupPubKey()` reads.
+    /// Legacy records without a separate inbox address return `l1Address`.
+    function inboxAddress(uint64 chainId) external view returns (address);
 
     /// Returns the chain id registered for `l1Address`, or 0 if not registered.
     function chainIdByL1Address(address l1Address) external view returns (uint64);
