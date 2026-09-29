@@ -11,14 +11,15 @@
 //! `D` is constant per block (independent of who voted), so excluding a peer
 //! enriches nobody - there is no censorship incentive. The
 //! residue (`pending - sum payout` = absentees + decay gap + division remainders)
-//! burns, keeping mint/burn parity (`sum payout + residue == pending`).
+//! is never paid out: `sum payout + residue == pending`.
 //!
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]; the executor wires them into the begin-zone CPA
 //! (escrow) and `LateFinalizeCredits` (record + settle) phases. At settle the
-//! residue is burned from `REWARDS_ADDRESS` (parity) **and** recycled into
-//! terminal Metadosis emission headroom via the canonical
-//! [`outbe_emissionlimit::block::dispatch_terminal_remainder_at`]; the
+//! whole six-decimal units of the residue are burned from `REWARDS_ADDRESS` and
+//! recycled into the Metadosis carry-over via
+//! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]; the native
+//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. The
 //! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is
 //! then freed, leaving only the `fee_settled` tombstone (no state bloat).
 
@@ -27,6 +28,7 @@ use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
+    units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT},
 };
 
 use crate::constants::{decay_weight, fixed_denominator};
@@ -170,8 +172,8 @@ pub fn settle_matured(
 }
 
 /// Settle the matured window for `fb_hash` exactly once: pay each credited voter
-/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the residue, and assert
-/// `sum payout + residue == pending`. Returns `(distributed, residue)`.
+/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the whole protocol units of
+/// the residue, and assert `sum payout + residue == pending`. Returns `(distributed, residue)`.
 pub fn settle_window(
     ctx: &BlockRuntimeContext,
     fb_hash: B256,
@@ -225,16 +227,23 @@ pub fn settle_window(
         PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
     })?;
     if !residue.is_zero() {
-        // Mint/burn parity: burn the residue from REWARDS, then recycle the same
-        // amount into terminal Metadosis emission headroom via the purpose-bound
-        // dispatcher. Under OCOMP this credits carry-over rather than racing the
-        // daily base-limit formation; pre-OCOMP behavior remains unchanged.
-        ctx.storage.decrease_balance(REWARDS_ADDRESS, residue)?;
-        outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
-            ctx,
-            residue,
-            ctx.block.timestamp,
-        )?;
+        // The residue is native wei and the carry-over counts six-decimal units, so only
+        // whole units are burned and recycled; the rest waits on REWARDS for the next window.
+        let native = residue
+            .checked_add(rewards.late_residue_dust_native.read()?)
+            .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
+        let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let burned = native - dust;
+        let units = native_to_protocol_floor(native);
+        rewards.late_residue_dust_native.write(dust)?;
+        if !units.is_zero() {
+            ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
+            outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
+                ctx,
+                units,
+                ctx.block.timestamp,
+            )?;
+        }
     }
 
     // Parity invariant (checked once): sum payout + residue == pending.
@@ -505,6 +514,86 @@ mod tests {
     }
 
     #[test]
+    fn late_residue_credits_whole_units_and_keeps_native_dust() {
+        run(|ctx| {
+            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let pending = U256::from(4_000) * unit + U256::from(7);
+            fund(ctx, pending);
+            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+
+            let (_, residue) = settle_window(ctx, FB, 4).unwrap();
+            assert_eq!(residue, U256::from(1_000) * unit + U256::from(4));
+            assert_eq!(
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::from(1_000)
+            );
+            let rewards = ctx.storage.contract::<Rewards>();
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(4)
+            );
+            assert_eq!(ctx.storage.balance(REWARDS_ADDRESS).unwrap(), U256::from(4));
+
+            assert_eq!(settle_window(ctx, FB, 4).unwrap(), (U256::ZERO, U256::ZERO));
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(4)
+            );
+        });
+    }
+
+    #[test]
+    fn sub_unit_residue_accumulates_until_a_whole_unit() {
+        run(|ctx| {
+            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let pending = U256::from(24) * unit / U256::from(10);
+            let second = B256::repeat_byte(0xCD);
+            let rewards = ctx.storage.contract::<Rewards>();
+            rewards.pending_reward_day.write(&second, 19700101).unwrap();
+            fund(ctx, pending * U256::from(2));
+            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(
+                ctx,
+                11,
+                second,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
+            let carry_over = || {
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap()
+            };
+
+            settle_window(ctx, FB, 4).unwrap();
+            assert_eq!(carry_over(), U256::ZERO);
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(6) * unit / U256::from(10)
+            );
+
+            settle_window(ctx, second, 4).unwrap();
+            assert_eq!(carry_over(), U256::from(1));
+            assert_eq!(
+                rewards.late_residue_dust_native.read().unwrap(),
+                U256::from(2) * unit / U256::from(10)
+            );
+            assert_eq!(
+                ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
+                U256::from(2) * unit / U256::from(10)
+            );
+        });
+    }
+
+    #[test]
     fn ocomp_late_settlement_residue_waits_for_daily_limit_formation() {
         let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
         storage.set_block_number(156);
@@ -512,13 +601,14 @@ mod tests {
         let wwd = WorldwideDay::new(20_260_728);
         let timestamp = wwd.start_timestamp();
         let expected_residue = U256::from(1_000);
+        let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(156, timestamp, CHAIN_ID, Address::ZERO, Vec::new()),
                 handle,
             );
-            let pending = U256::from(4_000);
+            let pending = U256::from(4_000) * unit;
             fund(&ctx, pending);
             escrow_block_fee(
                 &ctx,
@@ -535,8 +625,8 @@ mod tests {
             .unwrap();
 
             let (distributed, residue) = settle_window(&ctx, FB, 4).unwrap();
-            assert_eq!(distributed, U256::from(3_000));
-            assert_eq!(residue, expected_residue);
+            assert_eq!(distributed, U256::from(3_000) * unit);
+            assert_eq!(residue, expected_residue * unit);
             assert!(
                 outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd,)
                     .unwrap()
