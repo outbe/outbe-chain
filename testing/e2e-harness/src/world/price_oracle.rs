@@ -715,6 +715,8 @@ impl PriceOracleTopology {
             .arg("--config")
             .arg(&config_path)
             .current_dir(&self.cfg.repo)
+            // As under systemd: the vote journal cannot sit beside a config removed after startup.
+            .env("STATE_DIRECTORY", &directory)
             .env("RUST_LOG", "outbe_feeder=info")
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
