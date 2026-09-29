@@ -148,6 +148,13 @@ pub fn dispatch(
                 "issueForTest: a currency per series".into(),
             ));
         }
+        // The clearing engine can price neither leg at zero; a series that did
+        // would settle its units for free.
+        if call.entryPriceMinor.is_zero() || call.promisLoadMinor == 0 {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "issueForTest: a priced series per call".into(),
+            ));
+        }
         let mut legs = Vec::new();
         let ids = call.seriesIds.clone();
         for (series_id, issuance_currency) in
