@@ -14,6 +14,7 @@ Feature: Nod from issuance to settlement and forfeit
   @nod-lifecycle
   Scenario: Two Nods in one bucket are called, one is paid inside the notice and the other forfeited
     Given a fresh localnet with a 20-block voting window
+    And the deploy account is funded on the committee chain
     When the settlement currency is registered on the committee chain
     Then owners may settle in that currency
     And the controlled COEN USD quote is finalized through the real price feeder
