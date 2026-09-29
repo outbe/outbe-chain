@@ -20,7 +20,6 @@ struct KeyRequest([u8; REQUEST_LEN]);
 // Only the x86_64 EGETKEY path constructs this buffer.
 #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 #[repr(C, align(16))]
-#[cfg(target_arch = "x86_64")]
 struct HardwareKey([u8; 16]);
 
 fn parameters(cpu_svn: [u8; 16], isv_svn: u16, config_svn: u16) -> KeyRequest {
