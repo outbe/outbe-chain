@@ -108,19 +108,87 @@ pub fn demote_waiting_for_readiness(
 }
 
 /// Demotes a ready joiner and consumes its readiness confirmation.
+///
+/// `deactivated_at_height` is the block that dropped the bond below the
+/// minimum. The boundary planner uses it to keep a joiner who was already
+/// frozen into the reshare target accountable for that epoch.
 pub fn demote_joining(
     state: Joining,
     stake: StakeProjection,
     minimum: U256,
+    deactivated_at_height: u64,
 ) -> Result<WaitingForStake> {
     require_below_minimum(stake, minimum)?;
+    if deactivated_at_height == 0 {
+        return Err(PrecompileError::Fatal(
+            "validator deactivation height must be non-zero".into(),
+        ));
+    }
     Ok(WaitingForStake {
         registry_index: state.registry_index,
         consensus_pubkey: state.consensus_pubkey,
         p2p: state.p2p,
         stake,
-        history: state.history,
+        history: state
+            .history
+            .with_last_deactivated_at_height(Some(deactivated_at_height)),
     })
+}
+
+/// Keeps a joiner who lost eligibility after the reshare freeze in the
+/// certified committee until the next boundary can drop them.
+fn exit_demoted_joiner(
+    registry_index: NonZeroU64,
+    consensus_pubkey: ConsensusPubkey,
+    p2p: P2pInfo,
+    stake: StakeProjection,
+    history: ValidatorHistory,
+    deactivated_at_height: u64,
+) -> Result<Exiting> {
+    require_canonical_stake(stake)?;
+    if deactivated_at_height == 0 {
+        return Err(PrecompileError::Fatal(
+            "validator deactivation height must be non-zero".into(),
+        ));
+    }
+    Ok(Exiting {
+        registry_index,
+        consensus_pubkey,
+        p2p,
+        stake,
+        history: history.with_last_deactivated_at_height(Some(deactivated_at_height)),
+    })
+}
+
+/// Boundary retain for a frozen joiner now persisted as `WaitingForStake`.
+pub fn exit_waiting_for_stake_at_boundary(
+    state: WaitingForStake,
+    deactivated_at_height: u64,
+) -> Result<Exiting> {
+    exit_demoted_joiner(
+        state.registry_index,
+        state.consensus_pubkey,
+        state.p2p,
+        state.stake,
+        state.history,
+        deactivated_at_height,
+    )
+}
+
+/// Boundary retain for a frozen joiner who topped stake back up without
+/// confirming readiness again.
+pub fn exit_waiting_for_readiness_at_boundary(
+    state: WaitingForReadiness,
+    deactivated_at_height: u64,
+) -> Result<Exiting> {
+    exit_demoted_joiner(
+        state.registry_index,
+        state.consensus_pubkey,
+        state.p2p,
+        state.stake,
+        state.history,
+        deactivated_at_height,
+    )
 }
 
 /// Activates an included, readiness-confirmed joiner at a validated boundary.

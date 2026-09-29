@@ -92,7 +92,7 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Joining(joining) if bonded < minimum => {
                 set_change = true;
                 ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
-                    joining, stake, minimum,
+                    joining, stake, minimum, height,
                 )?)
             }
             ValidatorLifecycle::Active(active) if bonded < minimum => {
@@ -156,7 +156,7 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Joining(joining) if below_minimum => {
                 set_change = true;
                 ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
-                    joining, stake, minimum,
+                    joining, stake, minimum, height,
                 )?)
             }
             ValidatorLifecycle::Active(active) if below_minimum => {
