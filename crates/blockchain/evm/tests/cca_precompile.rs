@@ -189,14 +189,15 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
         assert_eq!(
             distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::from(1000))]).unwrap(),
-            U256::from(680)
+            U256::ZERO
         );
     });
-    let reward = checked_protocol_to_native(U256::from(320)).unwrap();
     assert_eq!(
         db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-        reward
+        checked_protocol_to_native(U256::from(1000)).unwrap()
     );
+    // Claim cases use a fixed balance so remainder handling stays independent of the pool split.
+    let reward = checked_protocol_to_native(U256::from(320)).unwrap();
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT

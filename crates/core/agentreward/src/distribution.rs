@@ -40,7 +40,8 @@ pub enum PoolKind {
 /// Excess accounting (per pool kind):
 /// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
 ///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: cap and rounding residue, or the whole pool when no active weight exists.
+/// * `Cca`: rounding residue only, or the whole pool when no positive
+///   eligible weight exists. CCA shares are not capped per address.
 ///
 /// Backing is minted at AGENT_REWARD_ADDRESS only for credited rewards.
 /// Claimable balances use native units; returned excess uses protocol units.
@@ -52,7 +53,7 @@ pub fn distribute_daily(
     ctx.storage.with_checkpoint(|| {
         let mut total_excess = U256::ZERO;
         for (kind, amount) in pools {
-            let excess = distribute_capped(ctx, prev_day, *kind, *amount)?;
+            let excess = distribute_pool(ctx, prev_day, *kind, *amount)?;
             total_excess = total_excess.checked_add(excess).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::Revert(
                     "agentreward distribute_daily overflow".into(),
@@ -63,9 +64,10 @@ pub fn distribute_daily(
     })
 }
 
-/// Shared capped allocation for all agent pools. One conversion to native
-/// COEN backs each credited share; undistributed protocol units are returned.
-fn distribute_capped(
+/// Allocates one agent pool. WAA and SRA use the per-address cap; CCA is
+/// proportional. One conversion to native COEN backs each credited share;
+/// undistributed protocol units are returned.
+fn distribute_pool(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
     kind: PoolKind,
@@ -97,8 +99,11 @@ fn distribute_capped(
             outbe_ccaregistry::api::active_reward_weights(&ctx.storage, prev_day.value())?,
         ),
     };
-    let (rewards, excess) = calculate_distribution_with_cap(amount, &weights)
-        .map_err(|error| PrecompileError::Revert(error.to_string()))?;
+    let (rewards, excess) = match kind {
+        PoolKind::Waa | PoolKind::Sra => calculate_distribution_with_cap(amount, &weights),
+        PoolKind::Cca => calculate_proportional_distribution(amount, &weights),
+    }
+    .map_err(|error| PrecompileError::Revert(error.to_string()))?;
     for reward in rewards {
         if reward.reward_amount.is_zero() {
             continue;
@@ -125,7 +130,7 @@ fn distribute_capped(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("capped reward distribution arithmetic overflow")]
+#[error("reward distribution arithmetic overflow")]
 pub struct DistributionError;
 
 fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, DistributionError> {
@@ -299,6 +304,51 @@ pub fn calculate_distribution_with_cap(
         })
         .collect();
 
+    Ok((rewards, excess))
+}
+
+/// Distributes a pool in proportion to weights, with no per-address cap.
+///
+/// Each positive weight receives `floor(pool * weight / total_weight)`.
+/// The undistributed remainder is excess, including an empty or all-zero
+/// weight set. Callers supply one weight per distinct address. Results are
+/// ordered by address.
+fn calculate_proportional_distribution(
+    total_pool: U256,
+    counts: &[(Address, U256)],
+) -> Result<(Vec<AddressReward>, U256), DistributionError> {
+    if counts.is_empty() || total_pool.is_zero() {
+        return Ok((vec![], total_pool));
+    }
+
+    let mut positive: Vec<_> = counts
+        .iter()
+        .copied()
+        .filter(|(_, weight)| !weight.is_zero())
+        .collect();
+    if positive.is_empty() {
+        return Ok((vec![], total_pool));
+    }
+    positive.sort_by_key(|(addr, _)| *addr);
+
+    let total_weight = positive.iter().try_fold(U256::ZERO, |sum, (_, weight)| {
+        sum.checked_add(*weight).ok_or(DistributionError)
+    })?;
+
+    let mut rewards = Vec::with_capacity(positive.len());
+    let mut distributed = U256::ZERO;
+    for (addr, weight) in positive {
+        let share = mul_div(total_pool, weight, total_weight)?;
+        distributed = distributed.checked_add(share).ok_or(DistributionError)?;
+        rewards.push(AddressReward {
+            address: addr,
+            weight,
+            reward_amount: share,
+        });
+    }
+    let excess = total_pool
+        .checked_sub(distributed)
+        .ok_or(DistributionError)?;
     Ok((rewards, excess))
 }
 
@@ -512,5 +562,82 @@ mod tests {
             calculate_distribution_with_cap(U256::ONE, &[(a, U256::ZERO)]).unwrap();
         assert!(rewards.is_empty());
         assert_eq!(excess, U256::ONE);
+    }
+
+    #[test]
+    fn proportional_distribution_has_no_address_cap() {
+        let alice = Address::repeat_byte(1);
+        let bob = Address::repeat_byte(2);
+        let carol = Address::repeat_byte(3);
+
+        let (rewards, excess) =
+            calculate_proportional_distribution(U256::from(100), &[(alice, U256::from(7))])
+                .unwrap();
+        assert_eq!(excess, U256::ZERO);
+        assert_eq!(rewards[0].reward_amount, U256::from(100));
+
+        let (rewards, excess) = calculate_proportional_distribution(
+            U256::from(100),
+            &[(bob, U256::from(20)), (alice, U256::from(80))],
+        )
+        .unwrap();
+        assert_eq!(excess, U256::ZERO);
+        assert_eq!(
+            rewards
+                .iter()
+                .map(|reward| (reward.address, reward.reward_amount))
+                .collect::<Vec<_>>(),
+            vec![(alice, U256::from(80)), (bob, U256::from(20))]
+        );
+
+        let (rewards, excess) = calculate_proportional_distribution(
+            U256::from(10),
+            &[(carol, U256::ONE), (alice, U256::ONE), (bob, U256::ONE)],
+        )
+        .unwrap();
+        assert_eq!(excess, U256::ONE);
+        assert!(rewards
+            .iter()
+            .all(|reward| reward.reward_amount == U256::from(3)));
+        let credited = rewards
+            .iter()
+            .fold(U256::ZERO, |sum, reward| sum + reward.reward_amount);
+        assert_eq!(credited + excess, U256::from(10));
+
+        let (rewards, excess) = calculate_proportional_distribution(U256::from(1000), &[]).unwrap();
+        assert!(rewards.is_empty());
+        assert_eq!(excess, U256::from(1000));
+
+        let (rewards, excess) = calculate_proportional_distribution(
+            U256::from(1000),
+            &[(alice, U256::ZERO), (bob, U256::ZERO)],
+        )
+        .unwrap();
+        assert!(rewards.is_empty());
+        assert_eq!(excess, U256::from(1000));
+
+        let (rewards, excess) = calculate_proportional_distribution(
+            U256::from(100),
+            &[
+                (carol, U256::ZERO),
+                (Address::repeat_byte(4), U256::from(20)),
+                (alice, U256::from(80)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            rewards
+                .iter()
+                .map(|reward| reward.address)
+                .collect::<Vec<_>>(),
+            vec![alice, Address::repeat_byte(4)]
+        );
+        assert_eq!(excess, U256::ZERO);
+
+        assert!(calculate_proportional_distribution(
+            U256::ONE,
+            &[(alice, U256::MAX), (bob, U256::ONE)]
+        )
+        .is_err());
     }
 }
