@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use cucumber::{given, then, when};
+use cucumber::{then, when};
 use outbe_nod::constants::{
     CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_THRESHOLD_DAYS,
     CALL_WINDOW, FLOOR_RATE_PCT,
@@ -35,7 +35,6 @@ alloy_sol_types::sol! {
 /// A Nod's id derives from its owner and day, so one bucket needs two owners.
 const PAID_OWNER: Address = Address::repeat_byte(0xa1);
 const FORFEITED_OWNER: Address = Address::repeat_byte(0xb2);
-const DEPLOY_FUNDING_COEN: u64 = 100;
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 const GRATIS_LOAD_MINOR: u64 = 5_000_000;
 /// `effectiveState` of `INod.NodData`.
@@ -53,24 +52,6 @@ const CALL_TIMEOUT_SECS: u64 = 300;
 const READ_TIMEOUT_SECS: u64 = 60;
 /// Once the notice has lapsed the next sweep burns the unpaid Nod.
 const FORFEIT_TIMEOUT_SECS: u64 = 300;
-
-#[given("the deploy account is funded on the committee chain")]
-fn fund_deploy_account(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    // Genesis funds validators, not the account that deploys fixtures and arms the hooks.
-    let funder = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("validator-0 funding key");
-    eth::send_value(
-        &url,
-        crate::world::origin_venue::deployer_address(),
-        &funder,
-        eth::coen(DEPLOY_FUNDING_COEN),
-    )
-    .expect("fund the deploy account");
-}
 
 #[when("two owners are issued Nods in one bucket")]
 fn issue_two_nods(world: &mut World) {

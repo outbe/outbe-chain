@@ -11,19 +11,14 @@ use outbe_tee::protocol::{Ledger, PromisOp};
 use crate::internal::{addresses, eth};
 use cucumber::{then, when};
 
-use crate::env::environment;
+use crate::features::entity_lifecycle::chain::{finalized_checkpoint, verify_checkpoint};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::relay::{Relay, RelayEnd};
-use crate::world::rpc::FinalizedCheckpoint;
-use crate::world::settlement_currency::{self, SettlementCurrency};
+use crate::world::settlement_currency;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
 sol! {
-    interface ILifecyclePaymentToken {
-        function decimals() external view returns (uint8);
-    }
-
     interface IIntexCard {
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
         function uri(uint256 tokenId) external view returns (string memory);
@@ -78,62 +73,6 @@ const CALL_LOOKBACK_DAYS: u32 = 3;
 const DELIVERY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is daily; give it a few blocks past the last rollover.
 const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
-
-#[when("the settlement currency is registered on the committee chain")]
-fn register_settlement_currency(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    // `addVault` admits the router's owner alone, and genesis seeds that to validator 0.
-    let owner_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("VaultRouter owner key");
-
-    let currency = settlement_currency::deploy(
-        &environment().repo.join("contracts/intex"),
-        &url,
-        &owner_key,
-    )
-    .expect("register the settlement currency");
-
-    world.state.settlement_currency = Some(currency);
-    let checkpoint = lifecycle_checkpoint(world);
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            eth::read_call_at(
-                &world.rpc.url(port),
-                currency.asset,
-                &ILifecyclePaymentToken::decimalsCall {},
-                checkpoint.height
-            ),
-            Some(6),
-            "lifecycle fixture payment token must have six decimals"
-        );
-    }
-    verify_checkpoint(world, checkpoint);
-    assert_vault_payment(world, 0);
-}
-
-#[then("owners may settle in that currency")]
-fn settlement_currency_is_acceptable(world: &mut World) {
-    let SettlementCurrency { asset, vault } = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered");
-    let url = world.rpc.url(world.validators.primary_port());
-
-    assert_eq!(
-        settlement_currency::registered_vaults(&url, asset),
-        vec![vault],
-        "the VaultRouter does not route the settlement asset to its vault"
-    );
-    assert_eq!(
-        settlement_currency::iso_code(&url, asset),
-        Some(settlement_currency::USD_ISO),
-        "the settlement asset does not answer the reference currency"
-    );
-}
 
 #[when("four test Intex series sharing a reference currency are issued to a funded owner")]
 fn issue_two_series(world: &mut World) {
@@ -581,31 +520,6 @@ fn expected_settlement_cost() -> U256 {
     U256::from(ENTRY_PRICE_MINOR) * U256::from(PROMIS_LOAD_MINOR) / U256::from(1_000_000)
 }
 
-fn lifecycle_checkpoint(world: &World) -> FinalizedCheckpoint {
-    // Transaction helpers have already required a successful mined receipt.
-    // Finalize at least that primary head on every port before reading state.
-    let head = world
-        .rpc
-        .head(world.validators.primary_port())
-        .expect("lifecycle primary head");
-    world
-        .rpc
-        .wait_finalized_checkpoint(&world.validators.committee_ports(), head, 120)
-        .expect("finalized lifecycle checkpoint on every validator")
-}
-
-fn verify_checkpoint(world: &World, checkpoint: FinalizedCheckpoint) {
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, checkpoint.height)
-                .expect("lifecycle checkpoint"),
-            checkpoint
-        );
-    }
-}
-
 fn assert_vault_payment(world: &World, settled_per_series: u32) {
     let currency = world
         .state
@@ -614,7 +528,7 @@ fn assert_vault_payment(world: &World, settled_per_series: u32) {
     let expected = expected_settlement_cost()
         * U256::from(settled_per_series)
         * U256::from(world.state.lifecycle_series.len());
-    let checkpoint = lifecycle_checkpoint(world);
+    let checkpoint = finalized_checkpoint(world);
     for port in world.validators.committee_ports() {
         let balance = settlement_currency::vault_balance_at(
             &world.rpc.url(port),
@@ -635,7 +549,7 @@ fn assert_vault_payment(world: &World, settled_per_series: u32) {
 
 fn promis_on_all_validators(world: &World, view_key: &[u8; 32]) -> U256 {
     let owner = crate::world::origin_venue::deployer_address();
-    let checkpoint = lifecycle_checkpoint(world);
+    let checkpoint = finalized_checkpoint(world);
     let mut common = None;
     for port in world.validators.committee_ports() {
         let blob = eth::read_call_at(

@@ -5,10 +5,10 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolEvent;
 use cucumber::{then, when};
 use outbe_tee::protocol::{Ledger, PromisOp};
 
+use crate::features::entity_lifecycle::chain::assert_single_event;
 use crate::features::settlement::{
     assert_mined_success, chain_id_b256, find_mining_pow_nonce, promis_balance,
 };
@@ -666,7 +666,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
     } else if !position_expired {
         assert_eq!(position.remainingCapacity, unissued_capacity());
     }
-    assert_expiry_event(
+    assert_single_event(
         &url,
         addresses::GEM_ADDR,
         from,
@@ -678,7 +678,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         },
     );
     let returned = if position_expired {
-        assert_expiry_event(
+        assert_single_event(
             &url,
             addresses::GEM_FACTORY_ADDR,
             from,
@@ -703,31 +703,6 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         ),
         Some(before + returned),
         "expiry returns did not credit the exact unallocated load"
-    );
-}
-
-fn assert_expiry_event<E: SolEvent>(url: &str, address: Address, from: u64, to: u64, expected: E) {
-    let encoded = expected.encode_log_data();
-    let logs = eth::raw_json_result(
-        url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "address": address, "fromBlock": format!("0x{from:x}"), "toBlock": format!("0x{to:x}"),
-            "topics": [encoded.topics()[0], encoded.topics()[1]],
-        }]),
-    )
-    .expect("finalized expiry events");
-    let logs = logs.as_array().expect("expiry log array");
-    assert_eq!(logs.len(), 1, "expected exactly one expiry for this asset");
-    assert_eq!(
-        logs[0]["topics"],
-        serde_json::json!(encoded.topics()),
-        "expiry identity mismatch"
-    );
-    assert_eq!(
-        logs[0]["data"],
-        serde_json::json!(encoded.data),
-        "expiry amount mismatch"
     );
 }
 
