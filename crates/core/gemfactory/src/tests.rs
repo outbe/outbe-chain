@@ -756,20 +756,43 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
 
-        assert_eq!(
-            runtime::settlement_units(&item, None, 6).unwrap(),
-            U256::ONE
-        );
-        assert_eq!(
-            runtime::settlement_units(&item, None, 18).unwrap(),
-            U256::from(1_000_000_000_000u64)
-        );
-        // The minimum is one reference unit, which a narrower asset and an
+        for (rate, decimals, expected) in [
+            (None, 6, 1u64),
+            (None, 8, 100),
+            (None, 18, 1_000_000_000_000),
+            (fx(2, 1), 6, 2),
+            (fx(1, 2), 18, 500_000_000_000),
+        ] {
+            assert_eq!(
+                runtime::settlement_units(&item, rate, decimals).unwrap(),
+                U256::from(expected)
+            );
+        }
+        // The minimum is one reference minor unit, which a narrower asset and an
         // unfavourable rate still floor away, as they do for Nod.
-        assert!(runtime::settlement_units(&item, None, 0).is_err());
-        assert!(runtime::settlement_units(&item, Some((U256::ONE, U256::from(2u64))), 6).is_err());
+        for (rate, decimals) in [(None, 0), (fx(1, 2), 6)] {
+            assert!(err_msg(runtime::settlement_units(&item, rate, decimals))
+                .contains("settlement cost rounds to zero"));
+        }
     });
+}
+
+#[test]
+fn a_dust_gem_is_charged_exactly_what_its_quote_says() {
+    let mut provider = test_storage(Some(U256::ONE));
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        seed_qualifying_day(storage, gem_id);
+        gem_id
+    });
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
+    });
+
+    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
 }
 
 #[test]
