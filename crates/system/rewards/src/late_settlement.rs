@@ -16,9 +16,10 @@
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]; the executor wires them into the begin-zone CPA
 //! (escrow) and `LateFinalizeCredits` (record + settle) phases. At settle the
-//! residue is burned from `REWARDS_ADDRESS` (parity) **and** recycled into
-//! terminal Metadosis emission headroom via the canonical
-//! [`outbe_emissionlimit::block::dispatch_terminal_remainder_at`]; the
+//! whole six-decimal units of the residue are burned from `REWARDS_ADDRESS` and
+//! recycled into the Metadosis carry-over via
+//! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]; the native
+//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. The
 //! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is
 //! then freed, leaving only the `fee_settled` tombstone (no state bloat).
 
@@ -27,6 +28,7 @@ use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
+    units::{checked_protocol_to_native, native_to_protocol_floor},
 };
 
 use crate::constants::{decay_weight, fixed_denominator};
@@ -225,16 +227,23 @@ pub fn settle_window(
         PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
     })?;
     if !residue.is_zero() {
-        // Mint/burn parity: burn the residue from REWARDS, then recycle the same
-        // amount into terminal Metadosis emission headroom via the purpose-bound
-        // dispatcher. Under OCOMP this credits carry-over rather than racing the
-        // daily base-limit formation; pre-OCOMP behavior remains unchanged.
-        ctx.storage.decrease_balance(REWARDS_ADDRESS, residue)?;
-        outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
-            ctx,
-            residue,
-            ctx.block.timestamp,
-        )?;
+        // The residue is native wei and the carry-over counts six-decimal units, so only
+        // whole units are burned and recycled; the rest waits on REWARDS for the next window.
+        let native = residue
+            .checked_add(rewards.late_residue_dust_native.read()?)
+            .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
+        let units = native_to_protocol_floor(native);
+        let burned = checked_protocol_to_native(units)
+            .ok_or_else(|| PrecompileError::Revert("late residue burn overflow".into()))?;
+        rewards.late_residue_dust_native.write(native - burned)?;
+        if !units.is_zero() {
+            ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
+            outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
+                ctx,
+                units,
+                ctx.block.timestamp,
+            )?;
+        }
     }
 
     // Parity invariant (checked once): sum payout + residue == pending.
@@ -512,13 +521,14 @@ mod tests {
         let wwd = WorldwideDay::new(20_260_728);
         let timestamp = wwd.start_timestamp();
         let expected_residue = U256::from(1_000);
+        let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(156, timestamp, CHAIN_ID, Address::ZERO, Vec::new()),
                 handle,
             );
-            let pending = U256::from(4_000);
+            let pending = U256::from(4_000) * unit;
             fund(&ctx, pending);
             escrow_block_fee(
                 &ctx,
@@ -535,8 +545,8 @@ mod tests {
             .unwrap();
 
             let (distributed, residue) = settle_window(&ctx, FB, 4).unwrap();
-            assert_eq!(distributed, U256::from(3_000));
-            assert_eq!(residue, expected_residue);
+            assert_eq!(distributed, U256::from(3_000) * unit);
+            assert_eq!(residue, expected_residue * unit);
             assert!(
                 outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd,)
                     .unwrap()

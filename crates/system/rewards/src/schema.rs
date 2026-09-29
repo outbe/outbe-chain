@@ -61,6 +61,7 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 42: reward_gem_pending_batch_count - uint64
 /// 43: pending_reward_day - mapping(B256 => uint32)
 /// 44: daily_last_window_close - mapping(uint32 => uint64)
+/// 45: late_residue_dust_native - uint256
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -284,4 +285,7 @@ pub struct Rewards {
     /// Last inclusion-window close height for each day's finalized blocks.
     /// Cycle runs before late credits, so preparation requires a later height.
     pub daily_last_window_close: Mapping<u32, u64>,
+
+    /// Native late-settlement residue below one protocol unit, carried to the next settlement.
+    pub late_residue_dust_native: Slot<U256>,
 }
