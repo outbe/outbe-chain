@@ -222,6 +222,10 @@ impl OcompTopology {
         &mut self,
         plan: OcompNodeFacingResumePlan,
     ) -> Result<()> {
+        // A localnet that never launched node-facing roles restores to the same empty set.
+        if plan.snapshot_exporters.is_empty() && plan.workers.is_empty() {
+            return Ok(());
+        }
         for validator_index in plan.snapshot_exporters {
             self.restart_snapshot_exporter(validator_index)?;
         }
