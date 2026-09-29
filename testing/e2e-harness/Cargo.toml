@@ -33,6 +33,7 @@ ocomp-integration = [
     "outbe-metadosis/test-utils",
     "dep:outbe-gem",
     "dep:outbe-gemfactory",
+    "dep:outbe-intexfactory",
     "dep:outbe-nodfactory",
     "dep:outbe-offchain-data",
     "dep:outbe-paynote",
@@ -87,6 +88,7 @@ outbe-consensus.workspace = true
 outbe-fidelity = { workspace = true, optional = true }
 outbe-gem = { workspace = true, optional = true }
 outbe-gemfactory = { workspace = true, optional = true }
+outbe-intexfactory = { workspace = true, optional = true }
 outbe-metadosis = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }

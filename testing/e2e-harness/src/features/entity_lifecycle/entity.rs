@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, FixedBytes, U256};
 use cucumber::Parameter;
 
 use super::markets::{EUR_ISO, MYR_ISO};
@@ -11,9 +11,10 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Parameter)]
-#[param(name = "entity", regex = "gem|Nod")]
+#[param(name = "entity", regex = "gem|Intex series|Nod")]
 pub(crate) enum Entity {
     Gem,
+    Series,
     Nod,
 }
 
@@ -23,6 +24,7 @@ impl FromStr for Entity {
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
             "gem" => Ok(Self::Gem),
+            "Intex series" => Ok(Self::Series),
             "Nod" => Ok(Self::Nod),
             other => Err(format!("unknown lifecycle entity {other:?}")),
         }
@@ -33,6 +35,7 @@ impl Entity {
     pub(crate) fn lifecycle(self) -> &'static dyn Lifecycle {
         match self {
             Self::Gem => &crate::features::gem_lifecycle::GemLifecycle,
+            Self::Series => &crate::features::intex_lifecycle::IntexLifecycle,
             Self::Nod => &crate::features::nod_lifecycle::NodLifecycle,
         }
     }
@@ -99,6 +102,7 @@ impl FromStr for Currency {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Item {
     Gem(U256),
+    Series { id: FixedBytes<14>, units: u32 },
     Nod(U256),
 }
 

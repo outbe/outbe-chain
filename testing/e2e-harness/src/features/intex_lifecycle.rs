@@ -1,20 +1,28 @@
-//! An Intex after the mint: qualification, settlement, and the burn into Promis.
+//! What an Intex supplies to the shared lifecycle: four series of one day and reference
+//! currency, issued to one owner across the committee and a target chain. Two are paid
+//! in two parts, one while qualified and one inside the call notice; the other two run
+//! out, one after a partial payment and one untouched.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{FixedBytes, U256};
+use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::sol;
 use base64::Engine as _;
-use outbe_tee::protocol::{Ledger, PromisOp};
 
 use crate::internal::{addresses, eth};
 use cucumber::{then, when};
 
-use crate::features::entity_lifecycle::chain::{finalized_checkpoint, verify_checkpoint};
+use crate::features::entity_lifecycle::chain::{
+    assert_single_event, finalized_checkpoint, head_time, poll_until,
+};
+use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Rail, Target};
+use crate::features::entity_lifecycle::markets::{EUR_ISO, MYR_ISO};
+use crate::features::entity_lifecycle::payment;
+use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::relay::{Relay, RelayEnd};
-use crate::world::settlement_currency;
+use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
@@ -35,7 +43,6 @@ sol! {
 const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
-/// Units each series mints to the owner; settled in two goes, so keep it even.
 /// Units each series mints per chain. The holding is split so bringing units home
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
@@ -44,15 +51,17 @@ const TARGET_UNITS: u32 = 6;
 /// where the bridge admits a move only to the owner's own address.
 const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
+/// What is home to pay for while qualified, and what the second hop brings.
+const QUALIFIED_UNITS: u32 = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
+const CALLED_UNITS: u32 = TARGET_UNITS - TRADABLE_HOP_UNITS;
 /// USD (840) as the reference for every series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// Qualification is read off the seeded day, so it waits only for that block.
-const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The sender fires every minute in e2e, then the relay carries the day over.
 const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
-/// `IntexState::Called`.
+/// `IntexState::Issued` / `Called`.
+const ISSUED: u8 = 0;
 const CALLED: u8 = 2;
 /// Derived against the clock on both chains; never written by anything.
 const EXPIRED: u8 = 3;
@@ -63,32 +72,25 @@ const EXPIRY_BUCKET_SECS: u64 = 3_600;
 /// Settled out of the expiring series, so the forfeit is the tirage less these.
 const EXPIRING_SETTLED_UNITS: u32 = 2;
 /// The credit lands in the block the sweep reaches the queue head.
-const FORFEIT_TIMEOUT_SECS: u64 = 180;
-/// DEV calls a series once the VWAP held above the call price on two of three days.
-/// DEV requires two of the last three days above the trigger.
-const CALL_THRESHOLD_DAYS: u32 = 2;
+const FORFEIT_TIMEOUT: Duration = Duration::from_secs(180);
 /// How far back the series are issued so closed days exist after their issuance.
 const CALL_LOOKBACK_DAYS: u32 = 3;
 /// A relayed message is asynchronous; scenarios wait for arrival rather than assume it.
 const DELIVERY_TIMEOUT_SECS: u64 = 180;
-/// The call sweep is daily; give it a few blocks past the last rollover.
-const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
 
-#[when("four test Intex series sharing a reference currency are issued to a funded owner")]
-fn issue_two_series(world: &mut World) {
+pub(crate) struct IntexLifecycle;
+
+#[when("four test Intex series sharing a reference currency are issued to the owner")]
+fn issue_four_series(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let chain_id = world.rpc.chain_id(port).expect("committee chain id");
-    let asset = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered")
-        .asset;
-    let owner = crate::world::origin_venue::deployer_address();
-
-    // Enough to settle every unit of every series at any price the sweeps derive.
-    test_issuance::fund_settler(&url, asset, DEPLOYER_KEY, U256::from(u64::MAX))
-        .expect("fund the settling owner");
+    let owner = owner();
+    assert_eq!(
+        world.state.issuance_market,
+        Some(MYR_ISO),
+        "the paid series is issued in MYR"
+    );
 
     let origin_router = world
         .state
@@ -102,41 +104,29 @@ fn issue_two_series(world: &mut World) {
     // Issued into a day already behind us: the call sweep counts breach days only
     // from the issuance day forward, and only closed days exist to count.
     let day = chain_worldwide_day_offset(world, port, -(i64::from(CALL_LOOKBACK_DAYS) * 86_400));
-    let now = u32::try_from(
-        world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("committee head timestamp"),
-    )
-    .expect("timestamp fits a uint32");
+    let now = u32::try_from(head_time(world)).expect("timestamp fits a uint32");
     test_issuance::open_day(
         &url,
         DEPLOYER_KEY,
         origin_router,
         day,
         now,
-        settlement_currency::USD_ISO,
+        USD_ISO,
         ENTRY_PRICE_MINOR,
         PROMIS_LOAD_MINOR,
     )
     .expect("open the day the series are issued into");
 
     // Same day and reference currency, different issuance currencies: one group,
-    // two members, which is what makes the group promotion and the mark batch real.
+    // four members, which is what makes the group promotion and the mark batch real.
     let series = test_issuance::issue_series(
         &url,
         DEPLOYER_KEY,
         day,
         // Issuance is stamped where the seeded days already lie behind it.
-        u32::try_from(
-            world
-                .rpc
-                .latest_block_timestamp(port)
-                .expect("committee head timestamp")
-                .saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * 86_400),
-        )
-        .expect("backdated stamp fits a uint32"),
-        settlement_currency::USD_ISO,
+        u32::try_from(head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * 86_400))
+            .expect("backdated stamp fits a uint32"),
+        USD_ISO,
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
@@ -148,12 +138,12 @@ fn issue_two_series(world: &mut World) {
         ],
         &[
             SeriesSpec {
-                issuance: *b"USD",
-                issuance_currency: settlement_currency::USD_ISO,
+                issuance: *b"MYR",
+                issuance_currency: MYR_ISO,
             },
             SeriesSpec {
                 issuance: *b"EUR",
-                issuance_currency: 978,
+                issuance_currency: EUR_ISO,
             },
             // Only part of this one is settled, so it is still holding units when the
             // notice runs out.
@@ -173,14 +163,8 @@ fn issue_two_series(world: &mut World) {
 
     // The capacity committee runs ahead of wall time, so advance Anvil only
     // after all legs have their timestamps fixed.
-    let issued_through = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("committee timestamp after issuance");
-    let target_url = world
-        .target_chain
-        .rpc_url()
-        .expect("target chain is running");
+    let issued_through = head_time(world);
+    let target_url = target_rpc_url(world);
     if eth::latest_block_timestamp(&target_url).expect("target timestamp before delivery")
         < issued_through
     {
@@ -213,12 +197,12 @@ fn owner_holds_issued_units(world: &mut World) {
     let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
     let target_nft = target_intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
+    let owner = owner();
 
     assert_eq!(
         world.state.lifecycle_series.len(),
         2,
-        "the scenario issues two series"
+        "the scenario pays for two series"
     );
 
     // The target-chain leg travels as a real message, so give the relay its round.
@@ -265,53 +249,6 @@ fn carry_target_clock(world: &World) {
     let _ = world.target_chain.sync_clock_to(now);
 }
 
-#[when("the reference rate stands above the series floor")]
-fn rate_above_floor(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let series = *world
-        .state
-        .lifecycle_series
-        .first()
-        .expect("a series was issued");
-
-    // Both series share an entry price, so one floor decides the group. Qualification
-    // reads the closed day's VWAP, so that day is seeded like the call window's.
-    let (_, floor, _) = venue_probes::series_prices(&url, nft, series).expect("series prices");
-    test_issuance::seed_day_vwaps(
-        &url,
-        DEPLOYER_KEY,
-        settlement_currency::USD_ISO,
-        1,
-        U256::from(floor * 2),
-    )
-    .expect("seed the closed day's VWAP");
-}
-
-#[then("every series qualifies on the seeded day")]
-fn both_series_qualify(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let deadline = Instant::now() + Duration::from_secs(QUALIFY_TIMEOUT_SECS);
-
-    for series in world.state.lifecycle_series.clone() {
-        loop {
-            let qualified = eth::read_call(
-                &url,
-                addresses::INTEX_FACTORY_ADDR,
-                &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
-            );
-            if qualified == Some(true) {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "series {series} did not qualify on the seeded day"
-            );
-            sleep(Duration::from_secs(2));
-        }
-    }
-}
-
 /// The origin's collection reads the IntexFactory; the target's reads the registry the origin pushes to.
 #[then("every series card reads Qualified on both chains")]
 fn cards_read_qualified(world: &mut World) {
@@ -347,6 +284,9 @@ fn cards_read_qualified(world: &mut World) {
                     Instant::now() < deadline,
                     "the card of {series} on {url} reads {state:?}; its source {source} has {max:?} against floor {floor}"
                 );
+                // The pushed day carries the committee's stamp, which the target
+                // refuses while it lies in the target's future.
+                carry_target_clock(world);
                 sleep(Duration::from_secs(5));
             }
         }
@@ -425,396 +365,323 @@ fn target_rpc_url(world: &World) -> String {
         .expect("target chain is running")
 }
 
-#[when("the owner settles part of their units")]
-fn settle_part(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let currency = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered");
-    let owner = crate::world::origin_venue::deployer_address();
-
-    // Settle what is already home. The rest is on the target chain and cannot be
-    // settled until the owner brings it back, which is a later step.
-    world.state.settled_units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
-    for series in world.state.lifecycle_series.clone() {
-        let issued = venue_probes::series_balances(&url, nft, series, owner)
-            .expect("series balances")
-            .0;
-        assert_eq!(
-            issued,
-            u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS),
-            "series {series} does not hold what was minted here plus what came home"
-        );
-
-        // A price the series refuses would fail here rather than inside `settle`,
-        // where the revert reads as a balance problem instead of a currency one.
-        let units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
-        let cost = test_issuance::quote_cost(&url, series, currency.asset, units)
-            .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
-        assert_eq!(
-            cost,
-            expected_settlement_cost() * U256::from(units),
-            "series {series} settlement quote differs from fixture entry price and load"
-        );
-
-        let proof = settlement_note(
-            world,
-            owner,
-            currency.asset,
-            expected_settlement_cost(),
-            units,
-        );
-        test_issuance::settle(&url, DEPLOYER_KEY, series, owner, units, &proof)
-            .expect("settle the units at home");
+impl Lifecycle for IntexLifecycle {
+    fn floor(&self, world: &World) -> U256 {
+        U256::from(prices(world, paid_series(world)[0]).1)
     }
-}
 
-/// One note per settle: a nullifier is booked once, so notes never carry over.
-fn settlement_note(
-    world: &World,
-    owner: alloy_primitives::Address,
-    asset: alloy_primitives::Address,
-    per_unit: U256,
-    units: u32,
-) -> Vec<u8> {
-    let total = per_unit
-        .checked_mul(U256::from(units))
-        .expect("settlement cost fits a U256");
-    crate::features::paynote::deposit_and_prove(
-        world,
-        world.validators.primary_port(),
-        DEPLOYER_KEY,
-        owner,
-        asset,
-        total,
-    )
-}
-
-#[then("those units move from issued to settled")]
-fn units_moved_to_settled(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
-
-    for series in &world.state.lifecycle_series {
-        assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, owner),
-            Some((0, u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS))),
-            "series {series} left issued units at home after settling"
-        );
+    fn call_price(&self, world: &World) -> U256 {
+        U256::from(prices(world, paid_series(world)[0]).2)
     }
-}
 
-#[then("the settlement payment lands in the reserve vault")]
-fn payment_in_vault(world: &mut World) {
-    assert_vault_payment(world, COMMITTEE_UNITS + TRADABLE_HOP_UNITS);
-}
-
-fn expected_settlement_cost() -> U256 {
-    // Entry price and load each use six decimals; the fixture pays in its
-    // six-decimal reference USD asset, so no cross-currency conversion applies.
-    // The product divides exactly, so the per-unit cost times the units settled
-    // is what the chain's single floor over the whole operation charges.
-    U256::from(ENTRY_PRICE_MINOR) * U256::from(PROMIS_LOAD_MINOR) / U256::from(1_000_000)
-}
-
-fn assert_vault_payment(world: &World, settled_per_series: u32) {
-    let currency = world
-        .state
-        .settlement_currency
-        .expect("registered settlement currency");
-    let expected = expected_settlement_cost()
-        * U256::from(settled_per_series)
-        * U256::from(world.state.lifecycle_series.len());
-    let checkpoint = finalized_checkpoint(world);
-    for port in world.validators.committee_ports() {
-        let balance = settlement_currency::vault_balance_at(
-            &world.rpc.url(port),
-            currency.asset,
-            currency.vault,
-            checkpoint.height,
-        )
-        .expect("finalized settlement vault token balance");
-        assert_eq!(
-            balance, expected,
-            "vault payment differs from fixture cost times units on port {port}"
-        );
-    }
-    verify_checkpoint(world, checkpoint);
-    eprintln!("INTEX_VAULT_EXPECTATION height={} hash={} state_root={} cost={} units_per_series={} series={} expected={expected}",
-        checkpoint.height, checkpoint.block_hash, checkpoint.state_root, expected_settlement_cost(), settled_per_series, world.state.lifecycle_series.len());
-}
-
-fn promis_on_all_validators(world: &World, view_key: &[u8; 32]) -> U256 {
-    let owner = crate::world::origin_venue::deployer_address();
-    let checkpoint = finalized_checkpoint(world);
-    let mut common = None;
-    for port in world.validators.committee_ports() {
-        let blob = eth::read_call_at(
-            &world.rpc.url(port),
-            addresses::PROMIS_ADDR,
-            &eth::IPromis::balanceOfCall { account: owner },
-            checkpoint.height,
-        )
-        .expect("finalized lifecycle Promis ciphertext");
-        let amount = if blob.is_empty() {
-            U256::ZERO
-        } else {
-            outbe_tee_enclave::promis::decrypt_balance(view_key, owner, blob.as_ref())
-                .expect("decrypt finalized lifecycle Promis balance")
-        };
-        if let Some(common) = common {
+    fn assert_issued(&self, world: &mut World) {
+        let url = world.rpc.url(world.validators.primary_port());
+        let nft = intex_nft(world);
+        let first = prices(world, paid_series(world)[0]);
+        assert_eq!(first.0, ENTRY_PRICE_MINOR);
+        for series in all_series(world) {
             assert_eq!(
-                amount, common,
-                "Promis balance differs on validator port {port}"
+                venue_probes::series_state(&url, nft, series),
+                Some(ISSUED),
+                "series {series} was not born Issued"
             );
-        } else {
-            common = Some(amount);
+            assert!(!is_qualified(&url, series));
+            assert_eq!(
+                prices(world, series),
+                first,
+                "every series must share one set of terms"
+            );
+            assert_eq!(
+                venue_probes::series_promis_load(&url, nft, series),
+                Some(PROMIS_LOAD_MINOR)
+            );
+            assert_eq!(
+                venue_probes::series_issued_count(&url, nft, series),
+                Some(UNITS)
+            );
         }
     }
-    verify_checkpoint(world, checkpoint);
-    let balance = common.expect("nonempty lifecycle validator cohort");
-    eprintln!(
-        "INTEX_PROMIS_OBSERVATION height={} hash={} state_root={} balance={balance}",
-        checkpoint.height, checkpoint.block_hash, checkpoint.state_root
-    );
-    balance
-}
 
-#[when("the owner mines Promis against their settled units")]
-fn mine_promis(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let nft = intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
-    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
+    fn qualified(&self, world: &World) -> bool {
+        let url = world.rpc.url(world.validators.primary_port());
+        all_series(world)
+            .into_iter()
+            .all(|series| is_qualified(&url, series))
+    }
 
-    let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
-        .expect("derive the owner's Promis modify key");
-    world.state.promis_before_mining = Some(promis_on_all_validators(world, &keys.view));
+    /// Each paid series is paid in two parts: what is home once it qualifies, and the
+    /// rest once it is called and brought home.
+    fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {
+        let [myr, eur] = paid_series(world);
+        match phase {
+            Phase::Qualified => [
+                part(eur, EUR_ISO, QUALIFIED_UNITS),
+                part(myr, MYR_ISO, QUALIFIED_UNITS),
+            ],
+            Phase::Called => [
+                part(myr, MYR_ISO, CALLED_UNITS),
+                part(eur, EUR_ISO, CALLED_UNITS),
+            ],
+        }
+    }
 
-    for series in world.state.lifecycle_series.clone() {
-        let settled = venue_probes::series_balances(&url, nft, series, owner)
-            .expect("series balances")
-            .1;
-        assert_eq!(
-            settled,
-            u64::from(UNITS),
-            "series {series} must have every fixture unit settled"
-        );
+    fn called(&self, world: &World) -> bool {
+        let url = world.rpc.url(world.validators.primary_port());
+        let nft = intex_nft(world);
+        all_series(world)
+            .into_iter()
+            .all(|series| venue_probes::series_state(&url, nft, series) == Some(CALLED))
+            && venue_probes::series_call_deadline(&url, nft, paid_series(world)[0])
+                .is_some_and(|deadline| head_time(world) <= deadline)
+    }
 
-        // Promis is minted per unit at the series' load, and the engine derives the
-        // same figure - a mismatch here would fail the proof rather than the mint.
-        let promis_load =
-            venue_probes::series_promis_load(&url, nft, series).expect("series promis load");
-        assert_eq!(
-            promis_load, PROMIS_LOAD_MINOR,
-            "series {series} load differs from issuance fixture"
-        );
-        let amount = U256::from(PROMIS_LOAD_MINOR) * U256::from(UNITS);
-        let op_nonce = eth::read_call(
+    fn assert_paid_settled(&self, world: &World) {
+        let url = world.rpc.url(world.validators.primary_port());
+        let nft = intex_nft(world);
+        for series in paid_series(world) {
+            let paid: u32 = world
+                .state
+                .entity_lifecycle
+                .payments
+                .iter()
+                .filter_map(|payment| match payment.target.item {
+                    Item::Series { id, units } if id == series => Some(units),
+                    _ => None,
+                })
+                .sum();
+            assert_eq!(
+                venue_probes::series_balances(&url, nft, series, owner())
+                    .map(|(_, settled)| settled),
+                Some(u64::from(paid)),
+                "series {series} does not hold exactly its paid units as settled"
+            );
+        }
+    }
+
+    /// Waiting past the notice is the only way to reach expiry: the deadline is
+    /// derived against the clock, and neither side writes anything when it passes.
+    fn lapse_notice(&self, world: &mut World) {
+        let port = world.validators.primary_port();
+        let url = world.rpc.url(port);
+        let nft = intex_nft(world);
+        let [series, _] = expiring_series(world);
+
+        let height = eth::block_number(&url).expect("head before the notice lapses");
+        let pool = eth::read_call_at(
             &url,
-            addresses::PROMIS_ADDR,
-            &IPromisNonce::opNonceOfCall { account: owner },
+            addresses::PROMIS_LIMIT_ADDR,
+            &eth::IPromisLimit::totalUnallocatedCall {},
+            height,
         )
-        .expect("read the owner's Promis op nonce");
-        let nonce = test_issuance::mine_nonce(owner, amount, series, 0)
-            .expect("a nonce clearing one leading zero byte");
-        let mac = outbe_tee_enclave::promis::modify_mac(
-            &keys.modify,
-            owner,
-            PromisOp::Mint,
-            amount,
-            op_nonce,
-            chain_b256(chain_id),
-        );
+        .expect("unallocated pool before the forfeit");
+        world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
 
-        test_issuance::mine_promis(
+        let deadline = venue_probes::series_call_deadline(&url, nft, series)
+            .expect("the expiring series carries a call deadline");
+        // A notice measured in days means the DEV profile never took, and the wait below
+        // would sit out the whole run for no reason anyone could see.
+        let notice = deadline.saturating_sub(u64::from(
+            venue_probes::series_called_at(&url, nft, series).expect("the series was Called"),
+        ));
+        assert!(
+            notice <= EXPIRY_BUCKET_SECS,
+            "call notice is {notice}s: the DEV parameter profile is not active, so this \
+             scenario would wait out the production window"
+        );
+        assert!(
+            deadline > 0,
+            "series {series} has no deadline, so it was never Called"
+        );
+        wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
+
+        // The notice above is waited out for real, but the sweep opens a bucket only once
+        // its hour has closed - so the group is re-queued on a deadline already behind a
+        // closed one rather than idling out the rest of the hour.
+        test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,
-            series,
-            u32::try_from(settled).expect("settled units fit a uint32"),
-            nonce,
-            mac,
-            op_nonce,
+            USD_ISO,
+            world
+                .state
+                .lifecycle_day
+                .expect("the lifecycle series were issued into a day"),
+            head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
         )
-        .expect("mine Promis from the settled units");
+        .expect("close the expiry bucket the group sits in");
     }
-}
 
-#[then("the settled units are burned and Promis is mined")]
-fn settled_burned_into_promis(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
+    /// One series was settled in part and one was never touched, so the credit owed
+    /// is the sum of what each still carries unrealized - never either tirage alone.
+    fn assert_forfeited(&self, world: &mut World) {
+        let port = world.validators.primary_port();
+        let url = world.rpc.url(port);
+        let nft = intex_nft(world);
+        let target_url = target_rpc_url(world);
+        let target_nft = target_intex_nft(world);
+        let owner = owner();
+        let (from, before) = world
+            .state
+            .entity_lifecycle
+            .pool_before_forfeit
+            .expect("the pool was read before the notice lapsed");
 
-    for series in &world.state.lifecycle_series {
-        assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, owner).map(|(_, settled)| settled),
-            Some(0),
-            "series {series} still holds settled units after mining"
-        );
-        // The engine counts what it burned, so the series' classes stay disjoint.
-        let counts = eth::read_call(
-            &url,
-            test_issuance::INTEX_FACTORY,
-            &IIntexFactoryCounts::seriesUnitCountsCall { seriesId: *series },
-        )
-        .expect("series unit counts");
-        assert_eq!(
-            counts.exercisedUnits, UNITS,
-            "series {series} did not count its exercised units"
-        );
-        assert_eq!(
-            counts.settledUnits, 0,
-            "series {series} left units counted as settled"
-        );
-    }
-    let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
-        .expect("derive owner Promis view key");
-    let expected_mint = U256::from(PROMIS_LOAD_MINOR)
-        * U256::from(UNITS)
-        * U256::from(world.state.lifecycle_series.len());
-    let before = world
-        .state
-        .promis_before_mining
-        .expect("Promis balance before mining");
-    assert_eq!(
-        promis_on_all_validators(world, &keys.view),
-        before
-            .checked_add(expected_mint)
-            .expect("expected Promis balance fits U256"),
-        "burned units did not mint the exact fixture Promis load"
-    );
-}
-
-/// The chain id as the enclave binds it into a MAC.
-fn chain_b256(chain_id: u64) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(U256::from(chain_id))
-}
-
-sol! {
-    interface IPromisNonce {
-        function opNonceOf(address account) external view returns (uint64);
-    }
-}
-
-sol! {
-    interface IIntexFactoryCounts {
-        struct UnitCounts {
-            uint32 issuedUnits;
-            uint32 activeUnits;
-            uint32 settledUnits;
-            uint32 exercisedUnits;
-            uint32 gemFactoryUnits;
-            uint32 forfeitedUnits;
-        }
-
-        function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
-    }
-}
-
-#[when("the call trigger holds above the call price across the call window")]
-fn call_trigger_holds(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let nft = intex_nft(world);
-    let series = *world
-        .state
-        .lifecycle_series
-        .first()
-        .expect("a series was issued");
-    let (_, _, call_price) = venue_probes::series_prices(&url, nft, series).expect("series prices");
-
-    // DEV calls a series whose VWAP cleared the trigger on two of the last three
-    // days. Seed those days rather than living through them: the Oracle's own
-    // arithmetic is not what this scenario is about, and the sweep still walks its
-    // index, checks the watermark and counts the days itself.
-    test_issuance::seed_day_vwaps(
-        &url,
-        DEPLOYER_KEY,
-        settlement_currency::USD_ISO,
-        CALL_THRESHOLD_DAYS,
-        U256::from(call_price) * U256::from(2),
-    )
-    .expect("seed the call-window VWAPs");
-}
-
-#[then("every series becomes Called")]
-fn both_series_called(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let deadline = Instant::now() + Duration::from_secs(CALL_SWEEP_TIMEOUT_SECS);
-
-    for series in world.state.lifecycle_series.clone() {
-        loop {
-            if venue_probes::series_state(&url, nft, series) == Some(CALLED) {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "series {series} never reached Called; the call sweep did not fire"
+        let mut expired = Vec::new();
+        for (series, settled_units) in expiring_series(world)
+            .into_iter()
+            .zip([EXPIRING_SETTLED_UNITS, 0])
+        {
+            let load = venue_probes::series_promis_load(&url, nft, series)
+                .expect("the expiring series carries a PROMIS load");
+            // Measured against the series' whole tirage, not one chain's balance: the
+            // units live on both chains, and only committee-side ones could be settled.
+            let tirage = venue_probes::series_issued_count(&url, nft, series)
+                .expect("the expiring series carries an issued count");
+            let unrealized = tirage
+                .checked_sub(settled_units)
+                .expect("the expiring series was issued with more units than it settled");
+            let (committee_issued, committee_settled) =
+                venue_probes::series_balances(&url, nft, series, owner)
+                    .expect("read what the owner still holds of the expiring series");
+            let (target_issued, target_settled) =
+                venue_probes::series_balances(&target_url, target_nft, series, owner)
+                    .expect("read what the owner still holds on the target chain");
+            assert_eq!(
+                committee_settled + target_settled,
+                u64::from(settled_units),
+                "series {series} did not end with exactly the settled part this asserts"
             );
-            sleep(Duration::from_secs(2));
+            assert_eq!(
+                committee_issued + target_issued,
+                u64::from(unrealized),
+                "the owner carries {} unrealized units of {series}, not {unrealized}: the \
+                 rest was settled or parked, and the forfeit is not what this asserts",
+                committee_issued + target_issued
+            );
+            assert!(
+                unrealized > 0,
+                "series {series} held nothing at the deadline, so the forfeit proves nothing"
+            );
+            expired.push((
+                series,
+                unrealized,
+                U256::from(load) * U256::from(unrealized),
+            ));
         }
+        let want = before
+            + expired
+                .iter()
+                .map(|(_, _, returned)| *returned)
+                .sum::<U256>();
+
+        poll_until(
+            FORFEIT_TIMEOUT,
+            || format!("unallocated PROMIS never reached {want} after the notice lapsed"),
+            || world.rpc.promis_limit_total_unallocated_on(port) == Some(want),
+        );
+        let height = finalized_checkpoint(world).height;
+        for (series, unrealized, returned) in expired {
+            assert_single_event(
+                &url,
+                addresses::INTEX_FACTORY_ADDR,
+                from,
+                height,
+                eth::IIntexFactory::SeriesExpired {
+                    seriesId: series,
+                    forfeitedUnits: unrealized,
+                    returnedPromis: returned,
+                },
+            );
+        }
+        assert_eq!(
+            eth::read_call_at(
+                &url,
+                addresses::PROMIS_LIMIT_ADDR,
+                &eth::IPromisLimit::totalUnallocatedCall {},
+                height,
+            ),
+            Some(want),
+            "the forfeit did not return exactly the unrealized load to the unallocated pool"
+        );
     }
-}
 
-#[when("the owner settles the remaining units inside the notice period")]
-fn settle_remainder(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let currency = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered");
-    let owner = crate::world::origin_venue::deployer_address();
-
-    for series in world.state.lifecycle_series.clone() {
-        let issued = venue_probes::series_balances(&url, nft, series, owner)
-            .expect("series balances")
-            .0;
-        assert_eq!(
-            issued,
-            u64::from(TARGET_UNITS - TRADABLE_HOP_UNITS),
-            "series {series} remaining issued units differ from fixture"
-        );
-        let units = u32::try_from(issued).expect("issued units fit a uint32");
-        let cost = test_issuance::quote_cost(&url, series, currency.asset, units)
-            .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
-        assert_eq!(
-            cost,
-            expected_settlement_cost() * U256::from(units),
-            "Called series {series} settlement quote differs from fixture"
-        );
-        let proof = settlement_note(
-            world,
+    /// The owner mines both paid series whole, into one Promis balance.
+    fn mine_paid(&self, world: &mut World) -> Vec<Mined> {
+        let url = world.rpc.url(world.validators.primary_port());
+        let nft = intex_nft(world);
+        let owner = owner();
+        let before = redeem::balance(world, Ledger::Promis, DEPLOYER_KEY, owner);
+        let mut amount = U256::ZERO;
+        for series in paid_series(world) {
+            assert_eq!(
+                venue_probes::series_balances(&url, nft, series, owner).map(|(_, settled)| settled),
+                Some(u64::from(UNITS)),
+                "series {series} must have every unit settled"
+            );
+            let promis = U256::from(PROMIS_LOAD_MINOR) * U256::from(UNITS);
+            let (mac, op_nonce) =
+                mint_authorization(world, Ledger::Promis, DEPLOYER_KEY, owner, promis);
+            let nonce = test_issuance::mine_nonce(owner, promis, series, 0)
+                .expect("a nonce clearing one leading zero byte");
+            test_issuance::mine_promis(&url, DEPLOYER_KEY, series, UNITS, nonce, mac.0, op_nonce)
+                .expect("mine Promis from the settled units");
+            // The engine counts what it burned, so the series' classes stay disjoint.
+            let counts = eth::read_call(
+                &url,
+                addresses::INTEX_FACTORY_ADDR,
+                &eth::IIntexFactory::seriesUnitCountsCall { seriesId: series },
+            )
+            .expect("series unit counts");
+            assert_eq!(
+                (counts.exercisedUnits, counts.settledUnits),
+                (UNITS, 0),
+                "series {series} did not count its settled units as exercised"
+            );
+            amount += promis;
+        }
+        vec![Mined {
             owner,
-            currency.asset,
-            expected_settlement_cost(),
-            units,
-        );
-        test_issuance::settle(&url, DEPLOYER_KEY, series, owner, units, &proof)
-            .expect("settle the remainder under Called");
+            owner_key: DEPLOYER_KEY.to_owned(),
+            ledger: Ledger::Promis,
+            before,
+            amount,
+        }]
+    }
+
+    fn assert_soulbound(&self, _world: &World) {
+        unreachable!("an issued Intex trades freely until it is called")
     }
 }
 
-#[then("no issued units remain of the pair being settled whole")]
-fn everything_settled(world: &mut World) {
+/// Part settled and part not, so the sweep has to return the load of the unrealized
+/// units alone rather than the tirage the series was issued with.
+#[when("the owner settles part of one series they let run out")]
+fn settle_part_of_expiring(world: &mut World) {
+    let [series, _] = expiring_series(world);
     let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
-
-    for series in &world.state.lifecycle_series {
-        assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, owner),
-            Some((0, u64::from(UNITS))),
-            "series {series} did not end with every unit settled"
-        );
-    }
-    assert_vault_payment(world, UNITS);
+    // Only the units that stayed on the committee can be settled: nothing brings this
+    // series home, and the rest expire where they are.
+    let issued = venue_probes::series_balances(&url, intex_nft(world), series, owner())
+        .expect("read what the owner holds of the expiring series")
+        .0;
+    assert!(
+        issued > u64::from(EXPIRING_SETTLED_UNITS),
+        "series {series} holds {issued} units here, too few to settle part and leave \
+         the rest to run out"
+    );
+    payment::pay(
+        world,
+        &Target {
+            item: Item::Series {
+                id: series,
+                units: EXPIRING_SETTLED_UNITS,
+            },
+            owner: owner(),
+            owner_key: DEPLOYER_KEY.to_owned(),
+            issuance_currency: 826,
+        },
+        Rail::PayNote,
+        USD_ISO,
+    );
 }
 
 #[when("a relay carries messages between the two chains")]
@@ -1021,123 +888,7 @@ fn bring_home(world: &mut World, amount: u32) {
     }
 }
 
-/// The two series left to run out: one settled in part, one never touched.
-fn expiring_series(world: &World) -> [alloy_primitives::FixedBytes<14>; 2] {
-    [
-        world
-            .state
-            .expiring_series
-            .expect("a series was issued to be settled in part"),
-        world
-            .state
-            .untouched_series
-            .expect("a series was issued to be left untouched"),
-    ]
-}
-
-/// Part settled and part not, so the sweep has to return the load of the unrealized
-/// units alone rather than the tirage the series was issued with.
-#[when("the owner settles part of one series they let run out")]
-fn settle_part_of_expiring(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let nft = intex_nft(world);
-    let currency = world
-        .state
-        .settlement_currency
-        .expect("settlement currency was registered");
-    let owner = crate::world::origin_venue::deployer_address();
-    let series = world
-        .state
-        .expiring_series
-        .expect("a series was issued to be left running out");
-
-    // Only the units that stayed on the committee can be settled: nothing brings this
-    // series home, and the rest expire where they are.
-    let issued = venue_probes::series_balances(&url, nft, series, owner)
-        .expect("read what the owner holds of the expiring series")
-        .0;
-    assert!(
-        issued > u64::from(EXPIRING_SETTLED_UNITS),
-        "series {series} holds {issued} units here, too few to settle part and leave \
-         the rest to run out"
-    );
-    let proof = settlement_note(
-        world,
-        owner,
-        currency.asset,
-        expected_settlement_cost(),
-        EXPIRING_SETTLED_UNITS,
-    );
-    test_issuance::settle(
-        &url,
-        DEPLOYER_KEY,
-        series,
-        owner,
-        EXPIRING_SETTLED_UNITS,
-        &proof,
-    )
-    .expect("settle part of the expiring series");
-}
-
-/// Waiting past the notice is the only way to reach expiry: the deadline is derived
-/// against the clock, and neither side writes anything when it passes.
-#[when("the call notice runs out on both of them")]
-fn notice_runs_out(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let nft = intex_nft(world);
-    let series = world
-        .state
-        .expiring_series
-        .expect("a series was issued to be left unsettled");
-
-    // Taken before the deadline so the forfeit shows up as a delta, not a total.
-    world.state.unallocated_before_expiry = Some(
-        world
-            .rpc
-            .promis_limit_total_unallocated_on(port)
-            .expect("read the unallocated PROMIS the forfeit will return into"),
-    );
-
-    let deadline = venue_probes::series_call_deadline(&url, nft, series)
-        .expect("the expiring series carries a call deadline");
-    // A notice measured in days means the DEV profile never took, and the wait below
-    // would sit out the whole run for no reason anyone could see.
-    let notice = deadline.saturating_sub(u64::from(
-        venue_probes::series_called_at(&url, nft, series).expect("the series was Called"),
-    ));
-    assert!(
-        notice <= 3600,
-        "call notice is {notice}s: the DEV parameter profile is not active, so this \
-         scenario would wait out the production window"
-    );
-    assert!(
-        deadline > 0,
-        "series {series} has no deadline, so it was never Called"
-    );
-    wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
-
-    // The notice above is waited out for real, but the sweep opens a bucket only once
-    // its hour has closed - so the group is re-queued on a deadline already behind a
-    // closed one rather than idling out the rest of the hour.
-    let now = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("committee head timestamp");
-    test_issuance::close_call_notice(
-        &url,
-        DEPLOYER_KEY,
-        settlement_currency::USD_ISO,
-        world
-            .state
-            .lifecycle_day
-            .expect("the lifecycle series were issued into a day"),
-        now.saturating_sub(EXPIRY_BUCKET_SECS),
-    )
-    .expect("close the expiry bucket the group sits in");
-}
-
-#[then("both series read Expired on both chains")]
+#[then("the series left to run out read Expired on both chains")]
 fn unsettled_series_expired(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let target_url = target_rpc_url(world);
@@ -1223,75 +974,61 @@ fn unsettled_series_expired(world: &mut World) {
     }
 }
 
-#[then("only their unrealized load returns to the unallocated pool")]
-fn forfeited_load_returns(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let nft = intex_nft(world);
-    let owner = crate::world::origin_venue::deployer_address();
-    let before = world
-        .state
-        .unallocated_before_expiry
-        .expect("the unallocated pool was read before the notice ran out");
+/// The two series left to run out: one settled in part, one never touched.
+fn expiring_series(world: &World) -> [FixedBytes<14>; 2] {
+    [
+        world
+            .state
+            .expiring_series
+            .expect("a series was issued to be settled in part"),
+        world
+            .state
+            .untouched_series
+            .expect("a series was issued to be left untouched"),
+    ]
+}
 
-    // One series was settled in part and one was never touched, so the credit owed is
-    // the sum of what each still carries unrealized - never either tirage on its own.
-    let mut want = alloy_primitives::U256::ZERO;
-    let target_url = target_rpc_url(world);
-    let target_nft = target_intex_nft(world);
+/// The two series paid for whole: issued in MYR, and in EUR.
+fn paid_series(world: &World) -> [FixedBytes<14>; 2] {
+    let [myr, eur] = world.state.lifecycle_series[..] else {
+        panic!("the scenario pays for two series")
+    };
+    [myr, eur]
+}
 
-    for (series, settled_units) in expiring_series(world)
-        .into_iter()
-        .zip([EXPIRING_SETTLED_UNITS, 0])
-    {
-        let load = venue_probes::series_promis_load(&url, nft, series)
-            .expect("the expiring series carries a PROMIS load");
-        // Measured against the series' whole tirage, not one chain's balance: the
-        // units live on both chains, and only committee-side ones could be settled.
-        let tirage = venue_probes::series_issued_count(&url, nft, series)
-            .expect("the expiring series carries an issued count");
-        let unrealized = tirage
-            .checked_sub(settled_units)
-            .expect("the expiring series was issued with more units than it settled");
-        let (committee_issued, committee_settled) =
-            venue_probes::series_balances(&url, nft, series, owner)
-                .expect("read what the owner still holds of the expiring series");
-        let (target_issued, target_settled) =
-            venue_probes::series_balances(&target_url, target_nft, series, owner)
-                .expect("read what the owner still holds on the target chain");
-        assert_eq!(
-            committee_settled + target_settled,
-            u64::from(settled_units),
-            "series {series} did not end with exactly the settled part this asserts"
-        );
-        assert_eq!(
-            committee_issued + target_issued,
-            u64::from(unrealized),
-            "the owner carries {} unrealized units of {series}, not {unrealized}: the \
-             rest was settled or parked, and the forfeit is not what this asserts",
-            committee_issued + target_issued
-        );
-        assert!(
-            unrealized > 0,
-            "series {series} held nothing at the deadline, so the forfeit proves nothing"
-        );
-        want += alloy_primitives::U256::from(load) * alloy_primitives::U256::from(unrealized);
+fn all_series(world: &World) -> [FixedBytes<14>; 4] {
+    let [myr, eur] = paid_series(world);
+    let [expiring, untouched] = expiring_series(world);
+    [myr, eur, expiring, untouched]
+}
+
+fn part(series: FixedBytes<14>, issuance_currency: u16, units: u32) -> Target {
+    Target {
+        item: Item::Series { id: series, units },
+        owner: owner(),
+        owner_key: DEPLOYER_KEY.to_owned(),
+        issuance_currency,
     }
+}
 
-    let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
-    loop {
-        let now = world
-            .rpc
-            .promis_limit_total_unallocated_on(port)
-            .expect("read the unallocated PROMIS after the forfeit");
-        if now == before + want {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "unallocated PROMIS went from {before} to {now}, expected {} back",
-            before + want
-        );
-        sleep(Duration::from_secs(2));
-    }
+fn owner() -> Address {
+    crate::world::origin_venue::deployer_address()
+}
+
+fn prices(world: &World, series: FixedBytes<14>) -> (u64, u64, u64) {
+    venue_probes::series_prices(
+        &world.rpc.url(world.validators.primary_port()),
+        intex_nft(world),
+        series,
+    )
+    .expect("series prices")
+}
+
+fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {
+    eth::read_call(
+        url,
+        addresses::INTEX_FACTORY_ADDR,
+        &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
+    )
+    .unwrap_or_else(|| panic!("series {series} qualification does not read back"))
 }

@@ -47,6 +47,23 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
                 snapshot: quote.snapshotId,
             }
         }
+        Item::Series { id, units } => {
+            let quote = eth::read_call(
+                &url,
+                addresses::INTEX_FACTORY_ADDR,
+                &eth::IIntexFactory::quoteSettlementCall {
+                    seriesId: *id,
+                    paymentToken: asset,
+                    amount: U256::from(*units),
+                },
+            )
+            .unwrap_or_else(|| panic!("series {id} does not quote a payment in {asset}"));
+            Quote {
+                currency: quote.settlementCurrency,
+                payable: quote.payableUnits,
+                snapshot: quote.snapshotId,
+            }
+        }
         Item::Nod(id) => {
             let quote = eth::read_call(
                 &url,
@@ -67,6 +84,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
 pub(crate) fn factory(target: &Target) -> Address {
     match target.item {
         Item::Gem(_) => addresses::GEM_FACTORY_ADDR,
+        Item::Series { .. } => addresses::INTEX_FACTORY_ADDR,
         Item::Nod(_) => addresses::NOD_FACTORY_ADDR,
     }
 }
@@ -184,6 +202,18 @@ fn settle_erc20(
                 snapshotId: snapshot,
             },
         ),
+        Item::Series { id, units } => send(
+            url,
+            payer_key,
+            addresses::INTEX_FACTORY_ADDR,
+            &eth::IIntexFactory::settleIntexCall {
+                seriesId: *id,
+                intexOwner: target.owner,
+                amount: U256::from(*units),
+                asset,
+                snapshotId: snapshot,
+            },
+        ),
         Item::Nod(id) => send(
             url,
             payer_key,
@@ -210,6 +240,17 @@ fn settle_paynote(
             addresses::GEM_FACTORY_ADDR,
             &eth::IGemFactory::settleGemWithPayNoteCall {
                 gemId: *id,
+                payNoteProof: proof.into(),
+            },
+        ),
+        Item::Series { id, units } => send(
+            url,
+            payer_key,
+            addresses::INTEX_FACTORY_ADDR,
+            &eth::IIntexFactory::settleIntexWithPayNoteCall {
+                seriesId: *id,
+                intexOwner: target.owner,
+                amount: U256::from(*units),
                 payNoteProof: proof.into(),
             },
         ),
@@ -254,6 +295,18 @@ fn assert_paid_event(
                 ),
                 (*id, target.owner, payable, currency),
                 "GemSettled does not record this payment"
+            );
+        }
+        // The series' record names the units; their cost shows only in the vault.
+        Item::Series { id, units } => {
+            let settled = eth::receipt_event::<eth::IIntexFactory::Settled>(
+                receipt,
+                addresses::INTEX_FACTORY_ADDR,
+            );
+            assert_eq!(
+                (settled.seriesId, settled.intexOwner, settled.amount),
+                (*id, target.owner, U256::from(*units)),
+                "Settled does not record this payment"
             );
         }
         Item::Nod(id) => {

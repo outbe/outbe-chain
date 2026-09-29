@@ -2,8 +2,9 @@
 //! mining what was not paid or is already gone. Each is read as the exact revert the
 //! product's own error type renders.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, FixedBytes, B256, U256};
 use outbe_gemfactory::errors::GemFactoryError;
+use outbe_intexfactory::errors::IntexFactoryError;
 use outbe_nodfactory::errors::NodFactoryError;
 
 use super::entity::{Item, Target};
@@ -12,6 +13,9 @@ use super::payment::{assert_refused, factory, quote, third_party_key};
 use crate::internal::eth;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
+
+/// `IntexState::Issued`, the stored state an unqualified series refuses payment in.
+const ISSUED_SERIES: u8 = 0;
 
 /// An ERC20 payment in USD, the reference rail, before the holding qualified.
 pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
@@ -24,6 +28,13 @@ pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
             factory(target),
             &erc20_gem(*id, asset, U256::ZERO),
             GemFactoryError::InvalidState,
+        ),
+        Item::Series { id, units } => assert_refused(
+            world,
+            payer,
+            factory(target),
+            &erc20_series(target, *id, *units, asset, U256::ZERO),
+            IntexFactoryError::NotSettleable(ISSUED_SERIES),
         ),
         Item::Nod(id) => assert_refused(
             world,
@@ -81,6 +92,40 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 },
             );
         }
+        Item::Series { id, units } => {
+            assert_refused(
+                world,
+                payer,
+                factory(target),
+                &erc20_series(target, *id, *units, myr, U256::ZERO),
+                IntexFactoryError::VwapSnapshotMismatch {
+                    authorized: U256::ZERO,
+                    required,
+                },
+            );
+            assert_refused(
+                world,
+                payer,
+                factory(target),
+                &erc20_series(target, *id, *units, eur, U256::ZERO),
+                IntexFactoryError::SettlementCurrencyMismatch(EUR_ISO),
+            );
+            assert_refused(
+                world,
+                target.owner,
+                factory(target),
+                &eth::IIntexFactory::settleIntexWithPayNoteCall {
+                    seriesId: *id,
+                    intexOwner: target.owner,
+                    amount: U256::from(*units),
+                    payNoteProof: note.into(),
+                },
+                IntexFactoryError::PayNoteOwnerMismatch {
+                    expected: target.owner,
+                    actual: payer,
+                },
+            );
+        }
         Item::Nod(id) => {
             assert_refused(
                 world,
@@ -126,6 +171,13 @@ pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
             &mine_gem(*id),
             GemFactoryError::InvalidState,
         ),
+        Item::Series { id, units } => assert_refused(
+            world,
+            target.owner,
+            factory(target),
+            &mine_series(target, *id, *units),
+            IntexFactoryError::InsufficientSettled,
+        ),
         Item::Nod(id) => assert_refused(
             world,
             target.owner,
@@ -145,6 +197,13 @@ pub(crate) fn assert_mined_unminable(world: &World, target: &Target) {
             factory(target),
             &mine_gem(*id),
             GemFactoryError::GemNotFound,
+        ),
+        Item::Series { id, units } => assert_refused(
+            world,
+            target.owner,
+            factory(target),
+            &mine_series(target, *id, *units),
+            IntexFactoryError::InsufficientSettled,
         ),
         Item::Nod(id) => assert_refused(
             world,
@@ -186,6 +245,37 @@ fn erc20_gem(id: U256, asset: Address, snapshot: U256) -> eth::IGemFactory::sett
 fn mine_gem(id: U256) -> eth::IGemFactory::minePromisCall {
     eth::IGemFactory::minePromisCall {
         gemId: id,
+        nonce: 0,
+        mac: B256::ZERO,
+        opNonce: 0,
+    }
+}
+
+fn erc20_series(
+    target: &Target,
+    id: FixedBytes<14>,
+    units: u32,
+    asset: Address,
+    snapshot: U256,
+) -> eth::IIntexFactory::settleIntexCall {
+    eth::IIntexFactory::settleIntexCall {
+        seriesId: id,
+        intexOwner: target.owner,
+        amount: U256::from(units),
+        asset,
+        snapshotId: snapshot,
+    }
+}
+
+fn mine_series(
+    target: &Target,
+    id: FixedBytes<14>,
+    units: u32,
+) -> eth::IIntexFactory::minePromisCall {
+    eth::IIntexFactory::minePromisCall {
+        seriesId: id,
+        owner: target.owner,
+        amount: U256::from(units),
         nonce: 0,
         mac: B256::ZERO,
         opNonce: 0,

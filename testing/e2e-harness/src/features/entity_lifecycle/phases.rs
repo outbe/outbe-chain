@@ -58,7 +58,7 @@ fn every_entity_qualifies(world: &mut World, entity: Entity) {
 }
 
 #[then(
-    expr = "a {entity} payment is refused for a stale snapshot, a foreign currency or another owner's note"
+    expr = "a/an {entity} payment is refused for a stale snapshot, a foreign currency or another owner's note"
 )]
 fn payment_guards(world: &mut World, entity: Entity) {
     let targets = entity.lifecycle().targets(world, Phase::Qualified);

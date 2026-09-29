@@ -650,16 +650,12 @@ pub struct FixtureState {
     pub target_contracts: Option<crate::world::target_chain::TargetContracts>,
     /// Addresses the origin-side deploy reported.
     pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
-    /// Units of each lifecycle series settled so far.
-    pub settled_units: u32,
     /// The Intex series the gem scenario parks to open its position.
     pub gem_source_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The merchant position those parked units opened.
     pub gem_position: Option<alloy_primitives::U256>,
     /// The gem lifecycle's gems, one per owner, in owner order.
     pub lifecycle_gems: Vec<alloy_primitives::U256>,
-    /// Promis held before mining, so the mined load shows as a delta.
-    pub promis_before_mining: Option<alloy_primitives::U256>,
     /// The Nod lifecycle's Nods, one per owner, in owner order.
     pub lifecycle_nods: Vec<alloy_primitives::U256>,
     /// What the shared lifecycle phases recorded.
@@ -674,8 +670,6 @@ pub struct FixtureState {
     pub untouched_series: Option<alloy_primitives::FixedBytes<14>>,
     /// The worldwide day the lifecycle series were issued into; the called group's key.
     pub lifecycle_day: Option<u32>,
-    /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
-    pub unallocated_before_expiry: Option<alloy_primitives::U256>,
     /// The stablecoin owners settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
@@ -734,7 +728,6 @@ impl Default for FixtureState {
             gem_source_series: None,
             gem_position: None,
             lifecycle_gems: Vec::new(),
-            promis_before_mining: None,
             lifecycle_nods: Vec::new(),
             #[cfg(feature = "ocomp-integration")]
             entity_lifecycle: Default::default(),
@@ -742,8 +735,6 @@ impl Default for FixtureState {
             expiring_series: None,
             untouched_series: None,
             lifecycle_day: None,
-            unallocated_before_expiry: None,
-            settled_units: 0,
             proposal_id: 1,
             proposed_version: None,
             activation_height: None,
