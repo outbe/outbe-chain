@@ -1,6 +1,6 @@
-//! What a gem supplies to the shared lifecycle: a merchant parks an Intex into a
-//! position and issues one gem to each of five owners, leaving capacity unissued. Two
-//! gems are paid while qualified, two inside the call notice, one is forfeited, and the
+//! What a Gem supplies to the shared lifecycle: a merchant parks an Intex into a
+//! position and issues one Gem to each of five owners, leaving capacity unissued. Two
+//! Gems are paid while qualified, two inside the call notice, one is forfeited, and the
 //! position ends by returning what it never issued.
 
 use std::thread::sleep;
@@ -25,7 +25,7 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
-/// The source series' entry price; the gems derive their own from it. Low enough that
+/// The source series' entry price; the Gems derive their own from it. Low enough that
 /// the controlled COEN/USD quote clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
 /// PROMIS-units per Intex unit, on the wire scale.
@@ -34,7 +34,7 @@ const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// of the holding keeps the burn visible against what stays.
 const UNITS: u32 = 8;
 const PARKED_UNITS: u32 = 6;
-/// Load per issued gem: five of them leave one unit's load unissued for the
+/// Load per issued Gem: five of them leave one unit's load unissued for the
 /// position's expiry to return.
 const GEM_LOAD_MINOR: u128 = 100_000;
 /// USD (840) as the reference, spelled `U` in the series id.
@@ -50,7 +50,7 @@ const HOLDER_SEED: u64 = 0x0e6e_0000;
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
-/// Once the bucket is closed the sweep reaches the gem in the next block or two.
+/// Once the bucket is closed the sweep reaches the Gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
 /// The expiry queue buckets deadlines by the hour they fall in.
 const EXPIRY_BUCKET_SECS: u64 = 3_600;
@@ -73,7 +73,7 @@ fn issue_source_series(world: &mut World) {
     let issuance_currency = world
         .state
         .issuance_market
-        .expect("the gem scenario prices an issuance market");
+        .expect("the Gem scenario prices an issuance market");
     assert_eq!(
         issuance_currency, MYR_ISO,
         "the source series is issued in MYR"
@@ -101,7 +101,7 @@ fn issue_source_series(world: &mut World) {
     )
     .expect("open the day the source series is issued into");
 
-    // One chain, one series: gems never leave the committee, so this scenario
+    // One chain, one series: Gems never leave the committee, so this scenario
     // needs neither a second venue nor a relay.
     let series = test_issuance::issue_series(
         &url,
@@ -143,7 +143,7 @@ fn issue_source_series(world: &mut World) {
     world.state.gem_source_series = Some(series);
 }
 
-#[when("the merchant parks part of their units into a gem position")]
+#[when("the merchant parks part of their units into a Gem position")]
 fn park_units(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let merchant = crate::world::origin_venue::deployer_address();
@@ -160,8 +160,8 @@ fn park_units(world: &mut World) {
     }
     let parked =
         eth::send_call_outcome(&url, addresses::GEM_FACTORY_ADDR, DEPLOYER_KEY, &call, None)
-            .expect("park units into a gem position");
-    assert_mined_success(&parked, "park units into a gem position");
+            .expect("park units into a Gem position");
+    assert_mined_success(&parked, "park units into a Gem position");
 
     // The position is a single-owner NFT, and this is the merchant's first.
     let position_id = eth::read_call(
@@ -204,7 +204,7 @@ fn position_holds_capacity(world: &mut World) {
     );
 }
 
-#[when("the merchant issues a gem to each of five owners, leaving capacity unissued")]
+#[when("the merchant issues a Gem to each of five owners, leaving capacity unissued")]
 fn issue_five_gems(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let position_id = world.state.gem_position.expect("a position was parked");
@@ -231,14 +231,14 @@ fn issue_five_gems(world: &mut World) {
             },
             None,
         )
-        .expect("issue a merchant gem");
-        assert_mined_success(&issued, "issue a merchant gem");
+        .expect("issue a merchant Gem");
+        assert_mined_success(&issued, "issue a merchant Gem");
         let gem_id = eth::receipt_event::<eth::IGemFactory::GemIssued>(
             &issued.receipt,
             addresses::GEM_FACTORY_ADDR,
         )
         .gemId;
-        // Qualification and the call count only days a gem held in full: stamp it
+        // Qualification and the call count only days a Gem held in full: stamp it
         // behind every day the scenario seeds.
         eth::send_call(
             &url,
@@ -251,7 +251,7 @@ fn issue_five_gems(world: &mut World) {
             },
             None,
         )
-        .expect("backdate the gem's issuance stamp");
+        .expect("backdate the Gem's issuance stamp");
         gems.push(gem_id);
     }
     world.state.lifecycle_gems = gems;
@@ -290,7 +290,7 @@ impl Lifecycle for GemLifecycle {
 
     fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
         let Item::Gem(id) = item else {
-            unreachable!("a gem scenario pays only for gems")
+            unreachable!("a Gem scenario pays only for Gems")
         };
         let data = read_gem(world, *id);
         (data.entryPrice, data.promisLoad)
@@ -301,7 +301,7 @@ impl Lifecycle for GemLifecycle {
         assert_eq!(
             position.remainingCapacity,
             unissued_capacity(),
-            "issuing the gems did not drain exactly their load from the position"
+            "issuing the Gems did not drain exactly their load from the position"
         );
         assert_eq!(
             (position.issuanceCurrency, position.referenceCurrency),
@@ -312,33 +312,33 @@ impl Lifecycle for GemLifecycle {
         for index in 0..HOLDERS {
             let id = gem(world, index);
             let data = read_gem(world, id);
-            assert_eq!(data.state, ISSUED, "gem {id} was not born Issued");
+            assert_eq!(data.state, ISSUED, "Gem {id} was not born Issued");
             assert!(!gem_is_qualified(&world_url(world), id));
             assert_eq!(data.calledAt, 0);
             assert_eq!(
                 data.owner,
                 owner_address(index),
-                "gem {id} went to the wrong owner"
+                "Gem {id} went to the wrong owner"
             );
             assert_eq!(
                 data.gemType, MERCHANT_GEM_TYPE,
-                "a gem issued from a parked position is a Merchant gem"
+                "a Gem issued from a parked position is a Merchant Gem"
             );
             assert_eq!(data.promisLoad, U256::from(GEM_LOAD_MINOR));
             assert_eq!(
                 (data.issuanceCurrency, data.referenceCurrency),
                 (position.issuanceCurrency, position.referenceCurrency),
-                "gem {id} does not inherit the position's currencies"
+                "Gem {id} does not inherit the position's currencies"
             );
             // The anti-dilution floor: never below the Intex the position came from.
             assert!(
                 data.entryPrice >= position.sourceEntryPrice,
-                "gem {id} priced below the Intex it was parked from"
+                "Gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(
                 (data.entryPrice, data.floorPrice, data.callPrice),
                 (first.entryPrice, first.floorPrice, first.callPrice),
-                "every gem must share one set of terms"
+                "every Gem must share one set of terms"
             );
         }
     }
@@ -366,17 +366,17 @@ impl Lifecycle for GemLifecycle {
     fn assert_paid_settled(&self, world: &World) {
         for paid in &world.state.entity_lifecycle.payments {
             let Item::Gem(id) = paid.target.item else {
-                unreachable!("a gem scenario pays only for gems")
+                unreachable!("a Gem scenario pays only for Gems")
             };
             assert_eq!(
                 read_gem(world, id).state,
                 SETTLED,
-                "paid gem {id} left Settled"
+                "paid Gem {id} left Settled"
             );
         }
     }
 
-    /// Wait out the notice on the chain's own clock, then re-queue the gem on a
+    /// Wait out the notice on the chain's own clock, then re-queue the Gem on a
     /// deadline already behind a closed bucket. Only the wait for the rest of the
     /// bucket's hour is skipped, which the sweep would otherwise impose on a DEV
     /// notice measured in minutes.
@@ -394,7 +394,7 @@ impl Lifecycle for GemLifecycle {
         let notice_end = called.calledAt + notice + EXPIRY_MARGIN_SECS;
         poll_until(
             Duration::from_secs(notice + CALL_TIMEOUT_SECS),
-            || format!("gem {id} never reached its call deadline {notice_end}"),
+            || format!("Gem {id} never reached its call deadline {notice_end}"),
             || head_time(world) >= notice_end,
         );
         eth::send_call(
@@ -407,7 +407,7 @@ impl Lifecycle for GemLifecycle {
             },
             None,
         )
-        .expect("close the expiry bucket the gem sits in");
+        .expect("close the expiry bucket the Gem sits in");
     }
 
     fn assert_forfeited(&self, world: &mut World) {
@@ -415,7 +415,7 @@ impl Lifecycle for GemLifecycle {
         let id = gem(world, FORFEITED);
         poll_until(
             FORFEIT_TIMEOUT,
-            || format!("gem {id} outlived its call notice; the forfeit sweep never burned it"),
+            || format!("Gem {id} outlived its call notice; the forfeit sweep never burned it"),
             || gem_count(&url, owner_address(FORFEITED)).is_zero(),
         );
         assert!(
@@ -425,7 +425,7 @@ impl Lifecycle for GemLifecycle {
                 &eth::IGem::getGemStatusCall { gemId: id }
             )
             .is_none(),
-            "a forfeited gem must not be readable"
+            "a forfeited Gem must not be readable"
         );
         assert_expiry_returns(world, finalized_checkpoint(world).height, false);
     }
@@ -457,7 +457,7 @@ impl Lifecycle for GemLifecycle {
                     None,
                 )
                 .expect("submit Promis mining");
-                assert_mined_success(&outcome, "mine Promis from the paid gem");
+                assert_mined_success(&outcome, "mine Promis from the paid Gem");
                 Mined {
                     owner,
                     owner_key: key,
@@ -527,7 +527,7 @@ fn unissued_capacity() -> U256 {
         - U256::from(GEM_LOAD_MINOR) * U256::from(HOLDERS)
 }
 
-/// Since the baseline the pool gained exactly the forfeited gem's load, plus the
+/// Since the baseline the pool gained exactly the forfeited Gem's load, plus the
 /// position's unissued rest once the position has expired too.
 fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bool) {
     let url = world_url(world);
@@ -658,7 +658,7 @@ fn gem_count(url: &str, owner: Address) -> U256 {
         addresses::GEM_ADDR,
         &eth::IGem::balanceOfCall { owner },
     )
-    .expect("the gem collection answers a balance read")
+    .expect("the Gem collection answers a balance read")
 }
 
 fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
@@ -667,7 +667,7 @@ fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
         addresses::GEM_ADDR,
         &eth::IGem::getGemStatusCall { gemId: gem_id },
     )
-    .unwrap_or_else(|| panic!("gem {gem_id} does not read back"))
+    .unwrap_or_else(|| panic!("Gem {gem_id} does not read back"))
 }
 
 pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {
@@ -676,5 +676,5 @@ pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {
         addresses::GEM_ADDR,
         &eth::IGem::isQualifiedCall { gemId: gem_id },
     )
-    .unwrap_or_else(|| panic!("gem {gem_id} qualification does not read back"))
+    .unwrap_or_else(|| panic!("Gem {gem_id} qualification does not read back"))
 }

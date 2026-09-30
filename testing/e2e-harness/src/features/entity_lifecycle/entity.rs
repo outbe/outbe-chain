@@ -11,7 +11,7 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Parameter)]
-#[param(name = "entity", regex = "gem|Intex series|Nod")]
+#[param(name = "entity", regex = "Gem|Intex series|Nod")]
 pub(crate) enum Entity {
     Gem,
     Series,
@@ -23,7 +23,7 @@ impl FromStr for Entity {
 
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
-            "gem" => Ok(Self::Gem),
+            "Gem" => Ok(Self::Gem),
             "Intex series" => Ok(Self::Series),
             "Nod" => Ok(Self::Nod),
             other => Err(format!("unknown lifecycle entity {other:?}")),
@@ -98,7 +98,7 @@ impl FromStr for Currency {
     }
 }
 
-/// What one payment settles: a whole gem or Nod, or some units of one Intex series.
+/// What one payment settles: a whole Gem or Nod, or some units of one Intex series.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Item {
     Gem(U256),
