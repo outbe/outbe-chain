@@ -549,6 +549,25 @@
   },
   {
     "type": "event",
+    "name": "GemExpiryDeferred",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "retryAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MetadataUpdate",
     "inputs": [
       {

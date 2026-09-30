@@ -4,7 +4,7 @@ use outbe_primitives::{
     address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
     daily_sweep::{Scheduled, SweepDays},
-    error::Result,
+    error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     time::{previous_date_key, timestamp_to_date_key},
 };
@@ -282,18 +282,20 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 slot += 1;
                 continue;
             }
+            // Out of this bucket either way, so an entry that does not burn cannot hold the day
+            // back; a Called gem among them is retried later rather than lost.
             match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
                 Ok(true) => burned = burned.saturating_add(1),
-                // Due and still not burning: the entry no longer matches its gem.
-                // Out of the bucket either way, so it cannot hold the day back.
                 Ok(false) => {
-                    tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
-                    gem.remove_called(gem_id)?;
+                    if !gem.requeue_or_drop(gem_id, now)? {
+                        tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
+                    }
                 }
-                Err(error) => {
-                    tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: quarantining gem");
-                    gem.remove_called(gem_id)?;
+                Err(error) if is_deterministic(&error) => {
+                    let deferred = gem.requeue_or_drop(gem_id, now)?;
+                    tracing::warn!(target: "outbe::gem", %gem_id, deferred, error = ?error, "expiry sweep: forfeit failed");
                 }
+                Err(error) => return Err(error),
             }
             slot += 1;
         }
@@ -307,11 +309,20 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         gem.expiry_cursor.write(0)?;
         // Anything left broke the invariant above; retiring it keeps the tree moving.
         if gem.expiry_bucket_live.read(&day)? != 0 {
-            let dropped = gem.force_retire_bucket(day)?;
-            tracing::warn!(target: "outbe::gem", day, dropped, "expiry sweep: bucket outlived its day, retiring it");
+            let (deferred, dropped) = gem.force_retire_bucket(day, now)?;
+            tracing::warn!(target: "outbe::gem", day, deferred, dropped, "expiry sweep: bucket outlived its hour, retiring it");
         }
     }
     Ok(burned)
+}
+
+/// A revert belongs to the block's outcome; any other error is this node's own fault and
+/// must fail the block rather than turn into a state change only this node makes.
+fn is_deterministic(error: &PrecompileError) -> bool {
+    matches!(
+        error,
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+    )
 }
 
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,

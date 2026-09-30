@@ -1134,16 +1134,105 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
+        let retry = GemContract::deadline_bucket(GemContract::bucket_end(bucket)) + 1;
         assert_eq!(
             gem.first_expiry_day().unwrap(),
-            None,
+            Some(retry),
             "the bucket leaves the tree instead of blocking every later one"
         );
         assert_eq!(
-            gem.called_bucket_slot.read(&gem_id).unwrap(),
-            0,
-            "and the gem stops pointing at a slot it no longer owns"
+            gem.called_deadline.read(&gem_id).unwrap(),
+            deadline,
+            "and its Called gem waits at its own deadline again"
         );
+
+        let ctx = block_ctx_at(storage, GemContract::bucket_end(retry));
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+        assert!(api::get_gem(storage, gem_id).unwrap().is_none());
+    });
+}
+
+/// A Called gem whose forfeit fails is not lost: it moves to the next hour, then burns.
+#[test]
+fn a_called_gem_whose_forfeit_fails_is_deferred_and_burned_later() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = mature_gem(&storage);
+        let load = api::get_gem(&storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .promis_load_minor;
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+        let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
+        // The credit overflows, so the forfeit reverts as a whole.
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .set_total_unallocated(U256::MAX)
+            .unwrap();
+
+        let now = GemContract::bucket_end(bucket);
+        let ctx = block_ctx_at(&storage, now);
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+
+        let retry = GemContract::deadline_bucket(now) + 1;
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
+        assert_eq!(gem.first_expiry_day().unwrap(), Some(retry));
+        (gem_id, load, retry)
+    });
+
+    let deferred: Vec<U256> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
+        .map(|event| event.gemId)
+        .collect();
+    assert_eq!(deferred, vec![gem_id]);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .set_total_unallocated(U256::ZERO)
+            .unwrap();
+        let ctx = block_ctx_at(&storage, GemContract::bucket_end(retry));
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+
+        assert!(api::get_gem(&storage, gem_id).unwrap().is_none());
+        assert_eq!(unallocated(&storage), load);
+    });
+}
+
+/// A storage fault is this node's own: it fails the block instead of moving the gem.
+#[test]
+fn a_storage_fault_in_a_forfeit_fails_the_block() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = mature_gem(&storage);
+        GemContract::new(storage.clone())
+            .mark_called(gem_id, T_NOW)
+            .unwrap();
+        let now = GemContract::bucket_end(GemContract::deadline_bucket(T_NOW + 7 * 86_400));
+        (gem_id, now)
+    });
+
+    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = block_ctx_at(&storage, now);
+        let error =
+            <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
+                &ctx,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::Storage(_)
+        ));
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
     });
 }
 

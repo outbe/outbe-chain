@@ -272,14 +272,36 @@ impl GemContract<'_> {
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        let day = Self::deadline_bucket(deadline);
+        self.place_in_expiry_bucket(gem_id, Self::deadline_bucket(deadline))?;
+        self.called_deadline.write(&gem_id, deadline)
+    }
+
+    /// Put a Called gem back in the queue at its own deadline, never before the next
+    /// hour; an entry whose gem is gone or no longer Called leaves the queue instead.
+    pub(crate) fn requeue_or_drop(&mut self, gem_id: U256, now: u64) -> Result<bool> {
+        let item = self.gem_items.get(gem_id)?;
+        self.remove_called(gem_id)?;
+        let Some(item) = item.filter(|item| item.state == GemState::Called as u8) else {
+            return Ok(false);
+        };
+        let deadline = item.called_at + u64::from(item.call_notice_period_seconds);
+        let day = Self::deadline_bucket(deadline).max(Self::deadline_bucket(now) + 1);
+        self.place_in_expiry_bucket(gem_id, day)?;
+        self.called_deadline.write(&gem_id, deadline)?;
+        self.emit(IGem::GemExpiryDeferred {
+            gemId: gem_id,
+            retryAt: Self::bucket_end(day),
+        })?;
+        Ok(true)
+    }
+
+    fn place_in_expiry_bucket(&mut self, gem_id: U256, day: u32) -> Result<()> {
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), gem_id)?;
         self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
         self.called_bucket_slot
             .write(&gem_id, Self::packed_slot(day, slot))?;
-        self.called_deadline.write(&gem_id, deadline)?;
 
         let live = self.expiry_bucket_live.read(&day)?;
         self.expiry_bucket_live
@@ -356,10 +378,11 @@ impl GemContract<'_> {
         Ok((!id.is_zero()).then_some(id))
     }
 
-    /// Drop whatever is left of a bucket the sweep has finished.
-    pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
+    /// Retire a bucket the sweep has finished: a Called gem still in it moves on, a
+    /// stale entry goes. Returns how many were deferred and dropped.
+    pub(crate) fn force_retire_bucket(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
         let len = self.expiry_bucket_len.read(&day)?;
-        let mut dropped = 0u32;
+        let (mut deferred, mut dropped) = (0u32, 0u32);
         for slot in 0..len {
             let gem_id = self
                 .expiry_bucket_at
@@ -367,8 +390,11 @@ impl GemContract<'_> {
             if gem_id.is_zero() {
                 continue;
             }
-            self.remove_called(gem_id)?;
-            dropped += 1;
+            if self.requeue_or_drop(gem_id, now)? {
+                deferred += 1;
+            } else {
+                dropped += 1;
+            }
         }
         self.expiry_bucket_len.clear(&day)?;
         self.expiry_bucket_live.clear(&day)?;
@@ -377,7 +403,7 @@ impl GemContract<'_> {
             self.expiry_sweep_day.write(0)?;
             self.expiry_cursor.write(0)?;
         }
-        Ok(dropped)
+        Ok((deferred, dropped))
     }
 
     pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
