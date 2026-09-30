@@ -434,27 +434,27 @@ where
                         })
                 },
                 |domain, raw_id| match domain {
-                    CeDomain::Tribute => match runtime.bodies.tribute().get_stored_body(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
-                    CeDomain::NodItem => match runtime.bodies.nod().get_stored_item(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
-                    CeDomain::NodBucket => match runtime.bodies.nod().get_stored_bucket(raw_id) {
-                        Ok(Some(body)) => Some(body.encode()),
-                        Ok(None) | Err(_) => {
-                            runtime.bodies.report_unavailable();
-                            None
-                        }
-                    },
+                    CeDomain::Tribute => runtime
+                        .bodies
+                        .tribute()
+                        .get_stored_body(raw_id)
+                        .ok()
+                        .flatten()
+                        .map(|body| body.encode()),
+                    CeDomain::NodItem => runtime
+                        .bodies
+                        .nod()
+                        .get_stored_item(raw_id)
+                        .ok()
+                        .flatten()
+                        .map(|body| body.encode()),
+                    CeDomain::NodBucket => runtime
+                        .bodies
+                        .nod()
+                        .get_stored_bucket(raw_id)
+                        .ok()
+                        .flatten()
+                        .map(|body| body.encode()),
                 },
             )
         })
