@@ -128,6 +128,8 @@ pub(crate) trait Lifecycle: Sync {
     fn floor(&self, world: &World) -> U256;
     /// The call price every entity of the scenario shares.
     fn call_price(&self, world: &World) -> U256;
+    /// The entry price and load a payment for `item` is priced on, as the holding records them.
+    fn terms(&self, world: &World, item: &Item) -> (U256, U256);
     fn assert_issued(&self, world: &mut World);
     fn qualified(&self, world: &World) -> bool;
     /// The two holdings paid in `phase`, in the order the scenario names their payments.

@@ -19,7 +19,7 @@ use crate::world::World;
 const USD_ISO: u16 = 840;
 const MOCK_PRICE: &str = "1.000000";
 pub(crate) const MOCK_VOLUME: &str = "1000.000000";
-const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+pub(crate) const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
 const PUBLICATION_TIMEOUT: Duration = Duration::from_secs(180);

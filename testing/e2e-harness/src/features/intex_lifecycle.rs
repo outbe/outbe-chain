@@ -39,8 +39,9 @@ sol! {
 }
 
 /// Every series carries the same entry price, so their call prices share a bin and
-/// one sweep pass calls them together.
-const ENTRY_PRICE_MINOR: u64 = 1_000_000;
+/// one sweep pass calls them together. Low enough that the controlled COEN/USD quote
+/// clears the call price.
+const ENTRY_PRICE_MINOR: u64 = 800_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// Units each series mints per chain. The holding is split so bringing units home
@@ -374,6 +375,22 @@ impl Lifecycle for IntexLifecycle {
         U256::from(prices(world, paid_series(world)[0]).2)
     }
 
+    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+        let Item::Series { id, units } = item else {
+            unreachable!("an Intex scenario pays only for series")
+        };
+        let load = venue_probes::series_promis_load(
+            &world.rpc.url(world.validators.primary_port()),
+            intex_nft(world),
+            *id,
+        )
+        .expect("series promis load");
+        (
+            U256::from(prices(world, *id).0),
+            U256::from(load) * U256::from(*units),
+        )
+    }
+
     fn assert_issued(&self, world: &mut World) {
         let url = world.rpc.url(world.validators.primary_port());
         let nft = intex_nft(world);
@@ -668,19 +685,22 @@ fn settle_part_of_expiring(world: &mut World) {
         "series {series} holds {issued} units here, too few to settle part and leave \
          the rest to run out"
     );
+    let item = Item::Series {
+        id: series,
+        units: EXPIRING_SETTLED_UNITS,
+    };
+    let terms = IntexLifecycle.terms(world, &item);
     payment::pay(
         world,
         &Target {
-            item: Item::Series {
-                id: series,
-                units: EXPIRING_SETTLED_UNITS,
-            },
+            item,
             owner: owner(),
             owner_key: DEPLOYER_KEY.to_owned(),
             issuance_currency: 826,
         },
         Rail::PayNote,
         USD_ISO,
+        terms,
     );
 }
 

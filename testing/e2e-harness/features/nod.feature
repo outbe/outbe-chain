@@ -7,7 +7,8 @@ Feature: Nod from issuance to Gratis and COEN
   # Every Nod is issued in MYR against a USD reference. Two are paid while qualified
   # and two inside the call notice, one on each rail and in each currency; the MYR
   # payments price off a closed pricing window, so the committee steps past the next
-  # whole hour once the quotes are finalized. The fifth Nod is left to forfeit.
+  # whole hour once the Nods are issued and the quotes finalized. The fifth Nod is
+  # left to forfeit.
   #
   # Time is seeded rather than lived through. Qualification and the call count only
   # closed days after the bucket's stamp, so the bucket is stamped behind the seeded
@@ -18,12 +19,12 @@ Feature: Nod from issuance to Gratis and COEN
     And the deploy account is funded on the committee chain
     When the settlement currencies are registered on the committee chain
     Then owners may settle in each of them
-    And the controlled COEN quotes are finalized through the real price feeder
-    And the pricing window closes over those quotes
     When five owners are issued Nods in one bucket
     Then every Nod reads Issued and carries its terms
     And no Nod can be paid before it qualifies
     And no Nod can be transferred
+    And the controlled COEN quotes are finalized through the real price feeder
+    And the pricing window closes over those quotes
     When the reference rate stands above the Nod floor
     Then every Nod qualifies
     And a Nod payment is refused for a stale snapshot, a foreign currency or another owner's note

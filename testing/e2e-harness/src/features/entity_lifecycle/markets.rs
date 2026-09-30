@@ -23,7 +23,7 @@ alloy_sol_types::sol! {
 pub(crate) const MYR_ISO: u16 = 458;
 /// Ringgit per COEN on the controlled feed, at six decimals.
 pub(crate) const MYR_RATE_MINOR: u64 = 4_500_000;
-/// Euro: registered with its own vault but foreign to every lifecycle entity.
+/// Euro: registered with its own vault, and foreign to the MYR-issued holdings.
 pub(crate) const EUR_ISO: u16 = 978;
 /// Scenarios with this tag price and settle in MYR as well as USD.
 const ISSUANCE_MARKET_TAG: &str = "myr-issuance";
@@ -57,6 +57,15 @@ pub(crate) fn genesis_oracle_pairs(world: &World) -> Option<Vec<(String, String,
         ),
         ("COEN".into(), iso.to_string(), MYR_RATE_MINOR.to_string()),
     ])
+}
+
+/// COEN in `iso` on the controlled feed, which every closed window and seeded day repeats.
+pub(crate) fn coen_rate(iso: u16) -> U256 {
+    match iso {
+        settlement_currency::USD_ISO => crate::features::price_oracle::EXPECTED_RATE,
+        MYR_ISO => U256::from(MYR_RATE_MINOR),
+        other => panic!("no controlled COEN quote in {other}"),
+    }
 }
 
 /// The currencies a lifecycle scenario prices: USD, and its issuance market if it has one.
@@ -119,7 +128,6 @@ fn register_settlement_currencies(world: &mut World) {
         let currency = register_currency(world, iso);
         world.state.currencies.insert(iso, currency);
     }
-    world.state.settlement_currency = Some(currency(world, settlement_currency::USD_ISO));
 }
 
 #[then("owners may settle in each of them")]

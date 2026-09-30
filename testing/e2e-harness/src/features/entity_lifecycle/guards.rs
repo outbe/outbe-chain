@@ -9,7 +9,7 @@ use outbe_nodfactory::errors::NodFactoryError;
 
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
-use super::payment::{assert_refused, factory, quote, third_party_key};
+use super::payment::{assert_mined_refusal, assert_refused, factory, quote, third_party_key};
 use crate::internal::eth;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
@@ -144,17 +144,15 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 &erc20_nod(*id, eur, U256::ZERO),
                 NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
             );
-            assert_refused(
+            // A Nod settles its compressed body before the note is spent, which only a
+            // block executes: this refusal is read off a mined transaction.
+            assert_mined_refusal(
                 world,
-                target.owner,
+                &target.owner_key,
                 factory(target),
                 &eth::INodFactory::settleNodWithPayNoteCall {
                     nodId: *id,
                     payNoteProof: note.into(),
-                },
-                NodFactoryError::PayNoteOwnerMismatch {
-                    expected: target.owner,
-                    actual: payer,
                 },
             );
         }

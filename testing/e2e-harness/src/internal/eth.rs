@@ -35,7 +35,7 @@ use tokio::runtime::Runtime;
 /// Supplying a limit prevents the provider from estimating gas first: an
 /// intentional contract revert is then submitted and observed through its
 /// mined receipt instead of being returned as a preflight RPC error.
-const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
+pub(crate) const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 
 /// Maximum fee accepted for a transaction intended for the next block.
 ///

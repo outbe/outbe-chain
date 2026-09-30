@@ -25,8 +25,9 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
-/// The source series' entry price; the gems derive their own from it.
-const ENTRY_PRICE_MINOR: u64 = 1_000_000;
+/// The source series' entry price; the gems derive their own from it. Low enough that
+/// the controlled COEN/USD quote clears the call price.
+const ENTRY_PRICE_MINOR: u64 = 800_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// Units minted to the merchant, and how many of them are parked. Parking part
@@ -285,6 +286,14 @@ impl Lifecycle for GemLifecycle {
 
     fn call_price(&self, world: &World) -> U256 {
         read_gem(world, gem(world, 0)).callPrice
+    }
+
+    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+        let Item::Gem(id) = item else {
+            unreachable!("a gem scenario pays only for gems")
+        };
+        let data = read_gem(world, *id);
+        (data.entryPrice, data.promisLoad)
     }
 
     fn assert_issued(&self, world: &mut World) {

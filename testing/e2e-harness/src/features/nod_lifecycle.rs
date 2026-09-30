@@ -42,7 +42,8 @@ alloy_sol_types::sol! {
 
 /// A Nod's id derives from its owner and day, so one bucket needs an owner per Nod.
 const HOLDER_SEED: u64 = 0x0e0d_0000;
-const ENTRY_PRICE_MINOR: u64 = 1_000_000;
+/// Low enough that the controlled COEN/USD quote clears even the call price.
+const ENTRY_PRICE_MINOR: u64 = 250_000;
 const GRATIS_LOAD_MINOR: u64 = 5_000_000;
 /// `effectiveState` of `INod.NodData`.
 const ISSUED: u8 = 0;
@@ -104,6 +105,14 @@ impl Lifecycle for NodLifecycle {
 
     fn call_price(&self, world: &World) -> U256 {
         read_nod(world, nod(world, 0)).callPriceMinor
+    }
+
+    fn terms(&self, world: &World, item: &Item) -> (U256, U256) {
+        let Item::Nod(id) = item else {
+            unreachable!("a Nod scenario pays only for Nods")
+        };
+        let data = read_nod(world, *id);
+        (data.entryPriceMinor, data.gratisLoadMinor)
     }
 
     fn assert_issued(&self, world: &mut World) {

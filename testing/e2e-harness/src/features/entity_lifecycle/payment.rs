@@ -6,7 +6,7 @@ use alloy_sol_types::SolCall;
 
 use super::chain::{finalized_checkpoint, verify_checkpoint};
 use super::entity::{Item, Rail, Target};
-use super::markets::currency;
+use super::markets::{coen_rate, currency};
 use crate::features::settlement::{assert_mined_success, fund_and_approve};
 use crate::internal::{addresses, eth};
 use crate::world::settlement_currency::{self, SettlementCurrency};
@@ -99,9 +99,16 @@ pub(crate) fn third_party_key(world: &World) -> String {
 }
 
 /// Pay for `target` in `iso` on `rail`: ERC20 from a third party, PayNote from the owner,
-/// whose note the proof has to name. The payment must credit the currency's vault by
-/// exactly the quote, which [`assert_payments_settled`] checks once finalized.
-pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16) -> Payment {
+/// whose note the proof has to name. The quote must be what `terms` cost in `iso`, and
+/// the payment must credit the currency's vault by exactly the quote, which
+/// [`assert_payments_settled`] checks once finalized.
+pub(crate) fn pay(
+    world: &World,
+    target: &Target,
+    rail: Rail,
+    iso: u16,
+    terms: (U256, U256),
+) -> Payment {
     assert!(
         target.accepts(iso),
         "{:?} pays in USD or its issuance currency {}, not {iso}",
@@ -118,9 +125,10 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16) -> Payme
         "{:?} quoted the wrong settlement currency",
         target.item
     );
-    assert!(
-        !quoted.payable.is_zero(),
-        "{:?} quoted a zero settlement cost",
+    assert_eq!(
+        quoted.payable,
+        cost(terms, iso),
+        "{:?} quoted a cost its terms do not give in {iso}",
         target.item
     );
 
@@ -182,6 +190,13 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16) -> Payme
         before,
         after: receipt_block(&outcome.receipt),
     }
+}
+
+/// Entry price times load at twelve decimals, at least one reference minor unit,
+/// converted through the controlled COEN quotes and floored once to six decimals.
+fn cost((entry, load): (U256, U256), iso: u16) -> U256 {
+    let scale = U256::from(1_000_000);
+    (entry * load).max(scale) * coen_rate(iso) / (coen_rate(settlement_currency::USD_ISO) * scale)
 }
 
 fn settle_erc20(
@@ -357,6 +372,28 @@ pub(crate) fn assert_payments_settled(world: &World, payments: &[Payment]) {
         }
     }
     verify_checkpoint(world, checkpoint);
+}
+
+/// The transaction is mined and reverts inside its gas limit, so a guard refused it
+/// rather than the gas running out.
+pub(crate) fn assert_mined_refusal<C: SolCall>(world: &World, key: &str, to: Address, call: &C) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let outcome = send(&url, key, to, call);
+    assert!(
+        !outcome.success,
+        "{} was not refused: {}",
+        C::SIGNATURE,
+        outcome.transaction_hash
+    );
+    let gas_used = outcome.receipt["gasUsed"]
+        .as_str()
+        .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+        .expect("receipt gas used");
+    assert!(
+        gas_used < eth::REVERT_FRIENDLY_GAS_LIMIT,
+        "{} ran out of gas instead of reverting",
+        C::SIGNATURE
+    );
 }
 
 /// The call reverts with exactly `expected`, the product error's own text.

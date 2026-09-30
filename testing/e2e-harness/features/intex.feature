@@ -54,7 +54,9 @@ Feature: Intex from auction to Promis
   # what is home once they qualify, and the rest once they are called and brought
   # home. The four payments take both rails and both currencies; the MYR ones
   # price off a closed pricing window, so the committee steps past the next whole
-  # hour before the series are issued. The other two are left to run out: one is
+  # hour once the series are issued. On this localnet that hour is midnight: the
+  # day closes on the controlled quote, and every seeded day repeats it, because a
+  # target chain records a day's price once. The other two are left to run out: one is
   # settled in part and one never touched, so the sweep has to return the load of
   # the unrealized units alone from one and the whole tirage from the other.
   #
@@ -82,12 +84,12 @@ Feature: Intex from auction to Promis
     When a relay carries messages between the two chains
     And the settlement currencies are registered on the committee chain
     Then owners may settle in each of them
-    And the controlled COEN quotes are finalized through the real price feeder
-    And the pricing window closes over those quotes
     When four test Intex series sharing a reference currency are issued to the owner
     Then the owner holds issued units of every series on each chain
     And every Intex series reads Issued and carries its terms
     And no Intex series can be paid before it qualifies
+    And the controlled COEN quotes are finalized through the real price feeder
+    And the pricing window closes over those quotes
     When the reference rate stands above the Intex series floor
     Then every Intex series qualifies
     And every series card reads Qualified on both chains
