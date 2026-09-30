@@ -533,7 +533,7 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
             assert!(
                 error
                     .to_string()
-                    .contains("OCOMP carrier signer is not authorized for this action"),
+                    .contains("result vote has no response window"),
                 "changed-binding vote failed for an unexpected reason: {error:#}"
             );
             None
