@@ -253,13 +253,13 @@ fn visit_price_path(
 /// A day that predates the position ends the count: the window is newest-first,
 /// so every remaining entry is older still, and a position must never inherit a
 /// breach run from before it existed. Mirrors the issuance guard in
-/// `outbe_gem::runtime::trigger_call`.
+/// `outbe_gem::runtime::breached_enough`.
 fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool {
     let window_days = position.call_window / SECS_PER_DAY;
     let threshold_days = position.call_threshold / SECS_PER_DAY;
     // A position sealed before the terms existed carries zeroes. Zero days is
     // "no terms", not "every day breaches"; leave it uncallable. Same guard as
-    // `outbe_gem::runtime::trigger_call`.
+    // `outbe_gem::runtime::breached_enough`.
     if window_days == 0 || threshold_days == 0 {
         return false;
     }

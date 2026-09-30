@@ -9,16 +9,15 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Gems one call slice may call before it gives out; the sweep resumes on the
+/// Buckets one call slice may decide before it gives out; the sweep resumes on the
 /// next block.
-pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
+pub const MAX_BUCKET_VISITS_PER_BLOCK: u32 = 256;
 
 /// `SweepDaySkipped.sweep` of the Called sweep.
 pub const CALL_SWEEP: u8 = 1;
 
-/// Slots one block's expiry sweep may step through. Low because a forfeit compacts
-/// the owner's whole gem list and a block hook is not gas-metered.
-pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 16;
+/// Slots one block's expiry sweep may step through; a block hook is not gas-metered.
+pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 64;
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.

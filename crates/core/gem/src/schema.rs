@@ -1,6 +1,7 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
+use outbe_primitives::time::first_full_day;
 
 /// The one type issued without a floor. Pinned to `GemTypes::Genesis` by a test in the
 /// factory, which owns that enum.
@@ -26,6 +27,42 @@ pub struct GemAddParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+}
+
+/// Everything a call decision reads off a gem. Gems that share it breach on the same
+/// days, so one decision covers them all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BucketTerms {
+    pub(crate) start_day: u32,
+    pub(crate) reference_currency: u16,
+    pub(crate) call_price: U256,
+    pub(crate) call_window: u32,
+    pub(crate) call_threshold: u32,
+    pub(crate) call_notice_period: u32,
+}
+
+impl BucketTerms {
+    pub(crate) fn of(item: &GemData) -> Self {
+        Self {
+            start_day: first_full_day(item.issued_at),
+            reference_currency: item.reference_currency,
+            call_price: item.call_price_minor,
+            call_window: item.call_window_seconds,
+            call_threshold: item.call_threshold_seconds,
+            call_notice_period: item.call_notice_period_seconds,
+        }
+    }
+
+    pub(crate) fn key(&self) -> B256 {
+        let mut buf = [0u8; 4 + 2 + 32 + 4 + 4 + 4];
+        buf[0..4].copy_from_slice(&self.start_day.to_be_bytes());
+        buf[4..6].copy_from_slice(&self.reference_currency.to_be_bytes());
+        buf[6..38].copy_from_slice(&self.call_price.to_be_bytes::<32>());
+        buf[38..42].copy_from_slice(&self.call_window.to_be_bytes());
+        buf[42..46].copy_from_slice(&self.call_threshold.to_be_bytes());
+        buf[46..50].copy_from_slice(&self.call_notice_period.to_be_bytes());
+        keccak256(buf)
+    }
 }
 
 #[storage_record(exists_field = owner)]
@@ -117,7 +154,7 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Call-price bin index, one trie per reference currency; a gem enters it at issuance.
+    // --- Retired per-gem call-price bins, superseded by the bucket bins; kept for the layout.
     #[attribute(order = 11)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
@@ -133,21 +170,23 @@ pub struct GemContract {
     #[attribute(order = 15)]
     pub call_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
+    /// Currency the unfinished call sweep resumes at.
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // --- Called gems, bucketed by the hour their notice period closes in. Calling is
-    // driven by price and expiry only by time, so the two stages stay separate.
+    // --- Called buckets, and gems called before buckets, queued by the hour their notice
+    // period closes in. Calling is driven by price and expiry only by time, so the two
+    // stages stay separate.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Gem id -> `(bucket << 32) | slot`; 0 = not queued.
+    /// Queue entry -> `(hour << 32) | slot`; 0 = not queued.
     #[attribute(order = 23)]
     pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
@@ -173,7 +212,8 @@ pub struct GemContract {
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 29)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id.
+    /// `keccak256(hour_be32 ++ slot_be32)` -> queue entry: a called bucket's key, or a
+    /// gem id.
     #[attribute(order = 30)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 31)]
@@ -187,13 +227,66 @@ pub struct GemContract {
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 34)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Gem id -> its index in `owner_gem_ids`, plus one. 0 for a gem written before the
+    /// field existed: burning it falls back to scanning the owner's list.
+    #[attribute(order = 35)]
+    pub owner_gem_position: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    // --- Call buckets: gems issued for the same first full day under the same call terms
+    // breach together, so they are called and forfeited together.
+    /// Gem id -> its bucket; zero for a gem issued before buckets existed.
+    #[attribute(order = 36)]
+    pub gem_bucket: outbe_primitives::storage::dsl::Map<U256, B256>,
+    #[attribute(order = 37)]
+    pub bucket_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `bucket_member_key(bucket, index)` -> gem id; swap-popped.
+    #[attribute(order = 38)]
+    pub bucket_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Gem id -> its index in its bucket.
+    #[attribute(order = 39)]
+    pub bucket_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    #[attribute(order = 40)]
+    pub bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 41)]
+    pub bucket_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// First UTC day whose price counts towards the bucket's call.
+    #[attribute(order = 42)]
+    pub bucket_start_day: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 43)]
+    pub bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 44)]
+    pub bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 45)]
+    pub bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Block timestamp the bucket was called; `0` until then.
+    #[attribute(order = 46)]
+    pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    // --- Uncalled buckets by call price, one trie per reference currency.
+    #[attribute(order = 47)]
+    pub bucket_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    #[attribute(order = 48)]
+    pub bucket_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 49)]
+    pub bucket_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 50)]
+    pub bucket_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `bin_index_key(currency, bin, index)` -> bucket.
+    #[attribute(order = 51)]
+    pub bucket_bin_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Bucket -> its index in its bin, plus one; 0 once it left the trie.
+    #[attribute(order = 52)]
+    pub bucket_bin_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `(bin << 32) | buckets of that bin still to visit`; 0 = start from the lowest bin.
+    #[attribute(order = 53)]
+    pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 }
 
 impl GemContract<'_> {
     /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be)`.
     /// `amount` is the gem's `promis_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
-        use alloy_primitives::keccak256;
         let mut buf = [0u8; 3 + 20 + 32 + 8];
         buf[0..3].copy_from_slice(b"gem");
         buf[3..23].copy_from_slice(owner.as_slice());
