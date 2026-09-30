@@ -17,7 +17,6 @@ outbe-primitives.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-provider.workspace = true
 alloy-signer-local.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
