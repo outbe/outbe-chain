@@ -221,6 +221,87 @@ fn a_gem_without_a_position_is_found_by_scanning_its_owner_list() {
     });
 }
 
+fn bucket_of(storage: &StorageHandle, gem_id: U256) -> alloy_primitives::B256 {
+    GemContract::new(storage.clone())
+        .gem_bucket
+        .read(&gem_id)
+        .unwrap()
+}
+
+/// Gems share a bucket only when every term of the call decision matches.
+#[test]
+fn a_bucket_holds_the_gems_whose_call_terms_all_match() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 2]);
+        let bucket = bucket_of(storage, gems[0]);
+        assert!(!bucket.is_zero());
+        assert_eq!(
+            bucket_of(storage, gems[1]),
+            bucket,
+            "the load is not a term"
+        );
+
+        let nonce = std::cell::Cell::new(0u64);
+        let apart = |edit: &dyn Fn(&mut GemAddParams)| {
+            let mut params = sample_params(BOB);
+            nonce.set(nonce.get() + 1);
+            params.promis_load_minor = U256::from(nonce.get());
+            edit(&mut params);
+            bucket_of(storage, api::add_gem(storage, params).unwrap())
+        };
+        assert_ne!(apart(&|p| p.issued_at += 86_400), bucket);
+        assert_eq!(
+            apart(&|p| p.issued_at += 1),
+            bucket,
+            "the same first full day"
+        );
+        assert_ne!(apart(&|p| p.reference_currency = EUR), bucket);
+        assert_ne!(apart(&|p| p.call_price_minor += U256::from(1u64)), bucket);
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        assert_ne!(apart(&|_| {}), bucket, "other window, threshold and notice");
+    });
+}
+
+#[test]
+fn leaving_a_bucket_moves_its_last_member_into_the_hole() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 2, 3]);
+        let bucket = bucket_of(storage, gems[0]);
+        let gem = GemContract::new(storage.clone());
+
+        burn_settled(storage, gems[0]);
+        assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 2);
+        assert_eq!(
+            gem.bucket_gems
+                .read(&GemContract::bucket_member_key(bucket, 0))
+                .unwrap(),
+            gems[2]
+        );
+        assert_eq!(gem.bucket_gem_index.read(&gems[2]).unwrap(), 0);
+        assert!(gem.gem_bucket.read(&gems[0]).unwrap().is_zero());
+    });
+}
+
+#[test]
+fn the_last_gem_out_closes_its_bucket() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let bucket = bucket_of(storage, gem_id);
+        let gem = GemContract::new(storage.clone());
+        let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
+        assert!(tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
+
+        api::set_state(storage, gem_id, GemState::Settled).unwrap();
+        assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
+        assert!(gem.bucket_call_price.read(&bucket).unwrap().is_zero());
+        assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
+        assert!(!tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
+    });
+}
+
 /// Whether the gem has qualified, as settlement and the view read it.
 fn is_qualified(storage: &StorageHandle, gem_id: U256) -> bool {
     let item = api::get_gem(storage, gem_id).unwrap().unwrap();
@@ -592,6 +673,8 @@ fn gem_storage_layout_matches_genesis_seeder() {
         // all_gem_ids (List) occupies slot 19.
         assert_eq!(gem.gem_index.base_slot(), U256::from(20u64));
         assert_eq!(gem.owner_gem_position.base_slot(), U256::from(43u64));
+        assert_eq!(gem.gem_bucket.base_slot(), U256::from(44u64));
+        assert_eq!(gem.bucket_scan_cursor.base_slot(), U256::from(61u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);

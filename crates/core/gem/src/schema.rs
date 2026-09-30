@@ -192,6 +192,55 @@ pub struct GemContract {
     /// field existed: burning it falls back to scanning the owner's list.
     #[attribute(order = 35)]
     pub owner_gem_position: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    // --- Call buckets: gems issued for the same first full day under the same call terms
+    // breach together, so they are called and forfeited together.
+    /// Gem id -> its bucket; zero for a gem issued before buckets existed.
+    #[attribute(order = 36)]
+    pub gem_bucket: outbe_primitives::storage::dsl::Map<U256, B256>,
+    #[attribute(order = 37)]
+    pub bucket_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `bucket_member_key(bucket, index)` -> gem id; swap-popped.
+    #[attribute(order = 38)]
+    pub bucket_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Gem id -> its index in its bucket.
+    #[attribute(order = 39)]
+    pub bucket_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    #[attribute(order = 40)]
+    pub bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 41)]
+    pub bucket_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// First UTC day whose price counts towards the bucket's call.
+    #[attribute(order = 42)]
+    pub bucket_start_day: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 43)]
+    pub bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 44)]
+    pub bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 45)]
+    pub bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Block timestamp the bucket was called; `0` until then.
+    #[attribute(order = 46)]
+    pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    // --- Uncalled buckets by call price, one trie per reference currency.
+    #[attribute(order = 47)]
+    pub bucket_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    #[attribute(order = 48)]
+    pub bucket_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 49)]
+    pub bucket_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 50)]
+    pub bucket_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `bin_index_key(currency, bin, index)` -> bucket.
+    #[attribute(order = 51)]
+    pub bucket_bin_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Bucket -> its index in its bin, plus one; 0 once it left the trie.
+    #[attribute(order = 52)]
+    pub bucket_bin_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `(bin << 32) | buckets of that bin still to visit`; 0 = start from the lowest bin.
+    #[attribute(order = 53)]
+    pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 }
 
 impl GemContract<'_> {

@@ -99,6 +99,7 @@ impl GemContract<'_> {
         // Enroll into the call-price bin index the daily Called scan walks.
         if is_callable(item.state) {
             self.insert_call_bin(item.gem_id, item.call_price_minor, item.reference_currency)?;
+            self.join_bucket(item)?;
         }
 
         if item.call_window_seconds
@@ -126,6 +127,7 @@ impl GemContract<'_> {
         } else if item.state == GemState::Called as u8 {
             self.remove_called(item.gem_id)?;
         }
+        self.leave_bucket(item.gem_id)?;
 
         let idx = self.gem_index.read(&item.gem_id)?;
         let last = self
@@ -166,6 +168,7 @@ impl GemContract<'_> {
         if item.state == GemState::Called as u8 {
             self.remove_called(gem_id)?;
         }
+        self.leave_bucket(gem_id)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = new_state as u8;
         self.gem_items.update(&item)?;

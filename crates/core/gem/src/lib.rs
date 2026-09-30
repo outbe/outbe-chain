@@ -5,6 +5,7 @@ pub mod hooks;
 pub mod precompile;
 pub mod schema;
 
+pub(crate) mod buckets;
 pub(crate) mod constants;
 pub(crate) mod metadata;
 pub(crate) mod runtime;

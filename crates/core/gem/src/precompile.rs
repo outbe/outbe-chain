@@ -67,13 +67,18 @@ pub fn dispatch(
     if let Ok(call) =
         <IGemTestArming::backdateGemForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
-        let gem = GemContract::new(storage.clone());
+        let mut gem = GemContract::new(storage.clone());
         let mut item = gem
             .gem_items
             .get(call.gemId)?
             .ok_or(GemError::GemNotFound)?;
+        let bucketed = !gem.gem_bucket.read(&item.gem_id)?.is_zero();
+        gem.leave_bucket(item.gem_id)?;
         item.issued_at = call.issuedAt;
         gem.gem_items.update(&item)?;
+        if bucketed {
+            gem.join_bucket(&item)?;
+        }
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]
