@@ -1,4 +1,4 @@
-//! The owners a lifecycle issues its Gems or Nods to: one holding each, on real keys,
+//! The owners a lifecycle issues its gems or Nods to: one holding each, on real keys,
 //! so every owner pays its own note, mines and redeems for itself.
 
 use alloy_primitives::Address;

@@ -39,7 +39,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
                 addresses::GEM_FACTORY_ADDR,
                 &eth::IGemFactory::quoteSettlementCall { gemId: *id, asset },
             )
-            .unwrap_or_else(|| panic!("Gem {id} does not quote a payment in {asset}"));
+            .unwrap_or_else(|| panic!("gem {id} does not quote a payment in {asset}"));
             Quote {
                 currency: quote.settlementCurrency,
                 payable: quote.payableUnits,

@@ -15,7 +15,7 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::{test_issuance, World};
 
 /// Seeded closed days above the call price: Nod's production threshold, which covers
-/// the DEV two-of-three that Gems and Intex run under.
+/// the DEV two-of-three that gems and Intex run under.
 pub(crate) const CALL_WINDOW_SEED_DAYS: u32 = 21;
 const QUALIFY_TIMEOUT: Duration = Duration::from_secs(180);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
