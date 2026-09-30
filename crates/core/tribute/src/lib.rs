@@ -1,4 +1,5 @@
 pub mod certified;
+mod day_mark;
 pub mod errors;
 pub mod precompile;
 pub mod projection;
@@ -8,6 +9,10 @@ pub mod runtime;
 pub mod schema;
 pub mod state;
 
+pub use day_mark::{
+    list_tribute_day_marks, read_tribute_day_mark, tribute_day_mark_operation,
+    write_tribute_day_mark, TributeDayMark, TRIBUTE_DAY_MARK_NAMESPACE,
+};
 pub use repository::{
     canonical_body, from_canonical_body, TributePage, TributePageRequest, TributeRepositoryError,
     TributeRepositoryReader, TributeRepositoryWriter,

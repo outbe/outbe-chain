@@ -277,7 +277,10 @@ pub(crate) fn inspect_stopped_stores(
             genesis_hash: layout.chain.genesis_hash(),
             start_block: layout.projection_start_block,
         },
-        Arc::new(RocksDbReader::open(&layout.offchain_root, scratch)?),
+        Arc::new(RocksDbReader::open(
+            &super::projection_store::projection_database(&layout.offchain_root),
+            scratch,
+        )?),
     )?
     .and_then(|state| state.checkpoint)
     .ok_or_else(|| eyre::eyre!("missing initialized offchain projection checkpoint"))?;

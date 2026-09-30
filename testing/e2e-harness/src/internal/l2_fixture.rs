@@ -400,8 +400,7 @@ mod tests {
         let host = outbe_primitives::chain::DEVNET_CHAIN_ID;
         let binding = |caller: Address, draft: B256, host, l2| {
             B256::from(field_bytes(
-                &outbe_protocol::primitive::hash::binding(&caller.into_array(), &draft.0, host, l2)
-                    .expect("offer binding"),
+                &hash::binding(&caller.into_array(), &draft.0, host, l2).expect("offer binding"),
             ))
         };
         assert_eq!(

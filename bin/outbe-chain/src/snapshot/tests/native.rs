@@ -18,7 +18,7 @@ use crate::OutbeHeader;
 
 type StageCheckpoint = <tables::StageCheckpoints as Table>::Value;
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     tempfile::TempDir,
     super::super::config::NativeLayout,
     OutbeHeader,

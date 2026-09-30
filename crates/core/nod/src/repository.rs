@@ -1,5 +1,9 @@
 //! Typed off-chain persistence boundary for Nod item and bucket bodies.
 
+mod day_store;
+
+use std::sync::Arc;
+
 use alloy_primitives::Address;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
@@ -8,8 +12,8 @@ use outbe_compressed_entities::{
     QueryRef, StoredBody, StoredBodyPage, WwdEntityId,
 };
 use outbe_offchain_storage::{
-    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
-    StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
+    AtomicWriteOperation, DayDatabases, Key, Namespace, ScanEntry, ScanRequest, StorageError,
+    StorageMetadata, StorageReaderHandle, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use thiserror::Error;
 
@@ -18,8 +22,11 @@ use crate::{NodBucketState, NodItemState};
 pub(crate) const NODS_NAMESPACE: &str = "nods";
 pub(crate) const NOD_BUCKETS_NAMESPACE: &str = "nod_buckets";
 pub(crate) const NODS_BY_OWNER_NAMESPACE: &str = "nods_by_owner";
+/// Shared index of worldwide days on which an owner still has a Nod.
+pub(crate) const NOD_OWNER_DAYS_NAMESPACE: &str = "nod_owner_days";
 const PRIMARY_KEY_LEN: usize = WwdEntityId::len_bytes();
 const OWNER_INDEX_KEY_LEN: usize = 20 + PRIMARY_KEY_LEN;
+const OWNER_DAY_KEY_LEN: usize = 24;
 
 /// Domain-level request for one ascending page of Nods.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,13 +111,48 @@ pub enum NodRepositoryError {
 #[derive(Clone)]
 pub struct NodRepositoryReader {
     storage: StorageReaderHandle,
+    route: Option<day_store::DayRoute>,
 }
 
 impl NodRepositoryReader {
     /// Creates a typed Nod reader over a backend-neutral storage handle.
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            route: None,
+        }
+    }
+
+    /// Reads and writes through one database per worldwide day.
+    ///
+    /// `shared` keeps the migration cursor. New bodies are stored in the day database.
+    #[must_use]
+    pub fn with_days(
+        shared: StorageReaderHandle,
+        shared_writer: StorageWriterHandle,
+        databases: Arc<DayDatabases>,
+    ) -> Self {
+        Self {
+            storage: shared,
+            route: Some(day_store::DayRoute {
+                shared_writer,
+                databases,
+                wrap: None,
+            }),
+        }
+    }
+
+    /// Reads each day database through `wrap` (execution budgets, diagnostics).
+    #[must_use]
+    pub fn with_day_read_wrap(
+        mut self,
+        wrap: Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync>,
+    ) -> Self {
+        if let Some(route) = &mut self.route {
+            route.wrap = Some(wrap);
+        }
+        self
     }
 
     /// Scans every primary item independently of owner-index membership.
@@ -195,6 +237,9 @@ impl NodRepositoryReader {
         &self,
         nod_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_stored_item(self, nod_id);
+        }
         let key = item_key(nod_id)?;
         let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
             return Ok(None);
@@ -207,6 +252,9 @@ impl NodRepositoryReader {
         &self,
         nod_id: WwdEntityId,
     ) -> Result<Option<(NodItemState, Option<StorageMetadata>)>, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_with_metadata(self, nod_id);
+        }
         let key = item_key(nod_id)?;
         let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
             return Ok(None);
@@ -254,6 +302,9 @@ impl NodRepositoryReader {
         &self,
         bucket_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_stored_bucket(self, bucket_id);
+        }
         let key = bucket_storage_key(bucket_id)?;
         let Some(record) = self
             .storage
@@ -269,6 +320,9 @@ impl NodRepositoryReader {
         &self,
         bucket_id: WwdEntityId,
     ) -> Result<Option<(NodBucketState, Option<StorageMetadata>)>, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::get_bucket_with_metadata(self, bucket_id);
+        }
         let key = bucket_storage_key(bucket_id)?;
         let Some(record) = self
             .storage
@@ -310,6 +364,9 @@ impl NodRepositoryReader {
         nod_ids: &[WwdEntityId],
         bucket_ids: &[WwdEntityId],
     ) -> Result<crate::projection::NodProjectionSession, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::projection_session(self, nod_ids, bucket_ids);
+        }
         let items = self.get_many_with_metadata(nod_ids)?;
         let buckets = self.get_buckets_with_metadata(bucket_ids)?;
         Ok(crate::projection::NodProjectionSession::from_records(
@@ -317,26 +374,11 @@ impl NodRepositoryReader {
         ))
     }
 
-    /// Lists all Nod items by ascending numeric Nod ID.
-    pub fn list_all(&self, request: NodPageRequest) -> Result<NodPage, NodRepositoryError> {
-        validate_page_limit(request.limit)?;
-        let after = request.after.map(item_key).transpose()?;
-        let scan = ScanRequest::new(&[], after.as_ref(), request.limit)?;
-        let page = self.storage.scan_prefix(namespace(NODS_NAMESPACE)?, scan)?;
-        let has_more = page.next_after.is_some();
-        let mut records = Vec::with_capacity(page.entries.len());
-        for entry in page.entries {
-            let nod_id = parse_primary_key(entry.key.as_bytes())?;
-            records.push(decode_item(nod_id, entry.value.as_bytes())?);
-        }
-        Ok(NodPage {
-            next_after: next_cursor(has_more, &records),
-            records,
-        })
-    }
-
     /// Lists only canonical Nod item identities for overlay merging.
     pub fn list_ids_all(&self, request: IdPageRequest) -> Result<IdPage, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_ids_all(self, request);
+        }
         let limit = validate_id_page_request(request)?;
         let after = request.after.map(item_key).transpose()?;
         let scan = ScanRequest::new(&[], after.as_ref(), limit)?;
@@ -347,11 +389,16 @@ impl NodRepositoryReader {
     }
 
     /// Lists one owner's Nod items in ascending numeric ID order.
+    ///
+    /// With day databases, the shared owner-day index selects which days to open.
     pub fn list_by_owner(
         &self,
         owner: Address,
         request: NodPageRequest,
     ) -> Result<NodPage, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_by_owner(self, owner, request);
+        }
         validate_page_limit(request.limit)?;
         let prefix = owner.as_slice();
         let after = request
@@ -386,6 +433,9 @@ impl NodRepositoryReader {
         owner: Address,
         request: IdPageRequest,
     ) -> Result<IdPage, NodRepositoryError> {
+        if self.route.is_some() {
+            return day_store::list_ids_by_owner(self, owner, request);
+        }
         let limit = validate_id_page_request(request)?;
         let after = request
             .after
@@ -399,6 +449,44 @@ impl NodRepositoryReader {
             parse_owner_index(entry, owner)
         })
     }
+
+    /// Shared put or delete for whether `owner` still has a Nod in this day database.
+    ///
+    /// The reader is the day database. The operation is applied to the shared database.
+    pub fn owner_day_marker(
+        &self,
+        owner: Address,
+        day: u32,
+    ) -> Result<AtomicWriteOperation, NodRepositoryError> {
+        let present = !self
+            .list_ids_by_owner(
+                owner,
+                IdPageRequest {
+                    after: None,
+                    limit: 1,
+                },
+            )?
+            .ids
+            .is_empty();
+        let key = owner_day_key(owner, day)?;
+        let namespace = namespace(NOD_OWNER_DAYS_NAMESPACE)?;
+        Ok(if present {
+            AtomicWriteOperation::put(namespace, key, Value::new(Vec::new())?)
+        } else {
+            AtomicWriteOperation::delete(namespace, key)
+        })
+    }
+}
+
+/// Deletes one owner-day index entry. Used when that day's database is already gone.
+pub fn clear_owner_day(
+    owner: Address,
+    day: u32,
+) -> Result<AtomicWriteOperation, NodRepositoryError> {
+    Ok(AtomicWriteOperation::delete(
+        namespace(NOD_OWNER_DAYS_NAMESPACE)?,
+        owner_day_key(owner, day)?,
+    ))
 }
 
 fn owner_audit_record(id: WwdEntityId, owner: Address) -> [u8; OWNER_INDEX_KEY_LEN] {
@@ -550,8 +638,24 @@ impl NodRepositoryWriter {
         }
     }
 
+    /// Writes each Nod into the database of its worldwide day.
+    #[must_use]
+    pub fn with_days(
+        shared_reader: StorageReaderHandle,
+        shared_writer: StorageWriterHandle,
+        databases: Arc<DayDatabases>,
+    ) -> Self {
+        Self {
+            reader: NodRepositoryReader::with_days(shared_reader, shared_writer.clone(), databases),
+            writer: shared_writer,
+        }
+    }
+
     /// Inserts or replaces one Nod item and its owner index.
     pub fn put_nod(&self, nod: &NodItemState) -> Result<(), NodRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::put_nod(self, nod);
+        }
         let mut session = self.reader.projection_session(&[nod.nod_id], &[])?;
         let batch = session.store_item(nod.nod_id, encode_item(nod)?, None)?;
         self.writer.apply_atomic(&batch)?;
@@ -560,6 +664,9 @@ impl NodRepositoryWriter {
 
     /// Deletes a Nod item and its owner index. Missing bodies are a success.
     pub fn delete_nod(&self, nod_id: WwdEntityId) -> Result<(), NodRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::delete_nod(self, nod_id);
+        }
         let mut session = self.reader.projection_session(&[nod_id], &[])?;
         let batch = session.delete_item(nod_id)?;
         self.writer.apply_atomic(&batch)?;
@@ -568,6 +675,9 @@ impl NodRepositoryWriter {
 
     /// Inserts or replaces one independently stored Nod bucket.
     pub fn put_bucket(&self, bucket: &NodBucketState) -> Result<(), NodRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::put_bucket(self, bucket);
+        }
         let bucket_id = canonical_bucket_id(bucket);
         let mut session = self.reader.projection_session(&[], &[bucket_id])?;
         let batch = session.store_bucket(bucket_id, encode_bucket(bucket)?, None)?;
@@ -577,10 +687,18 @@ impl NodRepositoryWriter {
 
     /// Deletes one Nod bucket. Missing buckets are a success.
     pub fn delete_bucket(&self, bucket_id: WwdEntityId) -> Result<(), NodRepositoryError> {
+        if self.reader.route.is_some() {
+            return day_store::delete_bucket(self, bucket_id);
+        }
         let mut session = self.reader.projection_session(&[], &[bucket_id])?;
         let batch = session.delete_bucket(bucket_id)?;
         self.writer.apply_atomic(&batch)?;
         Ok(())
+    }
+
+    /// Moves Nod keys already stored in the shared database into their day databases.
+    pub fn migrate_legacy_keys(&self) -> Result<(), NodRepositoryError> {
+        day_store::migrate(&self.reader)
     }
 }
 
@@ -670,6 +788,13 @@ pub(crate) fn owner_index_key(
     let mut bytes = Vec::with_capacity(OWNER_INDEX_KEY_LEN);
     bytes.extend_from_slice(owner.as_slice());
     bytes.extend_from_slice(nod_id.as_slice());
+    Ok(Key::new(bytes)?)
+}
+
+pub(crate) fn owner_day_key(owner: Address, day: u32) -> Result<Key, NodRepositoryError> {
+    let mut bytes = Vec::with_capacity(OWNER_DAY_KEY_LEN);
+    bytes.extend_from_slice(owner.as_slice());
+    bytes.extend_from_slice(&day.to_be_bytes());
     Ok(Key::new(bytes)?)
 }
 
