@@ -85,6 +85,11 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
             ),
         )
         .unwrap();
+    // These tests exercise the production call terms.
+    NodContract::new(storage.clone())
+        .config_profile
+        .write(crate::config::PROFILE_PROD)
+        .unwrap();
 }
 
 fn nod_item(owner: Address, iso: u16) -> NodItemState {
@@ -380,6 +385,76 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
             "issuance puts the bucket in its call bin"
         );
     });
+}
+
+/// Off mainnet an unset profile seals the DEV terms, as Gem and Intex run them.
+#[test]
+fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
+    harness(|storage, scope, parent| {
+        let nod = NodContract::new(storage.clone());
+        nod.config_profile
+            .write(crate::config::PROFILE_AUTO)
+            .unwrap();
+        let item = nod_item(Address::repeat_byte(0x11), ISO);
+        api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+        let dev = crate::config::NodParams::DEV;
+        assert_eq!(
+            (
+                nod.callable_bucket_call_rate
+                    .read(&item.bucket_key)
+                    .unwrap(),
+                nod.callable_bucket_call_window
+                    .read(&item.bucket_key)
+                    .unwrap(),
+                nod.callable_bucket_call_threshold
+                    .read(&item.bucket_key)
+                    .unwrap(),
+                nod.callable_bucket_call_notice_period
+                    .read(&item.bucket_key)
+                    .unwrap(),
+            ),
+            (
+                dev.call_rate,
+                dev.call_window,
+                dev.call_threshold,
+                dev.call_notice_period
+            )
+        );
+    });
+}
+
+/// Pin the selector slot index: the genesis seeder writes a raw slot.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    harness(|storage, _, _| {
+        assert_eq!(
+            NodContract::new(storage.clone()).config_profile.slot(),
+            U256::from(49)
+        );
+    });
+}
+
+#[test]
+fn the_profile_selector_resolves_like_gem_and_intex() {
+    use crate::config::{NodParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+    use outbe_primitives::chain::MAINNET_CHAIN_ID;
+    assert_eq!(
+        NodParams::from_selector(PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
+        NodParams::PROD
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_AUTO, CHAIN_ID).unwrap(),
+        NodParams::DEV
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_DEV, MAINNET_CHAIN_ID).unwrap(),
+        NodParams::DEV
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_PROD, CHAIN_ID).unwrap(),
+        NodParams::PROD
+    );
+    assert!(NodParams::from_selector(3, CHAIN_ID).is_err());
 }
 
 /// Later Nods join the first member's issuance stamp. A delayed second mint

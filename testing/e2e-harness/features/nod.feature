@@ -10,9 +10,10 @@ Feature: Nod from issuance to Gratis and COEN
   # whole hour once the Nods are issued and the quotes finalized. The fifth Nod is
   # left to forfeit.
   #
-  # Time is seeded rather than lived through. Qualification and the call count only
-  # closed days after the bucket's stamp, so the bucket is stamped behind the seeded
-  # days. The seven-day call notice has no DEV profile and is closed by a test hook.
+  # Time is seeded rather than lived through wherever the protocol allows it.
+  # Qualification and the call count only closed days after the bucket's stamp, so
+  # the bucket is stamped behind the seeded days. The call notice is the DEV
+  # profile's, so it is waited out for real.
   @nod-lifecycle @myr-issuance
   Scenario: Five Nods in one bucket are paid on both rails in both currencies, one forfeits, and the paid ones end in COEN
     Given a fresh localnet with a 20-block voting window

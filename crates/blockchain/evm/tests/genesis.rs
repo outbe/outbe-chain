@@ -600,6 +600,7 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
       "intex_factory": { "profile": "dev" },
       "gem_profile": { "profile": "prod" },
+      "nod_profile": { "profile": "prod" },
       "gems": [
         { "owner": "0x5555555555555555555555555555555555555555",
           "promis_load": "1000000",
@@ -611,6 +612,11 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     let mut provider = HashMapStorageProvider::new(512_215);
     load_seeded_storage(&mut provider, &genesis, GEM_ADDRESS);
     load_seeded_storage(&mut provider, &genesis, INTEX_FACTORY_ADDRESS);
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_primitives::addresses::NOD_ADDRESS,
+    );
 
     let owner = Address::repeat_byte(0x55);
     StorageHandle::enter(&mut provider, |storage| {
@@ -620,6 +626,13 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .read()
                 .unwrap(),
             outbe_intexfactory::config::PROFILE_DEV
+        );
+        assert_eq!(
+            outbe_nod::NodContract::new(storage.clone())
+                .config_profile
+                .read()
+                .unwrap(),
+            outbe_nod::config::PROFILE_PROD
         );
         let gem = GemContract::new(storage);
         assert_eq!(

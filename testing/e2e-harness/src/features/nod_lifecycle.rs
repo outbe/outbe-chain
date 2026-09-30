@@ -7,16 +7,15 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use cucumber::when;
-use outbe_nod::constants::{
-    CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW,
-    FLOOR_RATE_PCT,
-};
+use outbe_nod::config::NodParams;
+use outbe_nod::constants::FLOOR_RATE_PCT;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
+use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
@@ -35,14 +34,14 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
-        function closeCallNoticeForTest(uint256 nodId, uint64 deadline) external;
     }
 }
 
 /// A Nod's id derives from its owner and day, so one bucket needs an owner per Nod.
 const HOLDER_SEED: u64 = 0x0e0d_0000;
-/// Low enough that the controlled COEN/USD quote clears even the call price.
-const ENTRY_PRICE_MINOR: u64 = 250_000;
+/// Shared with Gem and Intex, and low enough that the controlled COEN/USD quote clears
+/// the DEV call price.
+const ENTRY_PRICE_MINOR: u64 = 800_000;
 /// Not a whole unit, so the cost leaves a remainder to floor.
 const GRATIS_LOAD_MINOR: u64 = 5_000_003;
 /// `effectiveState` of `INod.NodData`.
@@ -56,6 +55,10 @@ const ISSUANCE_TIMEOUT: Duration = Duration::from_secs(120);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Once the notice has lapsed the next sweep burns the unpaid Nod.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
+/// A DEV notice is minutes long; anything longer means the profile is not active.
+const MAX_DEV_NOTICE_SECS: u32 = 3_600;
+/// Slack past the deadline so the sweep has a block to run in.
+const NOTICE_MARGIN_SECS: u64 = 5;
 
 pub(crate) struct NodLifecycle;
 
@@ -68,9 +71,9 @@ fn issue_five_nods(world: &mut World) {
         .expect("the Nod scenario prices an issuance market");
     let now = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
-    // The bucket counts breach days only after it was issued: stamp it behind the
-    // whole call window the scenario is about to seed.
-    let issued_at = now.saturating_sub((u64::from(CALL_LOOKBACK_DAYS) + 2) * 86_400);
+    // Qualification and the call count only days after the bucket's stamp: stamp it
+    // behind every day the scenario seeds.
+    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400);
     holders::fund(world, HOLDER_SEED);
     let mut nods = Vec::with_capacity(HOLDERS);
     for index in 0..HOLDERS {
@@ -144,14 +147,21 @@ impl Lifecycle for NodLifecycle {
                 data.floorPriceMinor,
                 entry * U256::from(100 + FLOOR_RATE_PCT) / U256::from(100)
             );
+            let dev = NodParams::DEV;
             assert_eq!(
                 data.callPriceMinor,
-                entry * U256::from(100 + CALL_RATE_PCT) / U256::from(100)
+                entry * U256::from(100 + dev.call_rate) / U256::from(100)
             );
-            assert_eq!(data.callRate, CALL_RATE_PCT);
-            assert_eq!(data.callWindow, CALL_WINDOW);
-            assert_eq!(data.callThreshold, CALL_THRESHOLD);
-            assert_eq!(data.callNoticePeriod, CALL_NOTICE_PERIOD);
+            assert_eq!(
+                (data.callRate, data.callWindow, data.callThreshold),
+                (dev.call_rate, dev.call_window, dev.call_threshold),
+                "the bucket did not seal the DEV call terms"
+            );
+            assert!(
+                data.callNoticePeriod <= MAX_DEV_NOTICE_SECS,
+                "call notice is {}s: the DEV profile is not active",
+                data.callNoticePeriod
+            );
             assert_eq!(
                 (data.worldwideDay, data.floorPriceMinor),
                 (first.worldwideDay, first.floorPriceMinor),
@@ -177,7 +187,7 @@ impl Lifecycle for NodLifecycle {
         unpaid.iter().all(|data| {
             data.effectiveState == CALLED
                 && data.calledAt == called_at
-                && data.settlementDeadline == called_at + u64::from(CALL_NOTICE_PERIOD)
+                && data.settlementDeadline == called_at + u64::from(data.callNoticePeriod)
         }) && head_time(world) <= unpaid[0].settlementDeadline
     }
 
@@ -204,21 +214,13 @@ impl Lifecycle for NodLifecycle {
         )
         .expect("unallocated pool before the forfeit");
         world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
-        // Seven days of notice have no DEV profile to shorten them: move the bucket's call
-        // back so its deadline has just passed.
-        let close = INodFactoryTestArming::closeCallNoticeForTestCall {
-            nodId: nod(world, FORFEITED),
-            deadline: head_time(world) - 1,
-        };
-        let outcome = eth::send_call_outcome(
-            &url,
-            addresses::NOD_FACTORY_ADDR,
-            DEPLOYER_KEY,
-            &close,
-            None,
-        )
-        .expect("submit call notice close");
-        assert_mined_success(&outcome, "close the Nod call notice");
+        let called = read_nod(world, nod(world, FORFEITED));
+        let deadline = called.settlementDeadline + NOTICE_MARGIN_SECS;
+        poll_until(
+            Duration::from_secs(u64::from(called.callNoticePeriod)) + FORFEIT_TIMEOUT,
+            || format!("the chain never passed the Nod settlement deadline {deadline}"),
+            || head_time(world) > deadline,
+        );
     }
 
     fn assert_forfeited(&self, world: &World) {
