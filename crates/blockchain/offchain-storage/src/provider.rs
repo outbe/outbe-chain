@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use crate::{
-    MongoStorage, MongoWriterLease, RocksDbCloseWaiter, RocksDbReader, RocksDbStorage,
-    StorageBackend, StorageConfig, StorageError, StorageReaderHandle, StorageWriterHandle,
+    DayDirectory, MongoStorage, MongoWriterLease, RocksDbCloseWaiter, RocksDbReader,
+    RocksDbStorage, StorageBackend, StorageConfig, StorageError, StorageReaderHandle,
+    StorageWriterHandle,
 };
 
 /// Keeps the writer's backend-specific ownership alive through node shutdown.
@@ -61,7 +62,8 @@ impl StorageProvider {
                 })
             }
             StorageBackend::RocksDb(config) => {
-                let storage = Arc::new(RocksDbStorage::open(&config.path)?);
+                let directory = DayDirectory::open(&config.path)?;
+                let storage = Arc::new(RocksDbStorage::open(directory.shared_path())?);
                 Ok(OpenedStorage {
                     reader: storage.clone(),
                     writer: storage.clone(),
@@ -105,10 +107,13 @@ impl StorageReadSource {
     pub fn open_session(&self) -> Result<StorageReaderHandle, StorageError> {
         match &self.config.backend {
             StorageBackend::MongoDb(config) => Ok(Arc::new(MongoStorage::connect(config.clone())?)),
-            StorageBackend::RocksDb(config) => Ok(Arc::new(RocksDbReader::open(
-                &config.path,
-                &config.secondary_path.join(&self.reader_id),
-            )?)),
+            StorageBackend::RocksDb(config) => {
+                let directory = DayDirectory::open(&config.path)?;
+                Ok(Arc::new(RocksDbReader::open(
+                    &directory.shared_path(),
+                    &config.secondary_path.join(&self.reader_id),
+                )?))
+            }
         }
     }
 }
