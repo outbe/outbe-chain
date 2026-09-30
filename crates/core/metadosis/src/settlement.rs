@@ -238,6 +238,8 @@ fn process_local_terminal_outcome(
                 })?;
             promis_limit.add_to_total_unallocated(returned)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
+            // No Lysis allocation consumes these tributes, so the sealed partition is forfeited.
+            TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),
                 tributeTotals: tribute_nominal_total,

@@ -5,7 +5,8 @@ use outbe_compressed_entities::RetirementOutcome;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReadyOutcome {
     Completed,
-    Forfeited,
+    CompletedForfeited,
+    FailedForfeited,
 }
 
 fn seed_local_terminal_fixture(
@@ -60,7 +61,9 @@ fn begin_ready_scope(
 ) -> (ExecutionScope, TestParent) {
     match outcome {
         ReadyOutcome::Completed => begin_persistent_active_scope(provider),
-        ReadyOutcome::Forfeited => (begin_fixed_partition_scope(provider).0, TestParent::empty()),
+        ReadyOutcome::CompletedForfeited | ReadyOutcome::FailedForfeited => {
+            (begin_fixed_partition_scope(provider).0, TestParent::empty())
+        }
     }
 }
 
@@ -83,7 +86,11 @@ fn assert_ready_outcome(
 ) {
     match outcome {
         ReadyOutcome::Completed => assert_local_terminal_completed(provider, wwd, expected_promis),
-        ReadyOutcome::Forfeited => assert_ready_day_forfeited(provider, wwd, expected_promis),
+        ReadyOutcome::CompletedForfeited => {
+            assert_local_terminal_completed(provider, wwd, expected_promis);
+            assert_tribute_partition_forfeited(provider, wwd);
+        }
+        ReadyOutcome::FailedForfeited => assert_ready_day_forfeited(provider, wwd, expected_promis),
     }
 }
 
@@ -102,6 +109,15 @@ fn assert_ready_day_forfeited(
         assert_eq!(receipt.carry_over_after, day_limit);
         assert_eq!(receipt.retirement, RetirementOutcome::Requested);
         assert_no_ocomp_job(&storage, wwd);
+    });
+    assert_tribute_partition_forfeited(provider, wwd);
+}
+
+fn assert_tribute_partition_forfeited(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+) {
+    StorageHandle::enter(provider, |storage| {
         let tribute = TributeContract::new(storage);
         assert_eq!(tribute.total_supply().unwrap(), 0);
         let totals = tribute.get_day_totals(wwd).unwrap();
@@ -271,7 +287,7 @@ fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
         U256::from(2),
         1,
         U256::from(1_000),
-        ReadyOutcome::Completed,
+        ReadyOutcome::CompletedForfeited,
         U256::from(2),
     );
 }
@@ -284,7 +300,7 @@ fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
         U256::ZERO,
         1,
         U256::from(1_000),
-        ReadyOutcome::Forfeited,
+        ReadyOutcome::FailedForfeited,
         U256::ZERO,
     );
 }
@@ -297,7 +313,7 @@ fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
         U256::from(777),
         1,
         U256::from(1_000),
-        ReadyOutcome::Forfeited,
+        ReadyOutcome::FailedForfeited,
         U256::from(777),
     );
 }
@@ -323,66 +339,47 @@ fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
         U256::from(2),
         1,
         U256::ONE,
-        ReadyOutcome::Completed,
+        ReadyOutcome::CompletedForfeited,
         U256::ONE,
     );
 }
 
 #[test]
-fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input() {
+fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0818);
     let day_limit = U256::from(2);
     let nominal = U256::from(1_000);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled =
         seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 1, nominal);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x86)).unwrap();
-    let tree = Arc::new(FailSecondPartitionLookup {
-        parent_root,
-        partition_root: B256::repeat_byte(0x87),
-        calls: AtomicUsize::new(0),
-    });
-    let scope = ExecutionScope::with_parent_tree(
-        tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
-    );
-    let parent = TestParent::empty();
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
-    let ce_before = scope.ce_work_checkpoint().unwrap();
+    let (scope, tree) = begin_fixed_partition_scope(&mut provider);
 
-    run_start_command(&mut provider, &scope, &parent, 2, scheduled).unwrap();
+    run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
 
-    assert_eq!(
-        tree.calls.load(Ordering::SeqCst),
-        0,
-        "populated zero-gratis input remains available and is not retired"
-    );
-    assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
     assert_local_terminal_completed(&mut provider, wwd, day_limit);
+    assert_tribute_partition_forfeited(&mut provider, wwd);
     StorageHandle::enter(&mut provider, |storage| {
-        let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 1);
-        let totals = tribute.get_day_totals(wwd).unwrap();
-        assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, nominal);
+        assert_eq!(
+            TributeContract::new(storage.clone())
+                .pre_admission_projection(wwd)
+                .unwrap()
+                .sealed_collection_root,
+            tree.partition_root
+        );
+        assert!(MetadosisContract::new(storage.clone())
+            .read_metadosis_failure_receipt(wwd, day_limit)
+            .unwrap()
+            .is_none());
         assert_no_ocomp_job(&storage, wwd);
     });
+    let retired = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| {
+            outbe_tribute::precompile::ITribute::TributePartitionRetired::decode_log(event).is_ok()
+        })
+        .count();
+    assert_eq!(retired, 1);
 }
 
 #[test]
@@ -746,55 +743,34 @@ fn active_ocomp_profile_fails_the_populated_zero_limit_day_and_forfeits_its_part
 }
 
 #[test]
-fn active_ocomp_profile_preserves_the_populated_zero_lysis_limit_branch() {
-    with_storage(|storage| {
-        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
-        let nominal = U256::from(1_000);
-        // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
-        // non-zero day limit therefore produces an exact zero Lysis Limit.
-        let day_limit = U256::from(2);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+fn active_ocomp_profile_completes_the_populated_zero_lysis_limit_day_and_forfeits_its_partition() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
+    let nominal = U256::from(1_000);
+    // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
+    // non-zero day limit therefore produces an exact zero Lysis Limit.
+    let day_limit = U256::from(2);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let scheduled =
+        seed_local_terminal_fixture(&mut provider, wwd, day_type::RED, day_limit, 1, nominal);
+    let (scope, _) = begin_fixed_partition_scope(&mut provider);
 
-        let tribute = TributeContract::new(storage.clone());
-        tribute.total_supply.write(1).unwrap();
-        let mut totals = outbe_tribute::schema::DayTotals::with_key(wwd);
-        totals.initialized = true;
-        totals.is_sealed = true;
-        totals.tribute_count = 1;
-        totals.tribute_nominal_amount = nominal;
-        tribute.day_totals.create(&totals).unwrap();
-        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+    run_start_command(&mut provider, &scope, &TestParent::empty(), 2, scheduled).unwrap();
 
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+    assert_local_terminal_completed(&mut provider, wwd, day_limit);
+    assert_tribute_partition_forfeited(&mut provider, wwd);
+    StorageHandle::enter(&mut provider, |storage| {
         assert_no_ocomp_job(&storage, wwd);
-
-        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&series).unwrap(),
+            desis.auction_stage.read(&wwd).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
         assert_eq!(
-            desis.pending_desis_limit_minor.read(&series).unwrap(),
+            desis.pending_desis_limit_minor.read(&wwd).unwrap(),
             U256::ZERO
         );
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
-                .unwrap(),
-            day_limit
-        );
-        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        let tribute = TributeContract::new(storage);
-        assert_eq!(tribute.total_supply().unwrap(), 1);
-        let totals = tribute.get_day_totals(wwd).unwrap();
-        assert_eq!(totals.tribute_count, 1);
-        assert_eq!(totals.tribute_nominal_amount, nominal);
+        assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
     });
 }
 
