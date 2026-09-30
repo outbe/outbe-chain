@@ -9,7 +9,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::Codec as _;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -112,17 +111,13 @@ fn prove_spend(
             .try_into()
             .unwrap(),
     };
-    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
-        &Barretenberg::default(),
-        &witness,
-        &public,
-    )
-    .expect("paynote proof generation");
+    let proof = ProofGenerator::<PayNote>::generate(&Barretenberg::default(), &witness, &public)
+        .expect("paynote proof generation");
     (public, proof.proof)
 }
 
 pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields = <PayNote as Circuit<PayNoteSuit>>::public_inputs(public);
+    let fields = <PayNote as Circuit>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
@@ -154,7 +149,7 @@ pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: 
         PayNoteSuit::field_to_b256(&output.commitment).unwrap()
     );
     let public = public.try_into().unwrap();
-    let proof = ProofGenerator::<PayNoteSuit, PaynoteMerge>::generate(
+    let proof = ProofGenerator::<PaynoteMerge>::generate(
         &Barretenberg::default(),
         &witness.try_into().unwrap(),
         &public,

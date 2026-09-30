@@ -6,7 +6,6 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::Codec as _;
 use outbe_protocol::FieldElement as _;
 use outbe_zk_canonical::{
     demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS,
@@ -291,7 +290,6 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 #[test]
 fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     use outbe_protocol::protocol::zk::ProofGenerator;
-    use outbe_protocol::OutbeV1;
     use outbe_zk_backend::barretenberg::Barretenberg;
     use outbe_zk_canonical::emit_mint::{hash::*, Field};
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
@@ -347,15 +345,18 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         auth_path: path,
     };
     let backend = Barretenberg::default();
-    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
+    let proof = ProofGenerator::<EmitMint>::generate(&backend, &witness, &public)
         .expect("emit mint proof generation");
 
     assert_eq!(proof.proof.len(), EMIT_MINT_PROOF_WORDS);
     let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
     combined.extend_from_slice(&8u32.to_be_bytes());
-    for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
-    {
-        combined.extend_from_slice(OutbeV1::field_to_b256(&word).unwrap().as_slice());
+    for word in <EmitMint as outbe_protocol::protocol::zk::Circuit>::public_inputs(&public) {
+        combined.extend_from_slice(
+            outbe_protocol::codec::field_to_b256(&word)
+                .unwrap()
+                .as_slice(),
+        );
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

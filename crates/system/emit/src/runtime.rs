@@ -14,7 +14,6 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::emit_mint::{
     alloy::PublicInputs as EmitPublicInputs, decode_public_inputs as decode_emit_mint_public_inputs,
