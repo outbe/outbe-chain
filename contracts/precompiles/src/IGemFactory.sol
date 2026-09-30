@@ -83,7 +83,9 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A new gem was issued (agent reward, merchant, or genesis flow).
+    /// @notice A new gem was issued (agent reward, merchant, or genesis flow). `positionId`
+    ///         is the position a merchant gem drew on, 0 otherwise; `bucketKey` names the
+    ///         call bucket that `IGem.GemBucketCalled` reports.
     event GemIssued(
         uint256 indexed gemId,
         uint8 gemType,
@@ -93,7 +95,26 @@ interface IGemFactory {
         uint256 floorPrice,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 issuedAt
+        uint64 issuedAt,
+        uint256 callPrice,
+        uint32 callWindow,
+        uint32 callThreshold,
+        uint32 callNoticePeriod,
+        uint256 positionId,
+        bytes32 bucketKey
+    );
+    /// @notice A merchant sent Intex units into a new position.
+    event GemPositionIssued(
+        uint256 indexed positionId,
+        address indexed merchant,
+        bytes14 sourceIntexId,
+        uint256 capacity,
+        uint256 sourceEntryPrice,
+        uint256 sourceFloorPrice,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 issuedAt,
+        uint64 expiresAt
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);

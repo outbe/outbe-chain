@@ -708,7 +708,7 @@ fn event_count<E: SolEvent>(receipt: &Value, emitter: Address) -> usize {
     matching_logs::<E>(receipt, emitter).len()
 }
 
-fn single_event<E: SolEvent>(receipt: &Value, emitter: Address) -> E {
+pub(crate) fn single_event<E: SolEvent>(receipt: &Value, emitter: Address) -> E {
     let logs = matching_logs::<E>(receipt, emitter);
     assert_eq!(logs.len(), 1, "exactly one {} event", E::SIGNATURE);
     let topics: Vec<B256> =

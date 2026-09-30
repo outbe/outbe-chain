@@ -16,7 +16,7 @@ use outbe_common::settlement::floor_to_asset_units;
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
@@ -79,22 +79,34 @@ pub fn issue_gem(
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_gems_issued.write(new_total)?;
 
+    emit_gem_issued(storage, gem_id, U256::ZERO)?;
+
+    Ok(gem_id)
+}
+
+/// Announce a new gem with the terms its record and call bucket were given.
+fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256) -> Result<()> {
+    let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     emit_event(
         storage,
         GemIssued {
             gemId: gem_id,
-            gemType: gem_type as u8,
-            owner,
-            promisLoad: promis_load,
-            entryPrice: entry_price,
-            floorPrice: floor_price,
-            issuanceCurrency: issuance_currency,
-            referenceCurrency: reference_currency,
-            issuedAt: issued_at,
+            gemType: item.gem_type,
+            owner: item.owner,
+            promisLoad: item.promis_load_minor,
+            entryPrice: item.entry_price_minor,
+            floorPrice: item.floor_price_minor,
+            issuanceCurrency: item.issuance_currency,
+            referenceCurrency: item.reference_currency,
+            issuedAt: item.issued_at,
+            callPrice: item.call_price_minor,
+            callWindow: item.call_window_seconds,
+            callThreshold: item.call_threshold_seconds,
+            callNoticePeriod: item.call_notice_period_seconds,
+            positionId: position_id,
+            bucketKey: gem_api::bucket_of(storage, gem_id)?,
         },
-    )?;
-
-    Ok(gem_id)
+    )
 }
 
 /// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
@@ -142,7 +154,7 @@ pub fn issue_gem_position(
         GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
-    factory.add_position(&GemPosition {
+    let position = GemPosition {
         position_id,
         merchant: caller,
         source_intex_id,
@@ -153,7 +165,8 @@ pub fn issue_gem_position(
         reference_currency: series.reference_currency,
         issued_at,
         expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
-    })?;
+    };
+    factory.add_position(&position)?;
 
     factory.push_live_position(position_id)?;
 
@@ -162,6 +175,22 @@ pub fn issue_gem_position(
         .checked_add(capacity)
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_gem_factory_units.write(new_sent)?;
+
+    emit_event(
+        storage,
+        GemPositionIssued {
+            positionId: position_id,
+            merchant: caller,
+            sourceIntexId: source_intex_id.into(),
+            capacity,
+            sourceEntryPrice: position.source_entry_price,
+            sourceFloorPrice: position.source_floor_price,
+            issuanceCurrency: position.issuance_currency,
+            referenceCurrency: position.reference_currency,
+            issuedAt: issued_at,
+            expiresAt: position.expires_at,
+        },
+    )?;
 
     Ok(position_id)
 }
@@ -260,20 +289,7 @@ pub fn issue_merchant_gem(
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_gems_issued.write(new_total)?;
 
-    emit_event(
-        storage,
-        GemIssued {
-            gemId: gem_id,
-            gemType: GemTypes::Merchant as u8,
-            owner,
-            promisLoad: promis_load,
-            entryPrice: entry_price,
-            floorPrice: floor_price,
-            issuanceCurrency: record.issuance_currency,
-            referenceCurrency: record.reference_currency,
-            issuedAt: now,
-        },
-    )?;
+    emit_gem_issued(storage, gem_id, position_id)?;
 
     Ok(gem_id)
 }

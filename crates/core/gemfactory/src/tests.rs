@@ -2041,3 +2041,65 @@ fn merged_paynote_settles_a_gem_without_additional_funding() {
         assert!(runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).is_err());
     });
 }
+
+/// Issuance events carry what an indexer needs to follow a gem through its call.
+#[test]
+fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (position, expected) = StorageHandle::enter(&mut provider, |storage| {
+        seed_day_vwap(&storage, 840, rate);
+        let position = seed_and_send(
+            &storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let merchant_gem =
+            runtime::issue_merchant_gem(&storage, ALICE, position, BOB, six_decimal_unit())
+                .unwrap();
+        let wallet_gem = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
+            let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+            (item, pos, gem_api::bucket_of(&storage, gem_id).unwrap())
+        });
+        (position, expected)
+    });
+
+    let events = provider.get_ordered_events();
+    let issued: Vec<_> = events
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemIssued::decode_log(log).ok())
+        .map(|log| log.data)
+        .collect();
+    assert_eq!(issued.len(), 2);
+    for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
+        assert_eq!(event.gemId, item.gem_id);
+        assert_eq!(event.callPrice, item.call_price_minor);
+        assert_eq!(event.callWindow, item.call_window_seconds);
+        assert_eq!(event.callThreshold, item.call_threshold_seconds);
+        assert_eq!(event.callNoticePeriod, item.call_notice_period_seconds);
+        assert_eq!(event.positionId, *position_id);
+        assert_eq!(event.bucketKey, *bucket);
+        assert!(!bucket.is_zero());
+    }
+
+    let opened: Vec<_> = events
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemPositionIssued::decode_log(log).ok())
+        .map(|log| log.data)
+        .collect();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].positionId, position);
+    assert_eq!(opened[0].merchant, ALICE);
+    assert_eq!(opened[0].capacity, sent_capacity(six_decimal_u128()));
+    assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
+}
