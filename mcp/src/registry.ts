@@ -139,7 +139,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   paynote: {
     address: A("0x0000000000000000000000000000000000001019"),
-    note: "PayNote shielded ERC20 note pool (deposit + tree queries; spending is a Rust-only API)",
+    note: "PayNote shielded ERC20 pool (deposit, proof-authorized mergePayNotes, and tree queries; settlement spending is a Rust-only API)",
     abi: ABI.IPayNote,
   },
 };

@@ -43,6 +43,11 @@ impl EthCallMap {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecordedRpcCall {
+    EthCallAt {
+        to: Address,
+        data: Vec<u8>,
+        block_tag: String,
+    },
     EthCall {
         to: Address,
         data: Vec<u8>,

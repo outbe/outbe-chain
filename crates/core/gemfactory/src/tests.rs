@@ -147,47 +147,65 @@ fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R
 /// Nominal, for settlements refused before the cost is ever compared.
 const NOTE_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000;
 
+/// Non-zero statement for proofs that fail before the context comparison.
+fn unbound_context() -> B256 {
+    B256::from(U256::from(1u64))
+}
+
+fn gem_context(gem_id: U256, snapshot: U256) -> B256 {
+    outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Gem,
+        B256::from(gem_id),
+        U256::ONE,
+        snapshot,
+    )
+    .unwrap()
+}
+
 /// Seeds the pool with one note over `asset` and proves a spend of it.
 fn note_proof(
     provider: &mut HashMapStorageProvider,
     asset: Address,
-    owner: Address,
-    amount: u128,
+    context: B256,
+    amount: U256,
 ) -> Vec<u8> {
-    let amount = U256::from(amount);
     let fixture =
-        outbe_paynote::test_support::note_and_spend_proof(1, asset, owner, amount, amount);
+        outbe_paynote::test_support::note_and_spend_proof(1, asset, context, amount, amount);
     outbe_paynote::test_support::seed_pool(provider, 1, &[fixture.commitment]);
     fixture.proof
 }
 
-/// Builds a gem, quotes what `asset` owes for it, and funds a note with exactly
-/// that. Settlement takes the exact cost, so every test paying this way also
-/// checks that the quote is what settlement charges.
+/// Builds a gem, quotes what `asset` owes for it, and funds a note bound to that
+/// gem and snapshot. Settlement takes the exact cost, so every test paying this
+/// way also checks that the quote is what settlement charges.
 fn note_for_quoted_cost(
     provider: &mut HashMapStorageProvider,
     asset: Address,
-    payer: Address,
     build: impl FnOnce(&StorageHandle) -> U256,
 ) -> (U256, Vec<u8>) {
-    let (gem_id, cost) = StorageHandle::enter(provider, |storage| {
+    let (gem_id, cost, snapshot) = StorageHandle::enter(provider, |storage| {
         let gem_id = build(&storage);
-        let (_, cost, _) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
-        (gem_id, cost)
+        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, asset).unwrap();
+        (gem_id, cost, snapshot)
     });
-    let proof = note_proof(provider, asset, payer, cost.to::<u128>());
+    let proof = note_proof(provider, asset, gem_context(gem_id, snapshot), cost);
     (gem_id, proof)
 }
 
-/// [`with_storage`] plus a nominal note.
+/// [`with_storage`] plus a nominal note. The statement is unused: these paths
+/// reject the asset before comparing context.
 fn with_storage_paying<R>(
     rate: Option<U256>,
     asset: Address,
-    owner: Address,
     f: impl FnOnce(&StorageHandle, &[u8]) -> R,
 ) -> R {
     let mut storage = test_storage(rate);
-    let proof = note_proof(&mut storage, asset, owner, NOTE_AMOUNT);
+    let proof = note_proof(
+        &mut storage,
+        asset,
+        unbound_context(),
+        U256::from(NOTE_AMOUNT),
+    );
     StorageHandle::enter(&mut storage, |handle| f(&handle, &proof))
 }
 
@@ -251,7 +269,7 @@ fn issue_genesis_pays_like_agents_but_carries_no_floor() {
 fn a_genesis_gem_settles_once_its_first_day_closes() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
         issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap()
     });
@@ -440,7 +458,7 @@ fn issue_rejects_a_stale_oracle_rate_before_writing_a_gem() {
 fn settle_wallet_settles_with_a_registered_asset() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -470,7 +488,7 @@ fn gem_paid_off_the_quote(
     adjust: impl FnOnce(U256) -> U256,
 ) -> (HashMapStorageProvider, U256, Vec<u8>) {
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
-    let (gem_id, cost) = StorageHandle::enter(&mut provider, |storage| {
+    let (gem_id, cost, snapshot) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = issue_at_live_rate(
             &storage,
             ALICE,
@@ -481,10 +499,15 @@ fn gem_paid_off_the_quote(
         )
         .unwrap();
         seed_qualifying_day(&storage, gem_id);
-        let (_, cost, _) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
-        (gem_id, cost)
+        let (_, cost, snapshot) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        (gem_id, cost, snapshot)
     });
-    let proof = note_proof(&mut provider, STABLE, ALICE, adjust(cost).to::<u128>());
+    let proof = note_proof(
+        &mut provider,
+        STABLE,
+        gem_context(gem_id, snapshot),
+        adjust(cost),
+    );
     (provider, gem_id, proof)
 }
 
@@ -520,7 +543,7 @@ fn a_paynote_spending_less_than_the_cost_is_refused() {
 fn settlement_event_reports_the_rail_the_asset_matched() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -674,7 +697,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
     // COEN/USD 2.0, COEN/EUR 1.0: the same cost converts to half as many EUR units.
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, |storage| {
         register_currency(storage, 978, six_decimal_unit());
         seed_day_vwap(storage, 840, usd_rate);
         let gem_id = issue_at_live_rate(
@@ -703,7 +726,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
     // Exact obligation 2.5 EUR units: flooring charges 2, rounding up charged 3.
     let mut provider = test_storage(Some(U256::from(3_000_000u64)));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, |storage| {
         register_currency(storage, 978, U256::from(2_500_000u64));
         seed_day_vwap(storage, 840, U256::from(3_000_000u64));
         let gem_id =
@@ -727,7 +750,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     // The reference cost floors to 1, the obligation is 1.500001: an eighteen-
     // decimal asset carries all of it, scaling the floored 1 charged 1e12.
     let mut provider = test_storage(Some(U256::from(1_500_001u64)));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_18, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_18, |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
         seed_qualifying_day(storage, gem_id);
@@ -779,7 +802,7 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
 #[test]
 fn a_dust_gem_settles_for_one_minor_unit() {
     let mut provider = test_storage(Some(U256::ONE));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
         seed_qualifying_day(storage, gem_id);
@@ -809,7 +832,7 @@ fn the_settlement_minimum_ignores_the_sra_discount() {
 #[test]
 fn settling_on_an_unregistered_issuance_leg_is_refused() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
-    with_storage_paying(Some(usd_rate), STABLE_EUR, ALICE, |storage, proof| {
+    with_storage_paying(Some(usd_rate), STABLE_EUR, |storage, proof| {
         // The EUR asset is a valid vault asset, but COEN/978 was never registered,
         // so the pivot has no leg to convert through.
         seed_day_vwap(storage, 840, usd_rate);
@@ -836,7 +859,7 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
 fn the_reference_currency_settles_without_reading_any_issuance_rate() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         // Issuance 978 is never registered, so it carries no rate at all.
         let gem_id = issue_at_live_rate(
             storage,
@@ -863,7 +886,12 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
 fn settle_rejects_an_asset_with_no_registered_vault() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let proof = note_proof(&mut provider, STABLE, ALICE, NOTE_AMOUNT);
+    let proof = note_proof(
+        &mut provider,
+        STABLE,
+        unbound_context(),
+        U256::from(NOTE_AMOUNT),
+    );
     // Override the blanket vault count: this asset has none.
     provider.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
@@ -890,7 +918,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
 fn settlement_scales_the_cost_to_the_asset_decimals() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_18, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_18, |storage| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -922,7 +950,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
     // asset can ever report it, so it is inert - exactly as it is for a bid.
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -994,7 +1022,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
 fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, ALICE, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE_EUR, |storage| {
         register_currency(storage, 978, six_decimal_unit());
         seed_day_vwap(storage, 840, usd_rate);
         let gem_id = issue_at_live_rate(
@@ -1223,7 +1251,7 @@ fn a_position_reports_its_full_terms() {
 #[test]
 fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage_paying(Some(rate), STABLE, ALICE, |storage, proof| {
+    with_storage_paying(Some(rate), STABLE, |storage, proof| {
         // EUR trades live, but the window it converts at holds no euro price.
         let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
@@ -1268,7 +1296,7 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
 #[test]
 fn settle_rejects_wrong_settlement_currency() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage_paying(Some(rate), STABLE_EUR, ALICE, |storage, proof| {
+    with_storage_paying(Some(rate), STABLE_EUR, |storage, proof| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -1290,7 +1318,7 @@ fn settle_rejects_wrong_settlement_currency() {
 fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
-    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, BOB, |storage| {
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
@@ -1321,6 +1349,54 @@ fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
         event.owner, ALICE,
         "the event names the owner, not the payer"
     );
+}
+
+#[test]
+fn a_paynote_bound_to_another_gem_cannot_settle_this_one() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let (gem_id, proof) = note_for_quoted_cost(&mut provider, STABLE, |storage| {
+        let gem_id = issue_at_live_rate(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(storage, gem_id);
+        gem_id
+    });
+    let other = StorageHandle::enter(&mut provider, |storage| {
+        // gem_id hashes owner, load, and block. A different load keeps this gem distinct.
+        let other = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(11u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, other);
+        other
+    });
+    StorageHandle::enter(&mut provider, |storage| {
+        let rejected = runtime::settle_gem_with_paynote(&storage, BOB, other, &proof).unwrap_err();
+        assert!(
+            rejected.to_string().contains("does not match settlement"),
+            "{rejected}"
+        );
+        assert_eq!(
+            gem_api::get_gem(&storage, other).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+        runtime::settle_gem_with_paynote(&storage, BOB, gem_id, &proof).unwrap();
+        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.state, GemState::Settled as u8);
+        assert_eq!(item.owner, ALICE);
+    });
 }
 
 #[test]
@@ -1929,5 +2005,39 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
         );
         let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("oracle nominal unavailable"));
+    });
+}
+
+#[test]
+fn merged_paynote_settles_a_gem_without_additional_funding() {
+    let mut provider = test_storage(Some(U256::from(2) * six_decimal_unit()));
+    let (gem_id, cost, snapshot) = StorageHandle::enter(&mut provider, |storage| {
+        let id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Genesis,
+            U256::from(10) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        seed_qualifying_day(&storage, id);
+        let (_, cost, snapshot) = runtime::quote_settlement(&storage, id, STABLE).unwrap();
+        (id, cost, snapshot)
+    });
+    let (proof, _) = outbe_paynote::test_support::merged_note_spend_proof(
+        &mut provider,
+        1,
+        STABLE,
+        gem_context(gem_id, snapshot),
+        cost,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).unwrap();
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
+        assert!(runtime::settle_gem_with_paynote(&storage, ALICE, gem_id, &proof).is_err());
     });
 }

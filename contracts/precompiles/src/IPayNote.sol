@@ -34,6 +34,15 @@ interface IPayNote {
     /// BN254 field word.
     function deposit(address asset, uint256 amount, bytes32 noteSn) external;
 
+    /// @notice Atomically consume 2..maxMergeInputs same-asset notes and append
+    /// one ordinary note for their exact sum. Any address may relay the proof.
+    /// @dev Accepts the active outbe.paynote.merge combined proof. Amounts and
+    /// keys remain private. No tokens move and no settlement is performed.
+    function mergePayNotes(bytes calldata proof) external;
+
+    /// @notice Maximum input count supported by the active merge circuit.
+    function maxMergeInputs() external view returns (uint32 count);
+
     /// @notice Latest commitment-tree root.
     function currentRoot() external view returns (bytes32 root);
 
@@ -57,15 +66,20 @@ interface IPayNote {
     /// @param rootAfter Tree root after the append.
     /// @param asset The note's bound ERC20 (indexed).
     /// @param noteAmount Deposited public amount; `0` is the sentinel for a
-    /// spend's change note, whose remaining value is private.
+    /// change or merged note, whose value is private.
     event NewNote(
         bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint256 noteAmount
     );
 
     /// @notice A note was spent through the Rust `consume` API.
     /// @param asset The spent note's bound ERC20 (indexed).
-    /// @param owner Recipient bound by the proof (indexed).
+    /// @param context Settlement statement bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
     /// @param spendAmount Units released by the spend.
-    event NoteUsed(address indexed asset, address indexed owner, bytes32 indexed nullifier, uint256 spendAmount);
+    event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 spendAmount);
+
+    /// @notice These canonical nullifiers were consumed to create one note.
+    /// @dev Input commitments and all amounts remain private. NewNote supplies
+    /// the output's tree index and root to existing indexers.
+    event NotesMerged(address indexed asset, bytes32 indexed outputCommitment, bytes32[] nullifiers);
 }

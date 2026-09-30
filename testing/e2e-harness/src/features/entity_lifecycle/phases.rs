@@ -68,17 +68,17 @@ fn every_entity_qualifies(world: &mut World, entity: Entity) {
 }
 
 #[then(
-    expr = "a/an {entity} payment is refused for a stale snapshot, a foreign currency or another owner's note"
+    expr = "a/an {entity} payment is refused for a stale snapshot, a foreign currency or a note bound to another holding"
 )]
 fn payment_guards(world: &mut World, entity: Entity) {
     // The holding the scenario next pays in MYR by PayNote, so that payment differs from
-    // the refused note only in whose it is.
-    let [_, target] = entity.lifecycle().targets(world, Phase::Qualified);
+    // the refused note only in the holding it is bound to.
+    let [other, target] = entity.lifecycle().targets(world, Phase::Qualified);
     assert_eq!(
         target.issuance_currency, MYR_ISO,
         "the guarded holding is issued in MYR"
     );
-    guards::assert_payment_guards(world, &target);
+    guards::assert_payment_guards(world, &target, &other);
 }
 
 #[then(expr = "an unpaid {entity} cannot be mined")]

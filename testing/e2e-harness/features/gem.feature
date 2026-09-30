@@ -40,7 +40,7 @@ Feature: Gem from a parked Intex to Promis and COEN
     And no gem can be transferred
     When the reference rate stands above the gem floor
     Then every gem qualifies
-    And a gem payment is refused for a stale snapshot, a foreign currency or another owner's note
+    And a gem payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
     And an unpaid gem cannot be mined
     When a qualified gem is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault

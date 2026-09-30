@@ -118,9 +118,45 @@ impl Read for ConsensusBlock {
             alloy_rlp::Decodable::decode(&mut bytes.as_ref()).map_err(|rlp_err| {
                 commonware_codec::Error::Wrapped("reading RLP encoded block", rlp_err.into())
             })?;
+        // Digest and commitment are the header hash. Reject a body whose
+        // transaction, ommer, or withdrawals root does not match that header
+        // before the block can be stored under the header digest.
+        ensure_body_matches_header(&inner)?;
 
         Ok(Self::from_sealed(inner.seal_slow()))
     }
+}
+
+fn ensure_body_matches_header(block: &OutbeBlock) -> Result<(), commonware_codec::Error> {
+    let header = &block.header.inner;
+    let body = &block.body;
+
+    let transactions_root = alloy_consensus::proofs::calculate_transaction_root(&body.transactions);
+    if transactions_root != header.transactions_root {
+        return Err(commonware_codec::Error::Invalid(
+            "ConsensusBlock",
+            "transactions root mismatch",
+        ));
+    }
+
+    if body.calculate_ommers_root() != header.ommers_hash {
+        return Err(commonware_codec::Error::Invalid(
+            "ConsensusBlock",
+            "ommers root mismatch",
+        ));
+    }
+
+    match (header.withdrawals_root, body.calculate_withdrawals_root()) {
+        (Some(expected), Some(actual)) if expected == actual => {}
+        (None, None) => {}
+        _ => {
+            return Err(commonware_codec::Error::Invalid(
+                "ConsensusBlock",
+                "withdrawals root mismatch",
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl EncodeSize for ConsensusBlock {
@@ -249,5 +285,68 @@ mod tests {
             1,
             "consuming the clone releases its Arc ref"
         );
+    }
+
+    fn legacy_tx() -> reth_ethereum::TransactionSigned {
+        use alloy_consensus::{SignableTransaction, TxLegacy};
+        use alloy_primitives::{Signature, TxKind, U256};
+
+        TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(alloy_primitives::Address::repeat_byte(0x11)),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }
+        .into_signed(Signature::test_signature())
+        .into()
+    }
+
+    /// Header hash ignores the body. A peer can therefore ship an honest header
+    /// with a different body and still present the honest digest. Decode must
+    /// reject that copy before it can be archived under the digest.
+    fn with_swapped_body(
+        honest: &ConsensusBlock,
+        mutate: impl FnOnce(&mut OutbeBlock),
+    ) -> ConsensusBlock {
+        let mut block = honest.clone().into_inner().unseal();
+        mutate(&mut block);
+        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+    }
+
+    fn assert_decode_rejects(block: &ConsensusBlock, root: &'static str) {
+        let encoded = block.encode();
+        let mut buf = encoded.as_ref();
+        match ConsensusBlock::read_cfg(&mut buf, &()) {
+            Err(commonware_codec::Error::Invalid("ConsensusBlock", message)) => {
+                assert_eq!(message, root);
+            }
+            other => panic!("expected body root rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_cfg_rejects_body_whose_roots_do_not_match_the_header() {
+        let honest = sample_block(1, b"body-roots");
+
+        let extra_tx = with_swapped_body(&honest, |block| {
+            block.body.transactions.push(legacy_tx());
+        });
+        assert_eq!(extra_tx.digest(), honest.digest());
+        assert_decode_rejects(&extra_tx, "transactions root mismatch");
+
+        let extra_ommer = with_swapped_body(&honest, |block| {
+            block.body.ommers.push(block.header.clone());
+        });
+        assert_eq!(extra_ommer.digest(), honest.digest());
+        assert_decode_rejects(&extra_ommer, "ommers root mismatch");
+
+        let extra_withdrawals = with_swapped_body(&honest, |block| {
+            block.body.withdrawals = Some(Default::default());
+        });
+        assert_eq!(extra_withdrawals.digest(), honest.digest());
+        assert_decode_rejects(&extra_withdrawals, "withdrawals root mismatch");
     }
 }

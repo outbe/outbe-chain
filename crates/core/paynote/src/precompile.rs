@@ -1,9 +1,8 @@
 //! Outbe `DispatchFn` adapter for the PayNote precompile, the payable-selector
 //! policy, and the selector-sensitive base gas.
 //!
-//! Only `deposit` and the read-only views are reachable over the ABI. Spending
-//! is the Rust-only [`crate::api::consume`], so no proof verification cost ever
-//! arrives through this path.
+//! Deposits, proof-authorized merges and views are public. Settlement spending
+//! remains the Rust-only [`crate::api::consume`].
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -23,6 +22,11 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 /// ladder, commitment derivation, one depth-32 append, and the ERC20 +
 /// VaultRouter sub-calls (which meter their own execution on top).
 pub const PAYNOTE_DEPOSIT_BASE_GAS: u64 = 850_000;
+
+/// One merge verification plus the existing conservative tree-work allowance.
+/// Calldata and persistent storage operations are charged separately.
+pub const PAYNOTE_MERGE_BASE_GAS: u64 =
+    PAYNOTE_DEPOSIT_BASE_GAS + outbe_primitives::storage::gas::ZK_VERIFY_GAS;
 
 /// Base gas for the read-only views: a handful of storage reads, plus the
 /// root-window scan for `isKnownRoot`.
@@ -47,6 +51,10 @@ pub fn dispatch(
             deposit(c) => mutate_void(c, caller, |caller, c| {
                 runtime::deposit(storage, caller, c.asset, c.amount, c.noteSn)
             }),
+            mergePayNotes(c) => mutate_void(c, caller, |_, c| {
+                runtime::merge_pay_notes(&storage, &c.proof)
+            }),
+            maxMergeInputs(c) => view(c, |_| runtime::max_merge_inputs()),
             currentRoot(c) => view(c, |_| {
                 let paynote: PayNoteContract<'_> = storage.contract();
                 paynote.current_root.read()
@@ -76,7 +84,9 @@ pub fn dispatch(
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
         Some(&IPayNote::depositCall::SELECTOR) => PAYNOTE_DEPOSIT_BASE_GAS,
+        Some(&IPayNote::mergePayNotesCall::SELECTOR) => PAYNOTE_MERGE_BASE_GAS,
         Some(&IPayNote::currentRootCall::SELECTOR)
+        | Some(&IPayNote::maxMergeInputsCall::SELECTOR)
         | Some(&IPayNote::leafCountCall::SELECTOR)
         | Some(&IPayNote::isKnownRootCall::SELECTOR)
         | Some(&IPayNote::isSpentCall::SELECTOR)

@@ -90,7 +90,9 @@ interface IVote {
     /// @dev Admission and bond rules are identical to createProposal. The deadline
     /// is createdHeight + votingWindowBlocks, inclusive; tally runs in the next block.
     function createProposalWithVotingWindow(address targetModule, string calldata payload, uint64 votingWindowBlocks)
-        external payable returns (uint256 proposalId);
+        external
+        payable
+        returns (uint256 proposalId);
 
     /// @notice Casts a vote on a pending proposal.
     /// @dev Only active validators may vote.

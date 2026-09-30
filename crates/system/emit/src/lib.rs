@@ -22,9 +22,6 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 
-/// Cryptographic suite used by Emit.
-pub use outbe_zk_canonical::emit_mint::EmitSuite;
-
 /// In-memory commitment tree for Emit clients.
 pub use outbe_zk_canonical::emit_mint::Tree as EmitTree;
 

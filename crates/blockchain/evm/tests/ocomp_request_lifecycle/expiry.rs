@@ -56,10 +56,26 @@ pub(crate) fn run() {
         .as_ref()
         .is_some_and(|record| record.quorum.is_none()));
 
+    // Validator 2 has not voted. Its vote arrives in the deadline block itself,
+    // after the begin zone has closed the window, so execution records the
+    // late-vote soft failure instead of rejecting the block.
+    let late_calldata =
+        encode_submit_lysis_result_calldata(&initial_voting.signed_vote(2), &poc_schema_limits())
+            .expect("canonical late vote calldata");
+    let late_carrier = pooled_vote_transaction(Bytes::from(late_calldata), 2);
+    let late_carrier_hash = *PoolTransaction::hash(&late_carrier);
+    let mut late_carrier = Some(late_carrier);
+
     let mut expiry_parent = no_quorum.header;
     let mut expiry_storage = no_quorum.storage;
     let mut initial_terminal = no_quorum.record;
     for height in (open_height + 2)..=initial_deadline {
+        let deadline_block = height == initial_deadline;
+        let pool = if deadline_block {
+            late_carrier.take().into_iter().collect()
+        } else {
+            Vec::new()
+        };
         let built = build_canonical_ocomp_successor(
             &chain_spec,
             &prepared.tree_service,
@@ -74,8 +90,20 @@ pub(crate) fn run() {
             height,
             prepared.request_time + (height - REQUEST_HEIGHT),
             intent_id,
-            Vec::new(),
+            pool,
         );
+        if deadline_block {
+            assert_eq!(
+                built.user_transaction_hashes,
+                vec![late_carrier_hash],
+                "the late carrier is included in the deadline block"
+            );
+            assert_eq!(
+                built.user_receipt_successes,
+                vec![false],
+                "the late carrier gets the deadline-passed soft-failure receipt"
+            );
+        }
         expiry_parent = built.header;
         expiry_storage = built.storage;
         initial_terminal = built.record;

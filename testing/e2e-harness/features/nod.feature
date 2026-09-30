@@ -27,7 +27,7 @@ Feature: Nod from issuance to Gratis and COEN
     And the pricing window closes over those quotes
     When the reference rate stands above the Nod floor
     Then every Nod qualifies
-    And a Nod payment is refused for a stale snapshot, a foreign currency or another owner's note
+    And a Nod payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
     And an unpaid Nod cannot be mined
     When a qualified Nod is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault

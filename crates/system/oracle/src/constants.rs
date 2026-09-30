@@ -45,6 +45,14 @@ pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0xc8, 0x40,
 ]);
 
+/// Largest whole price one vote may quote. The stored rate is this many units
+/// times the pair scale, so one million on COEN/ISO is raw `1e12`.
+pub(crate) const MAX_VOTE_PRICE_WHOLE: u64 = 1_000_000;
+
+/// Largest whole volume one vote may quote. The stored volume is this many
+/// units times the pair scale, so one trillion on COEN/ISO is raw `1e18`.
+pub(crate) const MAX_VOTE_VOLUME_WHOLE: u64 = 1_000_000_000_000;
+
 /// Price scale used only when taking a reciprocal. Generic Oracle markets keep
 /// their existing decimal18 reciprocal contract.
 pub(crate) fn reciprocal_scale(pair: AddressPair) -> U256 {

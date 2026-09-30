@@ -862,10 +862,10 @@ mod tests {
                     == "Complete worker outage preserves exports and cannot halt consensus"
             })
             .unwrap();
-        assert_eq!(scenario.steps.len(), 10);
-        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent");
+        assert_eq!(scenario.steps.len(), 11);
+        assert_eq!(scenario.steps[5].value, "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent");
         assert_eq!(
-            scenario.steps[9].value,
+            scenario.steps[10].value,
             "the independent OCOMP job completes on every validator"
         );
         assert_registered_steps(&feature, scenario);

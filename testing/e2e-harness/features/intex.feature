@@ -95,7 +95,7 @@ Feature: Intex from auction to Promis
     Then every Intex series qualifies
     And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
-    Then an Intex series payment is refused for a stale snapshot, a foreign currency or another owner's note
+    Then an Intex series payment is refused for a stale snapshot, a foreign currency or a note bound to another holding
     And an unpaid Intex series cannot be mined
     When a qualified Intex series is paid in USD by ERC20 and another in MYR by PayNote
     Then each payment settles exactly its quote into its currency's vault

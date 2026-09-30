@@ -1,7 +1,10 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
 //! and UTC-day finalization, and the OCOMP projection profile.
 
-use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR, VWAP_HOUR_SECONDS};
+use crate::constants::{
+    reciprocal_scale, zero_volume_weight, DAY_TYPE_PAIR, MAX_VOTE_PRICE_WHOLE,
+    MAX_VOTE_VOLUME_WHOLE, VWAP_HOUR_SECONDS,
+};
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
@@ -162,6 +165,12 @@ impl OracleContract<'_> {
             return Err(OracleError::AlreadyVotedThisPeriod.into());
         }
 
+        // Reject an out-of-range quote before the voted flag, so the feeder can
+        // resubmit a market-sized vote in the same period.
+        for (pair, (_, _, rate, volume)) in resolved.iter().zip(tuples) {
+            Self::reject_vote_outside_market_bounds(*pair, *rate, *volume)?;
+        }
+
         // Mark as voted FIRST to prevent concurrent overwrite (ORC-AUD-037).
         // EVM executes transactions sequentially within a block, so a second
         // submitVote TX in the same block sees this flag immediately.
@@ -188,6 +197,35 @@ impl OracleContract<'_> {
         self.voter_list.push(validator)?;
 
         Ok(validator)
+    }
+
+    fn reject_vote_outside_market_bounds(
+        pair: AddressPair,
+        rate: U256,
+        volume: U256,
+    ) -> Result<()> {
+        let scale = reciprocal_scale(pair);
+        let max_price = U256::from(MAX_VOTE_PRICE_WHOLE)
+            .checked_mul(scale)
+            .expect("price ceiling fits in U256");
+        let max_volume = U256::from(MAX_VOTE_VOLUME_WHOLE)
+            .checked_mul(scale)
+            .expect("volume ceiling fits in U256");
+        if rate > max_price {
+            return Err(OracleError::VotePriceExceedsCap {
+                price: rate,
+                max: max_price,
+            }
+            .into());
+        }
+        if volume > max_volume {
+            return Err(OracleError::VoteVolumeExceedsCap {
+                volume,
+                max: max_volume,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     fn add_daily_aggregates(

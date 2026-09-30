@@ -5,7 +5,7 @@
 //! tree, replay, token, and event effects one rollback unit. All guards precede
 //! mutation. Guard failures convert from [`PayNoteError`] (which fixes the
 //! revert texts and the fatal/revert split) via `From`.
-//! `PayNoteSuit` encodes BN254 fields as exactly 32 big-endian bytes.
+//! Canonical field words are exactly 32 big-endian bytes.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
@@ -13,13 +13,14 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::Codec as _;
+use outbe_protocol::codec::{field_from_b256, field_to_b256};
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::noir::paynote::Paynote;
 use outbe_zk_canonical::paynote::{
     alloy::PublicInputs as PayNotePublicInputs,
     decode_public_inputs as decode_paynote_public_inputs,
 };
+use outbe_zk_canonical::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
 
 use crate::errors::PayNoteError;
 use crate::hash::{empty_subtrees, merkle_node, note_commitment};
@@ -29,7 +30,6 @@ use crate::schema::{
 };
 use crate::sol_ext::IERC20;
 use crate::Field;
-use crate::PayNoteSuit;
 
 /// The validated public claim a spend proof carries, returned to the consuming
 /// module. PayNote books the nullifier and any change note; deciding what the
@@ -37,12 +37,119 @@ use crate::PayNoteSuit;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNoteClaim {
     pub asset: Address,
-    pub owner: Address,
+    /// Opaque settlement statement. The caller recomputes it; PayNote does not.
+    pub context: B256,
     pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
     /// paid it without learning anything that links back to the depositor.
     pub nullifier: B256,
+}
+
+/// The circuit capacity fits u32 (currently four); checked to keep ABI and
+/// generated witness changes from silently truncating the published bound.
+pub(crate) fn max_merge_inputs() -> Result<u32> {
+    u32::try_from(MAX_MERGE_INPUTS)
+        .map_err(|_| PrecompileError::Fatal("PayNote merge capacity exceeds u32".into()))
+}
+
+/// Proof-authorized consolidation. Shares settlement's canonical nullifiers,
+/// tree and checkpoint; touches no token, Reserve, Oracle or right state.
+pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> {
+    let claim: paynote_merge::alloy::PublicInputs = paynote_merge::decode_public_inputs(proof)
+        .and_then(TryInto::try_into)
+        .map_err(|error| {
+            PayNoteError::InvalidInput(format!("merge proof is malformed: {error}"))
+        })?;
+    if claim.chain_id != storage.chain_id()? || claim.pool != PAYNOTE_ADDRESS {
+        return Err(PayNoteError::InvalidInput(
+            "merge chain or pool does not match runtime".into(),
+        )
+        .into());
+    }
+    if !(2..=max_merge_inputs()?).contains(&claim.input_count) {
+        return Err(PayNoteError::InvalidInput(
+            "merge input count is outside supported bounds".into(),
+        )
+        .into());
+    }
+    let count = usize::try_from(claim.input_count)
+        .map_err(|_| PayNoteError::InvalidInput("merge input count exceeds usize".into()))?;
+    let (active, padding) = claim.nullifiers.split_at(count);
+    if claim.asset.is_zero()
+        || claim.output_commitment.is_zero()
+        || padding.iter().any(|word| !word.is_zero())
+        || active
+            .iter()
+            .enumerate()
+            .any(|(i, word)| word.is_zero() || active[..i].contains(word))
+    {
+        return Err(PayNoteError::InvalidInput(
+            "merge has zero or duplicate inputs, output, asset, or nonzero padding".into(),
+        )
+        .into());
+    }
+    let paynote: PayNoteContract<'_> = storage.contract();
+    let leaf_count = paynote.leaf_count.read()?;
+    if leaf_count == 0 {
+        return Err(PayNoteError::NotInitialized.into());
+    }
+    if leaf_count >= PAYNOTE_TREE_CAPACITY {
+        return Err(PayNoteError::TreeFull.into());
+    }
+    if !paynote.recent_roots.read_all()?.contains(&claim.root) {
+        return Err(PayNoteError::RootNotRecent.into());
+    }
+    for nullifier in active {
+        if paynote.spent_nullifiers.read(nullifier)? {
+            return Err(PayNoteError::NullifierSpent.into());
+        }
+    }
+    if paynote.commitments.read(&claim.output_commitment)? {
+        return Err(PayNoteError::CommitmentExists.into());
+    }
+    match verify_circuit::<PaynoteMerge>(proof) {
+        Ok(true) => {}
+        Ok(false) => return Err(PayNoteError::InvalidInput("merge proof is invalid".into()).into()),
+        Err(error) => {
+            return Err(PayNoteError::InvalidInput(format!(
+                "merge proof verification failed: {error}"
+            ))
+            .into())
+        }
+    }
+    // The canonical decoder and circuit prove the confidential U256 sum;
+    // runtime never receives amounts and must not reconstruct them from logs.
+    let output = field_from_b256(&claim.output_commitment)
+        .map_err(|_| PayNoteError::InvalidInput("merge output is not a canonical field".into()))?;
+    let (_, zeros) = chain_state(storage)?;
+    storage.with_checkpoint(|| {
+        for nullifier in active {
+            paynote.spent_nullifiers.write(nullifier, true)?;
+        }
+        let (index, root_after) = append(&paynote, &zeros, output)?;
+        paynote.commitments.write(&claim.output_commitment, true)?;
+        storage.emit_event(
+            PAYNOTE_ADDRESS,
+            IPayNote::NotesMerged::encode_log_data(&IPayNote::NotesMerged {
+                asset: claim.asset,
+                outputCommitment: claim.output_commitment,
+                nullifiers: active.to_vec(),
+            }),
+        )?;
+        storage.emit_event(
+            PAYNOTE_ADDRESS,
+            IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
+                commitment: claim.output_commitment,
+                leafIndex: index,
+                rootAfter: field_to_b256(&root_after)
+                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+                asset: claim.asset,
+                noteAmount: U256::ZERO,
+            }),
+        )?;
+        Ok(())
+    })
 }
 
 /// Reads the live chain ID and derives its full in-memory empty ladder.
@@ -73,19 +180,18 @@ pub(crate) fn append(
         if (index >> level) & 1 == 0 {
             paynote.filled_subtrees.write(
                 &level_byte,
-                PayNoteSuit::field_to_b256(&current)
+                field_to_b256(&current)
                     .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
             )?;
             current = merkle_node(current, *zero).map_err(|_| PayNoteError::Hash)?;
         } else {
             let left = paynote.filled_subtrees.read(&level_byte)?;
-            let left =
-                PayNoteSuit::field_from_b256(&left).map_err(|_| PayNoteError::CorruptFrontier)?;
+            let left = field_from_b256(&left).map_err(|_| PayNoteError::CorruptFrontier)?;
             current = merkle_node(left, current).map_err(|_| PayNoteError::Hash)?;
         }
     }
-    let root_after = PayNoteSuit::field_to_b256(&current)
-        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+    let root_after =
+        field_to_b256(&current).map_err(|error| PrecompileError::Fatal(error.to_string()))?;
     paynote.current_root.write(root_after)?;
     paynote.leaf_count.write(index + 1)?;
     paynote.recent_roots.push(root_after)?;
@@ -110,7 +216,7 @@ pub(crate) fn deposit(
     if asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    let serial = PayNoteSuit::field_from_b256(&note_sn)
+    let serial = field_from_b256(&note_sn)
         .map_err(|_| PayNoteError::InvalidInput("noteSn is not a canonical BN254 field".into()))?;
     if serial.is_zero() {
         return Err(PayNoteError::InvalidInput("noteSn must be non-zero".into()).into());
@@ -132,8 +238,8 @@ pub(crate) fn deposit(
     if commitment.is_zero() {
         return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
     }
-    let commitment_word = PayNoteSuit::field_to_b256(&commitment)
-        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+    let commitment_word =
+        field_to_b256(&commitment).map_err(|error| PrecompileError::Fatal(error.to_string()))?;
     if paynote.commitments.read(&commitment_word)? {
         return Err(PayNoteError::CommitmentExists.into());
     }
@@ -171,7 +277,7 @@ pub(crate) fn deposit(
         outbe_vaultrouter::api::deposit(&storage, asset, units)?;
 
         if leaf_count == 0 {
-            let empty_root = PayNoteSuit::field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
+            let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
                 .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
             paynote.current_root.write(empty_root)?;
             paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW)?;
@@ -185,7 +291,7 @@ pub(crate) fn deposit(
             IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
                 commitment: commitment_word,
                 leafIndex: index,
-                rootAfter: PayNoteSuit::field_to_b256(&root_after)
+                rootAfter: field_to_b256(&root_after)
                     .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                 asset,
                 noteAmount: amount,
@@ -195,19 +301,18 @@ pub(crate) fn deposit(
     })
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.2.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
-/// The proof is the single source of truth for the statement: there is no
-/// calldata path, so there is nothing to cross-check it against and no
-/// statement-mismatch failure mode.
+/// The proof is the single source of truth for the statement it carries.
+/// `context` is an opaque public word; the caller recomputes the settlement
+/// statement and compares it. PayNote does not interpret the word.
 ///
 /// Notes are bearer instruments — spend authority is knowledge of the spend
-/// key, not an address — so there is deliberately no caller check. The circuit
-/// binds `owner` as the payout target, so a third party who replays someone
-/// else's proof only spends their own gas; the claim still names the intended
-/// owner.
+/// key, not an address — so there is deliberately no caller check. Any address
+/// may relay a proof. The nullifier does not include `context`, so every
+/// statement for one note shares one use.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
@@ -229,20 +334,20 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    if claim.owner.is_zero() {
-        return Err(PayNoteError::InvalidInput("owner must be non-zero".into()).into());
+    if claim.context == B256::ZERO {
+        return Err(PayNoteError::InvalidInput("context must be non-zero".into()).into());
     }
     if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
     }
 
-    let nullifier = PayNoteSuit::field_from_b256(&claim.nullifier).map_err(|_| {
+    let nullifier = field_from_b256(&claim.nullifier).map_err(|_| {
         PayNoteError::InvalidInput("nullifier is not a canonical BN254 field".into())
     })?;
     if nullifier.is_zero() {
         return Err(PayNoteError::InvalidInput("nullifier must be non-zero".into()).into());
     }
-    let change = PayNoteSuit::field_from_b256(&claim.change_commitment).map_err(|_| {
+    let change = field_from_b256(&claim.change_commitment).map_err(|_| {
         PayNoteError::InvalidInput("changeCommitment is not a canonical BN254 field".into())
     })?;
 
@@ -297,7 +402,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
                 asset: claim.asset,
-                owner: claim.owner,
+                context: claim.context,
                 nullifier: nullifier_word,
                 spendAmount: claim.spend_amount,
             }),
@@ -308,7 +413,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                 IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
                     commitment: change_word,
                     leafIndex: index,
-                    rootAfter: PayNoteSuit::field_to_b256(&root_after)
+                    rootAfter: field_to_b256(&root_after)
                         .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                     asset: claim.asset,
                     // Sentinel: a change note's remaining value is private.
@@ -321,7 +426,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     Ok(PayNoteClaim {
         asset: claim.asset,
-        owner: claim.owner,
+        context: claim.context,
         spend_amount: claim.spend_amount,
         nullifier: nullifier_word,
     })

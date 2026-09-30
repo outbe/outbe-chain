@@ -47,6 +47,10 @@ pub enum OracleError {
     PairNotVoteTarget,
     #[error("validator already voted this period")]
     AlreadyVotedThisPeriod,
+    #[error("vote price {price} exceeds {max}")]
+    VotePriceExceedsCap { price: U256, max: U256 },
+    #[error("vote volume {volume} exceeds {max}")]
+    VoteVolumeExceedsCap { volume: U256, max: U256 },
 
     // -- VWAP / TWAP --------------------------------------------------------
     #[error("no VWAP data in the requested time range")]
@@ -171,6 +175,8 @@ impl From<OracleError> for PrecompileError {
             | DuplicatePairInVote
             | PairNotVoteTarget
             | AlreadyVotedThisPeriod
+            | VotePriceExceedsCap { .. }
+            | VoteVolumeExceedsCap { .. }
             | NoVwapData
             | NoTwapData
             | MissingTwapData

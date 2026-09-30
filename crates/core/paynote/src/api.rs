@@ -17,16 +17,19 @@ use crate::schema::PayNoteContract;
 
 pub use crate::runtime::PayNoteClaim;
 
-/// Verify a `outbe.paynote@1.2.0` spend proof, nullify the note, append any
+pub use crate::context::{intex_series_target, settlement_context, SettlementDomain};
+
+/// Verify a `outbe.paynote@1.3.0` spend proof, nullify the note, append any
 /// change commitment, and return the validated claim.
 ///
 /// **Moves no tokens.** PayNote owns the tree, the nullifier set and the root
-/// window; the caller decides what `claim.spend_amount` of `claim.asset` buys
-/// and is responsible for paying `claim.owner`.
+/// window. The caller decides what `claim.spend_amount` of `claim.asset` buys
+/// and must require `claim.context` to equal the settlement statement it
+/// recomputes with [`settlement_context`].
 ///
-/// The claim comes from the proof itself, so the caller must check that
-/// `claim.asset` and `claim.spend_amount` are what it expected before acting
-/// on them — a valid proof for the *wrong* asset is still a valid proof.
+/// The claim comes from the proof itself, so the caller must check asset,
+/// amount, and context before acting on them — a valid proof for a different
+/// statement is still a valid proof.
 ///
 /// Reverts if the tree is uninitialized, the chain ID does not match, the root
 /// is outside the acceptance window, the nullifier is already spent, or the

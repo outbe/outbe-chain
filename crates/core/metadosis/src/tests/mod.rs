@@ -214,3 +214,4 @@ mod ocomp_storage;
 mod pre_admission;
 mod reducer;
 mod state;
+mod wwd_vwap_overflow;

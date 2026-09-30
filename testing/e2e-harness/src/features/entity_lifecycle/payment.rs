@@ -121,13 +121,12 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
         quoted
     };
     let mut quoted = checked_quote();
-
-    let outcome = match rail {
-        Rail::Erc20 => {
-            let payer_key = third_party_key(world);
-            let payer = eth::address_of(&payer_key).expect("third-party payer address");
-            let mut requoted = false;
-            loop {
+    let mut requoted = false;
+    let outcome = loop {
+        let outcome = match rail {
+            Rail::Erc20 => {
+                let payer_key = third_party_key(world);
+                let payer = eth::address_of(&payer_key).expect("third-party payer address");
                 fund_and_approve(
                     world,
                     vault.asset,
@@ -136,33 +135,34 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
                     factory(target),
                     quoted.payable,
                 );
-                let outcome = settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot);
-                if outcome.success {
-                    break outcome;
-                }
-                // The pricing snapshot rolls over on the hour: quote again once.
-                let fresh = checked_quote();
-                assert!(
-                    !requoted && fresh.snapshot != quoted.snapshot,
-                    "ERC20 payment for {:?} reverted: {}",
-                    target.item,
-                    outcome.receipt
-                );
-                quoted = fresh;
-                requoted = true;
+                settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot)
             }
+            Rail::PayNote => {
+                let proof = crate::features::paynote::deposit_and_prove(
+                    world,
+                    port,
+                    &target.owner_key,
+                    target.owner,
+                    vault.asset,
+                    quoted.payable,
+                    note_context(target, quoted.snapshot),
+                );
+                settle_paynote(&url, target, &target.owner_key, proof)
+            }
+        };
+        if outcome.success {
+            break outcome;
         }
-        Rail::PayNote => {
-            let proof = crate::features::paynote::deposit_and_prove(
-                world,
-                port,
-                &target.owner_key,
-                target.owner,
-                vault.asset,
-                quoted.payable,
-            );
-            settle_paynote(&url, target, &target.owner_key, proof)
-        }
+        // The pricing snapshot rolls over on the hour: quote again once.
+        let fresh = checked_quote();
+        assert!(
+            !requoted && fresh.snapshot != quoted.snapshot,
+            "{rail:?} payment for {:?} reverted: {}",
+            target.item,
+            outcome.receipt
+        );
+        quoted = fresh;
+        requoted = true;
     };
     assert_mined_success(&outcome, "lifecycle payment");
     assert_paid_event(
@@ -179,6 +179,16 @@ pub(crate) fn pay(world: &World, target: &Target, rail: Rail, iso: u16, terms: T
         payable: quoted.payable,
         before,
         after: receipt_block(&outcome.receipt),
+    }
+}
+
+/// The settlement a PayNote proof is bound to: the holding, its units, and the quote's snapshot.
+pub(crate) fn note_context(target: &Target, snapshot: U256) -> B256 {
+    use crate::features::paynote::{gem_context, intex_context, nod_context};
+    match &target.item {
+        Item::Gem(id) => gem_context(*id, snapshot),
+        Item::Series { id, units } => intex_context(&id.0, U256::from(*units), snapshot),
+        Item::Nod(id) => nod_context(*id, snapshot),
     }
 }
 

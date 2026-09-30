@@ -1,7 +1,7 @@
 //! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
-//! `outbe.paynote@1.2.0` statement from **Rust-computed** public inputs and
+//! `outbe.paynote@1.3.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
 //! the in-circuit ones and proving would fail — that is what pins the mirror.
@@ -10,12 +10,13 @@
 //! storage provider cannot serve, so only its pre-mutation guards are covered
 //! here; the full path belongs in an EVM-level integration test.
 
+mod merge;
+
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::Codec as _;
 use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
 use outbe_zk_canonical::paynote::{
     COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
@@ -30,18 +31,24 @@ use crate::schema::{
 };
 use crate::Field;
 
-use crate::{PayNoteSuit, PayNoteTree};
+use outbe_protocol::codec::field_to_b256;
+
+use crate::PayNoteTree;
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
 
 const ALICE: Address = Address::new([0x11; 20]);
-const OWNER: Address = Address::new([0x22; 20]);
 const USDC: Address = Address::new([0x33; 20]);
+
+/// Fixed non-zero statement for pool tests that never settle a right.
+fn statement() -> B256 {
+    B256::from(U256::from(1u64))
+}
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    PayNoteSuit::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {
@@ -69,7 +76,7 @@ fn prove_spend(
     let fixture = note_and_spend_proof(
         chain_id,
         asset,
-        OWNER,
+        statement(),
         U256::from(amount),
         U256::from(spend_amount),
     );
@@ -308,7 +315,7 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
     provider.enter(|storage| {
         let claim = runtime::consume(&storage, &proof).expect("valid full spend");
         assert_eq!(claim.asset, USDC);
-        assert_eq!(claim.owner, OWNER);
+        assert_eq!(claim.context, statement());
         assert_eq!(claim.spend_amount, 100);
 
         let paynote: PayNoteContract<'_> = storage.contract();
@@ -379,19 +386,19 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
 
 #[test]
 fn full_width_u256_spend_round_trip() {
-    assert_eq!(Paynote::VERSION, "1.2.0");
+    assert_eq!(Paynote::VERSION, "1.3.0");
     assert_eq!(
         Paynote::CIRCUIT_HASH,
-        alloy_primitives::hex!("3154da6976ca8ee5f00b228fe821ce0868b189ff73cefb1a9a562d2768a9f9cc")
+        alloy_primitives::hex!("0f2fbbc17ec830fb42c8206f216cde1b2452e8b8bc276bbe27a07e87ba1263a4")
     );
     assert_eq!(
         Paynote::VK_HASH,
-        alloy_primitives::hex!("75454ca024cd3532e24663d7ae14c2d7dc42fdb1291b69f2db17262385d6f34f")
+        alloy_primitives::hex!("cd7b395e59588bf2ec2b0bdc47352db055520a6551ae6b76e75c9dd0cacd5c42")
     );
 
     let note_amount = (U256::from(1) << 200) + U256::from(100);
     let spend_amount = (U256::from(1) << 199) + U256::from(40);
-    let fixture = note_and_spend_proof(CHAIN_ID, USDC, OWNER, note_amount, spend_amount);
+    let fixture = note_and_spend_proof(CHAIN_ID, USDC, statement(), note_amount, spend_amount);
     assert_eq!(fixture.proof.len(), PAYNOTE_COMBINED_LEN);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -404,6 +411,63 @@ fn full_width_u256_spend_round_trip() {
             .commitments
             .read(&b256(fixture.public.change_commitment))
             .unwrap());
+    });
+}
+
+#[test]
+fn zero_context_is_rejected_before_verification() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (mut proof, _, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
+    proof[132..164].fill(0);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    provider.enter(|storage| {
+        assert_revert(
+            runtime::consume(&storage, &proof),
+            "PayNote context must be non-zero",
+        );
+    });
+}
+
+#[test]
+fn two_contexts_of_one_note_share_one_nullifier() {
+    let first = note_and_spend_proof(
+        CHAIN_ID,
+        USDC,
+        statement(),
+        U256::from(100u64),
+        U256::from(100u64),
+    );
+    let second = note_and_spend_proof(
+        CHAIN_ID,
+        USDC,
+        B256::from(U256::from(2u64)),
+        U256::from(100u64),
+        U256::from(100u64),
+    );
+    assert_eq!(first.public.nullifier, second.public.nullifier);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, &[first.commitment]);
+    provider.enter(|storage| {
+        runtime::consume(&storage, &first.proof).unwrap();
+        assert_revert(
+            runtime::consume(&storage, &second.proof),
+            "PayNote nullifier has already been spent",
+        );
+    });
+}
+
+#[test]
+fn a_substituted_context_fails_verification() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (mut proof, _, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
+    assert_eq!(proof[163], 1);
+    proof[163] = 2;
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    provider.enter(|storage| {
+        assert_revert(
+            runtime::consume(&storage, &proof),
+            "PayNote proof is invalid",
+        );
     });
 }
 

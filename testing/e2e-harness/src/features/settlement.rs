@@ -427,7 +427,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     );
     // The cost is derived, so what to fund is the factory's own quote — already in
     // the settlement asset's units, which the reference amount never was.
-    let payable = eth::read_call(
+    let quote = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::quoteSettlementCall {
@@ -435,8 +435,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
             asset: fixture.asset,
         },
     )
-    .expect("quote settling the reward Gem")
-    .payableUnits;
+    .expect("quote settling the reward Gem");
+    let payable = quote.payableUnits;
     // The vault is credited here, not at settle time. Before the drain: this is an
     // ordinary transaction and pays its own gas.
     let paynote_proof = paynote::deposit_and_prove(
@@ -446,6 +446,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         owner,
         fixture.asset,
         payable,
+        paynote::gem_context(gem_id, quote.snapshotId),
     );
     assert_eq!(
         eth::read_call(
@@ -683,7 +684,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     assert_ne!(vault, Address::ZERO);
     let asset = eth::read_call(&url, vault, &ISettlementVault::assetCall {})
         .expect("existing settlement vault asset");
-    let payable = eth::read_call(
+    let quote = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::quoteSettlementCall {
@@ -691,8 +692,8 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             asset,
         },
     )
-    .expect("quote reward Gem settlement")
-    .payableUnits;
+    .expect("quote reward Gem settlement");
+    let payable = quote.payableUnits;
     assert!(!payable.is_zero());
     let reserve_before = eth::read_call(
         &url,
@@ -700,7 +701,15 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &ISettlementAsset::balanceOfCall { account: vault },
     )
     .expect("reserve before deposit");
-    let proof = paynote::deposit_and_prove(world, port, &key, owner, asset, payable);
+    let proof = paynote::deposit_and_prove(
+        world,
+        port,
+        &key,
+        owner,
+        asset,
+        payable,
+        paynote::gem_context(gem_id, quote.snapshotId),
+    );
     assert_eq!(
         eth::read_call(
             &url,
@@ -1052,13 +1061,25 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     // The cost is paid by depositing a note and then spending it. The value
     // reaches the reserve vault at deposit time, so the owner funds and
     // approves the PayNote pool rather than the NodFactory.
+    let nod_word = U256::from_be_slice(&nod_id);
+    let quote = eth::read_call(
+        &url,
+        addresses::NOD_FACTORY_ADDR,
+        &eth::INodFactory::quoteSettlementCall {
+            nodId: nod_word,
+            asset: fixture.asset,
+        },
+    )
+    .expect("quote settling the materialized Nod");
+    assert_eq!(quote.payableUnits, body.settlementCostMinor);
     let paynote_proof = paynote::deposit_and_prove(
         world,
         port,
         &key,
         owner,
         fixture.asset,
-        body.settlementCostMinor,
+        quote.payableUnits,
+        paynote::nod_context(nod_word, quote.snapshotId),
     );
     assert_eq!(
         eth::read_call(
