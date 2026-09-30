@@ -205,6 +205,18 @@ pub(crate) fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) ->
     }
 }
 
+pub(crate) fn nod_deleted(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData {
+    let body = nod_body(nod_id, owner, bucket_key);
+    let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+    let commitment =
+        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    INod::NodBodyDeleted {
+        nodId: nod_id.to_u256(),
+        previousCommitment: B256::from(*commitment.as_bytes()),
+    }
+    .encode_log_data()
+}
+
 pub(crate) fn nod_stored(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData {
     let body = nod_body(nod_id, owner, bucket_key);
     let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();

@@ -1,9 +1,12 @@
 //! Tribute and Nod mutations commit in the database of their worldwide day.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use alloy_primitives::Address;
+use outbe_nod::{clear_owner_day, NodRepositoryReader};
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, DayDatabases, StorageError, StorageWriterHandle,
+    AtomicWriteBatch, AtomicWriteOperation, DayDatabases, StorageError, StorageReaderHandle,
+    StorageWriterHandle,
 };
 
 use super::ProjectionError;
@@ -47,13 +50,27 @@ pub(super) fn write_day_operations(
             (Domain::Nod, true) => Some(databases.nod(day)?),
             (Domain::Nod, false) => databases.nod_if_present(day)?,
         };
+        let owners = match domain {
+            Domain::Nod => owner_addresses(&operations)?,
+            Domain::Tribute => Vec::new(),
+        };
         let Some(storage) = storage else {
+            for owner in owners {
+                shared.push(clear_owner_day(owner, day)?);
+            }
             continue;
         };
-        let handle: StorageWriterHandle = storage;
+        let handle: StorageWriterHandle = storage.clone();
         let day_batch = AtomicWriteBatch::from_operations(operations);
         day_batch.validate()?;
         handle.apply_atomic(&day_batch)?;
+        if domain == Domain::Nod {
+            let reader: StorageReaderHandle = storage;
+            let reader = NodRepositoryReader::new(reader);
+            for owner in owners {
+                shared.push(reader.owner_day_marker(owner, day)?);
+            }
+        }
     }
     let shared = AtomicWriteBatch::from_operations(shared);
     shared.validate()?;
@@ -79,4 +96,27 @@ fn day_target(operation: &AtomicWriteOperation) -> Result<Option<(Domain, u32)>,
         StorageError::Corruption("day key is shorter than the worldwide-day prefix".into())
     })?;
     Ok(Some((domain, u32::from_be_bytes(bytes))))
+}
+
+fn owner_addresses(operations: &[AtomicWriteOperation]) -> Result<Vec<Address>, ProjectionError> {
+    let mut owners = BTreeSet::new();
+    for operation in operations {
+        let (namespace, key) = match operation {
+            AtomicWriteOperation::Put { namespace, key, .. }
+            | AtomicWriteOperation::Delete { namespace, key } => {
+                (namespace.as_str(), key.as_bytes())
+            }
+        };
+        if namespace != NOD_BY_OWNER {
+            continue;
+        }
+        if key.len() < Address::len_bytes() {
+            return Err(StorageError::Corruption(
+                "Nod owner index key is shorter than an address".into(),
+            )
+            .into());
+        }
+        owners.insert(Address::from_slice(&key[..Address::len_bytes()]));
+    }
+    Ok(owners.into_iter().collect())
 }

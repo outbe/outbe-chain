@@ -13,7 +13,7 @@ pub mod schema;
 pub mod state;
 
 pub use repository::{
-    canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
+    canonical_bucket, canonical_bucket_id, canonical_item, clear_owner_day, from_canonical_bucket,
     from_canonical_item, NodPage, NodPageRequest, NodRepositoryError, NodRepositoryReader,
     NodRepositoryWriter,
 };

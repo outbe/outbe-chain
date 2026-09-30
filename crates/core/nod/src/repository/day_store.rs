@@ -5,13 +5,13 @@ use std::sync::Arc;
 use alloy_primitives::Address;
 use outbe_compressed_entities::{IdPage, IdPageRequest, WwdEntityId};
 use outbe_offchain_storage::{
-    DayDatabases, Key, RocksDbStorage, ScanRequest, StorageReaderHandle, StorageWriterHandle,
-    StoredValue, Value,
+    AtomicWriteBatch, DayDatabases, Key, RocksDbStorage, ScanRequest, StorageReaderHandle,
+    StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 
 use super::{
-    namespace, NodRepositoryError, NodRepositoryReader, NodRepositoryWriter, NODS_NAMESPACE,
-    NOD_BUCKETS_NAMESPACE,
+    namespace, NodPage, NodPageRequest, NodRepositoryError, NodRepositoryReader,
+    NodRepositoryWriter, NODS_NAMESPACE, NOD_BUCKETS_NAMESPACE, NOD_OWNER_DAYS_NAMESPACE,
 };
 
 const MIGRATION_NAMESPACE: &str = "nod_day_migration";
@@ -98,15 +98,18 @@ fn copy_record(
     record: StoredValue,
     items: bool,
 ) -> Result<(), NodRepositoryError> {
-    let day = route.databases.nod(id.worldwide_day().value())?;
+    let day_number = id.worldwide_day().value();
+    let day = route.databases.nod(day_number)?;
     let handle: StorageWriterHandle = day.clone();
-    let day_reader: StorageReaderHandle = day;
+    let day_reader: StorageReaderHandle = day.clone();
     let source = NodRepositoryReader::new(day_reader);
     let shared = NodRepositoryWriter::new(reader.storage.clone(), route.shared_writer.clone());
     if items {
+        let owner = super::decode_item(id, record.value.as_bytes())?.owner;
         let mut session = source.projection_session(&[id], &[])?;
         handle.apply_atomic(&session.store_item(id, record.value, record.metadata)?)?;
         shared.delete_nod(id)?;
+        write_owner_day(route, day, owner, day_number)?;
     } else {
         let mut session = source.projection_session(&[], &[id])?;
         handle.apply_atomic(&session.store_bucket(id, record.value, record.metadata)?)?;
@@ -243,7 +246,7 @@ pub(super) fn list_ids_by_owner(
         .after
         .map(|id| id.worldwide_day().value())
         .unwrap_or(0);
-    let days = route.databases.directory().list_nod_days()?;
+    let days = owner_days(reader, owner)?;
     walk_ids(
         route,
         &days,
@@ -256,17 +259,81 @@ pub(super) fn list_ids_by_owner(
     )
 }
 
+pub(super) fn list_by_owner(
+    reader: &NodRepositoryReader,
+    owner: Address,
+    request: NodPageRequest,
+) -> Result<NodPage, NodRepositoryError> {
+    migrate(reader)?;
+    super::validate_page_limit(request.limit)?;
+    let route = route(reader)?;
+    let start = request
+        .after
+        .map(|id| id.worldwide_day().value())
+        .unwrap_or(0);
+    let days = owner_days(reader, owner)?;
+    let mut records = Vec::new();
+    let mut remaining = request.limit;
+    for day in days.iter().copied().filter(|day| *day >= start) {
+        let Some(storage) = route.databases.nod_if_present(day)? else {
+            continue;
+        };
+        let day_reader = open_day_reader(route, storage);
+        let mut after = (day == start).then_some(request.after).flatten();
+        loop {
+            let page = day_reader.list_by_owner(
+                owner,
+                NodPageRequest {
+                    after,
+                    limit: remaining,
+                },
+            )?;
+            let day_has_more = page.next_after.is_some();
+            remaining = remaining.saturating_sub(page.records.len());
+            let page_was_empty = page.records.is_empty();
+            records.extend(page.records);
+            if remaining == 0 {
+                let more = day_has_more || later_owner(&days, day, owner, route)?;
+                return Ok(NodPage {
+                    next_after: more
+                        .then(|| records.last().map(|record| record.nod_id))
+                        .flatten(),
+                    records,
+                });
+            }
+            if page_was_empty || !day_has_more {
+                break;
+            }
+            after = page.next_after;
+        }
+    }
+    Ok(NodPage {
+        records,
+        next_after: None,
+    })
+}
+
 pub(super) fn put_nod(
     writer: &NodRepositoryWriter,
     nod: &crate::NodItemState,
 ) -> Result<(), NodRepositoryError> {
     migrate(&writer.reader)?;
-    let day = route(&writer.reader)?
-        .databases
-        .nod(nod.worldwide_day.value())?;
-    let reader: StorageReaderHandle = day.clone();
-    let writer: StorageWriterHandle = day;
-    NodRepositoryWriter::new(reader, writer).put_nod(nod)
+    let route = route(&writer.reader)?;
+    let day_number = nod.worldwide_day.value();
+    let day = route.databases.nod(day_number)?;
+    let reader_handle: StorageReaderHandle = day.clone();
+    let writer_handle: StorageWriterHandle = day.clone();
+    let old_owner = NodRepositoryReader::new(reader_handle.clone())
+        .get(nod.nod_id)?
+        .map(|body| body.owner);
+    NodRepositoryWriter::new(reader_handle, writer_handle).put_nod(nod)?;
+    write_owner_day(route, day.clone(), nod.owner, day_number)?;
+    if let Some(old_owner) = old_owner {
+        if old_owner != nod.owner {
+            write_owner_day(route, day, old_owner, day_number)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn delete_nod(
@@ -274,15 +341,21 @@ pub(super) fn delete_nod(
     nod_id: WwdEntityId,
 ) -> Result<(), NodRepositoryError> {
     migrate(&writer.reader)?;
-    let Some(day) = route(&writer.reader)?
-        .databases
-        .nod_if_present(nod_id.worldwide_day().value())?
-    else {
+    let route = route(&writer.reader)?;
+    let day_number = nod_id.worldwide_day().value();
+    let Some(day) = route.databases.nod_if_present(day_number)? else {
         return Ok(());
     };
-    let reader: StorageReaderHandle = day.clone();
-    let writer: StorageWriterHandle = day;
-    NodRepositoryWriter::new(reader, writer).delete_nod(nod_id)
+    let reader_handle: StorageReaderHandle = day.clone();
+    let writer_handle: StorageWriterHandle = day.clone();
+    let owner = NodRepositoryReader::new(reader_handle.clone())
+        .get(nod_id)?
+        .map(|body| body.owner);
+    NodRepositoryWriter::new(reader_handle, writer_handle).delete_nod(nod_id)?;
+    if let Some(owner) = owner {
+        write_owner_day(route, day, owner, day_number)?;
+    }
+    Ok(())
 }
 
 pub(super) fn put_bucket(
@@ -320,6 +393,79 @@ fn route(reader: &NodRepositoryReader) -> Result<&DayRoute, NodRepositoryError> 
             "Nod day route is missing".into(),
         ))
     })
+}
+
+fn owner_days(
+    reader: &NodRepositoryReader,
+    owner: Address,
+) -> Result<Vec<u32>, NodRepositoryError> {
+    let namespace = namespace(NOD_OWNER_DAYS_NAMESPACE)?;
+    let mut days = Vec::new();
+    let mut after = None;
+    loop {
+        let page = reader.storage.scan_prefix(
+            namespace.clone(),
+            ScanRequest::new(owner.as_slice(), after.as_ref(), MAX_SCAN_ENTRIES)?,
+        )?;
+        for entry in &page.entries {
+            let key = entry.key.as_bytes();
+            if key.len() != super::OWNER_DAY_KEY_LEN || &key[..20] != owner.as_slice() {
+                return Err(NodRepositoryError::MalformedIndexKey);
+            }
+            if !entry.value.as_bytes().is_empty() {
+                return Err(NodRepositoryError::NonEmptyIndexValue);
+            }
+            if entry.metadata.is_some() {
+                return Err(NodRepositoryError::IndexMetadata);
+            }
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&key[20..24]);
+            days.push(u32::from_be_bytes(bytes));
+        }
+        match page.next_after {
+            Some(next) => after = Some(next),
+            None => break,
+        }
+    }
+    Ok(days)
+}
+
+fn write_owner_day(
+    route: &DayRoute,
+    day: Arc<RocksDbStorage>,
+    owner: Address,
+    day_number: u32,
+) -> Result<(), NodRepositoryError> {
+    let handle: StorageReaderHandle = day;
+    let operation = NodRepositoryReader::new(handle).owner_day_marker(owner, day_number)?;
+    route
+        .shared_writer
+        .apply_atomic(&AtomicWriteBatch::from_operations(vec![operation]))?;
+    Ok(())
+}
+
+fn later_owner(
+    days: &[u32],
+    current: u32,
+    owner: Address,
+    route: &DayRoute,
+) -> Result<bool, NodRepositoryError> {
+    for day in days.iter().copied().filter(|day| *day > current) {
+        let Some(storage) = route.databases.nod_if_present(day)? else {
+            continue;
+        };
+        let page = open_day_reader(route, storage).list_by_owner(
+            owner,
+            NodPageRequest {
+                after: None,
+                limit: 1,
+            },
+        )?;
+        if !page.records.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn open_day_reader(route: &DayRoute, storage: Arc<RocksDbStorage>) -> NodRepositoryReader {

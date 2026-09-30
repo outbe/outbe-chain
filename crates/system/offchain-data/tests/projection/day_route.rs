@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
-use outbe_nod::NodRepositoryReader;
+use outbe_nod::{NodPageRequest, NodRepositoryReader};
 use outbe_offchain_data::{DayDatabaseRoute, FinalizedBlock, OffchainDataProjection};
 use outbe_offchain_storage::{DayDatabases, Namespace, ScanRequest, StorageReader};
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
@@ -79,4 +79,54 @@ fn new_tribute_and_nod_land_in_their_day_databases() {
         .unwrap()
         .is_some());
     assert!(databases.nod_if_present(7).unwrap().is_none());
+
+    let nod_reader =
+        NodRepositoryReader::with_days(shared.clone(), shared.clone(), databases.clone());
+    let listed = nod_reader
+        .list_by_owner(
+            owner,
+            NodPageRequest {
+                after: None,
+                limit: 10,
+            },
+        )
+        .unwrap();
+    assert_eq!(listed.records.len(), 1);
+    assert_eq!(listed.records[0].nod_id, nod_id);
+    assert_eq!(owner_day_count(shared.as_ref()), 1);
+
+    let bucket_key = B256::repeat_byte(0xbc);
+    projection
+        .project_block(&FinalizedBlock {
+            number: 6,
+            hash: B256::repeat_byte(6),
+            receipts: vec![receipt(
+                0,
+                2,
+                vec![log(0, NOD_ADDRESS, nod_deleted(nod_id, owner, bucket_key))],
+            )],
+        })
+        .unwrap();
+    let listed = nod_reader
+        .list_by_owner(
+            owner,
+            NodPageRequest {
+                after: None,
+                limit: 10,
+            },
+        )
+        .unwrap();
+    assert!(listed.records.is_empty());
+    assert_eq!(owner_day_count(shared.as_ref()), 0);
+}
+
+fn owner_day_count(storage: &impl StorageReader) -> usize {
+    StorageReader::scan_prefix(
+        storage,
+        Namespace::new("nod_owner_days").unwrap(),
+        ScanRequest::new(&[], None, 10).unwrap(),
+    )
+    .unwrap()
+    .entries
+    .len()
 }
