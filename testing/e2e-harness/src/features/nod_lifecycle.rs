@@ -225,20 +225,7 @@ impl Lifecycle for NodLifecycle {
         let url = world.rpc.url(world.validators.primary_port());
         let owner = owner_address(FORFEITED);
         let id = nod(world, FORFEITED);
-        poll_until(
-            FORFEIT_TIMEOUT,
-            || format!("the unpaid Nod {id} was not burned after its notice lapsed"),
-            || nod_balance(world, owner).is_zero(),
-        );
-        assert!(
-            eth::read_call(
-                &url,
-                addresses::NOD_ADDR,
-                &eth::INod::nodDataCall { nodId: id }
-            )
-            .is_none(),
-            "a burned Nod must not be readable"
-        );
+        assert_burned(world, owner, id, FORFEIT_TIMEOUT);
         let (from, before) = world
             .state
             .entity_lifecycle
@@ -297,6 +284,7 @@ impl Lifecycle for NodLifecycle {
                 )
                 .expect("submit Gratis mining");
                 assert_mined_success(&outcome, "mine Gratis from the paid Nod");
+                assert_burned(world, owner, id, READ_TIMEOUT);
                 Mined {
                     owner,
                     owner_key: key,
@@ -328,6 +316,24 @@ fn target(world: &World, index: usize) -> Target {
         owner_key: owner_key(index),
         issuance_currency: world.state.issuance_market.expect("issuance market"),
     }
+}
+
+/// The Nod is gone: its owner holds none, and its data no longer reads.
+fn assert_burned(world: &World, owner: Address, id: U256, timeout: Duration) {
+    poll_until(
+        timeout,
+        || format!("Nod {id} was not burned"),
+        || nod_balance(world, owner).is_zero(),
+    );
+    assert!(
+        eth::read_call(
+            &world.rpc.url(world.validators.primary_port()),
+            addresses::NOD_ADDR,
+            &eth::INod::nodDataCall { nodId: id }
+        )
+        .is_none(),
+        "a burned Nod must not be readable"
+    );
 }
 
 fn nod_balance(world: &World, owner: Address) -> U256 {
