@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
@@ -304,10 +304,10 @@ pub fn settle_gem(
     )
 }
 
-/// Settles a gem by spending a PayNote owned by `caller`, so no tokens move here.
+/// Settles a gem by spending a PayNote bound to this gem. Any address may relay it.
 pub fn settle_gem_with_paynote(
     storage: &StorageHandle<'_>,
-    caller: Address,
+    _caller: Address,
     gem_id: U256,
     paynote_proof: &[u8],
 ) -> Result<()> {
@@ -317,18 +317,21 @@ pub fn settle_gem_with_paynote(
         |_| Ok(()),
         |item, ()| {
             let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-
-            // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
-            if claim.owner != caller {
-                return Err(GemFactoryError::PayNoteOwnerMismatch {
-                    expected: caller,
-                    actual: claim.owner,
+            let currency = accept_payment_asset(storage, claim.asset, item)?;
+            let (amount_paid, snapshot) = cost_in_token(storage, item, claim.asset, currency)?;
+            let expected = outbe_paynote::api::settlement_context(
+                outbe_paynote::api::SettlementDomain::Gem,
+                B256::from(gem_id),
+                U256::ONE,
+                snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+            )?;
+            if claim.context != expected {
+                return Err(GemFactoryError::PayNoteContextMismatch {
+                    expected,
+                    actual: claim.context,
                 }
                 .into());
             }
-
-            let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, _) = cost_in_token(storage, item, claim.asset, currency)?;
             // Exact: the surplus of an over-spend is already in the reserve vault.
             if claim.spend_amount != amount_paid {
                 return Err(GemFactoryError::PayNoteCostMismatch {

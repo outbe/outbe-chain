@@ -64,7 +64,7 @@ fn merge_dispatch_creates_an_ordinary_private_note_and_shared_nullifiers() {
     assert_eq!(output.amount, U256::from(25));
     tree.append(output.commitment).unwrap();
     assert_eq!(new.rootAfter, b256(tree.root()));
-    let spend = spend_proof(CHAIN_ID, &tree, 3, &output, OWNER, U256::from(20));
+    let spend = spend_proof(CHAIN_ID, &tree, 3, &output, statement(), U256::from(20));
     provider.enter(|storage| {
         assert_eq!(
             runtime::consume(&storage, &spend).unwrap().spend_amount,
@@ -95,7 +95,14 @@ fn merge_dispatch_creates_an_ordinary_private_note_and_shared_nullifiers() {
 #[test]
 fn merge_and_settlement_compete_in_both_orders_and_merge_competes_with_merge() {
     let (inputs, output, tree, proof) = fixture(2);
-    let spend = spend_proof(CHAIN_ID, &tree, 0, &inputs[0], OWNER, inputs[0].amount);
+    let spend = spend_proof(
+        CHAIN_ID,
+        &tree,
+        0,
+        &inputs[0],
+        statement(),
+        inputs[0].amount,
+    );
     let alternate = note(CHAIN_ID, 100, USDC, output.amount);
     let competing = merge_proof(
         CHAIN_ID,

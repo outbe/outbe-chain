@@ -232,15 +232,20 @@ pub fn fund_settler(url: &str, asset: Address, owner_key: &str, amount: U256) ->
     Ok(())
 }
 
-/// What settling `units` of `series` costs in `payment_token`'s minor units.
-/// Reverts on a token the series does not accept, which is the check worth
-/// failing loudly.
-pub fn quote_cost(
+/// Quoted Intex settlement: payable minor units and the VWAP snapshot they use.
+pub struct IntexQuote {
+    pub payable_units: U256,
+    pub snapshot_id: U256,
+}
+
+/// What settling `units` of `series` costs, plus the snapshot that price uses.
+/// `None` when the series does not accept `payment_token`.
+pub fn quote_settlement(
     url: &str,
     series: FixedBytes<14>,
     payment_token: Address,
     units: u32,
-) -> Option<U256> {
+) -> Option<IntexQuote> {
     eth::read_call(
         url,
         INTEX_FACTORY,
@@ -250,7 +255,22 @@ pub fn quote_cost(
             amount: U256::from(units),
         },
     )
-    .map(|quote| quote.payableUnits)
+    .map(|quote| IntexQuote {
+        payable_units: quote.payableUnits,
+        snapshot_id: quote.snapshotId,
+    })
+}
+
+/// What settling `units` of `series` costs in `payment_token`'s minor units.
+/// Reverts on a token the series does not accept, which is the check worth
+/// failing loudly.
+pub fn quote_cost(
+    url: &str,
+    series: FixedBytes<14>,
+    payment_token: Address,
+    units: u32,
+) -> Option<U256> {
+    quote_settlement(url, series, payment_token, units).map(|quote| quote.payable_units)
 }
 
 /// Settle `amount` units of `series` held by the caller. The proof carries the

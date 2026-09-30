@@ -524,6 +524,7 @@ fn settle_part(world: &mut World) {
             world,
             owner,
             currency.asset,
+            series,
             expected_settlement_cost(),
             units,
         );
@@ -537,12 +538,22 @@ fn settlement_note(
     world: &World,
     owner: alloy_primitives::Address,
     asset: alloy_primitives::Address,
+    series: alloy_primitives::FixedBytes<14>,
     per_unit: U256,
     units: u32,
 ) -> Vec<u8> {
     let total = per_unit
         .checked_mul(U256::from(units))
         .expect("settlement cost fits a U256");
+    let url = world.rpc.url(world.validators.primary_port());
+    let quote = test_issuance::quote_settlement(&url, series, asset, units)
+        .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
+    assert_eq!(
+        quote.payable_units, total,
+        "series {series} quote drifted from the note amount"
+    );
+    let context =
+        crate::features::paynote::intex_context(&series.0, U256::from(units), quote.snapshot_id);
     crate::features::paynote::deposit_and_prove(
         world,
         world.validators.primary_port(),
@@ -550,6 +561,7 @@ fn settlement_note(
         owner,
         asset,
         total,
+        context,
     )
 }
 
@@ -879,6 +891,7 @@ fn settle_remainder(world: &mut World) {
             world,
             owner,
             currency.asset,
+            series,
             expected_settlement_cost(),
             units,
         );
@@ -1151,6 +1164,7 @@ fn settle_part_of_expiring(world: &mut World) {
         world,
         owner,
         currency.asset,
+        series,
         expected_settlement_cost(),
         EXPIRING_SETTLED_UNITS,
     );

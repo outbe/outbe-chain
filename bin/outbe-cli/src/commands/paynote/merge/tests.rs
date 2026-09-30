@@ -265,8 +265,13 @@ async fn proof_artifact_has_no_bearer_secrets_amounts_or_source_commitments() {
     logs.push(event(&stage.output, 3, tree.root(), U256::ZERO));
     let rpc = tree_rpc(&tree, logs);
     assert_eq!(read_tree(&rpc, CHAIN).await.unwrap().root(), tree.root());
-    let (spend, change, _) =
-        super::super::prove(&stage.output, U256::from(5), ASSET, &tree).unwrap();
+    let (spend, change, _) = super::super::prove(
+        &stage.output,
+        U256::from(5),
+        B256::from(U256::from(1u64)),
+        &tree,
+    )
+    .unwrap();
     provider.enter(|storage| outbe_paynote::api::consume(&storage, &spend).unwrap());
     assert_eq!(change.unwrap().amount, U256::ONE);
 }

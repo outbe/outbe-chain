@@ -22,11 +22,11 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_protocol::primitive::signature::SignatureScheme;
+use outbe_protocol::primitive::hash::{self, derive_owner};
+use outbe_protocol::primitive::signature;
 use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
 use outbe_zk_canonical::demo_tribute::{
@@ -233,9 +233,9 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
         init_crs().expect("pinned CRS initializes for e2e proof generation");
 
         let mut rng = StdRng::from_seed([9; 32]);
-        let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut rng);
+        let (secret, public_key) = signature::keypair(&mut rng);
         let nonce = Fr::rand(&mut rng);
-        let derived_owner = OutbeV1::derive_owner(&public_key, nonce).expect("derive owner");
+        let derived_owner = derive_owner(&public_key, nonce).expect("derive owner");
         let draft = TributeDraftClaim {
             id: draft_id,
             derived_owner: B256::from(field_bytes(&derived_owner)),
@@ -245,28 +245,25 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
             atto,
             su_ids: vec![su_hash],
         };
-        let binding = OutbeV1::binding(
+        let binding = hash::binding(
             &caller.into_array(),
-            draft_id.as_ref(),
+            &draft_id.0,
             host_chain_id,
             l2_chain_id,
         )
         .expect("derive offer binding");
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).expect("draft signer");
-        let path = Imt::<OutbeV1>::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
+        let path = Imt::new(demo_tribute_domain(), Fr::from(0u64), INCLUSION_DEPTH)
             .expect("empty commitment tree")
             .empty_inclusion_path(0);
         let (witness, public) = draft
             .derive_demo_tribute_witness(&mut rng, &signer, binding, &path)
             .expect("derive demo tribute witness");
-        let proof = ProofGenerator::<OutbeV1, DemoTribute>::generate(
-            &Barretenberg::default(),
-            &witness,
-            &public,
-        )
-        .expect("generate the offer Demo Tribute proof");
+        let proof =
+            ProofGenerator::<DemoTribute>::generate(&Barretenberg::default(), &witness, &public)
+                .expect("generate the offer Demo Tribute proof");
 
-        let public_inputs = <DemoTribute as Circuit<OutbeV1>>::public_inputs(&public);
+        let public_inputs = <DemoTribute as Circuit>::public_inputs(&public);
         assert_eq!(public_inputs.len(), 4);
         let merkle_root = field_bytes(&public_inputs[3]);
         let mut combined = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
@@ -308,7 +305,7 @@ fn parse_amount(value: &str, what: &'static str) -> u64 {
 }
 
 fn field_bytes(field: &Fr) -> [u8; 32] {
-    OutbeV1::field_to_be_bytes(field)
+    outbe_protocol::codec::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
 }
@@ -363,7 +360,7 @@ mod tests {
         assert_ne!(first.1, second.1, "SU hashes must not repeat");
         assert_ne!(first.0, first.1);
         for id in [first.0, first.1, second.0, second.1] {
-            outbe_protocol::codec::field_from_be_bytes_canonical::<Fr>(
+            outbe_protocol::codec::field_from_be_bytes_canonical(
                 id.as_slice(),
                 "fixture identifier",
             )
@@ -403,7 +400,7 @@ mod tests {
         let host = outbe_primitives::chain::DEVNET_CHAIN_ID;
         let binding = |caller: Address, draft: B256, host, l2| {
             B256::from(field_bytes(
-                &OutbeV1::binding(&caller.into_array(), draft.as_ref(), host, l2)
+                &outbe_protocol::primitive::hash::binding(&caller.into_array(), &draft.0, host, l2)
                     .expect("offer binding"),
             ))
         };

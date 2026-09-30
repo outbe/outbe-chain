@@ -10,8 +10,8 @@
 //!   * a note deposited by the real `deposit` path — commitment derived by the
 //!     runtime, not handed to it — is spendable by `settleNodWithPayNote`;
 //!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
-//!     spends it. Spend authority is knowledge of the note spend key, and
-//!     nothing on chain ties the depositor to the Nods the note pays for;
+//!     submits settlement. Spend authority is the note spend key. The proof
+//!     binds the Nod being settled, so a relayed proof still pays that Nod;
 //!   * a partial spend leaves change *in the pool*, and that change note is a
 //!     first-class note: it pays the next Nod on its own;
 //!   * one note is one payment. Replaying the first proof against the second Nod
@@ -20,8 +20,7 @@
 //! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
 //! NodFactory, Nod, GratisFactory and Gratis all run for real.
 
-use outbe_paynote::PayNoteSuit;
-use outbe_protocol::Codec as _;
+use outbe_protocol::codec::field_to_b256;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -100,8 +99,8 @@ fn qualify(storage: &StorageHandle<'_>, bucket_key: B256, floor: U256, iso: u16)
 }
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
-/// share `ALICE1` as their owner: each proof names that address as its owner,
-/// matching the Nod owner as `settleNodWithPayNote` requires. The depositor can be different.
+/// share `ALICE1` as their owner. Each spend proof binds the Nod it settles.
+/// The depositor can be a different account.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -338,7 +337,29 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
 }
 
 fn word(field: outbe_paynote::Field) -> B256 {
-    PayNoteSuit::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
+}
+
+/// Reference-rail Nod binding: the id word, one unit, snapshot zero.
+fn nod_context(nod_id: WwdEntityId) -> B256 {
+    outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Nod,
+        B256::from(nod_id.to_u256()),
+        U256::ONE,
+        U256::ZERO,
+    )
+    .expect("nod settlement context")
+}
+
+/// Reference-rail Gem binding: the id word, one unit, snapshot zero.
+fn gem_context(gem_id: U256) -> B256 {
+    outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Gem,
+        B256::from(gem_id),
+        U256::ONE,
+        U256::ZERO,
+    )
+    .expect("gem settlement context")
 }
 
 /// Settles `nod_id`, then mines it with gratis mint authorization against the
@@ -459,7 +480,14 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
 
     // First Nod: spend half the note.
-    let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
+    let first_proof = spend_proof(
+        CHAIN_ID,
+        &tree,
+        leaf,
+        &funding,
+        nod_context(nods[0]),
+        U256::from(COST),
+    );
     let minted = assert_mined(
         &settle_and_mine(&mut ctx, &scope, &readers, nods[0], &first_proof),
         "mine the first Nod with the deposited note",
@@ -470,8 +498,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         "paying a Nod must burn the note it was paid with"
     );
 
-    // The unspent half came back as a change leaf, derivable by the owner
-    // alone from the key and nullifier they already hold.
+    // The unspent half came back as a change leaf. The spend key and the
+    // nullifier already in hand derive it.
     let change =
         change_note(CHAIN_ID, &funding, U256::from(COST)).expect("a half-spent note leaves change");
     assert_eq!(
@@ -512,7 +540,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         &tree,
         change_leaf,
         &change,
-        ALICE1,
+        nod_context(nods[1]),
         U256::from(COST),
     );
     let minted = assert_mined(
@@ -556,7 +584,6 @@ fn measure_settle_gem_gas_with_real_paynote() {
     ctx.journaled_state.database.commit(deposited_state);
     let mut tree = new_tree(CHAIN_ID).unwrap();
     let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
-    let proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
 
     let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut ctx.journaled_state.database, block);
@@ -597,6 +624,14 @@ fn measure_settle_gem_gas_with_real_paynote() {
     });
     provider.flush().unwrap();
     drop(provider);
+    let proof = spend_proof(
+        CHAIN_ID,
+        &tree,
+        leaf,
+        &funding,
+        gem_context(gem_id),
+        U256::from(COST),
+    );
     let calldata = Bytes::from(
         IGemFactory::settleGemWithPayNoteCall {
             gemId: gem_id,
@@ -723,7 +758,14 @@ fn merged_12_8_5_pays_a_20_nod_and_preserves_five_as_ordinary_change() {
         assert!(is_spent(&mut ctx, &scope, word(input.nullifier)));
     }
     tree.append(output.commitment).unwrap();
-    let spend = spend_proof(CHAIN_ID, &tree, 3, &output, ALICE1, U256::from(20));
+    let spend = spend_proof(
+        CHAIN_ID,
+        &tree,
+        3,
+        &output,
+        nod_context(nods[0]),
+        U256::from(20),
+    );
     assert_eq!(
         assert_mined(
             &settle_and_mine(&mut ctx, &scope, &readers, nods[0], &spend),

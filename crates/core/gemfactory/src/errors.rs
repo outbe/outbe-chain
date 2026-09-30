@@ -81,10 +81,10 @@ pub enum GemFactoryError {
     #[error("settlement token moved an unexpected amount")]
     SettlementAmountMismatch,
 
-    #[error("PayNote proof names owner {actual}, expected {expected}")]
-    PayNoteOwnerMismatch {
-        expected: alloy_primitives::Address,
-        actual: alloy_primitives::Address,
+    #[error("PayNote context {actual} does not match settlement {expected}")]
+    PayNoteContextMismatch {
+        expected: alloy_primitives::B256,
+        actual: alloy_primitives::B256,
     },
 
     #[error("PayNote spends {covered}, settlement costs {required}")]

@@ -68,11 +68,14 @@ pub(crate) fn derive_expected_hashes(
         atto: amount.micro,
         su_ids,
     };
-    let nft_hash = EntityTrait::entity_hash(&draft)
+    let nft_hash = draft
+        .entity_hash()
         .map_err(|error| format!("invalid canonical TributeDraft: {error}"))?;
+    let sender = offer.owner.into_array();
+    let commitment_id: [u8; 32] = id.into();
     let binding_hash = outbe_protocol::primitive::hash::binding(
-        &offer.owner.into_array(),
-        id.as_ref(),
+        &sender,
+        &commitment_id,
         context.chain_id,
         context.l2_chain_id,
     )

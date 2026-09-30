@@ -6,7 +6,7 @@
 //! precede mutation, in the frozen transition-matrix order. Guard failures
 //! convert from [`EmitError`] (which fixes the stable revert texts and the
 //! fatal/revert split) via `From`.
-//! `EmitSuite` encodes BN254 fields as exactly 32 big-endian bytes.
+//! Canonical field words are exactly 32 big-endian bytes.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -20,11 +20,12 @@ use outbe_zk_canonical::emit_mint::{
 };
 use outbe_zk_canonical::noir::emit_mint::EmitMint;
 
+use outbe_protocol::codec::{field_from_b256, field_to_b256};
+
 use crate::errors::EmitError;
 use crate::hash::{empty_subtrees, merkle_node, note_commitment};
 use crate::precompile::IEmit;
 use crate::schema::{EmitContract, EMIT_ROOT_WINDOW, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
-use crate::EmitSuite;
 use crate::Field;
 
 /// The explicit mint statement, exactly as it arrives on the ABI.
@@ -57,26 +58,24 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
         if (index >> level) & 1 == 0 {
             emit.filled_subtrees.write(
                 &level_byte,
-                EmitSuite::field_to_b256(&current)
+                field_to_b256(&current)
                     .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
             )?;
             current = merkle_node(current, *zero).map_err(|_| EmitError::Hash)?;
         } else {
             let left = emit.filled_subtrees.read(&level_byte)?;
-            let left = EmitSuite::field_from_b256(&left).map_err(|_| {
+            let left = field_from_b256(&left).map_err(|_| {
                 PrecompileError::Fatal("Emit filled-subtree slot is not a canonical field".into())
             })?;
             current = merkle_node(left, current).map_err(|_| EmitError::Hash)?;
         }
     }
     emit.current_root.write(
-        EmitSuite::field_to_b256(&current)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+        field_to_b256(&current).map_err(|error| PrecompileError::Fatal(error.to_string()))?,
     )?;
     emit.leaf_count.write(index + 1)?;
     emit.recent_roots.push(
-        EmitSuite::field_to_b256(&current)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+        field_to_b256(&current).map_err(|error| PrecompileError::Fatal(error.to_string()))?,
     )?;
     Ok((index, current))
 }
@@ -93,7 +92,7 @@ pub(crate) fn burn(
         return Err(EmitError::BurnValueZero.into());
     }
     // Native value is already a canonical U256, matching the circuit amount.
-    let serial = EmitSuite::field_from_b256(&note_sn)
+    let serial = field_from_b256(&note_sn)
         .map_err(|_| EmitError::NonCanonicalField("noteSn"))
         .map_err(PrecompileError::from)?;
     if serial.is_zero() {
@@ -112,8 +111,8 @@ pub(crate) fn burn(
     if commitment.is_zero() {
         return Err(EmitError::MustBeNonZero("commitment").into());
     }
-    let commitment_word = EmitSuite::field_to_b256(&commitment)
-        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+    let commitment_word =
+        field_to_b256(&commitment).map_err(|error| PrecompileError::Fatal(error.to_string()))?;
     if emit.commitments.read(&commitment_word)? {
         return Err(EmitError::CommitmentExists.into());
     }
@@ -124,7 +123,7 @@ pub(crate) fn burn(
     // tree never observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
         if leaf_count == 0 {
-            let empty_root = EmitSuite::field_to_b256(&zeros[EMIT_TREE_DEPTH])
+            let empty_root = field_to_b256(&zeros[EMIT_TREE_DEPTH])
                 .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
             emit.current_root.write(empty_root)?;
             emit.recent_roots.setup(EMIT_ROOT_WINDOW)?;
@@ -150,7 +149,7 @@ pub(crate) fn burn(
             IEmit::NewNote::encode_log_data(&IEmit::NewNote {
                 commitment: commitment_word,
                 leafIndex: index,
-                rootAfter: EmitSuite::field_to_b256(&root_after)
+                rootAfter: field_to_b256(&root_after)
                     .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                 noteAmount: value,
             }),
@@ -183,11 +182,11 @@ pub(crate) fn mint(
 
     // Statement field elements must be canonical before they are compared or
     // hashed. `mint_units` is an exact ABI-decoded integer.
-    EmitSuite::field_from_b256(&statement.root)
+    field_from_b256(&statement.root)
         .map_err(|_| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
-    let nullifier = EmitSuite::field_from_b256(&statement.nullifier)
+    let nullifier = field_from_b256(&statement.nullifier)
         .map_err(|_| PrecompileError::from(EmitError::NonCanonicalField("nullifier")))?;
-    let change = EmitSuite::field_from_b256(&statement.change_commitment)
+    let change = field_from_b256(&statement.change_commitment)
         .map_err(|_| PrecompileError::from(EmitError::NonCanonicalField("changeCommitment")))?;
 
     // The embedded statement must equal the explicit calldata exactly — a
@@ -295,7 +294,7 @@ pub(crate) fn mint(
                 IEmit::NewNote::encode_log_data(&IEmit::NewNote {
                     commitment: change_word,
                     leafIndex: index,
-                    rootAfter: EmitSuite::field_to_b256(&root_after)
+                    rootAfter: field_to_b256(&root_after)
                         .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                     noteAmount: U256::ZERO,
                 }),

@@ -345,7 +345,7 @@ fn settle_and_mine(world: &mut World) {
     let load = read_gem(&url, gem_id).promisLoad;
 
     // The cost is derived, so the note covers the factory's own quote.
-    let payable = eth::read_call(
+    let quote = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::quoteSettlementCall {
@@ -353,8 +353,8 @@ fn settle_and_mine(world: &mut World) {
             asset,
         },
     )
-    .expect("quote settling the merchant gem")
-    .payableUnits;
+    .expect("quote settling the merchant gem");
+    let payable = quote.payableUnits;
     // A zero quote would otherwise become a one-unit note and fail inside the
     // settle, where the revert reads as a balance problem instead of a price one.
     assert!(!payable.is_zero(), "the gem quoted a zero settlement cost");
@@ -367,6 +367,7 @@ fn settle_and_mine(world: &mut World) {
         merchant,
         asset,
         payable,
+        crate::features::paynote::gem_context(gem_id, quote.snapshotId),
     );
 
     let settle = eth::send_call_outcome(

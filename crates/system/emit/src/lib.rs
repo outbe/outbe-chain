@@ -22,20 +22,6 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 
-/// BN254 field words for Emit. The circuits crate exposes the same conversions
-/// as free functions.
-pub struct EmitSuite;
-
-impl EmitSuite {
-    pub fn field_to_b256(value: &Field) -> Result<alloy_primitives::B256, outbe_protocol::Error> {
-        outbe_protocol::codec::field_to_b256(value)
-    }
-
-    pub fn field_from_b256(value: &alloy_primitives::B256) -> Result<Field, outbe_protocol::Error> {
-        outbe_protocol::codec::field_from_b256(value)
-    }
-}
-
 /// In-memory commitment tree for Emit clients.
 pub use outbe_zk_canonical::emit_mint::Tree as EmitTree;
 

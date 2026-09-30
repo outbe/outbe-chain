@@ -355,13 +355,25 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         "the settlement fixture only registers an asset for USD"
     );
     let fixture = crate::features::settlement::deploy_settlement_fixture(world);
+    let nod_word = alloy_primitives::U256::from_be_slice(&nod_id);
+    let quote = crate::internal::eth::read_call(
+        &world.rpc.url(port),
+        crate::internal::addresses::NOD_FACTORY_ADDR,
+        &crate::internal::eth::INodFactory::quoteSettlementCall {
+            nodId: nod_word,
+            asset: fixture.asset,
+        },
+    )
+    .expect("quote capacity nod settlement");
+    assert_eq!(quote.payableUnits, body.settlementCostMinor);
     let proof = crate::features::paynote::deposit_and_prove(
         world,
         port,
         &private_key,
         owner,
         fixture.asset,
-        body.settlementCostMinor,
+        quote.payableUnits,
+        crate::features::paynote::nod_context(nod_word, quote.snapshotId),
     );
     world
         .rpc

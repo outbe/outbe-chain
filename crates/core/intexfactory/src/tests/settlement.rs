@@ -250,8 +250,18 @@ fn settlement_quote_dispatch() {
 /// Two units of `sample(7)` cost this at six decimals.
 const TWO_UNIT_COST: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 
+fn intex_context(series: SeriesId, units: U256) -> B256 {
+    outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Intex,
+        outbe_paynote::api::intex_series_target(series.as_bytes()),
+        units,
+        U256::ZERO,
+    )
+    .unwrap()
+}
+
 /// Series 7 qualified with two units on its owner, settled by a stranger whose
-/// note spends `spend`.
+/// note spends `spend` and is bound to those two units.
 fn settle_two_units_spending(
     spend: U256,
 ) -> (
@@ -267,6 +277,22 @@ fn settle_two_units_spending_from(
 ) -> (
     HashMapStorageProvider,
     outbe_primitives::error::Result<U256>,
+) {
+    let (storage, outcome, _) =
+        settle_bound(spend, merged, sid(7), U256::from(2u64), U256::from(2u64));
+    (storage, outcome)
+}
+
+fn settle_bound(
+    spend: U256,
+    merged: bool,
+    bound_series: SeriesId,
+    bound_units: U256,
+    settle_units: U256,
+) -> (
+    HashMapStorageProvider,
+    outbe_primitives::error::Result<U256>,
+    B256,
 ) {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
     use outbe_vaultrouter::api::IVaultRouter;
@@ -292,33 +318,41 @@ fn settle_two_units_spending_from(
     );
     storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
 
-    let proof = if merged {
-        outbe_paynote::test_support::merged_note_spend_proof(
+    let context = intex_context(bound_series, bound_units);
+    let (proof, nullifier) = if merged {
+        let (proof, nullifier) = outbe_paynote::test_support::merged_note_spend_proof(
             &mut storage,
             CHAIN_ID,
             payment_token(),
-            PAYER,
+            context,
             spend,
+        );
+        (
+            proof,
+            outbe_protocol::codec::field_to_b256(&nullifier).unwrap(),
         )
     } else {
         let fixture = outbe_paynote::test_support::note_and_spend_proof(
             CHAIN_ID,
             payment_token(),
-            PAYER,
+            context,
             spend,
             spend,
         );
         outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[fixture.commitment]);
-        fixture.proof
+        (
+            fixture.proof,
+            outbe_protocol::codec::field_to_b256(&fixture.public.nullifier).unwrap(),
+        )
     };
 
     let outcome = StorageHandle::enter(&mut storage, |s| {
         runtime::issue(&s, sample(7)).unwrap();
         seed_qualifying_day(&s);
-        runtime::settle_intex_with_paynote(&s, sid(7), owner(), PAYER, U256::from(2u64), &proof)
+        runtime::settle_intex_with_paynote(&s, sid(7), owner(), PAYER, settle_units, &proof)
             .map(|_| U256::from(outbe_intex::api::settled_units(&s, sid(7)).unwrap()))
     });
-    (storage, outcome)
+    (storage, outcome, nullifier)
 }
 
 const PAYER: Address = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
@@ -345,6 +379,40 @@ fn anyone_may_settle_and_the_units_stay_with_the_owner() {
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].intexOwner, owner(), "the payer keeps nothing");
     assert_eq!(settled[0].amount, U256::from(2u64));
+}
+
+#[test]
+fn a_proof_bound_to_two_units_cannot_settle_one() {
+    let (mut storage, outcome, nullifier) = settle_bound(
+        TWO_UNIT_COST,
+        false,
+        sid(7),
+        U256::from(2u64),
+        U256::from(1u64),
+    );
+    let error = outcome.unwrap_err().to_string();
+    assert!(error.contains("does not match settlement"), "{error}");
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        assert!(!outbe_paynote::api::is_spent(&s, nullifier).unwrap());
+    });
+}
+
+#[test]
+fn a_proof_bound_to_another_series_cannot_settle_this_one() {
+    let (mut storage, outcome, nullifier) = settle_bound(
+        TWO_UNIT_COST,
+        false,
+        sid(8),
+        U256::from(2u64),
+        U256::from(2u64),
+    );
+    let error = outcome.unwrap_err().to_string();
+    assert!(error.contains("does not match settlement"), "{error}");
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        assert!(!outbe_paynote::api::is_spent(&s, nullifier).unwrap());
+    });
 }
 
 /// The surplus of an over-spend reaches the reserve vault with nothing left to

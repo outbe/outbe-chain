@@ -289,7 +289,8 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 /// changed, binding the combined wire to the frozen circuit identity.
 #[test]
 fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
-    use outbe_protocol::protocol::zk::ProofGenerator;
+    use outbe_protocol::codec::field_to_b256;
+    use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
     use outbe_zk_backend::barretenberg::Barretenberg;
     use outbe_zk_canonical::emit_mint::{hash::*, Field};
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
@@ -351,12 +352,8 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     assert_eq!(proof.proof.len(), EMIT_MINT_PROOF_WORDS);
     let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
     combined.extend_from_slice(&8u32.to_be_bytes());
-    for word in <EmitMint as outbe_protocol::protocol::zk::Circuit>::public_inputs(&public) {
-        combined.extend_from_slice(
-            outbe_protocol::codec::field_to_b256(&word)
-                .unwrap()
-                .as_slice(),
-        );
+    for word in <EmitMint as Circuit>::public_inputs(&public) {
+        combined.extend_from_slice(field_to_b256(&word).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

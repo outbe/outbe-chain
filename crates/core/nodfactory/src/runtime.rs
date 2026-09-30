@@ -179,14 +179,13 @@ pub fn settle_nod_with_paynote(
         parent,
         nod_id,
         |_, _| Ok(()),
-        |terms, entry_price, ()| discharge_cost(storage, terms, entry_price, paynote_proof),
+        |terms, entry_price, ()| discharge_cost(storage, nod_id, terms, entry_price, paynote_proof),
     )
 }
 
 /// Currency pair and load a settlement charges against. Copied off the item
 /// before `settle_nod` consumes the loaded body.
 struct SettlementTerms {
-    owner_reference: Address,
     issuance_currency: u16,
     reference_currency: u16,
     gratis_load_minor: U256,
@@ -219,7 +218,6 @@ fn settle<Q>(
     }
     let owner = item.body().owner;
     let terms = SettlementTerms {
-        owner_reference: owner,
         issuance_currency: item.body().issuance_currency,
         reference_currency: item.body().reference_currency,
         gratis_load_minor: item.body().gratis_load_minor,
@@ -351,20 +349,12 @@ struct PaidCost {
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
+    nod_id: WwdEntityId,
     terms: &SettlementTerms,
     entry_price_minor: U256,
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-
-    // front-running protection
-    if claim.owner != terms.owner_reference {
-        return Err(NodFactoryError::PayNoteOwnerMismatch {
-            expected: terms.owner_reference,
-            actual: claim.owner,
-        }
-        .into());
-    }
 
     let currency = accept_payment_asset(
         storage,
@@ -372,7 +362,20 @@ fn discharge_cost(
         terms.issuance_currency,
         terms.reference_currency,
     )?;
-    let (cost, _) = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
+    let (cost, snapshot) = cost_in_token(storage, terms, entry_price_minor, claim.asset, currency)?;
+    let expected = outbe_paynote::api::settlement_context(
+        outbe_paynote::api::SettlementDomain::Nod,
+        B256::from(nod_id.to_u256()),
+        U256::ONE,
+        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+    )?;
+    if claim.context != expected {
+        return Err(NodFactoryError::PayNoteContextMismatch {
+            expected,
+            actual: claim.context,
+        }
+        .into());
+    }
     if claim.spend_amount != cost {
         return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
@@ -532,7 +535,6 @@ pub fn quote_settlement(
 ) -> Result<(u16, U256, U256)> {
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     let terms = SettlementTerms {
-        owner_reference: item.body().owner,
         issuance_currency: item.body().issuance_currency,
         reference_currency: item.body().reference_currency,
         gratis_load_minor: item.body().gratis_load_minor,
