@@ -75,7 +75,14 @@ impl PreparedOffchainDataProjection {
     #[must_use]
     pub fn runtime_body_readers(&self) -> RuntimeBodyReaders {
         let reader: StorageReaderHandle = self.overlay.clone();
-        RuntimeBodyReaders::new_supervised(reader, self.runtime_failure_sender.clone())
+        match self.projector.day_route() {
+            Some(route) => RuntimeBodyReaders::new_supervised_with_days(
+                reader,
+                route.clone(),
+                self.runtime_failure_sender.clone(),
+            ),
+            None => RuntimeBodyReaders::new_supervised(reader, self.runtime_failure_sender.clone()),
+        }
     }
 
     /// Backend-neutral exact-checkpoint readiness used by local execution gates.

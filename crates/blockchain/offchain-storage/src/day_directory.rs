@@ -66,6 +66,16 @@ impl DayDirectory {
         remove_directory_if_present(&self.nod_day_path(day))
     }
 
+    /// Numeric Tribute day directories, ascending. A missing parent is empty.
+    pub fn list_tribute_days(&self) -> Result<Vec<u32>, StorageError> {
+        list_numbered_dirs(&self.root.join(TRIBUTE_DAYS_DIR))
+    }
+
+    /// Numeric Nod day directories, ascending. A missing parent is empty.
+    pub fn list_nod_days(&self) -> Result<Vec<u32>, StorageError> {
+        list_numbered_dirs(&self.root.join(NOD_DAYS_DIR))
+    }
+
     fn day_path(&self, family: &str, day: u32) -> PathBuf {
         self.root.join(family).join(day.to_string())
     }
@@ -107,6 +117,34 @@ fn migrate_legacy_root(root: &Path) -> Result<(), StorageError> {
         std::fs::rename(current_path, shared.join("CURRENT")).map_err(StorageError::unavailable)?;
     }
     Ok(())
+}
+
+fn list_numbered_dirs(path: &Path) -> Result<Vec<u32>, StorageError> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(StorageError::unavailable(error)),
+    };
+    let mut days = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(StorageError::unavailable)?;
+        let Some(name) = entry.file_name().into_string().ok() else {
+            continue;
+        };
+        let Ok(day) = name.parse::<u32>() else {
+            continue;
+        };
+        if entry
+            .file_type()
+            .map_err(StorageError::unavailable)?
+            .is_dir()
+        {
+            days.push(day);
+        }
+    }
+    days.sort_unstable();
+    days.dedup();
+    Ok(days)
 }
 
 fn remove_directory_if_present(path: &Path) -> Result<(), StorageError> {

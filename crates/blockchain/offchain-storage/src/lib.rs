@@ -1,6 +1,7 @@
 //! Backend-neutral, synchronous storage for node-local off-chain data.
 
 mod config;
+mod day_databases;
 mod day_directory;
 mod memory;
 mod mongo;
@@ -11,6 +12,7 @@ mod rocks_codec;
 mod types;
 
 pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
+pub use day_databases::DayDatabases;
 pub use day_directory::DayDirectory;
 pub use memory::MemoryStorage;
 pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};

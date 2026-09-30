@@ -56,9 +56,25 @@ impl OffchainDataProjection {
             decoded_receipts.push((receipt, events));
         }
 
-        let tribute_reader = TributeRepositoryReader::new(self.reader.clone());
+        let (tribute_reader, nod_reader) = match &self.day_route {
+            Some(route) => (
+                TributeRepositoryReader::with_days(
+                    route.durable_reader.clone(),
+                    route.durable_writer.clone(),
+                    route.databases.clone(),
+                ),
+                NodRepositoryReader::with_days(
+                    route.durable_reader.clone(),
+                    route.durable_writer.clone(),
+                    route.databases.clone(),
+                ),
+            ),
+            None => (
+                TributeRepositoryReader::new(self.reader.clone()),
+                NodRepositoryReader::new(self.reader.clone()),
+            ),
+        };
         let retained_tribute_reader = RetainedTributeReader::new(self.reader.clone());
-        let nod_reader = NodRepositoryReader::new(self.reader.clone());
         let mut tribute_ids = BTreeSet::new();
         let mut nod_ids = BTreeSet::new();
         let mut bucket_ids = BTreeSet::new();

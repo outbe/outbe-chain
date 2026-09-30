@@ -4,6 +4,7 @@
 //! normalizes finalized blocks into [`FinalizedBlock`], while the projector
 //! consumes only the shared off-chain storage capabilities.
 
+mod day_apply;
 mod decode;
 mod prepare;
 mod retirement;
@@ -28,7 +29,7 @@ use alloy_primitives::{Address, LogData, B256};
 use outbe_compressed_entities::WwdEntityId;
 use outbe_nod::NodRepositoryError;
 use outbe_offchain_storage::{
-    AtomicWriteBatch, StorageError, StorageReaderHandle, StorageWriterHandle,
+    AtomicWriteBatch, DayDatabases, StorageError, StorageReaderHandle, StorageWriterHandle,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::TributeRepositoryError;
@@ -116,12 +117,24 @@ pub enum ProjectionOutcome {
     AlreadyApplied(ProjectionCheckpoint),
 }
 
+/// Durable shared database plus the per-day Tribute and Nod databases.
+#[derive(Clone)]
+pub struct DayDatabaseRoute {
+    /// Open day databases for this off-chain root.
+    pub databases: Arc<DayDatabases>,
+    /// Reader for the shared database. Legacy keys and the migration cursor live here.
+    pub durable_reader: StorageReaderHandle,
+    /// Writer for the shared database.
+    pub durable_writer: StorageWriterHandle,
+}
+
 /// Deterministic projector over shared backend-neutral storage capabilities.
 pub struct OffchainDataProjection {
     reader: StorageReaderHandle,
     writer: StorageWriterHandle,
     state: ProjectionState,
     tribute_retention_selector: Option<Arc<dyn TributeRetentionSelector>>,
+    day_route: Option<DayDatabaseRoute>,
 }
 
 impl OffchainDataProjection {
@@ -153,7 +166,19 @@ impl OffchainDataProjection {
             writer,
             state,
             tribute_retention_selector: None,
+            day_route: None,
         })
+    }
+
+    /// Routes Tribute and Nod bodies into one database per worldwide day.
+    pub fn set_day_route(&mut self, route: DayDatabaseRoute) {
+        self.day_route = Some(route);
+    }
+
+    /// Day routing configured for this projector, when the node opened RocksDB.
+    #[must_use]
+    pub fn day_route(&self) -> Option<&DayDatabaseRoute> {
+        self.day_route.as_ref()
     }
 
     /// Opens the projector with the node-owned active-pin selector.
@@ -209,7 +234,13 @@ impl OffchainDataProjection {
             block_batch.extend(receipt.batch.operations().iter().cloned());
         }
         block_batch.extend(state_batch(&next_state)?.operations().iter().cloned());
-        block_batch.validate()?;
+        let block_batch = match &self.day_route {
+            Some(route) => day_apply::write_day_operations(&route.databases, block_batch)?,
+            None => {
+                block_batch.validate()?;
+                block_batch
+            }
+        };
         self.writer.apply_atomic(&block_batch)?;
         self.state = next_state;
         Ok((

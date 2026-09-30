@@ -25,6 +25,7 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 mongodb.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []
