@@ -42,6 +42,12 @@ pub(crate) enum WwdTransitionPlan {
     MissedOffering,
 }
 
+impl WwdTransitionPlan {
+    fn opens_offering(&self) -> bool {
+        matches!(self, Self::Advance(edges) if edges.contains(&WwdAdvanceEdge::OpenOffering))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum ReadyDisposition {
@@ -58,6 +64,7 @@ pub(crate) enum OuterWwdEvent {
         block_time: u64,
         retained_count: usize,
         admission_available: bool,
+        limit_final: bool,
     },
     ProcessReady(ReadyDisposition),
     OcompRequestCommitted,
@@ -142,13 +149,18 @@ pub(crate) fn reduce_outer_wwd(
             block_time,
             retained_count,
             admission_available,
+            limit_final,
         } => {
             if retained_count > MAX_RETAINED_WWDS {
                 return Err(crate::errors::storage_corruption(format!(
                     "Metadosis retained WWD count {retained_count} exceeds cap {MAX_RETAINED_WWDS}"
                 )));
             }
-            match plan_wwd_advance(current, block_time)? {
+            let mut plan = plan_wwd_advance(current, block_time)?;
+            if limit_final && current.metadosis_limit_amount.is_zero() && plan.opens_offering() {
+                plan = WwdTransitionPlan::MissedOffering;
+            }
+            match plan {
                 WwdTransitionPlan::Noop => transition(
                     Some(current.status),
                     current.status,

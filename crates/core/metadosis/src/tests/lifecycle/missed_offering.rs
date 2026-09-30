@@ -131,6 +131,108 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     end_persistent_active_scope(&mut provider, &scope);
 }
 
+fn seed_zero_limit_lookback_day_opening_at(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+    opening: u64,
+) {
+    StorageHandle::enter(provider, |storage| {
+        arm_genesis_ocomp(&storage, CHAIN_ID);
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                opening - FORMING_PERIOD_HOURS * SECONDS_PER_HOUR,
+                0,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        metadosis
+            .fixture_set_wwd_status(wwd, WwdStatus::LookbackDelay)
+            .unwrap();
+        TributeContract::new(storage).seal_day(wwd).unwrap();
+    });
+}
+
+fn assert_zero_limit_offering_missed(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+    block_number: u64,
+) {
+    StorageHandle::enter(provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        let receipt = metadosis
+            .read_missed_offering_receipt(wwd)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.value_routed, U256::ZERO);
+        assert_eq!(receipt.block_number, block_number);
+        assert!(TributeContract::new(storage).is_day_sealed(wwd).unwrap());
+    });
+    assert!(provider_status_events(provider, wwd)
+        .iter()
+        .all(|(_, new_status, _)| *new_status != status::OFFERING));
+}
+
+#[test]
+fn final_zero_limit_misses_the_offering_from_forming_and_lookback() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0901);
+    for from_lookback in [false, true] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
+        let (forming_end, lookback_end) = StorageHandle::enter(&mut provider, |storage| {
+            let day = MetadosisContract::new(storage).worldwide_days.entry(wwd);
+            (
+                day.forming_end().read().unwrap(),
+                day.lookback_end().read().unwrap(),
+            )
+        });
+        let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+        let mut block_number = 2;
+        if from_lookback {
+            run_advance_command(&mut provider, &scope, block_number, forming_end).unwrap();
+            block_number += 1;
+        }
+
+        run_advance_command(&mut provider, &scope, block_number, lookback_end).unwrap();
+
+        assert_zero_limit_offering_missed(&mut provider, wwd, block_number);
+        end_persistent_active_scope(&mut provider, &scope);
+    }
+}
+
+#[test]
+fn zero_limit_offering_opens_until_its_utc_day_closes() {
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0902);
+    let utc_day_closed = wwd.to_timestamp_utc() + 24 * SECONDS_PER_HOUR;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let last_open_hour = utc_day_closed - SECONDS_PER_HOUR;
+    seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, last_open_hour);
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+    run_advance_command(&mut provider, &scope, 2, last_open_hour).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
+        assert!(metadosis
+            .read_missed_offering_receipt(wwd)
+            .unwrap()
+            .is_none());
+        assert!(!TributeContract::new(storage).is_day_sealed(wwd).unwrap());
+    });
+    end_persistent_active_scope(&mut provider, &scope);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, utc_day_closed);
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+    run_advance_command(&mut provider, &scope, 2, utc_day_closed).unwrap();
+    assert_zero_limit_offering_missed(&mut provider, wwd, 2);
+    end_persistent_active_scope(&mut provider, &scope);
+}
+
 #[test]
 fn malformed_missed_offering_receipt_is_fatal() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);

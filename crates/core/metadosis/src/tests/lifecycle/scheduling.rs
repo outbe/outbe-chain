@@ -25,6 +25,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
+        metadosis.set_metadosis_limit(wwd, U256::ONE).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.seal_day(wwd).unwrap();

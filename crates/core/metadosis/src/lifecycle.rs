@@ -39,6 +39,7 @@ pub(crate) fn advance_active_worldwide_days(
     require_active_ocomp_profile(&metadosis)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     let retained_count = aggregate.retained_count();
+    let block_utc_day = outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp);
     let mut admission_consumed = false;
     for current in aggregate.active_records() {
         let transition = reduce_outer_wwd(
@@ -47,6 +48,8 @@ pub(crate) fn advance_active_worldwide_days(
                 block_time: ctx.block.timestamp,
                 retained_count,
                 admission_available: !admission_consumed,
+                // A day limit is formed only while its WWD's UTC day is open.
+                limit_final: block_utc_day > current.worldwide_day.value(),
             },
         )?;
         match transition.kind() {
