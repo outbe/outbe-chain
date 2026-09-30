@@ -350,14 +350,11 @@ where
             if is_reserved_system_tx(recovered.tx()) {
                 return self.execute_reserved_system_tx(recovered, f);
             }
-            match self.execute_ocomp_system_carrier(tx_env, recovered, f)? {
-                system_execution::dispatch::OcompCarrierStep::Done(result) => return result,
-                system_execution::dispatch::OcompCarrierStep::Continue {
-                    tx_env,
-                    recovered,
-                    commit: f,
-                } => self.route_user_transaction(tx_env, recovered, f),
+            let candidate = self.ocomp_system_carrier_candidate(&recovered)?;
+            if let Some(candidate) = candidate {
+                return self.execute_ocomp_system_carrier(candidate, tx_env, recovered, f);
             }
+            self.route_user_transaction(tx_env, recovered, f)
         })();
 
         let ce_failure = ce_scope.take_ce_work_failure();

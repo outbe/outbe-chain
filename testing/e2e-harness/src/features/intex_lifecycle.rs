@@ -1164,6 +1164,7 @@ fn settle_part_of_expiring(world: &mut World) {
         world,
         owner,
         currency.asset,
+        series,
         expected_settlement_cost(),
         EXPIRING_SETTLED_UNITS,
     );
