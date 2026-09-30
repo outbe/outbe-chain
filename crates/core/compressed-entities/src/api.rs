@@ -586,6 +586,7 @@ pub struct ExecutionScope {
     parent_identity_without_root: Mutex<Option<(u32, u64, B256)>>,
     parent_binding_configured: AtomicBool,
     rpc_read_only: AtomicBool,
+    rpc_finalized_root: Option<B256>,
     provisional_seal: Mutex<Option<crate::SealOutput>>,
     completed_seal: Mutex<Option<crate::SealOutput>>,
     ce_work_config: CeWorkConfig,
@@ -636,6 +637,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(false),
             rpc_read_only: AtomicBool::new(false),
+            rpc_finalized_root: None,
             provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
@@ -664,6 +666,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            rpc_finalized_root: None,
             provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config,
@@ -699,6 +702,7 @@ impl ExecutionScope {
             ))),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            rpc_finalized_root: None,
             provisional_seal: Mutex::new(None),
             completed_seal: Mutex::new(None),
             ce_work_config,
@@ -720,6 +724,7 @@ impl ExecutionScope {
         commitment_scheme_version: u32,
         block_number: u64,
         block_hash: B256,
+        root: B256,
     ) -> Self {
         let mut scope = Self::with_parent_tree_factory(
             factory,
@@ -730,6 +735,7 @@ impl ExecutionScope {
         );
         scope.parent_binding_configured = AtomicBool::new(false);
         scope.rpc_read_only = AtomicBool::new(true);
+        scope.rpc_finalized_root = Some(root);
         scope
     }
 
@@ -788,6 +794,14 @@ impl ExecutionScope {
                 ));
             }
             return Ok(());
+        }
+        if self.is_rpc_read_only() && self.rpc_finalized_root != Some(evm_root) {
+            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                format!(
+                    "RPC state root {evm_root} is not the finalized tree root {:?}",
+                    self.rpc_finalized_root
+                ),
+            ));
         }
         let factory = self
             .parent_tree_factory
@@ -851,6 +865,11 @@ impl ExecutionScope {
 
     pub fn parent_root(&self) -> Result<B256> {
         self.opened_parent_tree().map(|tree| tree.parent_root())
+    }
+
+    /// True while the scope serves RPC simulation rather than block execution.
+    pub fn is_rpc_read_only(&self) -> bool {
+        self.rpc_read_only.load(Ordering::Acquire)
     }
 
     /// Best-effort context for a failed body check; never selects a different tree.

@@ -2,14 +2,23 @@ use std::sync::Arc;
 
 use alloy_evm::{block::BlockExecutor, eth::EthBlockExecutionCtx};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    AuthenticatedParentTree, AuthenticatedParentTreeFactory, CandidateCacheLimits, CeMdbx,
+    CeWorkConfig, Commitment, CompressedTreeService, EntityRef, EnvironmentIdentity,
+    ExactParentIdentity, ExecutionScope, FinalLeafMutation, FinalizedMarker, PartitionRef,
+    ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmConfig};
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_evm::{sub_call, OutbeBlockExecutionCtx, OutbeEvmConfig};
+use outbe_offchain_data::{RuntimeBodyFailure, RuntimeBodyReaders};
+use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
+use outbe_primitives::storage::{
+    hashmap::HashMapStorageProvider, StorageHandle, SubCallInput, SubCallOutput,
+};
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS, units::SCALE_1E6_U256, OutbeHeader,
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
+    units::SCALE_1E6_U256,
+    OutbeHeader,
 };
 use reth_ethereum::{
     chainspec::{ChainSpec, EthChainSpec, MAINNET},
@@ -18,10 +27,12 @@ use reth_ethereum::{
 use reth_evm::{execute::ProviderError, ConfigureEvm, EvmEnv};
 use revm::{
     context::{BlockEnv, CfgEnv},
-    database::CacheDB,
+    database::{CacheDB, EmptyDB},
     database_interface::EmptyDBTyped,
+    handler::MainContext as _,
     primitives::hardfork::SpecId,
     state::AccountInfo,
+    Context,
 };
 
 fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
@@ -182,4 +193,172 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
     let precompile_scope = executor.evm().execution_scope();
     assert_eq!(precompile_scope.parent_root().unwrap(), parent_root);
     precompile_scope.ce_work_checkpoint().unwrap();
+}
+
+/// A parent tree that commits every leaf, so any body read needs the projection.
+#[derive(Debug)]
+struct CommittedLeafTree(ExactParentIdentity);
+
+impl AuthenticatedParentTree for CommittedLeafTree {
+    fn parent_block_hash(&self) -> B256 {
+        self.0.block_hash
+    }
+
+    fn parent_root(&self) -> B256 {
+        self.0.root
+    }
+
+    fn read_leaf_verified(
+        &self,
+        _entity: EntityRef,
+        _expected_parent_root: B256,
+    ) -> PrecompileResult<Option<Commitment>> {
+        Ok(Some(Commitment::try_from([1_u8; 32]).unwrap()))
+    }
+
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        _expected_parent_root: B256,
+    ) -> PrecompileResult<bool> {
+        Ok(true)
+    }
+
+    fn prepare_seal(
+        &self,
+        _block_number: u64,
+        _mutations: &[FinalLeafMutation],
+        _retirements: &[PartitionRef],
+    ) -> PrecompileResult<ProvisionalTreeBatch> {
+        Err(PrecompileError::Fatal("read-only test tree".into()))
+    }
+}
+
+#[derive(Debug)]
+struct CommittedLeafFactory;
+
+impl AuthenticatedParentTreeFactory for CommittedLeafFactory {
+    fn open_parent(
+        &self,
+        identity: ExactParentIdentity,
+    ) -> PrecompileResult<Arc<dyn AuthenticatedParentTree>> {
+        Ok(Arc::new(CommittedLeafTree(identity)))
+    }
+}
+
+fn committed_parent() -> ExactParentIdentity {
+    ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 7,
+        block_hash: B256::repeat_byte(0x07),
+        root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+    }
+}
+
+fn read_nod_owner(scope: Arc<ExecutionScope>) -> (String, Option<RuntimeBodyFailure>) {
+    let mut seeded = HashMapStorageProvider::new(MAINNET.chain().id());
+    StorageHandle::enter(&mut seeded, |storage| {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_bytes(committed_parent().root.0),
+            )
+            .unwrap();
+        if !scope.is_rpc_read_only() {
+            outbe_compressed_entities::begin_block(storage, &scope).unwrap();
+        }
+    });
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(
+        COMPRESSED_ENTITIES_ADDRESS,
+        AccountInfo {
+            nonce: 1,
+            ..Default::default()
+        },
+    );
+    for ((address, slot), value) in seeded.storage {
+        db.insert_account_storage(address, slot, value).unwrap();
+    }
+    let mut ctx = Context::mainnet().with_db(db);
+
+    let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
+    let readers = RuntimeBodyReaders::new_supervised(
+        Arc::new(outbe_offchain_storage::MemoryStorage::new()),
+        failure_tx,
+    );
+    let owner_of = outbe_nod::precompile::INod::ownerOfCall {
+        nodId: U256::from(9),
+    };
+    let result: Result<SubCallOutput, _> = sub_call::run(
+        &mut ctx,
+        Address::repeat_byte(0x11),
+        false,
+        SpecId::PRAGUE,
+        Some(readers),
+        scope,
+        SubCallInput {
+            target: NOD_ADDRESS,
+            value: U256::ZERO,
+            calldata: owner_of.abi_encode().into(),
+            gas_limit: 1_000_000,
+            is_static: true,
+        },
+    );
+    let observed = format!("{result:?}");
+    let failure = failure_rx.borrow().clone();
+    (observed, failure)
+}
+
+#[test]
+fn rpc_body_read_failure_stays_with_its_caller() {
+    let parent = committed_parent();
+    let scope = Arc::new(ExecutionScope::for_finalized_rpc(
+        Arc::new(CommittedLeafFactory),
+        parent.commitment_scheme_version,
+        parent.block_number,
+        parent.block_hash,
+        parent.root,
+    ));
+
+    let (observed, failure) = read_nod_owner(scope);
+
+    assert!(observed.contains("body read unavailable"), "{observed}");
+    assert!(failure.is_none(), "{failure:?}");
+}
+
+#[test]
+fn block_body_read_failure_reaches_the_node_supervisor() {
+    let scope = Arc::new(ExecutionScope::with_parent_tree(
+        Arc::new(CommittedLeafTree(committed_parent())),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    ));
+
+    let (observed, failure) = read_nod_owner(scope);
+
+    assert!(observed.contains("body read corruption"), "{observed}");
+    assert!(
+        matches!(failure, Some(RuntimeBodyFailure::Fatal(_))),
+        "{failure:?}"
+    );
+}
+
+#[test]
+fn rpc_state_ahead_of_the_finalized_tree_is_unavailable() {
+    let parent = committed_parent();
+    let scope = ExecutionScope::for_finalized_rpc(
+        Arc::new(CommittedLeafFactory),
+        parent.commitment_scheme_version,
+        parent.block_number,
+        parent.block_hash,
+        B256::repeat_byte(0x99),
+    );
+
+    assert!(matches!(
+        scope.read_parent_leaf_verified(EntityRef::NodItem([9_u8; 32].into()), parent.root),
+        Err(PrecompileError::TreeUnavailable(_))
+    ));
 }

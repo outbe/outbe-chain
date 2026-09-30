@@ -122,6 +122,7 @@ fn finalized_rpc_scope_reads_without_opening_mutation_lifecycle() {
         ACTIVE_COMMITMENT_SCHEME,
         42,
         block_hash,
+        root,
     );
 
     assert_eq!(
@@ -154,6 +155,7 @@ fn block_configuration_replaces_finalized_rpc_fallback() {
         ACTIVE_COMMITMENT_SCHEME,
         10,
         B256::repeat_byte(0x10),
+        B256::repeat_byte(0x90),
     );
 
     scope

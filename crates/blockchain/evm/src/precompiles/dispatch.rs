@@ -296,11 +296,15 @@ where
         result
     })();
 
-    if let Some(readers) = runtime_body_readers {
-        if let Err(error) = &result {
-            readers.report_precompile_error(error);
+    let result = match result {
+        Err(error) if execution_scope.is_rpc_read_only() => Err(rpc_read_error(error)),
+        result => {
+            if let (Some(readers), Err(error)) = (runtime_body_readers, &result) {
+                readers.report_precompile_error(error);
+            }
+            result
         }
-    }
+    };
 
     let precompile_result = map_outbe_precompile_result(result, actual_gas);
 
@@ -314,4 +318,20 @@ where
     };
 
     Ok(Some(interp_result))
+}
+
+/// An RPC read pairs a tree and a body projection that advance separately, so its body
+/// failures stay retryable for the caller and never reach the node supervisor.
+fn rpc_read_error(error: PrecompileError) -> PrecompileError {
+    match error {
+        PrecompileError::BodyReadCorruption(message) => {
+            tracing::warn!(
+                target: "outbe::precompile",
+                %message,
+                "RPC body read disagrees with its tree"
+            );
+            PrecompileError::BodyReadUnavailable(message)
+        }
+        other => other,
+    }
 }

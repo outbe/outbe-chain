@@ -510,6 +510,7 @@ impl EvmFactory for OutbeEvmFactory {
                         marker.commitment_scheme_version,
                         marker.height,
                         marker.block_hash,
+                        marker.new_root,
                     ))
                 })
             })
