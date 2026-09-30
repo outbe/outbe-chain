@@ -340,13 +340,11 @@ fn nod_target() -> SettlementTarget {
 }
 
 fn quote_return(payable: U256) -> Vec<u8> {
-    INodSettlementQuote::quoteSettlementCall::abi_encode_returns(
-        &INodSettlementQuote::quoteSettlementReturn {
-            settlementCurrency: 840,
-            payableUnits: payable,
-            snapshotId: U256::ZERO,
-        },
-    )
+    INodFactory::quoteSettlementCall::abi_encode_returns(&INodFactory::quoteSettlementReturn {
+        settlementCurrency: 840,
+        payableUnits: payable,
+        snapshotId: U256::ZERO,
+    })
 }
 
 pub(super) fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
@@ -378,7 +376,7 @@ pub(super) fn tree_rpc_quoted(tree: &PayNoteTree, logs: Vec<Value>, payable: U25
             (
                 (
                     NOD_FACTORY_ADDRESS,
-                    INodSettlementQuote::quoteSettlementCall::SELECTOR,
+                    INodFactory::quoteSettlementCall::SELECTOR,
                 ),
                 quote_return(payable),
             ),
@@ -485,7 +483,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
         (
             (
                 NOD_FACTORY_ADDRESS,
-                INodSettlementQuote::quoteSettlementCall::SELECTOR,
+                INodFactory::quoteSettlementCall::SELECTOR,
             ),
             quote_return(U256::ONE),
         ),

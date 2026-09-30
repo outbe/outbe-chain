@@ -289,7 +289,7 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 /// changed, binding the combined wire to the frozen circuit identity.
 #[test]
 fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
-    use outbe_emit::EmitSuite;
+    use outbe_protocol::codec::field_to_b256;
     use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
     use outbe_zk_backend::barretenberg::Barretenberg;
     use outbe_zk_canonical::emit_mint::{hash::*, Field};
@@ -353,7 +353,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     let mut combined = Vec::with_capacity(4 + 32 * (8 + proof.proof.len()));
     combined.extend_from_slice(&8u32.to_be_bytes());
     for word in <EmitMint as Circuit>::public_inputs(&public) {
-        combined.extend_from_slice(EmitSuite::field_to_b256(&word).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&word).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

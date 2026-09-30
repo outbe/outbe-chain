@@ -11,7 +11,7 @@ use ark_ff::PrimeField;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::codec::{field_to_b256, u256_limbs_be};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -26,7 +26,7 @@ use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_S
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 use crate::Field;
 
-use crate::{EmitSuite, EmitTree};
+use crate::EmitTree;
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
@@ -44,7 +44,7 @@ fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
 }
 
 fn b256(field: Field) -> B256 {
-    EmitSuite::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 fn small_word(low_byte: u8) -> B256 {
@@ -129,7 +129,7 @@ fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(EmitSuite::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);

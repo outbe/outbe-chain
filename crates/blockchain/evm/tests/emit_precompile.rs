@@ -12,12 +12,11 @@ use outbe_emit::hash::{
 };
 use outbe_emit::precompile::IEmit;
 use outbe_emit::schema::{EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
-use outbe_emit::EmitSuite;
 use outbe_emit::EmitTree;
 use outbe_emit::Field;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::EMIT_ADDRESS;
-use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::codec::{field_to_b256, u256_limbs_be};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -180,7 +179,7 @@ fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
 }
 
 fn b256(field: Field) -> B256 {
-    EmitSuite::field_to_b256(&field).unwrap()
+    field_to_b256(&field).unwrap()
 }
 
 // ---- reference tree and proof fixture --------------------------------------
@@ -237,7 +236,7 @@ fn prove_mint(
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof.proof.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(EmitSuite::field_to_b256(&f).unwrap().as_slice());
+        combined.extend_from_slice(field_to_b256(&f).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

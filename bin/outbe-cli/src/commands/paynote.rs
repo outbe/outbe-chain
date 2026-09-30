@@ -46,26 +46,14 @@ use crate::{
 
 sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 
-sol! {
-    interface INodSettlementQuote {
-        function quoteSettlement(uint256 nodId, address asset)
-            external
-            view
-            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
-    }
-    interface IGemSettlementQuote {
-        function quoteSettlement(uint256 gemId, address asset)
-            external
-            view
-            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
-    }
-    interface IIntexSettlementQuote {
-        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)
-            external
-            view
-            returns (uint16 settlementCurrency, uint256 payableUnits, uint256 snapshotId);
-    }
+// Alloy 1.6 generates event constructors with the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod settlement_abi {
+    alloy_sol_types::sol!("../../contracts/precompiles/src/INodFactory.sol");
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IGemFactory.sol");
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IIntexFactory.sol");
 }
+use settlement_abi::{IGemFactory, IIntexFactory, INodFactory};
 
 /// Deposit shielded paynotes and generate spend proofs.
 ///
@@ -225,7 +213,7 @@ async fn quote_settlement(
             let quote = call(
                 client,
                 NOD_FACTORY_ADDRESS,
-                INodSettlementQuote::quoteSettlementCall {
+                INodFactory::quoteSettlementCall {
                     nodId: id,
                     asset: note.asset,
                 },
@@ -244,7 +232,7 @@ async fn quote_settlement(
             let quote = call(
                 client,
                 GEM_FACTORY_ADDRESS,
-                IGemSettlementQuote::quoteSettlementCall {
+                IGemFactory::quoteSettlementCall {
                     gemId: id,
                     asset: note.asset,
                 },
@@ -263,7 +251,7 @@ async fn quote_settlement(
             let quote = call(
                 client,
                 INTEX_FACTORY_ADDRESS,
-                IIntexSettlementQuote::quoteSettlementCall {
+                IIntexFactory::quoteSettlementCall {
                     seriesId: FixedBytes::from(series),
                     paymentToken: note.asset,
                     amount: units,
