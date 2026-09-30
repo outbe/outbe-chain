@@ -33,10 +33,10 @@ fn third_party_settles_and_mines(world: &mut World) {
         Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     let (id_bytes, initial) = loop {
         let observed = stable_live_read(world, port, 0, || {
-            world
-                .rpc
-                .materialized_nod_for_owner(port, owner)
-                .expect("live materialized Nod lookup")
+            ready(
+                world.rpc.materialized_nod_for_owner(port, owner),
+                "live materialized Nod lookup",
+            )
         });
         if let Some(nod) = observed {
             break nod;
@@ -744,9 +744,9 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks. Only successful observations that
-/// straddle a head change are retried; RPC and decoding failures remain fatal.
-fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> T) -> T {
+/// Read live CE views without mixing blocks. Observations that straddle a head change
+/// or that the node answers as not yet readable are retried; other failures remain fatal.
+fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         assert!(
@@ -760,9 +760,10 @@ fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -
         }
         let value = read();
         let after = live_checkpoint(world, port);
-        if before != after {
+        let Some(value) = value.filter(|_| before == after) else {
+            sleep(Duration::from_millis(100));
             continue;
-        }
+        };
         let finalized = world
             .rpc
             .wait_finalized_checkpoint(&world.validators.committee_ports(), before.height, 120)
@@ -801,21 +802,24 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
     let assert_reason = |minimum, gas_limit| {
         for &port in &ports {
             stable_live_read(world, port, minimum, || {
-                let actual = eth::read_call_revert_data_at_block(
-                    &world.rpc.url(port),
-                    addresses::NOD_FACTORY_ADDR,
-                    payer,
-                    call,
-                    U256::ZERO,
-                    alloy_eips::BlockId::latest(),
-                    gas_limit,
-                )
-                .expect("live Nod rejection with exact EVM revert data");
+                let actual = ready(
+                    eth::read_call_revert_data_at_block(
+                        &world.rpc.url(port),
+                        addresses::NOD_FACTORY_ADDR,
+                        payer,
+                        call,
+                        U256::ZERO,
+                        alloy_eips::BlockId::latest(),
+                        gas_limit,
+                    ),
+                    "live Nod rejection with exact EVM revert data",
+                )?;
                 assert_eq!(
                     actual.as_ref(),
                     expected.as_slice(),
                     "unexpected live Nod guard on {port}"
                 );
+                Some(())
             });
         }
     };
@@ -957,28 +961,32 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
         let snapshot = stable_live_read(world, port, minimum, || {
-            let count: usize = eth::read_call_result(
-                &url,
-                addresses::NOD_ADDR,
-                &eth::INod::balanceOfCall { owner },
-            )
-            .expect("live Nod owner count")
+            let count: usize = ready(
+                eth::read_call_result(
+                    &url,
+                    addresses::NOD_ADDR,
+                    &eth::INod::balanceOfCall { owner },
+                ),
+                "live Nod owner count",
+            )?
             .try_into()
             .expect("bounded Nod count");
             assert!(count <= 32, "bounded Nod owner inventory");
             let owner_ids = (0..count)
                 .map(|index| {
-                    eth::read_call_result(
-                        &url,
-                        addresses::NOD_ADDR,
-                        &eth::INod::tokenOfOwnerByIndexCall {
-                            owner,
-                            index: U256::from(index),
-                        },
+                    ready(
+                        eth::read_call_result(
+                            &url,
+                            addresses::NOD_ADDR,
+                            &eth::INod::tokenOfOwnerByIndexCall {
+                                owner,
+                                index: U256::from(index),
+                            },
+                        ),
+                        "live Nod owner index",
                     )
-                    .expect("live Nod owner index")
                 })
-                .collect::<Vec<_>>();
+                .collect::<Option<Vec<_>>>()?;
             assert_eq!(
                 owner_ids
                     .iter()
@@ -987,29 +995,34 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                 count,
                 "duplicate Nod owner index"
             );
-            let total_supply =
-                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})
-                    .expect("live Nod supply");
-            let body = owner_ids.contains(&id.to_u256()).then(|| {
-                let body = eth::read_call_result(
-                    &url,
-                    addresses::NOD_ADDR,
-                    &eth::INod::nodDataCall {
-                        nodId: id.to_u256(),
-                    },
-                )
-                .expect("live Nod body");
+            let total_supply = ready(
+                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {}),
+                "live Nod supply",
+            )?;
+            let body = if owner_ids.contains(&id.to_u256()) {
+                let body = ready(
+                    eth::read_call_result(
+                        &url,
+                        addresses::NOD_ADDR,
+                        &eth::INod::nodDataCall {
+                            nodId: id.to_u256(),
+                        },
+                    ),
+                    "live Nod body",
+                )?;
                 assert_eq!(body.owner, owner);
                 assert_eq!(body.nodId, id.to_u256());
-                body
-            });
-            NodSnapshot {
+                Some(body)
+            } else {
+                None
+            };
+            Some(NodSnapshot {
                 index: NodIndexSnapshot {
                     owner_ids,
                     total_supply,
                 },
                 body,
-            }
+            })
         });
         if let Some(expected) = &expected {
             assert_same_snapshot(expected, &snapshot);
@@ -1018,6 +1031,18 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
         }
     }
     expected.expect("nonempty Nod observer cohort")
+}
+
+/// A live CE read the node answers as not yet readable yields `None`; other failures are fatal.
+fn ready<T, E: std::fmt::Display>(read: Result<T, E>, what: &str) -> Option<T> {
+    let error = match read {
+        Ok(value) => return Some(value),
+        Err(error) => format!("{error:#}"),
+    };
+    let unavailable = error.contains("body read unavailable: ")
+        || error.contains("compressed-entity tree unavailable: ");
+    assert!(unavailable, "{what}: {error}");
+    None
 }
 
 fn assert_same_snapshot(before: &NodSnapshot, after: &NodSnapshot) {
