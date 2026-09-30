@@ -237,12 +237,13 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
 
-# Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs
-# and crates/core/gem/src/config.rs); genesis only picks one. The slots are pinned
-# by a test in each crate.
+# Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs,
+# crates/core/gem/src/config.rs and crates/core/nod/src/config.rs); genesis only
+# picks one. The slots are pinned by a test in each crate.
 PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
 INTEX_PROFILE_SLOT = 5
 GEM_PROFILE_SLOT = 34
+NOD_PROFILE_SLOT = 49
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
@@ -1983,6 +1984,7 @@ def apply_seed(
     for section, address, slot, label in (
         ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
         ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
+        ("nod_profile", NOD_ADDRESS, NOD_PROFILE_SLOT, "Nod"),
     ):
         if section not in seed:
             continue
