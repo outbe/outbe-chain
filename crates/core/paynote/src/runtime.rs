@@ -13,7 +13,6 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::noir::paynote::Paynote;
 use outbe_zk_canonical::paynote::{

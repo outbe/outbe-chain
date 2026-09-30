@@ -99,6 +99,7 @@ mod boundary;
 mod fixtures;
 pub(super) mod harness;
 mod receipts_and_gas;
+mod sponsorship_quota;
 mod system_execution;
 mod system_failure_codes;
 mod zero_fee;
