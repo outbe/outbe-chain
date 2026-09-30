@@ -55,6 +55,9 @@ mod gc;
 mod handles;
 mod inspection;
 mod journal;
+mod proof;
+mod reconcile;
+mod release;
 mod source;
 #[cfg(test)]
 mod test_support;
