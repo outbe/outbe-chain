@@ -1,9 +1,9 @@
 use alloy_primitives::{B256, U256};
 use outbe_primitives::error::Result;
 
-use crate::buckets::BucketTerms;
 use crate::errors::GemError;
 use crate::precompile::IGem::GemExpired;
+use crate::schema::BucketTerms;
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {

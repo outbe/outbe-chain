@@ -9,10 +9,10 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::buckets::BucketBins;
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK, MAX_EXPIRY_STEPS_PER_BLOCK};
 use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
+use crate::state::BucketBins;
 
 pub struct GemLifecycle;
 
@@ -374,7 +374,7 @@ fn forfeit_bucket(
     budget: &mut u32,
     burned: &mut u32,
 ) -> Result<bool> {
-    let entry = crate::buckets::bucket_entry(bucket);
+    let entry = crate::state::bucket_entry(bucket);
     loop {
         let count = gem.bucket_gem_count.read(&bucket)?;
         if count == 0 {

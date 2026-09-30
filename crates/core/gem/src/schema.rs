@@ -1,6 +1,7 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
+use outbe_primitives::time::first_full_day;
 
 /// The one type issued without a floor. Pinned to `GemTypes::Genesis` by a test in the
 /// factory, which owns that enum.
@@ -26,6 +27,42 @@ pub struct GemAddParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+}
+
+/// Everything a call decision reads off a gem. Gems that share it breach on the same
+/// days, so one decision covers them all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BucketTerms {
+    pub(crate) start_day: u32,
+    pub(crate) reference_currency: u16,
+    pub(crate) call_price: U256,
+    pub(crate) call_window: u32,
+    pub(crate) call_threshold: u32,
+    pub(crate) call_notice_period: u32,
+}
+
+impl BucketTerms {
+    pub(crate) fn of(item: &GemData) -> Self {
+        Self {
+            start_day: first_full_day(item.issued_at),
+            reference_currency: item.reference_currency,
+            call_price: item.call_price_minor,
+            call_window: item.call_window_seconds,
+            call_threshold: item.call_threshold_seconds,
+            call_notice_period: item.call_notice_period_seconds,
+        }
+    }
+
+    pub(crate) fn key(&self) -> B256 {
+        let mut buf = [0u8; 4 + 2 + 32 + 4 + 4 + 4];
+        buf[0..4].copy_from_slice(&self.start_day.to_be_bytes());
+        buf[4..6].copy_from_slice(&self.reference_currency.to_be_bytes());
+        buf[6..38].copy_from_slice(&self.call_price.to_be_bytes::<32>());
+        buf[38..42].copy_from_slice(&self.call_window.to_be_bytes());
+        buf[42..46].copy_from_slice(&self.call_threshold.to_be_bytes());
+        buf[46..50].copy_from_slice(&self.call_notice_period.to_be_bytes());
+        keccak256(buf)
+    }
 }
 
 #[storage_record(exists_field = owner)]
@@ -250,7 +287,6 @@ impl GemContract<'_> {
     /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be)`.
     /// `amount` is the gem's `promis_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
-        use alloy_primitives::keccak256;
         let mut buf = [0u8; 3 + 20 + 32 + 8];
         buf[0..3].copy_from_slice(b"gem");
         buf[3..23].copy_from_slice(owner.as_slice());

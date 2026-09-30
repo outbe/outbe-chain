@@ -52,7 +52,7 @@ fn requeue_called_gem(
     let bucket = gem.gem_bucket.read(&gem_id)?;
     let entry = match bucket.is_zero() {
         true => gem_id,
-        false => crate::buckets::bucket_entry(bucket),
+        false => crate::state::bucket_entry(bucket),
     };
     if gem.called_deadline.read(&entry)? == 0 {
         return Err(GemError::InvalidState.into());

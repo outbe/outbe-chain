@@ -749,7 +749,7 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
 }
 
-/// One currency's call-price trie, like `outbe_gem::buckets::BucketBins`.
+/// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
 impl BinTreeStorage for CallBins<'_, '_> {

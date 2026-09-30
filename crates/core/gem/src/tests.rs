@@ -300,13 +300,13 @@ fn the_last_gem_out_closes_its_bucket() {
         let bucket = bucket_of(storage, gem_id);
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
+        assert!(tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
 
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
         assert!(gem.bucket_call_price.read(&bucket).unwrap().is_zero());
         assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
-        assert!(!tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
+        assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -387,7 +387,7 @@ fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
         assert!(is_qualified(storage, gem_id));
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::buckets::BucketBins(&gem, 840), bin).unwrap());
+        assert!(tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -908,7 +908,7 @@ fn a_settled_gem_is_never_forfeited() {
 
         assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
-        let entry = crate::buckets::bucket_entry(bucket);
+        let entry = crate::state::bucket_entry(bucket);
         assert_eq!(gem.called_bucket_slot.read(&entry).unwrap(), 0);
     });
 }
@@ -1213,7 +1213,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let deadline = T_NOW + 7 * 86_400;
         let bucket = GemContract::deadline_hour(deadline);
 
-        let entry = crate::buckets::bucket_entry(bucket_of(storage, gem_id));
+        let entry = crate::state::bucket_entry(bucket_of(storage, gem_id));
         gem.called_deadline
             .write(&entry, deadline + 400 * 86_400)
             .unwrap();
@@ -1506,7 +1506,7 @@ fn settling_one_gem_of_a_called_bucket_leaves_the_rest_called() {
         assert_eq!(settled.state, GemState::Settled as u8);
         assert_eq!(settled.called_at, T_NOW);
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
-        let entry = crate::buckets::bucket_entry(bucket_of(storage, gems[1]));
+        let entry = crate::state::bucket_entry(bucket_of(storage, gems[1]));
         assert_ne!(
             GemContract::new(storage.clone())
                 .called_bucket_slot
