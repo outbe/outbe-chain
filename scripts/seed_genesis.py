@@ -791,6 +791,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
       slot 18:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
       slot 19:     all_gem_ids      List<U256>  (len @ slot 19, data @ keccak(19)+i)
       slot 20:     gem_index        Map<U256, u32>
+      slot 43:     owner_gem_position Map<U256, u32>  (index in owner_gem_ids + 1)
 
     Settled gems sit in neither the call-price index nor the called queue, so
     those slots stay empty.
@@ -835,6 +836,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
         # owner_gem_ids index (slot 18) + swap-and-pop counter (slot 17 below).
         oi = owner_counts.get(owner.lower(), 0)
         storage.set_mapping(18, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        storage.set_mapping(43, gem_id, oi + 1)
         owner_counts[owner.lower()] = oi + 1
 
         # all_gem_ids List element i (slot 19 data region) + gem_index (slot 20).

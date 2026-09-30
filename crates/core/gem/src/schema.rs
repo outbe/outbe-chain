@@ -187,6 +187,11 @@ pub struct GemContract {
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 34)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Gem id -> its index in `owner_gem_ids`, plus one. 0 for a gem written before the
+    /// field existed: burning it falls back to scanning the owner's list.
+    #[attribute(order = 35)]
+    pub owner_gem_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemContract<'_> {

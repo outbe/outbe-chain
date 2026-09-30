@@ -86,6 +86,8 @@ impl GemContract<'_> {
         self.owner_gem_ids
             .write(&Self::owner_index_key(item.owner, owner_count), item.gem_id)?;
         self.owner_gem_counts.write(&item.owner, owner_count + 1)?;
+        self.owner_gem_position
+            .write(&item.gem_id, owner_count + 1)?;
 
         let idx = self.all_gem_ids.len()?;
         self.all_gem_ids.push(item.gem_id)?;
@@ -413,24 +415,30 @@ impl GemContract<'_> {
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
         let count = self.owner_gem_counts.read(&owner)?;
         let last = count.checked_sub(1).ok_or(GemError::GemNotFound)?;
-        let mut found: Option<u32> = None;
-        for i in 0..count {
-            let key = Self::owner_index_key(owner, i);
-            if self.owner_gem_ids.read(&key)? == gem_id {
-                found = Some(i);
-                break;
-            }
-        }
-        let idx = found.ok_or(GemError::GemNotFound)?;
+        let idx = match self.owner_gem_position.read(&gem_id)?.checked_sub(1) {
+            Some(idx) => idx,
+            None => self.find_in_owner_index(owner, gem_id, count)?,
+        };
         let last_key = Self::owner_index_key(owner, last);
         if idx != last {
             let last_id = self.owner_gem_ids.read(&last_key)?;
             self.owner_gem_ids
                 .write(&Self::owner_index_key(owner, idx), last_id)?;
+            self.owner_gem_position.write(&last_id, idx + 1)?;
         }
         self.owner_gem_ids.clear(&last_key)?;
+        self.owner_gem_position.clear(&gem_id)?;
         self.owner_gem_counts.write(&owner, last)?;
         Ok(())
+    }
+
+    fn find_in_owner_index(&self, owner: Address, gem_id: U256, count: u32) -> Result<u32> {
+        for i in 0..count {
+            if self.owner_gem_ids.read(&Self::owner_index_key(owner, i))? == gem_id {
+                return Ok(i);
+            }
+        }
+        Err(GemError::GemNotFound.into())
     }
 
     // --- Bin keys (PancakeSwap LB-style) ----------------------------------

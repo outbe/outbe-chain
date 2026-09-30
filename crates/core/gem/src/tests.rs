@@ -171,6 +171,56 @@ fn burn_compacts_owner_index() {
     });
 }
 
+fn burn_settled(storage: &StorageHandle, gem_id: U256) {
+    api::set_state(storage, gem_id, GemState::Settled).unwrap();
+    api::burn(storage, gem_id).unwrap();
+}
+
+fn alice_gems(storage: &StorageHandle, loads: &[u64]) -> Vec<U256> {
+    loads
+        .iter()
+        .map(|load| {
+            let mut params = sample_params(ALICE);
+            params.promis_load_minor = U256::from(*load);
+            api::add_gem(storage, params).unwrap()
+        })
+        .collect()
+}
+
+/// The owner list is compacted through each gem's stored position, not by a scan.
+#[test]
+fn burn_moves_the_last_gem_into_the_hole_and_updates_its_position() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 2, 3]);
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.owner_gem_position.read(&gems[2]).unwrap(), 3);
+
+        burn_settled(storage, gems[0]);
+        assert_eq!(gem.token_of_owner_by_index(ALICE, 0).unwrap(), gems[2]);
+        assert_eq!(gem.owner_gem_position.read(&gems[2]).unwrap(), 1);
+        assert_eq!(gem.owner_gem_position.read(&gems[0]).unwrap(), 0);
+
+        burn_settled(storage, gems[2]);
+        assert_eq!(gem.balance_of(ALICE).unwrap(), 1);
+        assert_eq!(gem.token_of_owner_by_index(ALICE, 0).unwrap(), gems[1]);
+    });
+}
+
+/// A gem written before positions existed, such as a genesis seed, is still found.
+#[test]
+fn a_gem_without_a_position_is_found_by_scanning_its_owner_list() {
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 2]);
+        let gem = GemContract::new(storage.clone());
+        gem.owner_gem_position.clear(&gems[0]).unwrap();
+
+        burn_settled(storage, gems[0]);
+        assert_eq!(gem.balance_of(ALICE).unwrap(), 1);
+        assert_eq!(gem.token_of_owner_by_index(ALICE, 0).unwrap(), gems[1]);
+        assert_eq!(gem.owner_gem_position.read(&gems[1]).unwrap(), 1);
+    });
+}
+
 /// Whether the gem has qualified, as settlement and the view read it.
 fn is_qualified(storage: &StorageHandle, gem_id: U256) -> bool {
     let item = api::get_gem(storage, gem_id).unwrap().unwrap();
@@ -541,6 +591,7 @@ fn gem_storage_layout_matches_genesis_seeder() {
         assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(18u64));
         // all_gem_ids (List) occupies slot 19.
         assert_eq!(gem.gem_index.base_slot(), U256::from(20u64));
+        assert_eq!(gem.owner_gem_position.base_slot(), U256::from(43u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);
